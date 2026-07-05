@@ -86,3 +86,88 @@ def test_reset_starts_new_active_transcript_without_deleting_old_file(
     assert json.loads((tmp_path / "active.json").read_text()) == {
         "transcript_id": new_transcript_id
     }
+
+
+def test_list_sessions_returns_metadata_sorted_by_recent_activity(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    first_id = store.start_new()
+    store.append("user", {"content": "first long request title"})
+    store.append("assistant", {"content": "first answer"})
+    second_id = store.reset()
+    store.append("user", {"content": "second request"})
+
+    sessions = store.list_sessions()
+
+    assert [session.id for session in sessions] == [second_id, first_id]
+    assert sessions[0].title == "second request"
+    assert sessions[0].message_count == 1
+    assert sessions[0].status == "idle"
+    assert sessions[0].is_active is True
+    assert sessions[0].created_at <= sessions[0].updated_at
+    assert sessions[1].title == "first long request title"
+    assert sessions[1].message_count == 2
+    assert sessions[1].is_active is False
+
+
+def test_list_sessions_reports_waiting_and_failed_status(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    waiting_id = store.start_new()
+    store.append(
+        "tool_request",
+        {
+            "id": "shell-call",
+            "name": "shell.run",
+            "approval_id": "approval-1",
+            "arguments": {"command": "printf ok"},
+        },
+    )
+    failed_id = store.reset()
+    store.append("runtime_error", {"message": "Codex exited"})
+
+    sessions = {session.id: session for session in store.list_sessions()}
+
+    assert sessions[waiting_id].status == "waiting_approval"
+    assert sessions[failed_id].status == "failed"
+
+
+def test_activate_session_switches_active_transcript(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    first_id = store.start_new()
+    store.append("user", {"content": "first"})
+    store.reset()
+
+    assert store.activate(first_id) is True
+
+    assert store.active_id() == first_id
+    assert [event.payload for event in store.load_active()] == [{"content": "first"}]
+
+
+def test_activate_missing_session_returns_false(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+
+    assert store.activate("missing") is False
+
+
+def test_delete_session_removes_transcript_and_clears_active_pointer(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    transcript_id = store.start_new()
+    store.append("user", {"content": "delete me"})
+
+    assert store.delete(transcript_id) is True
+
+    assert store.active_id() is None
+    assert not (tmp_path / f"{transcript_id}.jsonl").exists()
+    assert not (tmp_path / "active.json").exists()
+
+
+def test_search_sessions_matches_transcript_payload_text(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    first_id = store.start_new()
+    store.append("user", {"content": "find the billing regression"})
+    store.reset()
+    store.append("user", {"content": "unrelated message"})
+
+    results = store.search_sessions("billing")
+
+    assert [result.id for result in results] == [first_id]
+    assert results[0].title == "find the billing regression"

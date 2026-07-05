@@ -1,6 +1,8 @@
 const state = {
   messages: [],
   pendingApproval: null,
+  sessions: [],
+  sessionQuery: "",
   status: null,
   busy: false,
 };
@@ -17,7 +19,10 @@ const elements = {
   messageList: document.querySelector("#message-list"),
   resetButton: document.querySelector("#reset-button"),
   sendButton: document.querySelector("#send-button"),
+  sessionList: document.querySelector("#session-list"),
   sessionMeta: document.querySelector("#session-meta"),
+  sessionSearch: document.querySelector("#session-search"),
+  sessionSearchForm: document.querySelector("#session-search-form"),
   tokenForm: document.querySelector("#token-form"),
   tokenInput: document.querySelector("#token-input"),
   tokenPanel: document.querySelector("#token-panel"),
@@ -55,6 +60,7 @@ elements.chatForm?.addEventListener("submit", async (event) => {
       body: JSON.stringify({ message: content }),
     });
     applyRuntimeResponse(data);
+    await refreshRuntimeMetadata();
   } catch (error) {
     showError(error.message);
   } finally {
@@ -85,12 +91,51 @@ elements.resetButton?.addEventListener("click", async () => {
     await apiFetch("/api/reset", { method: "POST" });
     state.messages = [];
     state.pendingApproval = null;
-    await loadStatus();
+    await refreshRuntimeMetadata();
     render();
   } catch (error) {
     showError(error.message);
   } finally {
     setBusy(false);
+  }
+});
+
+elements.sessionSearchForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  state.sessionQuery = elements.sessionSearch?.value.trim() ?? "";
+  await loadSessions();
+  renderSessions();
+});
+
+elements.sessionSearch?.addEventListener("input", async () => {
+  const query = elements.sessionSearch?.value.trim() ?? "";
+  if (query) {
+    return;
+  }
+
+  state.sessionQuery = "";
+  await loadSessions();
+  renderSessions();
+});
+
+elements.sessionList?.addEventListener("click", async (event) => {
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  const button = target?.closest("button[data-session-action]");
+  if (!(button instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const sessionId = button.dataset.sessionId ?? "";
+  if (!sessionId || state.busy) {
+    return;
+  }
+
+  const action = button.dataset.sessionAction;
+  if (action === "activate") {
+    await activateSession(sessionId);
+  }
+  if (action === "delete") {
+    await deleteSession(sessionId);
   }
 });
 
@@ -116,7 +161,6 @@ async function authenticateWithToken(token) {
       throw new Error(`Authentication failed (${response.status}).`);
     }
     window.history.replaceState({}, "", window.location.pathname);
-    await loadStatus();
     await loadHistory();
   } catch (error) {
     showTokenPanel();
@@ -134,7 +178,7 @@ async function loadHistory() {
     const events = Array.isArray(data.events) ? data.events : [];
     state.messages = messagesFromEvents(events);
     state.pendingApproval = pendingApprovalFromEvents(events);
-    await loadStatus();
+    await refreshRuntimeMetadata();
     hideTokenPanel();
     render();
   } catch (error) {
@@ -158,8 +202,67 @@ async function loadStatus() {
     pendingApproval: Boolean(data.pending_approval),
     provider: String(data.provider ?? "unknown"),
     sessionId: typeof data.session_id === "string" ? data.session_id : "",
+    sessionStatus: String(data.session_status ?? "idle"),
     workspaceRoot: String(data.workspace_root ?? ""),
   };
+}
+
+async function loadSessions() {
+  const query = state.sessionQuery.trim();
+  const url = query
+    ? `/api/sessions/search?q=${encodeURIComponent(query)}`
+    : "/api/sessions";
+  const data = await apiFetch(url);
+  state.sessions = Array.isArray(data.sessions) ? data.sessions.map(normalizeSession).filter(Boolean) : [];
+}
+
+async function refreshRuntimeMetadata() {
+  await Promise.all([loadStatus(), loadSessions()]);
+}
+
+async function activateSession(sessionId) {
+  setBusy(true);
+  hideError();
+
+  try {
+    const data = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/activate`, {
+      method: "POST",
+    });
+    const events = Array.isArray(data.events) ? data.events : [];
+    state.messages = messagesFromEvents(events);
+    state.pendingApproval = pendingApprovalFromEvents(events);
+    await refreshRuntimeMetadata();
+    render();
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function deleteSession(sessionId) {
+  if (!window.confirm("Delete this session transcript?")) {
+    return;
+  }
+
+  setBusy(true);
+  hideError();
+
+  try {
+    const data = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
+    if (data.active_session_id === null) {
+      state.messages = [];
+      state.pendingApproval = null;
+    }
+    await refreshRuntimeMetadata();
+    render();
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function resolveApproval(action) {
@@ -176,6 +279,7 @@ async function resolveApproval(action) {
       method: "POST",
     });
     applyRuntimeResponse(data);
+    await refreshRuntimeMetadata();
   } catch (error) {
     showError(error.message);
   } finally {
@@ -302,9 +406,25 @@ function normalizeApproval(value) {
   return { id: value.id, command: value.command };
 }
 
+function normalizeSession(value) {
+  if (!value || typeof value !== "object" || typeof value.id !== "string") {
+    return null;
+  }
+  return {
+    createdAt: String(value.created_at ?? ""),
+    id: value.id,
+    isActive: Boolean(value.is_active),
+    messageCount: Number(value.message_count ?? 0),
+    status: String(value.status ?? "idle"),
+    title: String(value.title ?? "Untitled session"),
+    updatedAt: String(value.updated_at ?? ""),
+  };
+}
+
 function render() {
   renderMessages();
   renderApproval();
+  renderSessions();
   if (elements.connectionState) {
     elements.connectionState.textContent = elements.tokenPanel?.hidden ? "Connected" : "Token required";
   }
@@ -349,9 +469,56 @@ function renderStatus() {
     : "none";
   elements.sessionMeta.textContent = [
     `Session ${sessionLabel}`,
+    state.status.sessionStatus,
     `${state.status.provider}/${state.status.model}`,
     `${state.status.messageCount} messages`,
   ].join(" · ");
+}
+
+function renderSessions() {
+  if (!elements.sessionList) {
+    return;
+  }
+
+  elements.sessionList.replaceChildren();
+  if (state.sessions.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "session-empty";
+    empty.textContent = state.sessionQuery ? "No matching sessions" : "No sessions yet";
+    elements.sessionList.append(empty);
+    return;
+  }
+
+  for (const session of state.sessions) {
+    const item = document.createElement("li");
+    item.className = `session-item${session.isActive ? " session-item-active" : ""}`;
+
+    const activateButton = document.createElement("button");
+    activateButton.className = "session-main";
+    activateButton.dataset.sessionAction = "activate";
+    activateButton.dataset.sessionId = session.id;
+    activateButton.type = "button";
+
+    const title = document.createElement("span");
+    title.className = "session-title";
+    title.textContent = session.title;
+
+    const meta = document.createElement("span");
+    meta.className = "session-row-meta";
+    meta.textContent = `${session.status} · ${session.messageCount} messages`;
+
+    activateButton.append(title, meta);
+
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "session-delete secondary";
+    deleteButton.dataset.sessionAction = "delete";
+    deleteButton.dataset.sessionId = session.id;
+    deleteButton.type = "button";
+    deleteButton.textContent = "Delete";
+
+    item.append(activateButton, deleteButton);
+    elements.sessionList.append(item);
+  }
 }
 
 function renderApproval() {

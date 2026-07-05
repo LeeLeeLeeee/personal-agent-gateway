@@ -1,32 +1,53 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
   <title id="title">Personal Agent Gateway UI preview</title>
-  <desc id="desc">A browser UI for sending messages to a local Codex agent through a token-protected gateway.</desc>
+  <desc id="desc">A browser UI with a session list, session status, chat transcript, and approval controls for a local Codex agent gateway.</desc>
   <rect width="1280" height="720" fill="#f6f7f9"/>
-  <rect x="52" y="48" width="1176" height="624" rx="10" fill="#ffffff" stroke="#cfd6df"/>
-  <rect x="52" y="48" width="1176" height="74" rx="10" fill="#fbfcfd" stroke="#cfd6df"/>
+  <rect x="52" y="48" width="1176" height="624" rx="8" fill="#ffffff" stroke="#cfd6df"/>
+  <rect x="52" y="48" width="1176" height="82" rx="8" fill="#fbfcfd" stroke="#cfd6df"/>
   <text x="84" y="82" fill="#1d2733" font-family="Arial, sans-serif" font-size="21" font-weight="700">Personal Agent Gateway</text>
-  <text x="84" y="105" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13">Connected · Session 9a77eee0 · codex/default · 4 messages</text>
-  <rect x="1115" y="68" width="82" height="34" rx="5" fill="#ffffff" stroke="#9aa7b5"/>
-  <text x="1142" y="90" fill="#1d2733" font-family="Arial, sans-serif" font-size="13" font-weight="700">Reset</text>
+  <text x="84" y="105" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13">Connected</text>
+  <text x="84" y="123" fill="#5f6f80" font-family="Arial, sans-serif" font-size="12">Session 9a77eee0 · idle · codex/default · 4 messages</text>
+  <rect x="1115" y="72" width="82" height="34" rx="5" fill="#ffffff" stroke="#9aa7b5"/>
+  <text x="1142" y="94" fill="#1d2733" font-family="Arial, sans-serif" font-size="13" font-weight="700">Reset</text>
 
-  <rect x="84" y="152" width="1112" height="330" rx="6" fill="#ffffff" stroke="#cfd6df"/>
-  <line x1="84" y1="218" x2="1196" y2="218" stroke="#cfd6df"/>
-  <line x1="84" y1="310" x2="1196" y2="310" stroke="#cfd6df"/>
-  <line x1="84" y1="408" x2="1196" y2="408" stroke="#cfd6df"/>
+  <rect x="84" y="154" width="270" height="462" rx="5" fill="#ffffff" stroke="#cfd6df"/>
+  <text x="108" y="187" fill="#1d2733" font-family="Arial, sans-serif" font-size="15" font-weight="700">Sessions</text>
+  <text x="108" y="224" fill="#5f6f80" font-family="Arial, sans-serif" font-size="11" font-weight="700">SEARCH SESSIONS</text>
+  <rect x="108" y="236" width="150" height="34" rx="4" fill="#ffffff" stroke="#9aa7b5"/>
+  <text x="120" y="258" fill="#5f6f80" font-family="Arial, sans-serif" font-size="12">billing</text>
+  <rect x="266" y="236" width="64" height="34" rx="4" fill="#ffffff" stroke="#9aa7b5"/>
+  <text x="281" y="258" fill="#1d2733" font-family="Arial, sans-serif" font-size="12" font-weight="700">Search</text>
 
-  <text x="112" y="190" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13" font-weight="700">USER</text>
-  <text x="222" y="190" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">README structure looks too implementation-heavy. Rewrite it for first-time readers.</text>
+  <rect x="108" y="294" width="222" height="58" rx="5" fill="#ffffff" stroke="#1769aa"/>
+  <rect x="108" y="294" width="4" height="58" fill="#1769aa"/>
+  <text x="124" y="318" fill="#1d2733" font-family="Arial, sans-serif" font-size="13" font-weight="700">billing regression</text>
+  <text x="124" y="338" fill="#5f6f80" font-family="Arial, sans-serif" font-size="12">idle · 4 messages</text>
+  <rect x="108" y="366" width="222" height="58" rx="5" fill="#ffffff" stroke="#cfd6df"/>
+  <text x="124" y="390" fill="#1d2733" font-family="Arial, sans-serif" font-size="13" font-weight="700">README rewrite</text>
+  <text x="124" y="410" fill="#5f6f80" font-family="Arial, sans-serif" font-size="12">waiting_approval · 8 messages</text>
+  <rect x="108" y="438" width="222" height="58" rx="5" fill="#ffffff" stroke="#cfd6df"/>
+  <text x="124" y="462" fill="#1d2733" font-family="Arial, sans-serif" font-size="13" font-weight="700">frontend polish</text>
+  <text x="124" y="482" fill="#5f6f80" font-family="Arial, sans-serif" font-size="12">failed · 2 messages</text>
 
-  <text x="112" y="254" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13" font-weight="700">ASSISTANT</text>
-  <text x="222" y="254" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">I will reorganize it around purpose, workflow, safety boundaries, and quick start.</text>
-  <text x="222" y="282" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">Internal module details move behind the user-facing explanation.</text>
+  <rect x="378" y="154" width="818" height="330" rx="5" fill="#ffffff" stroke="#cfd6df"/>
+  <line x1="378" y1="220" x2="1196" y2="220" stroke="#cfd6df"/>
+  <line x1="378" y1="312" x2="1196" y2="312" stroke="#cfd6df"/>
+  <line x1="378" y1="410" x2="1196" y2="410" stroke="#cfd6df"/>
 
-  <text x="112" y="350" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13" font-weight="700">USER</text>
-  <text x="222" y="350" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">What should we improve next?</text>
+  <text x="408" y="192" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13" font-weight="700">USER</text>
+  <text x="510" y="192" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">Find the billing regression and explain the risky files.</text>
 
-  <rect x="84" y="512" width="1112" height="104" rx="6" fill="#ffffff" stroke="#cfd6df"/>
-  <text x="104" y="538" fill="#5f6f80" font-family="Arial, sans-serif" font-size="12" font-weight="700">MESSAGE</text>
-  <rect x="104" y="552" width="960" height="42" rx="5" fill="#ffffff" stroke="#1769aa"/>
+  <text x="408" y="256" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13" font-weight="700">ASSISTANT</text>
+  <text x="510" y="256" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">I found the regression in the invoice calculation path.</text>
+  <text x="510" y="284" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">The next step is adding a focused test around discount ordering.</text>
+
+  <text x="408" y="352" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13" font-weight="700">TOOL</text>
+  <text x="510" y="352" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">$ pytest tests/test_billing.py</text>
+  <text x="510" y="380" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">exit 0</text>
+
+  <rect x="378" y="512" width="818" height="104" rx="5" fill="#ffffff" stroke="#cfd6df"/>
+  <text x="398" y="538" fill="#5f6f80" font-family="Arial, sans-serif" font-size="12" font-weight="700">MESSAGE</text>
+  <rect x="398" y="552" width="666" height="42" rx="5" fill="#ffffff" stroke="#1769aa"/>
   <rect x="1080" y="552" width="96" height="42" rx="5" fill="#1769aa"/>
   <text x="1112" y="578" fill="#ffffff" font-family="Arial, sans-serif" font-size="14" font-weight="700">Send</text>
 </svg>

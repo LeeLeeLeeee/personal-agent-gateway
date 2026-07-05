@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -22,6 +22,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app_config = config or load_config()
     transcript = TranscriptStore(app_config.session_dir)
     shared_runtime = runtime or _create_runtime(app_config, transcript)
+    running_session_id: str | None = None
     app = FastAPI()
     token_dependency = require_token(app_config.web_token, secure_cookie=app_config.cookie_secure)
     static_dir = Path(__file__).parent / "static"
@@ -52,27 +53,74 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     @app.get("/api/status")
     def status(_token: None = token_dependency) -> dict[str, object]:
         events = transcript.load_active()
+        session_id = transcript.active_id()
         return {
             "provider": app_config.model_provider,
             "model": app_config.model,
             "workspace_root": str(app_config.workspace_root),
-            "session_id": transcript.active_id(),
+            "session_id": session_id,
             "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
             "pending_approval": _has_pending_shell_approval(events),
+            "session_status": _session_status(events, session_id, running_session_id),
             "cookie_secure": app_config.cookie_secure,
         }
 
+    @app.get("/api/sessions")
+    def sessions(_token: None = token_dependency) -> dict[str, list[dict[str, object]]]:
+        return {
+            "sessions": [
+                _session_payload(session, running_session_id)
+                for session in transcript.list_sessions()
+            ]
+        }
+
+    @app.get("/api/sessions/search")
+    def search_sessions(q: str = "", _token: None = token_dependency) -> dict[str, list[dict[str, object]]]:
+        return {
+            "sessions": [
+                _session_payload(session, running_session_id)
+                for session in transcript.search_sessions(q)
+            ]
+        }
+
+    @app.post("/api/sessions/{session_id}/activate")
+    def activate_session(session_id: str, _token: None = token_dependency) -> dict[str, object]:
+        if not transcript.activate(session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"session_id": session_id, "events": [_event_payload(event) for event in transcript.load_active()]}
+
+    @app.delete("/api/sessions/{session_id}")
+    def delete_session(session_id: str, _token: None = token_dependency) -> dict[str, object]:
+        if not transcript.delete(session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"deleted": True, "active_session_id": transcript.active_id()}
+
     @app.post("/api/chat")
     async def chat(request: ChatRequest, _token: None = token_dependency) -> dict[str, object]:
-        return _runtime_response(await shared_runtime.handle_user_message(request.message))
+        nonlocal running_session_id
+        running_session_id = transcript.active_id()
+        try:
+            return _runtime_response(await shared_runtime.handle_user_message(request.message))
+        finally:
+            running_session_id = None
 
     @app.post("/api/approvals/{approval_id}/approve")
     async def approve(approval_id: str, _token: None = token_dependency) -> dict[str, object]:
-        return _runtime_response(await shared_runtime.approve(approval_id))
+        nonlocal running_session_id
+        running_session_id = transcript.active_id()
+        try:
+            return _runtime_response(await shared_runtime.approve(approval_id))
+        finally:
+            running_session_id = None
 
     @app.post("/api/approvals/{approval_id}/deny")
     async def deny(approval_id: str, _token: None = token_dependency) -> dict[str, object]:
-        return _runtime_response(await shared_runtime.deny(approval_id))
+        nonlocal running_session_id
+        running_session_id = transcript.active_id()
+        try:
+            return _runtime_response(await shared_runtime.deny(approval_id))
+        finally:
+            running_session_id = None
 
     @app.post("/api/reset")
     def reset(_token: None = token_dependency) -> dict[str, object]:
@@ -127,6 +175,23 @@ def _runtime_response(result: RuntimeResult) -> dict[str, object]:
         "messages": result.messages,
         "pending_approval": result.pending_approval,
     }
+
+
+def _session_payload(session: BaseModel, running_session_id: str | None) -> dict[str, object]:
+    payload = session.model_dump(mode="json")
+    if payload["id"] == running_session_id:
+        payload["status"] = "running"
+    return {str(key): value for key, value in payload.items()}
+
+
+def _session_status(events: list[object], session_id: str | None, running_session_id: str | None) -> str:
+    if session_id is not None and session_id == running_session_id:
+        return "running"
+    if events and getattr(events[-1], "kind", "") == "runtime_error":
+        return "failed"
+    if _has_pending_shell_approval(events):
+        return "waiting_approval"
+    return "idle"
 
 
 def _has_pending_shell_approval(events: list[object]) -> bool:

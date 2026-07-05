@@ -30,25 +30,41 @@
         </form>
       </section>
 
-      <section class="workspace" aria-label="Agent workspace">
-        <ol id="message-list" class="message-list" aria-live="polite"></ol>
+      <section class="workspace-layout" aria-label="Agent workspace">
+        <aside class="session-panel" aria-labelledby="sessions-title">
+          <div class="session-panel-header">
+            <h2 id="sessions-title">Sessions</h2>
+          </div>
+          <form id="session-search-form" class="session-search-form">
+            <label for="session-search">Search sessions</label>
+            <div class="session-search-row">
+              <input id="session-search" name="q" type="search" autocomplete="off">
+              <button class="secondary" type="submit">Search</button>
+            </div>
+          </form>
+          <ol id="session-list" class="session-list" aria-live="polite"></ol>
+        </aside>
 
-        <section id="approval-panel" class="approval-panel" aria-labelledby="approval-title" hidden>
-          <div class="approval-copy">
-            <h2 id="approval-title">Shell approval pending</h2>
-            <pre id="approval-command"></pre>
-          </div>
-          <div class="approval-actions">
-            <button id="approve-button" type="button">Approve</button>
-            <button id="deny-button" class="secondary" type="button">Deny</button>
-          </div>
+        <section class="workspace" aria-label="Active session">
+          <ol id="message-list" class="message-list" aria-live="polite"></ol>
+
+          <section id="approval-panel" class="approval-panel" aria-labelledby="approval-title" hidden>
+            <div class="approval-copy">
+              <h2 id="approval-title">Shell approval pending</h2>
+              <pre id="approval-command"></pre>
+            </div>
+            <div class="approval-actions">
+              <button id="approve-button" type="button">Approve</button>
+              <button id="deny-button" class="secondary" type="button">Deny</button>
+            </div>
+          </section>
+
+          <form id="chat-form" class="composer">
+            <label for="message-input">Message</label>
+            <textarea id="message-input" name="message" rows="3" autocomplete="off"></textarea>
+            <button id="send-button" type="submit">Send</button>
+          </form>
         </section>
-
-        <form id="chat-form" class="composer">
-          <label for="message-input">Message</label>
-          <textarea id="message-input" name="message" rows="3" autocomplete="off"></textarea>
-          <button id="send-button" type="submit">Send</button>
-        </form>
       </section>
     </main>
     <script src="/static/app.js"></script>

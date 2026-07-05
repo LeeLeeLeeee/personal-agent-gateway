@@ -86,6 +86,10 @@ def test_unauthenticated_routes_return_401(tmp_path: Path) -> None:
     assert client.get("/static/styles.css").status_code == 401
     assert client.get("/api/history").status_code == 401
     assert client.get("/api/status").status_code == 401
+    assert client.get("/api/sessions").status_code == 401
+    assert client.get("/api/sessions/search?q=hello").status_code == 401
+    assert client.post("/api/sessions/session-1/activate").status_code == 401
+    assert client.delete("/api/sessions/session-1").status_code == 401
     assert client.post("/api/chat", json={"message": "hello"}).status_code == 401
     assert client.post("/api/reset").status_code == 401
     assert client.post("/api/approvals/approval-1/approve").status_code == 401
@@ -116,10 +120,15 @@ def test_ui_assets_smoke(tmp_path: Path) -> None:
     assert page.status_code == 200
     assert "text/html" in page.headers["content-type"]
     assert 'id="app-root"' in page.text
+    assert 'id="session-list"' in page.text
+    assert 'id="session-search"' in page.text
     assert script.status_code == 200
     assert "text/javascript" in script.headers["content-type"]
     assert "history.replaceState" in script.text
     assert "confirm(" in script.text
+    assert "loadSessions" in script.text
+    assert "activateSession" in script.text
+    assert "deleteSession" in script.text
 
 
 def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
@@ -136,6 +145,7 @@ def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
         "session_id": None,
         "message_count": 0,
         "pending_approval": False,
+        "session_status": "idle",
         "cookie_secure": False,
     }
     assert "secret-token" not in response.text
@@ -157,6 +167,55 @@ def test_status_reports_active_session_after_real_runtime_message(tmp_path: Path
     payload = response.json()
     assert payload["session_id"]
     assert payload["message_count"] == 2
+    assert payload["session_status"] == "idle"
+
+
+def test_sessions_api_lists_activate_delete_and_searches_sessions(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    first_id = store.start_new()
+    store.append("user", {"content": "billing regression"})
+    second_id = store.reset()
+    store.append("user", {"content": "frontend polish"})
+    client = auth_client(config, FakeRuntime())
+
+    list_response = client.get("/api/sessions")
+    sessions = list_response.json()["sessions"]
+
+    assert list_response.status_code == 200
+    assert [session["id"] for session in sessions] == [second_id, first_id]
+    assert sessions[0]["title"] == "frontend polish"
+    assert sessions[0]["is_active"] is True
+    assert sessions[0]["status"] == "idle"
+
+    activate_response = client.post(f"/api/sessions/{first_id}/activate")
+
+    assert activate_response.status_code == 200
+    assert activate_response.json()["session_id"] == first_id
+    assert client.get("/api/history").json()["events"][0]["payload"] == {
+        "content": "billing regression"
+    }
+
+    search_response = client.get("/api/sessions/search?q=billing")
+
+    assert search_response.status_code == 200
+    assert [session["id"] for session in search_response.json()["sessions"]] == [first_id]
+
+    delete_response = client.delete(f"/api/sessions/{first_id}")
+
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {"deleted": True, "active_session_id": None}
+    assert client.get("/api/sessions").json()["sessions"][0]["id"] == second_id
+
+
+def test_activate_missing_session_returns_404(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = auth_client(config, FakeRuntime())
+
+    response = client.post("/api/sessions/missing/activate")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Session not found"}
 
 
 def test_chat_returns_runtime_output(tmp_path: Path) -> None:

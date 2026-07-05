@@ -15,6 +15,7 @@ TranscriptKind = Literal[
     "tool_denial",
     "runtime_error",
 ]
+SessionStatus = Literal["idle", "waiting_approval", "failed"]
 
 
 class TranscriptEvent(BaseModel):
@@ -23,6 +24,16 @@ class TranscriptEvent(BaseModel):
     kind: TranscriptKind
     payload: dict[str, object]
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SessionSummary(BaseModel):
+    id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    message_count: int
+    status: SessionStatus
+    is_active: bool
 
 
 class TranscriptStore:
@@ -36,6 +47,52 @@ class TranscriptStore:
 
     def active_id(self) -> str | None:
         return self._read_active_id()
+
+    def list_sessions(self) -> list[SessionSummary]:
+        active_id = self._read_active_id()
+        sessions = [
+            self._session_summary(transcript_id, active_id)
+            for transcript_id in self._known_session_ids(active_id)
+        ]
+        return sorted(sessions, key=lambda session: session.updated_at, reverse=True)
+
+    def search_sessions(self, query: str) -> list[SessionSummary]:
+        normalized_query = query.strip().lower()
+        if not normalized_query:
+            return []
+
+        active_id = self._read_active_id()
+        matched_sessions: list[SessionSummary] = []
+        for transcript_id in self._known_session_ids(active_id):
+            events = self._load(transcript_id)
+            haystack = "\n".join(
+                json.dumps(event.payload, ensure_ascii=False).lower() for event in events
+            )
+            if normalized_query in haystack:
+                matched_sessions.append(self._session_summary(transcript_id, active_id))
+        return sorted(matched_sessions, key=lambda session: session.updated_at, reverse=True)
+
+    def activate(self, transcript_id: str) -> bool:
+        if not self._transcript_path(transcript_id).exists():
+            return False
+
+        self._write_active(transcript_id)
+        return True
+
+    def delete(self, transcript_id: str) -> bool:
+        transcript_path = self._transcript_path(transcript_id)
+        active_id = self._read_active_id()
+        if not transcript_path.exists():
+            return False
+
+        transcript_path.unlink()
+        if active_id != transcript_id:
+            return True
+
+        active_path = self._active_path()
+        if active_path.exists():
+            active_path.unlink()
+        return True
 
     def append(
         self,
@@ -62,14 +119,10 @@ class TranscriptStore:
         if transcript_id is None:
             return []
 
-        transcript_path = self._transcript_path(transcript_id)
-        if not transcript_path.exists():
-            return []
+        return self._load(transcript_id)
 
-        events: list[TranscriptEvent] = []
-        for line in transcript_path.read_text(encoding="utf-8").splitlines():
-            events.append(TranscriptEvent.model_validate(json.loads(line)))
-        return events
+    def load(self, transcript_id: str) -> list[TranscriptEvent]:
+        return self._load(transcript_id)
 
     def reset(self) -> str:
         return self.start_new()
@@ -79,6 +132,16 @@ class TranscriptStore:
 
     def _transcript_path(self, transcript_id: str) -> Path:
         return self._session_dir / f"{transcript_id}.jsonl"
+
+    def _load(self, transcript_id: str) -> list[TranscriptEvent]:
+        transcript_path = self._transcript_path(transcript_id)
+        if not transcript_path.exists():
+            return []
+
+        events: list[TranscriptEvent] = []
+        for line in transcript_path.read_text(encoding="utf-8").splitlines():
+            events.append(TranscriptEvent.model_validate(json.loads(line)))
+        return events
 
     def _read_active_id(self) -> str | None:
         active_path = self._active_path()
@@ -94,3 +157,71 @@ class TranscriptStore:
             json.dumps({"transcript_id": transcript_id}),
             encoding="utf-8",
         )
+
+    def _known_session_ids(self, active_id: str | None) -> list[str]:
+        session_ids = {
+            path.stem
+            for path in self._session_dir.glob("*.jsonl")
+            if path.is_file()
+        }
+        if active_id is not None:
+            session_ids.add(active_id)
+        return sorted(session_ids)
+
+    def _session_summary(self, transcript_id: str, active_id: str | None) -> SessionSummary:
+        events = self._load(transcript_id)
+        created_at = _created_at(events, self._transcript_path(transcript_id))
+        updated_at = events[-1].created_at if events else created_at
+        return SessionSummary(
+            id=transcript_id,
+            title=_session_title(events),
+            created_at=created_at,
+            updated_at=updated_at,
+            message_count=sum(1 for event in events if event.kind in {"user", "assistant"}),
+            status=_session_status(events),
+            is_active=transcript_id == active_id,
+        )
+
+
+def _created_at(events: list[TranscriptEvent], transcript_path: Path) -> datetime:
+    if events:
+        return events[0].created_at
+    if transcript_path.exists():
+        return datetime.fromtimestamp(transcript_path.stat().st_mtime, UTC)
+    return datetime.now(UTC)
+
+
+def _session_title(events: list[TranscriptEvent]) -> str:
+    for event in events:
+        if event.kind != "user":
+            continue
+        content = event.payload.get("content") or event.payload.get("message")
+        if isinstance(content, str) and content.strip():
+            return _compact_title(content)
+    return "Untitled session"
+
+
+def _compact_title(content: str) -> str:
+    title = " ".join(content.split())
+    if len(title) <= 64:
+        return title
+    return f"{title[:61]}..."
+
+
+def _session_status(events: list[TranscriptEvent]) -> SessionStatus:
+    if events and events[-1].kind == "runtime_error":
+        return "failed"
+    if _has_pending_shell_approval(events):
+        return "waiting_approval"
+    return "idle"
+
+
+def _has_pending_shell_approval(events: list[TranscriptEvent]) -> bool:
+    pending_by_tool_id: set[str] = set()
+    for event in events:
+        payload = event.payload
+        if event.kind == "tool_request" and payload.get("name") == "shell.run":
+            pending_by_tool_id.add(str(payload.get("id", "")))
+        elif event.kind in {"tool_result", "tool_denial"}:
+            pending_by_tool_id.discard(str(payload.get("id", "")))
+    return bool(pending_by_tool_id)
