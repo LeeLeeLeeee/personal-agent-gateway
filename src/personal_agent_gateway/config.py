@@ -17,6 +17,7 @@ class AppConfig(BaseModel):
     model_provider: str = "codex"
     model: str = "default"
     session_dir: Path
+    cookie_secure: bool = False
     openai_api_key: str | None = None
     codex_binary: str = "codex"
     codex_sandbox: str = "workspace-write"
@@ -34,6 +35,15 @@ class AppConfig(BaseModel):
     @classmethod
     def resolve_path(cls, value: Path) -> Path:
         return value.expanduser().resolve()
+
+    @field_validator("cookie_secure", mode="before")
+    @classmethod
+    def parse_bool(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes", "on"}
+        return False
 
     @classmethod
     def from_env(cls, env: dict[str, str | None]) -> Self:
@@ -57,6 +67,7 @@ class AppConfig(BaseModel):
                 model_provider=env.get("AGENT_MODEL_PROVIDER") or "codex",
                 model=env.get("AGENT_MODEL") or "default",
                 session_dir=Path(session_dir),
+                cookie_secure=env.get("AGENT_COOKIE_SECURE") or False,
                 openai_api_key=env.get("OPENAI_API_KEY"),
                 codex_binary=env.get("AGENT_CODEX_BIN") or "codex",
                 codex_sandbox=env.get("AGENT_CODEX_SANDBOX") or "workspace-write",
@@ -81,6 +92,7 @@ def load_config() -> AppConfig:
             "AGENT_MODEL_PROVIDER": os.getenv("AGENT_MODEL_PROVIDER"),
             "AGENT_MODEL": os.getenv("AGENT_MODEL"),
             "AGENT_SESSION_DIR": os.getenv("AGENT_SESSION_DIR"),
+            "AGENT_COOKIE_SECURE": os.getenv("AGENT_COOKIE_SECURE"),
             "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
             "AGENT_CODEX_BIN": os.getenv("AGENT_CODEX_BIN"),
             "AGENT_CODEX_SANDBOX": os.getenv("AGENT_CODEX_SANDBOX"),

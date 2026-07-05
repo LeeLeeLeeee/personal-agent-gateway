@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Personal Agent Gateway UI preview</title>
+  <desc id="desc">A browser UI for sending messages to a local Codex agent through a token-protected gateway.</desc>
+  <rect width="1280" height="720" fill="#f6f7f9"/>
+  <rect x="52" y="48" width="1176" height="624" rx="10" fill="#ffffff" stroke="#cfd6df"/>
+  <rect x="52" y="48" width="1176" height="74" rx="10" fill="#fbfcfd" stroke="#cfd6df"/>
+  <text x="84" y="82" fill="#1d2733" font-family="Arial, sans-serif" font-size="21" font-weight="700">Personal Agent Gateway</text>
+  <text x="84" y="105" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13">Connected · Session 9a77eee0 · codex/default · 4 messages</text>
+  <rect x="1115" y="68" width="82" height="34" rx="5" fill="#ffffff" stroke="#9aa7b5"/>
+  <text x="1142" y="90" fill="#1d2733" font-family="Arial, sans-serif" font-size="13" font-weight="700">Reset</text>
+
+  <rect x="84" y="152" width="1112" height="330" rx="6" fill="#ffffff" stroke="#cfd6df"/>
+  <line x1="84" y1="218" x2="1196" y2="218" stroke="#cfd6df"/>
+  <line x1="84" y1="310" x2="1196" y2="310" stroke="#cfd6df"/>
+  <line x1="84" y1="408" x2="1196" y2="408" stroke="#cfd6df"/>
+
+  <text x="112" y="190" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13" font-weight="700">USER</text>
+  <text x="222" y="190" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">README structure looks too implementation-heavy. Rewrite it for first-time readers.</text>
+
+  <text x="112" y="254" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13" font-weight="700">ASSISTANT</text>
+  <text x="222" y="254" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">I will reorganize it around purpose, workflow, safety boundaries, and quick start.</text>
+  <text x="222" y="282" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">Internal module details move behind the user-facing explanation.</text>
+
+  <text x="112" y="350" fill="#5f6f80" font-family="Arial, sans-serif" font-size="13" font-weight="700">USER</text>
+  <text x="222" y="350" fill="#1d2733" font-family="Arial, sans-serif" font-size="16">What should we improve next?</text>
+
+  <rect x="84" y="512" width="1112" height="104" rx="6" fill="#ffffff" stroke="#cfd6df"/>
+  <text x="104" y="538" fill="#5f6f80" font-family="Arial, sans-serif" font-size="12" font-weight="700">MESSAGE</text>
+  <rect x="104" y="552" width="960" height="42" rx="5" fill="#ffffff" stroke="#1769aa"/>
+  <rect x="1080" y="552" width="96" height="42" rx="5" fill="#1769aa"/>
+  <text x="1112" y="578" fill="#ffffff" font-family="Arial, sans-serif" font-size="14" font-weight="700">Send</text>
+</svg>

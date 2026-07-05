@@ -85,6 +85,7 @@ def test_unauthenticated_routes_return_401(tmp_path: Path) -> None:
     assert client.get("/static/app.js").status_code == 401
     assert client.get("/static/styles.css").status_code == 401
     assert client.get("/api/history").status_code == 401
+    assert client.get("/api/status").status_code == 401
     assert client.post("/api/chat", json={"message": "hello"}).status_code == 401
     assert client.post("/api/reset").status_code == 401
     assert client.post("/api/approvals/approval-1/approve").status_code == 401
@@ -117,6 +118,45 @@ def test_ui_assets_smoke(tmp_path: Path) -> None:
     assert 'id="app-root"' in page.text
     assert script.status_code == 200
     assert "text/javascript" in script.headers["content-type"]
+    assert "history.replaceState" in script.text
+    assert "confirm(" in script.text
+
+
+def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = auth_client(config, FakeRuntime())
+
+    response = client.get("/api/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "codex",
+        "model": "default",
+        "workspace_root": str(config.workspace_root),
+        "session_id": None,
+        "message_count": 0,
+        "pending_approval": False,
+        "cookie_secure": False,
+    }
+    assert "secret-token" not in response.text
+
+
+def test_status_reports_active_session_after_real_runtime_message(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient([ModelResponse(content="stored answer", tool_calls=[])]),
+    )
+    client = auth_client(config, runtime)
+
+    client.post("/api/chat", json={"message": "remember this"})
+    response = client.get("/api/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session_id"]
+    assert payload["message_count"] == 2
 
 
 def test_chat_returns_runtime_output(tmp_path: Path) -> None:
@@ -181,7 +221,8 @@ def test_reset_returns_empty_events_and_resets_history(tmp_path: Path) -> None:
     response = client.post("/api/reset")
 
     assert response.status_code == 200
-    assert response.json() == {"events": []}
+    assert response.json()["events"] == []
+    assert response.json()["session_id"]
     assert client.get("/api/history").json() == {"events": []}
 
 
@@ -208,7 +249,9 @@ def test_reset_invalidates_real_runtime_pending_approval(tmp_path: Path) -> None
     client = auth_client(config, runtime)
     pending = client.post("/api/chat", json={"message": "run it"}).json()["pending_approval"]
 
-    assert client.post("/api/reset").json() == {"events": []}
+    reset_payload = client.post("/api/reset").json()
+    assert reset_payload["events"] == []
+    assert reset_payload["session_id"]
     response = client.post(f"/api/approvals/{pending['id']}/approve")
 
     assert response.status_code == 200

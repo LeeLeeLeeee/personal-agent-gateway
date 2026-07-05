@@ -173,3 +173,15 @@ async def test_codex_client_reports_local_codex_failure(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Codex exited with status 7: not logged in"):
         await client.complete([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.asyncio
+async def test_codex_client_reports_missing_binary() -> None:
+    client = CodexModelClient(
+        binary="/definitely/missing/codex",
+        model="default",
+        workspace_root=Path("."),
+    )
+
+    with pytest.raises(RuntimeError, match="Codex binary not found"):
+        await client.complete([{"role": "user", "content": "hello"}])

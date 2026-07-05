@@ -1,6 +1,7 @@
 const state = {
   messages: [],
   pendingApproval: null,
+  status: null,
   busy: false,
 };
 
@@ -16,6 +17,7 @@ const elements = {
   messageList: document.querySelector("#message-list"),
   resetButton: document.querySelector("#reset-button"),
   sendButton: document.querySelector("#send-button"),
+  sessionMeta: document.querySelector("#session-meta"),
   tokenForm: document.querySelector("#token-form"),
   tokenInput: document.querySelector("#token-input"),
   tokenPanel: document.querySelector("#token-panel"),
@@ -72,6 +74,9 @@ elements.resetButton?.addEventListener("click", async () => {
   if (state.busy) {
     return;
   }
+  if (!window.confirm("Start a new session? Current transcript stays on disk.")) {
+    return;
+  }
 
   setBusy(true);
   hideError();
@@ -80,6 +85,7 @@ elements.resetButton?.addEventListener("click", async () => {
     await apiFetch("/api/reset", { method: "POST" });
     state.messages = [];
     state.pendingApproval = null;
+    await loadStatus();
     render();
   } catch (error) {
     showError(error.message);
@@ -110,6 +116,7 @@ async function authenticateWithToken(token) {
       throw new Error(`Authentication failed (${response.status}).`);
     }
     window.history.replaceState({}, "", window.location.pathname);
+    await loadStatus();
     await loadHistory();
   } catch (error) {
     showTokenPanel();
@@ -127,6 +134,7 @@ async function loadHistory() {
     const events = Array.isArray(data.events) ? data.events : [];
     state.messages = messagesFromEvents(events);
     state.pendingApproval = pendingApprovalFromEvents(events);
+    await loadStatus();
     hideTokenPanel();
     render();
   } catch (error) {
@@ -139,6 +147,19 @@ async function loadHistory() {
     }
     showError(error.message);
   }
+}
+
+async function loadStatus() {
+  const data = await apiFetch("/api/status");
+  state.status = {
+    cookieSecure: Boolean(data.cookie_secure),
+    messageCount: Number(data.message_count ?? 0),
+    model: String(data.model ?? "default"),
+    pendingApproval: Boolean(data.pending_approval),
+    provider: String(data.provider ?? "unknown"),
+    sessionId: typeof data.session_id === "string" ? data.session_id : "",
+    workspaceRoot: String(data.workspace_root ?? ""),
+  };
 }
 
 async function resolveApproval(action) {
@@ -287,6 +308,7 @@ function render() {
   if (elements.connectionState) {
     elements.connectionState.textContent = elements.tokenPanel?.hidden ? "Connected" : "Token required";
   }
+  renderStatus();
 }
 
 function renderMessages() {
@@ -313,6 +335,25 @@ function renderMessages() {
   elements.messageList.scrollTop = elements.messageList.scrollHeight;
 }
 
+function renderStatus() {
+  if (!elements.sessionMeta) {
+    return;
+  }
+  if (!state.status) {
+    elements.sessionMeta.textContent = "Session pending";
+    return;
+  }
+
+  const sessionLabel = state.status.sessionId
+    ? state.status.sessionId.slice(0, 8)
+    : "none";
+  elements.sessionMeta.textContent = [
+    `Session ${sessionLabel}`,
+    `${state.status.provider}/${state.status.model}`,
+    `${state.status.messageCount} messages`,
+  ].join(" · ");
+}
+
 function renderApproval() {
   const approval = state.pendingApproval;
   if (!elements.approvalPanel || !elements.approvalCommand) {
@@ -327,6 +368,7 @@ function showTokenPanel() {
   if (elements.tokenPanel) {
     elements.tokenPanel.hidden = false;
   }
+  state.status = null;
   if (elements.connectionState) {
     elements.connectionState.textContent = "Token required";
   }

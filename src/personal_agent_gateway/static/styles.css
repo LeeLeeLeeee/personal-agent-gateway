@@ -102,6 +102,12 @@ h2 {
   margin-top: 0.15rem;
 }
 
+.session-meta {
+  color: var(--muted);
+  font-size: 0.76rem;
+  margin-top: 0.1rem;
+}
+
 .error-banner {
   border: 1px solid var(--danger-border);
   background: var(--danger-bg);

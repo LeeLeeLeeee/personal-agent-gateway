@@ -34,6 +34,9 @@ class TranscriptStore:
         self._write_active(transcript_id)
         return transcript_id
 
+    def active_id(self) -> str | None:
+        return self._read_active_id()
+
     def append(
         self,
         kind: TranscriptKind,

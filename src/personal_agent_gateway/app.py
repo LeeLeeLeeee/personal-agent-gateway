@@ -23,7 +23,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     transcript = TranscriptStore(app_config.session_dir)
     shared_runtime = runtime or _create_runtime(app_config, transcript)
     app = FastAPI()
-    token_dependency = require_token(app_config.web_token)
+    token_dependency = require_token(app_config.web_token, secure_cookie=app_config.cookie_secure)
     static_dir = Path(__file__).parent / "static"
 
     @app.exception_handler(Exception)
@@ -49,6 +49,19 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     def history(_token: None = token_dependency) -> dict[str, list[dict[str, object]]]:
         return {"events": [_event_payload(event) for event in transcript.load_active()]}
 
+    @app.get("/api/status")
+    def status(_token: None = token_dependency) -> dict[str, object]:
+        events = transcript.load_active()
+        return {
+            "provider": app_config.model_provider,
+            "model": app_config.model,
+            "workspace_root": str(app_config.workspace_root),
+            "session_id": transcript.active_id(),
+            "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
+            "pending_approval": _has_pending_shell_approval(events),
+            "cookie_secure": app_config.cookie_secure,
+        }
+
     @app.post("/api/chat")
     async def chat(request: ChatRequest, _token: None = token_dependency) -> dict[str, object]:
         return _runtime_response(await shared_runtime.handle_user_message(request.message))
@@ -62,12 +75,12 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         return _runtime_response(await shared_runtime.deny(approval_id))
 
     @app.post("/api/reset")
-    def reset(_token: None = token_dependency) -> dict[str, list[object]]:
+    def reset(_token: None = token_dependency) -> dict[str, object]:
         nonlocal shared_runtime
-        transcript.reset()
+        session_id = transcript.reset()
         if runtime is None:
             shared_runtime = _create_runtime(app_config, transcript)
-        return {"events": []}
+        return {"events": [], "session_id": session_id}
 
     return app
 
@@ -114,6 +127,18 @@ def _runtime_response(result: RuntimeResult) -> dict[str, object]:
         "messages": result.messages,
         "pending_approval": result.pending_approval,
     }
+
+
+def _has_pending_shell_approval(events: list[object]) -> bool:
+    pending_by_tool_id: set[str] = set()
+    for event in events:
+        kind = getattr(event, "kind", "")
+        payload = getattr(event, "payload", {})
+        if kind == "tool_request" and payload.get("name") == "shell.run":
+            pending_by_tool_id.add(str(payload.get("id", "")))
+        elif kind in {"tool_result", "tool_denial"}:
+            pending_by_tool_id.discard(str(payload.get("id", "")))
+    return bool(pending_by_tool_id)
 
 
 __all__ = ["create_app", "main"]

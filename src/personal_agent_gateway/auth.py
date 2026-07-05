@@ -4,7 +4,7 @@ from fastapi import Cookie, Depends, Header, HTTPException, Query, Response
 from fastapi.params import Depends as DependsParam
 
 
-def require_token(expected_token: str) -> DependsParam:
+def require_token(expected_token: str, secure_cookie: bool = False) -> DependsParam:
     def dependency(
         response: Response,
         token: Annotated[str | None, Query()] = None,
@@ -22,6 +22,7 @@ def require_token(expected_token: str) -> DependsParam:
                 key="agent_web_token",
                 value=expected_token,
                 httponly=True,
+                secure=secure_cookie,
                 samesite="lax",
             )
 

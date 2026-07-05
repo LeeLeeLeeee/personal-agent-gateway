@@ -95,12 +95,16 @@ class CodexModelClient:
         self._timeout_seconds = timeout_seconds
 
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
-        process = await asyncio.create_subprocess_exec(
-            *self._command(),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *self._command(),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"Codex binary not found: {self._binary}") from exc
+
         prompt = _codex_prompt(messages).encode()
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -115,7 +119,7 @@ class CodexModelClient:
         stdout_text = stdout.decode(errors="replace")
         stderr_text = stderr.decode(errors="replace")
         if process.returncode != 0:
-            detail = stderr_text.strip() or stdout_text.strip()
+            detail = _summarize_process_output(stderr_text, stdout_text)
             raise RuntimeError(f"Codex exited with status {process.returncode}: {detail}")
 
         content = _parse_codex_output(stdout_text).strip()
@@ -175,6 +179,15 @@ def _parse_codex_output(output: str) -> str:
     if final_message:
         return final_message
     return output
+
+
+def _summarize_process_output(stderr_text: str, stdout_text: str) -> str:
+    detail = stderr_text.strip() or stdout_text.strip()
+    if not detail:
+        return "no output"
+    if len(detail) <= 800:
+        return detail
+    return f"{detail[:800]}... [truncated]"
 
 
 def _parse_tool_call(raw_call: object) -> ToolCall | None:

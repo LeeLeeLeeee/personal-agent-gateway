@@ -9,10 +9,17 @@ def test_start_new_creates_new_active_transcript_id(tmp_path: Path) -> None:
 
     transcript_id = store.start_new()
 
+    assert store.active_id() == transcript_id
     assert transcript_id
     assert json.loads((tmp_path / "active.json").read_text()) == {
         "transcript_id": transcript_id
     }
+
+
+def test_active_id_returns_none_before_session_exists(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+
+    assert store.active_id() is None
 
 
 def test_append_writes_jsonl_events_in_order(tmp_path: Path) -> None:

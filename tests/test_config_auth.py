@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from personal_agent_gateway.auth import require_token
-from personal_agent_gateway.config import ConfigError, load_config
+from personal_agent_gateway.config import AppConfig, ConfigError, load_config
 
 
 def test_load_config_requires_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -30,6 +30,19 @@ def test_load_config_rejects_non_loopback_host(
         load_config()
 
 
+def test_load_config_reads_cookie_secure_flag() -> None:
+    config = AppConfig.from_env(
+        {
+            "AGENT_WEB_TOKEN": "secret-token",
+            "AGENT_WORKSPACE_ROOT": ".",
+            "AGENT_SESSION_DIR": "./data/sessions",
+            "AGENT_COOKIE_SECURE": "true",
+        }
+    )
+
+    assert config.cookie_secure is True
+
+
 def test_require_token_accepts_query_token_and_sets_cookie() -> None:
     app = FastAPI()
 
@@ -42,6 +55,20 @@ def test_require_token_accepts_query_token_and_sets_cookie() -> None:
 
     assert response.status_code == 200
     assert response.cookies.get("agent_web_token") == "secret-token"
+
+
+def test_require_token_can_set_secure_cookie() -> None:
+    app = FastAPI()
+
+    @app.get("/")
+    def route(_: None = require_token("secret-token", secure_cookie=True)) -> dict[str, str]:
+        return {"status": "ok"}
+
+    client = TestClient(app)
+    response = client.get("/?token=secret-token")
+
+    assert response.status_code == 200
+    assert "Secure" in response.headers["set-cookie"]
 
 
 def test_require_token_rejects_missing_or_invalid_token() -> None:
