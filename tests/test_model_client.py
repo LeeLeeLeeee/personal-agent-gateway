@@ -1,9 +1,10 @@
 import json
+from pathlib import Path
 
 import httpx
 import pytest
 
-from personal_agent_gateway.model_client import ModelResponse, OpenAIModelClient, ToolCall
+from personal_agent_gateway.model_client import CodexModelClient, ModelResponse, OpenAIModelClient, ToolCall
 
 
 @pytest.mark.asyncio
@@ -136,3 +137,39 @@ async def test_openai_client_maps_wire_tool_call_names_to_internal_names() -> No
         content="",
         tool_calls=[ToolCall(id="call-1", name="shell.run", arguments={"command": "pwd"})],
     )
+
+
+@pytest.mark.asyncio
+async def test_codex_client_runs_local_codex_exec_and_parses_final_message(tmp_path: Path) -> None:
+    codex_bin = tmp_path / "codex"
+    codex_bin.write_text(
+        "#!/bin/sh\n"
+        "cat >/dev/null\n"
+        "printf '%s\\n' "
+        "'{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"local answer\"}}'\n",
+        encoding="utf-8",
+    )
+    codex_bin.chmod(0o755)
+
+    client = CodexModelClient(binary=str(codex_bin), model="default", workspace_root=tmp_path)
+
+    response = await client.complete([{"role": "user", "content": "hello"}])
+
+    assert response == ModelResponse(content="local answer", tool_calls=[])
+
+
+@pytest.mark.asyncio
+async def test_codex_client_reports_local_codex_failure(tmp_path: Path) -> None:
+    codex_bin = tmp_path / "codex"
+    codex_bin.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' 'not logged in' >&2\n"
+        "exit 7\n",
+        encoding="utf-8",
+    )
+    codex_bin.chmod(0o755)
+
+    client = CodexModelClient(binary=str(codex_bin), model="default", workspace_root=tmp_path)
+
+    with pytest.raises(RuntimeError, match="Codex exited with status 7: not logged in"):
+        await client.complete([{"role": "user", "content": "hello"}])

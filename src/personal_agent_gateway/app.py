@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.auth import require_token
 from personal_agent_gateway.config import AppConfig, ConfigError, load_config
-from personal_agent_gateway.model_client import OpenAIModelClient
+from personal_agent_gateway.model_client import CodexModelClient, OpenAIModelClient
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
@@ -78,8 +78,24 @@ def main() -> None:
 
 
 def _create_runtime(config: AppConfig, transcript: TranscriptStore) -> AgentRuntime:
+    if config.model_provider == "codex":
+        return AgentRuntime(
+            transcript=transcript,
+            tools=WorkspaceTools(config.workspace_root, ApprovalStore()),
+            model=CodexModelClient(
+                binary=config.codex_binary,
+                model=config.model,
+                workspace_root=config.workspace_root,
+                sandbox=config.codex_sandbox,
+                approval_policy=config.codex_approval_policy,
+                timeout_seconds=config.codex_timeout_seconds,
+            ),
+        )
+
     if config.model_provider != "openai":
         raise ConfigError(f"Unsupported model provider: {config.model_provider}")
+    if not config.openai_api_key:
+        raise ConfigError("OPENAI_API_KEY is required when AGENT_MODEL_PROVIDER=openai")
 
     return AgentRuntime(
         transcript=transcript,

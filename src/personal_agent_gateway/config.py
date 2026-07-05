@@ -14,10 +14,14 @@ class AppConfig(BaseModel):
     web_port: int = 8787
     web_token: str
     workspace_root: Path
-    model_provider: str = "openai"
-    model: str = "gpt-4.1"
+    model_provider: str = "codex"
+    model: str = "default"
     session_dir: Path
     openai_api_key: str | None = None
+    codex_binary: str = "codex"
+    codex_sandbox: str = "workspace-write"
+    codex_approval_policy: str = "never"
+    codex_timeout_seconds: int = 600
 
     @field_validator("web_host")
     @classmethod
@@ -50,10 +54,14 @@ class AppConfig(BaseModel):
                 web_port=int(env.get("AGENT_WEB_PORT") or "8787"),
                 web_token=token,
                 workspace_root=Path(workspace_root),
-                model_provider=env.get("AGENT_MODEL_PROVIDER") or "openai",
-                model=env.get("AGENT_MODEL") or "gpt-4.1",
+                model_provider=env.get("AGENT_MODEL_PROVIDER") or "codex",
+                model=env.get("AGENT_MODEL") or "default",
                 session_dir=Path(session_dir),
                 openai_api_key=env.get("OPENAI_API_KEY"),
+                codex_binary=env.get("AGENT_CODEX_BIN") or "codex",
+                codex_sandbox=env.get("AGENT_CODEX_SANDBOX") or "workspace-write",
+                codex_approval_policy=env.get("AGENT_CODEX_APPROVAL_POLICY") or "never",
+                codex_timeout_seconds=int(env.get("AGENT_CODEX_TIMEOUT_SECONDS") or "600"),
             )
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
@@ -74,5 +82,9 @@ def load_config() -> AppConfig:
             "AGENT_MODEL": os.getenv("AGENT_MODEL"),
             "AGENT_SESSION_DIR": os.getenv("AGENT_SESSION_DIR"),
             "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+            "AGENT_CODEX_BIN": os.getenv("AGENT_CODEX_BIN"),
+            "AGENT_CODEX_SANDBOX": os.getenv("AGENT_CODEX_SANDBOX"),
+            "AGENT_CODEX_APPROVAL_POLICY": os.getenv("AGENT_CODEX_APPROVAL_POLICY"),
+            "AGENT_CODEX_TIMEOUT_SECONDS": os.getenv("AGENT_CODEX_TIMEOUT_SECONDS"),
         }
     )

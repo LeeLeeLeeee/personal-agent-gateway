@@ -9,7 +9,7 @@ from personal_agent_gateway.config import ConfigError, load_config
 
 
 def test_load_config_requires_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("AGENT_WEB_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_WEB_TOKEN", "")
     monkeypatch.setenv("AGENT_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("AGENT_SESSION_DIR", str(tmp_path / "sessions"))
 

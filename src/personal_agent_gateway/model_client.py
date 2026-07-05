@@ -1,5 +1,7 @@
 import json
+import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Protocol
 
 import httpx
@@ -73,6 +75,106 @@ class OpenAIModelClient:
                 tool_calls.append(parsed)
 
         return ModelResponse(content=content, tool_calls=tool_calls)
+
+
+class CodexModelClient:
+    def __init__(
+        self,
+        binary: str,
+        model: str,
+        workspace_root: Path,
+        sandbox: str = "workspace-write",
+        approval_policy: str = "never",
+        timeout_seconds: int = 600,
+    ) -> None:
+        self._binary = binary
+        self._model = model
+        self._workspace_root = workspace_root
+        self._sandbox = sandbox
+        self._approval_policy = approval_policy
+        self._timeout_seconds = timeout_seconds
+
+    async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
+        process = await asyncio.create_subprocess_exec(
+            *self._command(),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        prompt = _codex_prompt(messages).encode()
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(prompt),
+                timeout=self._timeout_seconds,
+            )
+        except TimeoutError as exc:
+            process.kill()
+            await process.communicate()
+            raise RuntimeError("Codex execution timed out") from exc
+
+        stdout_text = stdout.decode(errors="replace")
+        stderr_text = stderr.decode(errors="replace")
+        if process.returncode != 0:
+            detail = stderr_text.strip() or stdout_text.strip()
+            raise RuntimeError(f"Codex exited with status {process.returncode}: {detail}")
+
+        content = _parse_codex_output(stdout_text).strip()
+        return ModelResponse(content=content, tool_calls=[])
+
+    def _command(self) -> list[str]:
+        command = [
+            self._binary,
+            "exec",
+            "--json",
+            "-c",
+            f"approval_policy={json.dumps(self._approval_policy)}",
+            "--sandbox",
+            self._sandbox,
+            "-C",
+            str(self._workspace_root),
+            "--skip-git-repo-check",
+        ]
+        if self._model and self._model != "default":
+            command.extend(["-m", self._model])
+        command.append("-")
+        return command
+
+
+def _codex_prompt(messages: list[dict[str, object]]) -> str:
+    lines = [
+        "You are the local Codex agent behind a personal web gateway.",
+        "Use the configured local workspace directly when the request requires code or file work.",
+        "Keep the final answer concise and actionable.",
+        "",
+        "Conversation:",
+    ]
+    for message in messages:
+        role = str(message.get("role", "message")).upper()
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            lines.append(f"{role}: {content}")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _parse_codex_output(output: str) -> str:
+    final_message = ""
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        if event.get("type") == "item.completed" and item.get("type") == "agent_message":
+            text = item.get("text")
+            if isinstance(text, str):
+                final_message = text
+    if final_message:
+        return final_message
+    return output
 
 
 def _parse_tool_call(raw_call: object) -> ToolCall | None:

@@ -312,7 +312,7 @@ def _redact_payload(payload: dict[str, object]) -> dict[str, object]:
 
 
 def _redact_value(key: str, value: object) -> object:
-    if key in {"AGENT_WEB_TOKEN", "OPENAI_API_KEY"}:
+    if key in {"AGENT_WEB_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"}:
         return "[redacted]"
     if isinstance(value, str):
         return _redact_text(value)
@@ -325,7 +325,7 @@ def _redact_value(key: str, value: object) -> object:
 
 def _redact_text(value: str) -> str:
     redacted = value
-    for name in ("AGENT_WEB_TOKEN", "OPENAI_API_KEY"):
+    for name in ("AGENT_WEB_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"):
         redacted = redacted.replace(name, "[redacted]")
         secret = os.getenv(name)
         if secret:
