@@ -1,0 +1,16 @@
+body {
+  font-family: system-ui, sans-serif;
+  margin: 2rem;
+}
+
+main {
+  max-width: 48rem;
+}
+
+textarea,
+button,
+pre {
+  display: block;
+  margin-top: 0.75rem;
+  width: 100%;
+}

@@ -1,0 +1,351 @@
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+import personal_agent_gateway.app as app_module
+from personal_agent_gateway.app import create_app, main
+from personal_agent_gateway.approval import ApprovalStore
+from personal_agent_gateway.config import AppConfig
+from personal_agent_gateway.model_client import ModelResponse, ToolCall
+from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
+from personal_agent_gateway.tools import WorkspaceTools
+from personal_agent_gateway.transcript import TranscriptStore
+
+
+class FakeRuntime:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+        self.approved: list[str] = []
+        self.denied: list[str] = []
+
+    async def handle_user_message(self, content: str) -> RuntimeResult:
+        self.messages.append(content)
+        return RuntimeResult(
+            messages=[{"role": "assistant", "content": f"reply: {content}"}],
+            pending_approval={"id": "approval-1", "command": "printf ok"},
+        )
+
+    async def approve(self, approval_id: str) -> RuntimeResult:
+        self.approved.append(approval_id)
+        return RuntimeResult(
+            messages=[{"role": "assistant", "content": f"approved {approval_id}"}],
+            pending_approval=None,
+        )
+
+    async def deny(self, approval_id: str) -> RuntimeResult:
+        self.denied.append(approval_id)
+        return RuntimeResult(
+            messages=[{"role": "assistant", "content": f"denied {approval_id}"}],
+            pending_approval=None,
+        )
+
+
+class BrokenRuntime:
+    async def handle_user_message(self, _content: str) -> RuntimeResult:
+        raise RuntimeError("stack trace details")
+
+    async def approve(self, _approval_id: str) -> RuntimeResult:
+        raise RuntimeError("stack trace details")
+
+    async def deny(self, _approval_id: str) -> RuntimeResult:
+        raise RuntimeError("stack trace details")
+
+
+class FakeModelClient:
+    def __init__(self, responses: list[ModelResponse]) -> None:
+        self.responses = responses
+
+    async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
+        return self.responses.pop(0)
+
+
+def make_config(tmp_path: Path) -> AppConfig:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    return AppConfig(
+        web_token="secret-token",
+        workspace_root=workspace,
+        session_dir=tmp_path / "sessions",
+        openai_api_key="test-key",
+    )
+
+
+def auth_client(config: AppConfig, runtime: AgentRuntime | FakeRuntime) -> TestClient:
+    client = TestClient(create_app(config=config, runtime=runtime))
+    client.get("/?token=secret-token")
+    return client
+
+
+def test_unauthenticated_routes_return_401(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = TestClient(create_app(config=config, runtime=FakeRuntime()))
+
+    assert client.get("/").status_code == 401
+    assert client.get("/static/app.js").status_code == 401
+    assert client.get("/static/styles.css").status_code == 401
+    assert client.get("/api/history").status_code == 401
+    assert client.post("/api/chat", json={"message": "hello"}).status_code == 401
+    assert client.post("/api/reset").status_code == 401
+    assert client.post("/api/approvals/approval-1/approve").status_code == 401
+    assert client.post("/api/approvals/approval-1/deny").status_code == 401
+
+
+def test_query_token_authenticates_and_sets_cookie(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = TestClient(create_app(config=config, runtime=FakeRuntime()))
+
+    response = client.get("/?token=secret-token")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert response.cookies.get("agent_web_token") == "secret-token"
+    assert client.get("/api/history").status_code == 200
+    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/static/styles.css").status_code == 200
+
+
+def test_chat_returns_runtime_output(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    runtime = FakeRuntime()
+    client = auth_client(config, runtime)
+
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [{"role": "assistant", "content": "reply: hello"}],
+        "pending_approval": {"id": "approval-1", "command": "printf ok"},
+    }
+    assert runtime.messages == ["hello"]
+
+
+def test_app_reuses_one_runtime_instance(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    runtime = FakeRuntime()
+    client = auth_client(config, runtime)
+
+    assert client.post("/api/chat", json={"message": "one"}).status_code == 200
+    assert client.post("/api/chat", json={"message": "two"}).status_code == 200
+
+    assert runtime.messages == ["one", "two"]
+
+
+def test_history_returns_restored_transcript_after_app_recreation(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    first_runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient([ModelResponse(content="stored answer", tool_calls=[])]),
+    )
+    first_client = auth_client(config, first_runtime)
+    first_client.post("/api/chat", json={"message": "remember this"})
+    second_runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient([]),
+    )
+
+    second_client = auth_client(config, second_runtime)
+    response = second_client.get("/api/history")
+
+    assert response.status_code == 200
+    events = response.json()["events"]
+    assert [(event["kind"], event["payload"]) for event in events] == [
+        ("user", {"content": "remember this"}),
+        ("assistant", {"content": "stored answer"}),
+    ]
+
+
+def test_reset_returns_empty_events_and_resets_history(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    TranscriptStore(config.session_dir).append("user", {"content": "old"})
+    client = auth_client(config, FakeRuntime())
+
+    assert client.get("/api/history").json()["events"]
+
+    response = client.post("/api/reset")
+
+    assert response.status_code == 200
+    assert response.json() == {"events": []}
+    assert client.get("/api/history").json() == {"events": []}
+
+
+def test_reset_invalidates_real_runtime_pending_approval(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient(
+            [
+                ModelResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="shell-call",
+                            name="shell.run",
+                            arguments={"command": "printf stale > stale.txt"},
+                        )
+                    ],
+                )
+            ]
+        ),
+    )
+    client = auth_client(config, runtime)
+    pending = client.post("/api/chat", json={"message": "run it"}).json()["pending_approval"]
+
+    assert client.post("/api/reset").json() == {"events": []}
+    response = client.post(f"/api/approvals/{pending['id']}/approve")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": f"Error: No pending approval: {pending['id']}",
+            }
+        ],
+        "pending_approval": None,
+    }
+    assert not (config.workspace_root / "stale.txt").exists()
+
+
+def test_approve_resumes_execution(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    runtime = FakeRuntime()
+    client = auth_client(config, runtime)
+
+    response = client.post("/api/approvals/approval-1/approve")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [{"role": "assistant", "content": "approved approval-1"}],
+        "pending_approval": None,
+    }
+    assert runtime.approved == ["approval-1"]
+
+
+def test_deny_records_denial(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    runtime = FakeRuntime()
+    client = auth_client(config, runtime)
+
+    response = client.post("/api/approvals/approval-1/deny")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [{"role": "assistant", "content": "denied approval-1"}],
+        "pending_approval": None,
+    }
+    assert runtime.denied == ["approval-1"]
+
+
+def test_real_runtime_approve_resumes_execution(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient(
+            [
+                ModelResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="shell-call",
+                            name="shell.run",
+                            arguments={"command": "printf ran > ran.txt"},
+                        )
+                    ],
+                ),
+                ModelResponse(content="done", tool_calls=[]),
+            ]
+        ),
+    )
+    client = auth_client(config, runtime)
+    pending = client.post("/api/chat", json={"message": "run it"}).json()["pending_approval"]
+
+    response = client.post(f"/api/approvals/{pending['id']}/approve")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [{"role": "assistant", "content": "done"}],
+        "pending_approval": None,
+    }
+    assert (config.workspace_root / "ran.txt").read_text(encoding="utf-8") == "ran"
+
+
+def test_real_runtime_deny_records_denial(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient(
+            [
+                ModelResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="shell-call",
+                            name="shell.run",
+                            arguments={"command": "printf denied > denied.txt"},
+                        )
+                    ],
+                )
+            ]
+        ),
+    )
+    client = auth_client(config, runtime)
+    pending = client.post("/api/chat", json={"message": "run it"}).json()["pending_approval"]
+
+    response = client.post(f"/api/approvals/{pending['id']}/deny")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [{"role": "assistant", "content": "Command denied."}],
+        "pending_approval": None,
+    }
+    assert not (config.workspace_root / "denied.txt").exists()
+    events = client.get("/api/history").json()["events"]
+    assert events[-1]["kind"] == "tool_denial"
+    assert events[-1]["payload"] == {
+        "id": "shell-call",
+        "command": "printf denied > denied.txt",
+        "status": "denied",
+    }
+
+
+def test_runtime_errors_return_json_without_stack_trace(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = TestClient(
+        create_app(config=config, runtime=BrokenRuntime()),
+        raise_server_exceptions=False,
+    )
+    client.get("/?token=secret-token")
+
+    response = client.post("/api/chat", json={"message": "boom"})
+
+    assert response.status_code == 500
+    assert response.headers["content-type"] == "application/json"
+    assert response.json() == {"detail": "Internal Server Error"}
+    assert "stack trace details" not in response.text
+
+
+def test_main_loads_config_and_runs_uvicorn_with_configured_host_port(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = make_config(tmp_path)
+    calls: list[dict[str, object]] = []
+
+    def fake_run(application: object, host: str, port: int) -> None:
+        calls.append({"application": application, "host": host, "port": port})
+
+    monkeypatch.setattr(app_module, "load_config", lambda: config)
+    monkeypatch.setattr(app_module.uvicorn, "run", fake_run)
+
+    main()
+
+    assert len(calls) == 1
+    assert isinstance(calls[0]["application"], FastAPI)
+    assert calls[0]["host"] == "127.0.0.1"
+    assert calls[0]["port"] == 8787

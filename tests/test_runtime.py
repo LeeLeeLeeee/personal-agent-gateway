@@ -259,6 +259,39 @@ async def test_restarted_runtime_can_approve_pending_shell_request(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_approval_without_active_pending_request_is_rejected_without_execution(
+    tmp_path: Path,
+) -> None:
+    runtime, transcript, _tools, _model, workspace = make_runtime(
+        tmp_path,
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="shell-call",
+                        name="shell.run",
+                        arguments={"command": "printf stale > stale.txt"},
+                    )
+                ],
+            )
+        ],
+    )
+    pending = await runtime.handle_user_message("run command")
+    transcript.reset()
+
+    result = await runtime.approve(str(pending.pending_approval["id"]))
+
+    assert not (workspace / "stale.txt").exists()
+    assert result.messages == [
+        {
+            "role": "assistant",
+            "content": f"Error: No pending approval: {pending.pending_approval['id']}",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_approving_shell_request_appends_result_and_resumes_model(
     tmp_path: Path,
 ) -> None:

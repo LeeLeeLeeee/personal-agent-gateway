@@ -49,9 +49,10 @@ class AgentRuntime:
                 self._transcript.load_active(),
                 approval_id,
             )
-            if pending is not None:
-                self._restore_pending_shell(pending)
-            tool_call_id = pending.tool_call_id if pending is not None else approval_id
+            if pending is None:
+                raise RuntimeError(f"No pending approval: {approval_id}")
+
+            self._restore_pending_shell(pending)
             result = self._tools.approve_shell(approval_id)
             self._append(
                 "approval",
@@ -61,7 +62,7 @@ class AgentRuntime:
                     "status": "approved",
                 },
             )
-            self._append("tool_result", _shell_result_payload(result, tool_call_id))
+            self._append("tool_result", _shell_result_payload(result, pending.tool_call_id))
             return await self._run_model_loop()
         except Exception as exc:
             return self._handle_runtime_error(exc)
@@ -72,14 +73,15 @@ class AgentRuntime:
                 self._transcript.load_active(),
                 approval_id,
             )
-            if pending is not None:
-                self._restore_pending_shell(pending)
-            tool_call_id = pending.tool_call_id if pending is not None else approval_id
+            if pending is None:
+                raise RuntimeError(f"No pending approval: {approval_id}")
+
+            self._restore_pending_shell(pending)
             denied = self._tools.deny_shell(approval_id)
             self._append(
                 "tool_denial",
                 {
-                    "id": tool_call_id,
+                    "id": pending.tool_call_id,
                     "command": denied.command,
                     "status": denied.status,
                 },
