@@ -105,6 +105,20 @@ def test_query_token_authenticates_and_sets_cookie(tmp_path: Path) -> None:
     assert client.get("/static/styles.css").status_code == 200
 
 
+def test_ui_assets_smoke(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = auth_client(config, FakeRuntime())
+
+    page = client.get("/")
+    script = client.get("/static/app.js")
+
+    assert page.status_code == 200
+    assert "text/html" in page.headers["content-type"]
+    assert 'id="app-root"' in page.text
+    assert script.status_code == 200
+    assert "text/javascript" in script.headers["content-type"]
+
+
 def test_chat_returns_runtime_output(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     runtime = FakeRuntime()

@@ -7,14 +7,48 @@
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body>
-    <main>
-      <h1>Personal Agent Gateway</h1>
-      <form id="chat-form">
-        <label for="message">Message</label>
-        <textarea id="message" name="message" rows="4"></textarea>
-        <button type="submit">Send</button>
-      </form>
-      <pre id="output"></pre>
+    <main id="app-root" class="app-shell">
+      <header class="app-header">
+        <div>
+          <h1>Personal Agent Gateway</h1>
+          <p id="connection-state">Checking session</p>
+        </div>
+        <button id="reset-button" class="secondary" type="button">Reset</button>
+      </header>
+
+      <div id="error-banner" class="error-banner" role="alert" hidden></div>
+
+      <section id="token-panel" class="token-panel" aria-labelledby="token-title" hidden>
+        <h2 id="token-title">Token required</h2>
+        <form id="token-form" class="token-form">
+          <label for="token-input">Web token</label>
+          <div class="token-row">
+            <input id="token-input" name="token" type="password" autocomplete="current-password">
+            <button type="submit">Connect</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="workspace" aria-label="Agent workspace">
+        <ol id="message-list" class="message-list" aria-live="polite"></ol>
+
+        <section id="approval-panel" class="approval-panel" aria-labelledby="approval-title" hidden>
+          <div class="approval-copy">
+            <h2 id="approval-title">Shell approval pending</h2>
+            <pre id="approval-command"></pre>
+          </div>
+          <div class="approval-actions">
+            <button id="approve-button" type="button">Approve</button>
+            <button id="deny-button" class="secondary" type="button">Deny</button>
+          </div>
+        </section>
+
+        <form id="chat-form" class="composer">
+          <label for="message-input">Message</label>
+          <textarea id="message-input" name="message" rows="3" autocomplete="off"></textarea>
+          <button id="send-button" type="submit">Send</button>
+        </form>
+      </section>
     </main>
     <script src="/static/app.js"></script>
   </body>
