@@ -1,139 +1,106 @@
-# Personal Agent Web Gateway
+# Personal Agent Gateway
 
-## Purpose
+브라우저에서 내 로컬 Mac의 Codex 기반 에이전트를 호출하기 위한 개인용 웹 게이트웨이입니다.
 
-Personal Agent Web Gateway is a local-first web gateway for operating a personal
-agent from a browser. It serves the app on a loopback host, protects every app
-page, static asset, and API with a shared web token, and runs agent filesystem and
-shell work inside the configured workspace root.
+기본 실행 방식은 OpenAI API 직접 호출이 아니라 로컬 `codex exec --json` 호출입니다. 따라서 기본 설정에서는 `OPENAI_API_KEY`를 앱에 넣지 않습니다. 이미 로컬 Mac에 로그인되어 있는 Codex CLI 설정을 그대로 사용합니다.
 
-The default agent backend is the local Codex CLI. The gateway does not need an
-OpenAI API key for the default path because it calls `codex exec` on the Mac and
-reuses the local Codex login/configuration.
+## 무엇을 하는가
 
-## Non-goals
+- 로컬 FastAPI 서버를 `127.0.0.1` 또는 `localhost`에만 띄웁니다.
+- 브라우저 UI와 API 전체를 `AGENT_WEB_TOKEN`으로 보호합니다.
+- Cloudflare Quick Tunnel을 통해 외부 브라우저에서 임시 HTTPS URL로 접속할 수 있게 합니다.
+- 받은 메시지를 로컬 `codex exec --json`으로 전달하고 최종 응답을 웹 UI에 표시합니다.
+- 대화 기록은 로컬 디스크에 저장하고 재시작 후에도 active session을 이어갑니다.
 
-This is not a public multi-user service, an unauthenticated agent endpoint, or a
-general remote shell. It does not remove the need to protect the web token,
-local Codex credentials, local machine, workspace files, or tunnel URL.
+## 하지 않는 것
 
-## Current Architecture
+이 프로젝트는 공개 멀티유저 서비스가 아닙니다. 인증 없는 에이전트 엔드포인트도 아니고, 범용 원격 쉘도 아닙니다.
+
+다음 값들은 직접 보호해야 합니다.
+
+- `AGENT_WEB_TOKEN`
+- Cloudflare Quick Tunnel URL
+- 로컬 Codex 로그인 상태
+- 로컬 Mac 자체
+- `AGENT_WORKSPACE_ROOT` 아래의 파일
+
+## 아키텍처
 
 ```text
-Remote browser
-  -> Cloudflare Quick Tunnel public HTTPS URL
-  -> local loopback FastAPI gateway
-  -> token-protected web UI and API
+외부 브라우저
+  -> Cloudflare Quick Tunnel 공개 HTTPS URL
+  -> 로컬 loopback FastAPI gateway
+  -> token-protected Web UI / API
   -> AgentRuntime
   -> CodexModelClient
   -> local `codex exec --json`
-  -> local workspace filesystem and shell access controlled by Codex
+  -> 로컬 workspace 파일/명령 실행
 ```
 
-The gateway binds only to `127.0.0.1` or `localhost`. Cloudflare Quick Tunnel is
-the only public ingress in the current Version A setup. The tunnel forwards
-traffic to the loopback server, and the gateway still requires the shared web
-token before serving pages, static assets, or APIs.
+현재 Version A에서는 Cloudflare Quick Tunnel이 유일한 외부 ingress입니다. 앱 서버는 loopback 주소에만 bind하고, tunnel이 `127.0.0.1:${AGENT_WEB_PORT}`로 요청을 전달합니다.
 
-Main modules:
+터널 URL을 알고 있어도 바로 사용할 수 없게 모든 페이지, static asset, API 요청에 `AGENT_WEB_TOKEN` 인증을 적용합니다.
 
-- `src/personal_agent_gateway/app.py`: FastAPI app, routes, static HTML, and
-  provider selection.
-- `src/personal_agent_gateway/auth.py`: shared-token authentication from query
-  string, bearer token, or HttpOnly cookie.
-- `src/personal_agent_gateway/runtime.py`: conversation runtime, transcript
-  loading/saving, provider invocation, and sensitive value redaction.
-- `src/personal_agent_gateway/model_client.py`: provider clients. The default
-  `CodexModelClient` invokes local `codex exec --json`; `OpenAIModelClient`
-  remains available for explicit API-backed runs.
-- `src/personal_agent_gateway/transcript.py`: JSONL transcript persistence and
-  `active.json` restart pointer.
-- `src/personal_agent_gateway/tools.py` and
-  `src/personal_agent_gateway/approval.py`: local filesystem/shell tool support
-  and browser approval flow used by the OpenAI provider path.
-- `scripts/run_local.sh`: starts the local loopback server.
-- `scripts/run_tunnel.sh`: starts a Cloudflare Quick Tunnel to the local server.
+## 주요 모듈
 
-## Technical Basis
+- `src/personal_agent_gateway/app.py`: FastAPI 앱, route, static HTML, provider 선택
+- `src/personal_agent_gateway/auth.py`: query token, bearer token, HttpOnly cookie 인증
+- `src/personal_agent_gateway/runtime.py`: 대화 runtime, transcript 저장/복원, provider 호출, 민감값 redaction
+- `src/personal_agent_gateway/model_client.py`: provider client 구현. 기본값은 `CodexModelClient`
+- `src/personal_agent_gateway/transcript.py`: JSONL transcript와 `active.json` session pointer 관리
+- `src/personal_agent_gateway/tools.py`: OpenAI provider 경로에서 사용하는 파일/쉘 tool
+- `src/personal_agent_gateway/approval.py`: OpenAI provider 경로의 브라우저 승인 flow
+- `scripts/run_local.sh`: 로컬 서버 실행
+- `scripts/run_tunnel.sh`: Cloudflare Quick Tunnel 실행
 
-- Local-first control: the browser never talks directly to Codex or the
-  filesystem. It talks to the local gateway, and the gateway invokes the local
-  agent engine.
-- Loopback binding: `AGENT_WEB_HOST` is restricted to `127.0.0.1` or
-  `localhost` so the app is not directly exposed on the LAN.
-- Tunnel ingress: Cloudflare Quick Tunnel provides a temporary public HTTPS URL
-  without buying a domain or creating a named Cloudflare project.
-- Token gate: the tunnel URL is not treated as secret. Every page, static file,
-  and API request still requires `AGENT_WEB_TOKEN`.
-- Codex execution: the default provider runs `codex exec --json` as a local
-  subprocess. JSONL events are parsed and the final agent message is returned to
-  the web UI.
-- Codex credentials: local Codex CLI authentication/configuration is reused.
-  The gateway does not pass an OpenAI API key in the default `codex` provider.
-- Workspace boundary: `AGENT_WORKSPACE_ROOT` is passed as the Codex working
-  directory and is also the filesystem/shell boundary for the OpenAI provider
-  tool path.
-- Restart persistence: transcripts are stored on disk and `active.json` points
-  to the current session after a gateway restart.
+## 기술적 근거
 
-## Implemented Features
+- **로컬 우선 실행**: 브라우저는 Codex나 파일시스템에 직접 접근하지 않습니다. 브라우저는 gateway에만 요청하고, gateway가 로컬 agent engine을 호출합니다.
+- **loopback bind**: `AGENT_WEB_HOST`는 `127.0.0.1` 또는 `localhost`로 제한합니다. 앱이 LAN에 직접 노출되는 것을 막기 위한 선택입니다.
+- **임시 public ingress**: 도메인 구매 없이 Cloudflare Quick Tunnel의 `trycloudflare.com` URL을 사용합니다.
+- **token gate**: 터널 URL은 secret으로 취급하지 않습니다. 실제 접근 제어는 `AGENT_WEB_TOKEN`으로 합니다.
+- **Codex CLI 재사용**: 기본 provider는 로컬 `codex exec --json` subprocess를 실행합니다. 로컬 Codex 로그인/config를 재사용하므로 기본 경로에서는 OpenAI API key가 필요하지 않습니다.
+- **workspace boundary**: `AGENT_WORKSPACE_ROOT`를 Codex 실행 위치로 넘기고, OpenAI provider의 파일/쉘 tool boundary로도 사용합니다.
+- **재시작 유지**: transcript는 디스크에 저장하고 `active.json`이 현재 session을 가리킵니다.
 
-- Token-protected web UI.
-- Token-protected API endpoints.
-- Query-token login that sets an HttpOnly `agent_web_token` cookie.
-- Local transcript persistence in `AGENT_SESSION_DIR`.
-- Active session restore after process restart.
-- Reset action that clears the active session.
-- Default local Codex provider through `codex exec --json`.
-- Optional OpenAI API provider for explicit `AGENT_MODEL_PROVIDER=openai` runs.
-- Browser approval flow for shell tool calls in the OpenAI provider path.
-- Cloudflare Quick Tunnel script for no-domain external access.
-- Sensitive value redaction for configured token/API-key values in runtime
-  records.
-- Unit tests for config/auth, app routing, transcript persistence, runtime
-  behavior, tools, and model clients.
+## 구현된 기능
 
-## Current Limitations
+- token-protected web UI
+- token-protected API endpoint
+- `?token=...` 접속 시 HttpOnly `agent_web_token` cookie 설정
+- `AGENT_SESSION_DIR` 기반 로컬 transcript 저장
+- 프로세스 재시작 후 active session 복원
+- reset 버튼으로 active session 초기화
+- 기본 로컬 Codex provider: `codex exec --json`
+- 선택적 OpenAI API provider: `AGENT_MODEL_PROVIDER=openai`
+- OpenAI provider 경로의 shell tool 브라우저 승인 flow
+- 도메인 없이 외부 접속 가능한 Cloudflare Quick Tunnel script
+- token/API key류 민감값 redaction
+- config/auth, app routing, transcript, runtime, tools, model client 테스트
 
-- Cloudflare Quick Tunnel URLs are temporary. The URL changes when the tunnel is
-  restarted.
-- Quick Tunnel is suitable for personal testing, not uptime guarantees or a
-  stable production endpoint.
-- The Codex provider currently starts a `codex exec` subprocess per request. It
-  sends the web transcript as context, but it does not yet resume a Codex thread
-  ID with `codex exec resume`.
-- The Codex provider currently returns the final assistant message only. It does
-  not stream intermediate JSONL events to the browser yet.
-- Browser approval is not wired into the Codex provider. Command execution in
-  that path is controlled by `AGENT_CODEX_SANDBOX` and
-  `AGENT_CODEX_APPROVAL_POLICY`.
-- Authentication is single shared-token auth. There are no per-user accounts,
-  roles, revocation lists, or audit dashboards.
-- No named Cloudflare Tunnel, custom domain, access policy, or Cloudflare Zero
-  Trust login is configured in this version.
+## 현재 제약
 
-## Security model
+- Cloudflare Quick Tunnel URL은 임시 URL입니다. tunnel을 재시작하면 URL이 바뀝니다.
+- Quick Tunnel은 개인 테스트/개인 사용에는 편하지만 uptime이 보장되는 production endpoint가 아닙니다.
+- Codex provider는 요청마다 `codex exec` subprocess를 새로 실행합니다. 웹 transcript를 context로 넘기지만 아직 `codex exec resume`으로 Codex thread ID를 이어가지는 않습니다.
+- Codex provider는 현재 최종 assistant message만 반환합니다. JSONL 중간 이벤트를 브라우저로 streaming하지 않습니다.
+- Codex provider에는 브라우저 승인 flow가 직접 연결되어 있지 않습니다. 명령 실행 제어는 `AGENT_CODEX_SANDBOX`, `AGENT_CODEX_APPROVAL_POLICY`가 담당합니다.
+- 인증은 단일 shared token 방식입니다. 사용자 계정, role, revoke list, audit dashboard는 없습니다.
+- named Cloudflare Tunnel, custom domain, Cloudflare Zero Trust login은 아직 구성하지 않았습니다.
 
-- `AGENT_WEB_HOST` must be `127.0.0.1` or `localhost`.
-- `AGENT_WEB_TOKEN` is required for all app pages, static assets, and APIs.
-- Authentication accepts `?token=...`, a bearer token, or the
-  `agent_web_token` cookie.
-- The first successful request with `?token=...` sets an HttpOnly
-  `agent_web_token` cookie.
-- Filesystem tools are limited to `AGENT_WORKSPACE_ROOT`.
-- Shell commands require explicit browser approval and run in
-  `AGENT_WORKSPACE_ROOT`.
-- Transcripts persist under `AGENT_SESSION_DIR`, but token and API key values
-  should not be written to transcripts.
-- With `AGENT_MODEL_PROVIDER=codex`, the gateway calls the local `codex exec`
-  CLI and reuses the local Codex login/configuration.
-- With `AGENT_MODEL_PROVIDER=codex`, shell approval behavior is delegated to the
-  Codex CLI sandbox and approval policy.
+## 보안 모델
 
-## Environment setup
+- `AGENT_WEB_HOST`는 `127.0.0.1` 또는 `localhost`만 허용합니다.
+- 모든 page, static asset, API에 `AGENT_WEB_TOKEN`이 필요합니다.
+- 인증 방식은 `?token=...`, bearer token, `agent_web_token` cookie입니다.
+- `?token=...`으로 첫 인증에 성공하면 HttpOnly `agent_web_token` cookie를 설정합니다.
+- 파일 tool은 `AGENT_WORKSPACE_ROOT` 아래로 제한됩니다.
+- `AGENT_MODEL_PROVIDER=openai`의 shell command는 브라우저 승인 후 `AGENT_WORKSPACE_ROOT`에서 실행됩니다.
+- transcript는 `AGENT_SESSION_DIR` 아래에 저장됩니다.
+- token/API key 값은 runtime 기록에 남기지 않도록 redaction합니다.
+- `AGENT_MODEL_PROVIDER=codex`에서는 로컬 `codex exec`가 실행되고, shell approval은 Codex CLI sandbox/approval policy에 위임됩니다.
 
-Create a virtual environment, install the project in editable mode, and create a
-local environment file:
+## 설치
 
 ```bash
 python -m venv .venv
@@ -142,38 +109,29 @@ python -m pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-Generate a strong web token:
+강한 web token을 생성합니다.
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Edit `.env` and set:
-
-- `AGENT_WEB_HOST`: `127.0.0.1` or `localhost`.
-- `AGENT_WEB_PORT`: local port. The default is `8787`.
-- `AGENT_WEB_TOKEN`: strong random token generated above.
-- `AGENT_WORKSPACE_ROOT`: root directory available to filesystem and shell tools.
-- `AGENT_MODEL_PROVIDER`: `codex` by default. `openai` remains available for
-  explicit API-backed runs.
-- `AGENT_MODEL`: `default` to use the local Codex default model, or a specific
-  model passed to `codex exec -m`.
-- `AGENT_SESSION_DIR`: transcript/session storage directory.
-- `AGENT_CODEX_BIN`: Codex CLI binary. Defaults to `codex`.
-- `AGENT_CODEX_SANDBOX`: Codex sandbox mode. Defaults to `workspace-write`.
-- `AGENT_CODEX_APPROVAL_POLICY`: Codex approval policy. Defaults to `never`.
-- `AGENT_CODEX_TIMEOUT_SECONDS`: request timeout for local Codex execution.
-
-Optional current-shell convenience:
+`.env`를 열고 필요한 값을 설정합니다.
 
 ```bash
-source .env
+AGENT_WEB_HOST=127.0.0.1
+AGENT_WEB_PORT=8787
+AGENT_WEB_TOKEN=replace-with-strong-random-token
+AGENT_WORKSPACE_ROOT=/absolute/path/to/workspace
+AGENT_MODEL_PROVIDER=codex
+AGENT_MODEL=default
+AGENT_SESSION_DIR=./data/sessions
+AGENT_CODEX_BIN=codex
+AGENT_CODEX_SANDBOX=workspace-write
+AGENT_CODEX_APPROVAL_POLICY=never
+AGENT_CODEX_TIMEOUT_SECONDS=300
 ```
 
-The app loads `.env` internally, so `source .env` is not required for the app to
-read it. `.env.example` uses plain `KEY=value` lines, and the run scripts use
-shell expansion for host and port before Python starts. For script-visible
-overrides such as `AGENT_WEB_PORT`, use inline env or auto-export the file:
+앱은 내부에서 `.env`를 읽습니다. 다만 shell script가 host/port override를 보려면 inline env 또는 export가 필요합니다.
 
 ```bash
 AGENT_WEB_PORT=8788 scripts/run_local.sh
@@ -181,63 +139,77 @@ AGENT_WEB_PORT=8788 scripts/run_tunnel.sh
 set -a; source .env; set +a
 ```
 
-## Local run
-
-After the editable install and environment setup:
+## 로컬 실행
 
 ```bash
 scripts/run_local.sh
 ```
 
-Open `http://127.0.0.1:8787/?token=<AGENT_WEB_TOKEN>` by default. If using a
-different port, make sure the script sees the exported or inline
-`AGENT_WEB_PORT`.
+기본 주소:
 
-## Cloudflare Quick Tunnel run
+```text
+http://127.0.0.1:8787/?token=<AGENT_WEB_TOKEN>
+```
 
-Run the local server through the tunnel script:
+## Cloudflare Quick Tunnel 실행
 
 ```bash
 scripts/run_tunnel.sh
 ```
 
-The tunnel points to `http://127.0.0.1:${AGENT_WEB_PORT}`.
+script는 `http://127.0.0.1:${AGENT_WEB_PORT}`를 Cloudflare Quick Tunnel에 연결합니다.
 
-Cloudflare Quick Tunnel gives a generated
-`https://<random>.trycloudflare.com` URL. No domain purchase is required. The URL
-changes when the tunnel restarts. The web token is still required because the URL
-can be accessed by anyone who knows it.
+Cloudflare는 다음 형태의 임시 URL을 발급합니다.
 
-Use the generated URL with the token:
+```text
+https://<random>.trycloudflare.com
+```
+
+접속할 때는 token을 붙입니다.
 
 ```text
 https://<random>.trycloudflare.com/?token=<AGENT_WEB_TOKEN>
 ```
 
-## How restart persistence works
+도메인 구매는 필요 없습니다. 단, tunnel을 재시작하면 URL이 바뀝니다.
 
-Transcripts are stored under `AGENT_SESSION_DIR`. The active session pointer is
-`active.json`, which lets the gateway resume the active session after restart.
-Reset clears the active session.
+## 재시작 유지 방식
 
-## Shell approval behavior
+대화 transcript는 `AGENT_SESSION_DIR` 아래에 JSONL로 저장됩니다.
 
-For `AGENT_MODEL_PROVIDER=openai`, shell tool calls still use the browser
-approval flow.
+현재 session pointer는 다음 파일입니다.
 
-For `AGENT_MODEL_PROVIDER=codex`, command execution is handled by local
-`codex exec` using `AGENT_CODEX_SANDBOX` and `AGENT_CODEX_APPROVAL_POLICY`.
+```text
+<AGENT_SESSION_DIR>/active.json
+```
+
+gateway를 재시작하면 `active.json`을 읽어 마지막 active session을 복원합니다. UI의 reset은 active session을 초기화합니다.
+
+## Shell approval 동작
+
+`AGENT_MODEL_PROVIDER=openai`:
+
+- shell tool call은 브라우저 승인 flow를 사용합니다.
+- 승인된 command는 `AGENT_WORKSPACE_ROOT`에서 실행됩니다.
+
+`AGENT_MODEL_PROVIDER=codex`:
+
+- command 실행은 로컬 `codex exec`가 처리합니다.
+- 제어값은 `AGENT_CODEX_SANDBOX`, `AGENT_CODEX_APPROVAL_POLICY`입니다.
+
+## 테스트
+
+```bash
+.venv/bin/python -m pytest
+.venv/bin/python -m ruff check .
+```
 
 ## Troubleshooting
 
-- If the server refuses to start, confirm `AGENT_WEB_HOST` is `127.0.0.1` or
-  `localhost`.
-- If the browser shows an auth error, pass `?token=<AGENT_WEB_TOKEN>`, send a
-  bearer token, or clear the `agent_web_token` cookie and authenticate again.
-- If port `8787` is busy, use an exported or inline `AGENT_WEB_PORT` for the
-  run script.
-- If the tunnel URL stops working, restart `scripts/run_tunnel.sh` and use the
-  new `https://<random>.trycloudflare.com` URL.
-- If files are missing from tool access, check that they are under
-  `AGENT_WORKSPACE_ROOT`.
-- If session state is stale, use reset to clear the active session pointer.
+- 서버가 뜨지 않으면 `AGENT_WEB_HOST`가 `127.0.0.1` 또는 `localhost`인지 확인합니다.
+- 인증 오류가 나면 `?token=<AGENT_WEB_TOKEN>`으로 접속하거나 bearer token을 사용합니다.
+- cookie가 꼬였으면 `agent_web_token` cookie를 지우고 다시 접속합니다.
+- `8787` port가 사용 중이면 `AGENT_WEB_PORT`를 inline env로 넘깁니다.
+- tunnel URL이 동작하지 않으면 `scripts/run_tunnel.sh`를 재시작하고 새 URL을 사용합니다.
+- agent가 파일을 보지 못하면 해당 파일이 `AGENT_WORKSPACE_ROOT` 아래에 있는지 확인합니다.
+- session 상태가 이상하면 reset으로 active session pointer를 초기화합니다.
