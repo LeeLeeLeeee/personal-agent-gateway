@@ -21,6 +21,15 @@ class ApprovalStore:
         self._approvals[approval.id] = approval
         return approval
 
+    def restore_pending(self, approval_id: str, command: str) -> ShellApproval:
+        existing = self._approvals.get(approval_id)
+        if existing is not None:
+            return existing
+
+        approval = ShellApproval(id=approval_id, command=command, status="pending")
+        self._approvals[approval.id] = approval
+        return approval
+
     def get(self, approval_id: str) -> ShellApproval:
         return self._approvals[approval_id]
 
