@@ -1,3 +1,5 @@
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,14 @@ class FakeModelClient:
         if self.error is not None:
             raise self.error
         return self.responses.pop(0)
+
+
+def write_file_command(filename: str, content: str) -> str:
+    code = (
+        "from pathlib import Path; "
+        f"Path({filename!r}).write_text({content!r}, encoding='utf-8')"
+    )
+    return f'"{sys.executable}" -c "{code}"'
 
 
 def make_runtime(
@@ -221,6 +231,7 @@ async def test_new_user_message_does_not_call_model_while_shell_approval_is_pend
 
 @pytest.mark.asyncio
 async def test_restarted_runtime_can_approve_pending_shell_request(tmp_path: Path) -> None:
+    command = write_file_command("restored.txt", "restored")
     runtime, transcript, _tools, _model, workspace = make_runtime(
         tmp_path,
         [
@@ -230,7 +241,7 @@ async def test_restarted_runtime_can_approve_pending_shell_request(tmp_path: Pat
                     ToolCall(
                         id="shell-call",
                         name="shell.run",
-                        arguments={"command": "printf restored > restored.txt"},
+                        arguments={"command": command},
                     )
                 ],
             )
@@ -251,7 +262,7 @@ async def test_restarted_runtime_can_approve_pending_shell_request(tmp_path: Pat
             "type": "function",
             "function": {
                 "name": "shell.run",
-                "arguments": '{"command": "printf restored > restored.txt"}',
+                "arguments": json.dumps({"command": command}, sort_keys=True),
             },
         }
     ]
@@ -295,6 +306,7 @@ async def test_approval_without_active_pending_request_is_rejected_without_execu
 async def test_approving_shell_request_appends_result_and_resumes_model(
     tmp_path: Path,
 ) -> None:
+    command = write_file_command("approved.txt", "approved")
     runtime, transcript, _tools, model, workspace = make_runtime(
         tmp_path,
         [
@@ -304,7 +316,7 @@ async def test_approving_shell_request_appends_result_and_resumes_model(
                     ToolCall(
                         id="shell-call",
                         name="shell.run",
-                        arguments={"command": "printf approved > approved.txt"},
+                        arguments={"command": command},
                     )
                 ],
             ),
@@ -322,7 +334,7 @@ async def test_approving_shell_request_appends_result_and_resumes_model(
             "approval",
             {
                 "id": pending.pending_approval["id"],
-                "command": "printf approved > approved.txt",
+                "command": command,
                 "status": "approved",
             },
         ),
@@ -331,7 +343,7 @@ async def test_approving_shell_request_appends_result_and_resumes_model(
             {
                 "id": "shell-call",
                 "name": "shell.run",
-                "command": "printf approved > approved.txt",
+                "command": command,
                 "exit_code": 0,
                 "stdout": "",
                 "stderr": "",
@@ -350,7 +362,7 @@ async def test_approving_shell_request_appends_result_and_resumes_model(
                     "type": "function",
                     "function": {
                         "name": "shell.run",
-                        "arguments": '{"command": "printf approved > approved.txt"}',
+                        "arguments": json.dumps({"command": command}, sort_keys=True),
                     },
                 }
             ],
@@ -358,9 +370,16 @@ async def test_approving_shell_request_appends_result_and_resumes_model(
         {
             "role": "tool",
             "tool_call_id": "shell-call",
-            "content": (
-                '{"command": "printf approved > approved.txt", "exit_code": 0, '
-                '"id": "shell-call", "name": "shell.run", "stderr": "", "stdout": ""}'
+            "content": json.dumps(
+                {
+                    "command": command,
+                    "exit_code": 0,
+                    "id": "shell-call",
+                    "name": "shell.run",
+                    "stderr": "",
+                    "stdout": "",
+                },
+                sort_keys=True,
             ),
         },
     ]

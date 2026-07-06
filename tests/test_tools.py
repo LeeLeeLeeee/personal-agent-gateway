@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,14 @@ from personal_agent_gateway.tools import ToolError, WorkspaceTools
 
 def make_tools(root: Path) -> WorkspaceTools:
     return WorkspaceTools(root=root, approvals=ApprovalStore())
+
+
+def write_file_command(filename: str, content: str) -> str:
+    code = (
+        "from pathlib import Path; "
+        f"Path({filename!r}).write_text({content!r}, encoding='utf-8')"
+    )
+    return f'"{sys.executable}" -c "{code}"'
 
 
 def test_fs_list_lists_only_workspace_entries(tmp_path: Path) -> None:
@@ -57,12 +66,13 @@ def test_shell_request_creates_pending_approval_without_executing(tmp_path: Path
 
 def test_approve_shell_executes_exactly_one_approved_command(tmp_path: Path) -> None:
     tools = make_tools(tmp_path)
-    pending = tools.shell_request("printf executed > ran.txt")
+    command = write_file_command("ran.txt", "executed")
+    pending = tools.shell_request(command)
 
     result = tools.approve_shell(pending.id)
 
     assert result.approval_id == pending.id
-    assert result.command == "printf executed > ran.txt"
+    assert result.command == command
     assert result.exit_code == 0
     assert (tmp_path / "ran.txt").read_text(encoding="utf-8") == "executed"
     with pytest.raises(ToolError, match="not pending"):

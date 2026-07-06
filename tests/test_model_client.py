@@ -1,10 +1,23 @@
 import json
+import os
 from pathlib import Path
 
 import httpx
 import pytest
 
 from personal_agent_gateway.model_client import CodexModelClient, ModelResponse, OpenAIModelClient, ToolCall
+
+
+def write_fake_codex(tmp_path: Path, body: str) -> Path:
+    if os.name == "nt":
+        codex_bin = tmp_path / "codex.cmd"
+        codex_bin.write_text(f"@echo off\r\n{body}\r\n", encoding="utf-8")
+        return codex_bin
+
+    codex_bin = tmp_path / "codex"
+    codex_bin.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    codex_bin.chmod(0o755)
+    return codex_bin
 
 
 @pytest.mark.asyncio
@@ -141,15 +154,15 @@ async def test_openai_client_maps_wire_tool_call_names_to_internal_names() -> No
 
 @pytest.mark.asyncio
 async def test_codex_client_runs_local_codex_exec_and_parses_final_message(tmp_path: Path) -> None:
-    codex_bin = tmp_path / "codex"
-    codex_bin.write_text(
-        "#!/bin/sh\n"
-        "cat >/dev/null\n"
-        "printf '%s\\n' "
-        "'{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"local answer\"}}'\n",
-        encoding="utf-8",
+    payload = '{"type":"item.completed","item":{"type":"agent_message","text":"local answer"}}'
+    if os.name == "nt":
+        body = f"echo {payload}"
+    else:
+        body = f"printf '%s\\n' '{payload}'"
+    codex_bin = write_fake_codex(
+        tmp_path,
+        body,
     )
-    codex_bin.chmod(0o755)
 
     client = CodexModelClient(binary=str(codex_bin), model="default", workspace_root=tmp_path)
 
@@ -160,14 +173,11 @@ async def test_codex_client_runs_local_codex_exec_and_parses_final_message(tmp_p
 
 @pytest.mark.asyncio
 async def test_codex_client_reports_local_codex_failure(tmp_path: Path) -> None:
-    codex_bin = tmp_path / "codex"
-    codex_bin.write_text(
-        "#!/bin/sh\n"
-        "printf '%s\\n' 'not logged in' >&2\n"
-        "exit 7\n",
-        encoding="utf-8",
-    )
-    codex_bin.chmod(0o755)
+    if os.name == "nt":
+        body = "echo not logged in 1>&2\r\nexit /b 7"
+    else:
+        body = "printf '%s\\n' 'not logged in' >&2\nexit 7"
+    codex_bin = write_fake_codex(tmp_path, body)
 
     client = CodexModelClient(binary=str(codex_bin), model="default", workspace_root=tmp_path)
 

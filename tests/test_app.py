@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -58,6 +59,14 @@ class FakeModelClient:
 
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
         return self.responses.pop(0)
+
+
+def write_file_command(filename: str, content: str) -> str:
+    code = (
+        "from pathlib import Path; "
+        f"Path({filename!r}).write_text({content!r}, encoding='utf-8')"
+    )
+    return f'"{sys.executable}" -c "{code}"'
 
 
 def make_config(tmp_path: Path) -> AppConfig:
@@ -358,6 +367,7 @@ def test_deny_records_denial(tmp_path: Path) -> None:
 
 def test_real_runtime_approve_resumes_execution(tmp_path: Path) -> None:
     config = make_config(tmp_path)
+    command = write_file_command("ran.txt", "ran")
     runtime = AgentRuntime(
         TranscriptStore(config.session_dir),
         WorkspaceTools(config.workspace_root, ApprovalStore()),
@@ -369,7 +379,7 @@ def test_real_runtime_approve_resumes_execution(tmp_path: Path) -> None:
                         ToolCall(
                             id="shell-call",
                             name="shell.run",
-                            arguments={"command": "printf ran > ran.txt"},
+                            arguments={"command": command},
                         )
                     ],
                 ),
