@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Self
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class ConfigError(Exception):
@@ -12,17 +12,27 @@ class ConfigError(Exception):
 class AppConfig(BaseModel):
     web_host: str = "127.0.0.1"
     web_port: int = 8787
-    web_token: str
+    web_token: str | None = None
     workspace_root: Path
     model_provider: str = "codex"
     model: str = "default"
     session_dir: Path
+    app_db_path: Path | None = None
+    artifact_root: Path | None = None
+    temp_dir: Path | None = None
+    auth_dir: Path | None = None
     cookie_secure: bool = False
+    auth_setup_token: str | None = None
+    auth_require_token_and_otp: bool = False
     openai_api_key: str | None = None
     codex_binary: str = "codex"
     codex_sandbox: str = "workspace-write"
     codex_approval_policy: str = "never"
     codex_timeout_seconds: int = 600
+    ffmpeg_binary: str = "ffmpeg"
+    ffprobe_binary: str = "ffprobe"
+    capture_binary: str = "screencapture"
+    job_worker_concurrency: int = 1
 
     @field_validator("web_host")
     @classmethod
@@ -31,12 +41,35 @@ class AppConfig(BaseModel):
             return value
         raise ValueError("AGENT_WEB_HOST must be 127.0.0.1 or localhost")
 
-    @field_validator("workspace_root", "session_dir", mode="after")
+    @field_validator(
+        "workspace_root",
+        "session_dir",
+        "app_db_path",
+        "artifact_root",
+        "temp_dir",
+        "auth_dir",
+        mode="after",
+    )
     @classmethod
-    def resolve_path(cls, value: Path) -> Path:
+    def resolve_path(cls, value: Path | None) -> Path | None:
+        if value is None:
+            return value
         return value.expanduser().resolve()
 
-    @field_validator("cookie_secure", mode="before")
+    @model_validator(mode="after")
+    def derive_local_data_paths(self) -> Self:
+        data_root = self.session_dir.parent
+        if self.app_db_path is None:
+            self.app_db_path = (data_root / "app.sqlite").resolve()
+        if self.artifact_root is None:
+            self.artifact_root = (data_root / "artifacts").resolve()
+        if self.temp_dir is None:
+            self.temp_dir = (data_root / "temp").resolve()
+        if self.auth_dir is None:
+            self.auth_dir = (data_root / "auth").resolve()
+        return self
+
+    @field_validator("cookie_secure", "auth_require_token_and_otp", mode="before")
     @classmethod
     def parse_bool(cls, value: object) -> bool:
         if isinstance(value, bool):
@@ -51,12 +84,17 @@ class AppConfig(BaseModel):
         workspace_root = env.get("AGENT_WORKSPACE_ROOT")
         session_dir = env.get("AGENT_SESSION_DIR")
 
-        if not token:
-            raise ConfigError("AGENT_WEB_TOKEN is required")
         if not workspace_root:
             raise ConfigError("AGENT_WORKSPACE_ROOT is required")
         if not session_dir:
             raise ConfigError("AGENT_SESSION_DIR is required")
+
+        session_path = Path(session_dir)
+        data_root = session_path.parent
+        app_db_path = env.get("AGENT_APP_DB_PATH") or str(data_root / "app.sqlite")
+        artifact_root = env.get("AGENT_ARTIFACT_ROOT") or str(data_root / "artifacts")
+        temp_dir = env.get("AGENT_TEMP_DIR") or str(data_root / "temp")
+        auth_dir = env.get("AGENT_AUTH_DIR") or str(data_root / "auth")
 
         try:
             return cls(
@@ -66,13 +104,23 @@ class AppConfig(BaseModel):
                 workspace_root=Path(workspace_root),
                 model_provider=env.get("AGENT_MODEL_PROVIDER") or "codex",
                 model=env.get("AGENT_MODEL") or "default",
-                session_dir=Path(session_dir),
+                session_dir=session_path,
+                app_db_path=Path(app_db_path),
+                artifact_root=Path(artifact_root),
+                temp_dir=Path(temp_dir),
+                auth_dir=Path(auth_dir),
                 cookie_secure=env.get("AGENT_COOKIE_SECURE") or False,
+                auth_setup_token=env.get("AGENT_AUTH_SETUP_TOKEN") or None,
+                auth_require_token_and_otp=env.get("AGENT_AUTH_REQUIRE_TOKEN_AND_OTP") or False,
                 openai_api_key=env.get("OPENAI_API_KEY"),
                 codex_binary=env.get("AGENT_CODEX_BIN") or "codex",
                 codex_sandbox=env.get("AGENT_CODEX_SANDBOX") or "workspace-write",
                 codex_approval_policy=env.get("AGENT_CODEX_APPROVAL_POLICY") or "never",
                 codex_timeout_seconds=int(env.get("AGENT_CODEX_TIMEOUT_SECONDS") or "600"),
+                ffmpeg_binary=env.get("AGENT_FFMPEG_BIN") or "ffmpeg",
+                ffprobe_binary=env.get("AGENT_FFPROBE_BIN") or "ffprobe",
+                capture_binary=env.get("AGENT_CAPTURE_BIN") or "screencapture",
+                job_worker_concurrency=int(env.get("AGENT_JOB_WORKER_CONCURRENCY") or "1"),
             )
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
@@ -92,11 +140,21 @@ def load_config() -> AppConfig:
             "AGENT_MODEL_PROVIDER": os.getenv("AGENT_MODEL_PROVIDER"),
             "AGENT_MODEL": os.getenv("AGENT_MODEL"),
             "AGENT_SESSION_DIR": os.getenv("AGENT_SESSION_DIR"),
+            "AGENT_APP_DB_PATH": os.getenv("AGENT_APP_DB_PATH"),
+            "AGENT_ARTIFACT_ROOT": os.getenv("AGENT_ARTIFACT_ROOT"),
+            "AGENT_TEMP_DIR": os.getenv("AGENT_TEMP_DIR"),
+            "AGENT_AUTH_DIR": os.getenv("AGENT_AUTH_DIR"),
             "AGENT_COOKIE_SECURE": os.getenv("AGENT_COOKIE_SECURE"),
+            "AGENT_AUTH_SETUP_TOKEN": os.getenv("AGENT_AUTH_SETUP_TOKEN"),
+            "AGENT_AUTH_REQUIRE_TOKEN_AND_OTP": os.getenv("AGENT_AUTH_REQUIRE_TOKEN_AND_OTP"),
             "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
             "AGENT_CODEX_BIN": os.getenv("AGENT_CODEX_BIN"),
             "AGENT_CODEX_SANDBOX": os.getenv("AGENT_CODEX_SANDBOX"),
             "AGENT_CODEX_APPROVAL_POLICY": os.getenv("AGENT_CODEX_APPROVAL_POLICY"),
             "AGENT_CODEX_TIMEOUT_SECONDS": os.getenv("AGENT_CODEX_TIMEOUT_SECONDS"),
+            "AGENT_FFMPEG_BIN": os.getenv("AGENT_FFMPEG_BIN"),
+            "AGENT_FFPROBE_BIN": os.getenv("AGENT_FFPROBE_BIN"),
+            "AGENT_CAPTURE_BIN": os.getenv("AGENT_CAPTURE_BIN"),
+            "AGENT_JOB_WORKER_CONCURRENCY": os.getenv("AGENT_JOB_WORKER_CONCURRENCY"),
         }
     )
