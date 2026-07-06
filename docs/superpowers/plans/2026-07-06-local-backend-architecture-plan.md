@@ -1047,7 +1047,7 @@ Expected: new API tests pass and existing app tests still pass.
 - Create: `src/personal_agent_gateway/scheduler_loop.py`
 - Create: `tests/test_schedules.py`
 
-- [ ] **Step 1: Add `croniter` dependency**
+- [x] **Step 1: Add `croniter` dependency**
 
 Modify `pyproject.toml`:
 
@@ -1055,7 +1055,7 @@ Modify `pyproject.toml`:
 "croniter>=6.0.0"
 ```
 
-- [ ] **Step 2: Write schedule tests**
+- [x] **Step 2: Write schedule tests**
 
 ```python
 from datetime import datetime, timezone
@@ -1108,7 +1108,7 @@ def test_due_schedule_creates_job(tmp_path: Path) -> None:
     assert jobs[0].source == "schedule"
 ```
 
-- [ ] **Step 3: Run and verify failure**
+- [x] **Step 3: Run and verify failure**
 
 Run:
 
@@ -1118,7 +1118,7 @@ python -m pytest tests/test_schedules.py -v
 
 Expected: imports fail.
 
-- [ ] **Step 4: Implement schedule service**
+- [x] **Step 4: Implement schedule service**
 
 Implement CRUD and:
 
@@ -1129,7 +1129,7 @@ resume(schedule_id: str) -> Schedule
 run_now(schedule_id: str, job_service: JobService) -> Job
 ```
 
-- [ ] **Step 5: Implement scheduler loop**
+- [x] **Step 5: Implement scheduler loop**
 
 Use an in-process loop:
 
@@ -1148,7 +1148,7 @@ enqueue queued jobs
 update next_run_at
 ```
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 Run:
 
@@ -1167,7 +1167,7 @@ Expected: tests and ruff pass.
 - Test: `tests/test_runtime.py`
 - Test: `tests/test_app.py`
 
-- [ ] **Step 1: Preserve existing chat behavior**
+- [x] **Step 1: Preserve existing chat behavior**
 
 Run current tests first:
 
@@ -1177,7 +1177,7 @@ python -m pytest tests/test_runtime.py tests/test_app.py -v
 
 Expected: pass before changes.
 
-- [ ] **Step 2: Add job event creation for shell approvals**
+- [x] **Step 2: Add job event creation for shell approvals**
 
 When runtime receives a `shell.run` tool call:
 
@@ -1190,7 +1190,7 @@ return pending approval response using job approval id
 
 Do not change the external `/api/chat` response shape in this task.
 
-- [ ] **Step 3: Add test that shell approval creates a job**
+- [x] **Step 3: Add test that shell approval creates a job**
 
 Add a runtime test that sends a fake `shell.run` tool call and asserts:
 
@@ -1201,7 +1201,7 @@ assert jobs[0].capability_id == "shell.run"
 assert jobs[0].status == "waiting_approval"
 ```
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run:
 
@@ -1216,7 +1216,7 @@ Expected: existing chat behavior still works, and shell approval is now visible 
 **Files:**
 - Modify only files touched by previous tasks if verification exposes issues.
 
-- [ ] **Step 1: Run full backend test suite**
+- [x] **Step 1: Run full backend test suite**
 
 Run:
 
@@ -1226,7 +1226,7 @@ python -m pytest
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Run ruff**
+- [x] **Step 2: Run ruff**
 
 Run:
 
