@@ -5,11 +5,26 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from personal_agent_gateway.api import (
+    artifacts_router,
+    auth_router,
+    capabilities_router,
+    jobs_router,
+)
 from personal_agent_gateway.approval import ApprovalStore
+from personal_agent_gateway.artifacts import ArtifactStore
 from personal_agent_gateway.auth import require_token
+from personal_agent_gateway.auth_store import AuthStore
+from personal_agent_gateway.capabilities import CapabilityRegistry
 from personal_agent_gateway.config import AppConfig, ConfigError, load_config
+from personal_agent_gateway.db import Database
+from personal_agent_gateway.job_worker import JobWorker
+from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import CodexModelClient, OpenAIModelClient
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
+from personal_agent_gateway.runners.capture import CaptureRunner
+from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
+from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
 
@@ -24,8 +39,13 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     shared_runtime = runtime or _create_runtime(app_config, transcript)
     running_session_id: str | None = None
     app = FastAPI()
-    token_dependency = require_token(app_config.web_token, secure_cookie=app_config.cookie_secure)
+    token_dependency = require_token(app_config.web_token or "", secure_cookie=app_config.cookie_secure)
     static_dir = Path(__file__).parent / "static"
+    _attach_local_services(app, app_config)
+    app.include_router(auth_router)
+    app.include_router(capabilities_router)
+    app.include_router(jobs_router)
+    app.include_router(artifacts_router)
 
     @app.exception_handler(Exception)
     async def internal_error_handler(_request: Request, _exc: Exception) -> JSONResponse:
@@ -131,6 +151,41 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         return {"events": [], "session_id": session_id}
 
     return app
+
+
+def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
+    assert config.app_db_path is not None
+    assert config.artifact_root is not None
+    assert config.temp_dir is not None
+    assert config.auth_dir is not None
+    db = Database(config.app_db_path)
+    db.initialize()
+    registry = CapabilityRegistry.default()
+    job_service = JobService(db, registry)
+    artifact_store = ArtifactStore(db, config.artifact_root)
+    job_worker = JobWorker(
+        job_service,
+        artifact_store,
+        {
+            "ffmpeg": FfmpegRunner(
+                ffmpeg_binary=config.ffmpeg_binary,
+                ffprobe_binary=config.ffprobe_binary,
+                workspace_root=config.workspace_root,
+                temp_dir=config.temp_dir,
+            ),
+            "capture": CaptureRunner(
+                capture_binary=config.capture_binary,
+                temp_dir=config.temp_dir,
+            ),
+            "shell": ShellRunner(config.workspace_root),
+        },
+    )
+    app.state.app_config = config
+    app.state.auth_store = AuthStore(config.auth_dir)
+    app.state.capability_registry = registry
+    app.state.job_service = job_service
+    app.state.artifact_store = artifact_store
+    app.state.job_worker = job_worker
 
 
 def main() -> None:
