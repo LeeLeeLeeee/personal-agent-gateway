@@ -2,6 +2,7 @@ import json
 import os
 from dataclasses import dataclass
 
+from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ModelClient, ToolCall
 from personal_agent_gateway.tools import ShellResult, WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptEvent, TranscriptStore
@@ -26,10 +27,12 @@ class AgentRuntime:
         transcript: TranscriptStore,
         tools: WorkspaceTools,
         model: ModelClient,
+        job_service: JobService | None = None,
     ) -> None:
         self._transcript = transcript
         self._tools = tools
         self._model = model
+        self._job_service = job_service
 
     async def handle_user_message(self, content: str) -> RuntimeResult:
         try:
@@ -116,6 +119,7 @@ class AgentRuntime:
         if tool_call.name == "shell.run":
             command = _required_string(tool_call.arguments, "command", "shell.run")
             pending = self._tools.shell_request(command)
+            self._create_shell_job(command)
             self._append(
                 "tool_request",
                 {
@@ -147,6 +151,18 @@ class AgentRuntime:
             {"id": tool_call.id, "name": tool_call.name, "result": result},
         )
         return None
+
+    def _create_shell_job(self, command: str) -> None:
+        if self._job_service is None:
+            return
+        self._job_service.create_job(
+            capability_id="shell.run",
+            source="chat",
+            title="Shell command",
+            input_json={"command": command},
+            source_session_id=self._transcript.active_id(),
+            command_preview=command,
+        )
 
     def _append(self, kind: str, payload: dict[str, object]) -> TranscriptEvent:
         return self._transcript.append(kind, _redact_payload(payload))

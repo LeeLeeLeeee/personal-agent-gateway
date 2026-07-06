@@ -36,12 +36,16 @@ class ChatRequest(BaseModel):
 def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = None) -> FastAPI:
     app_config = config or load_config()
     transcript = TranscriptStore(app_config.session_dir)
-    shared_runtime = runtime or _create_runtime(app_config, transcript)
     running_session_id: str | None = None
     app = FastAPI()
     token_dependency = require_token(app_config.web_token or "", secure_cookie=app_config.cookie_secure)
     static_dir = Path(__file__).parent / "static"
     _attach_local_services(app, app_config)
+    shared_runtime = runtime or _create_runtime(
+        app_config,
+        transcript,
+        app.state.job_service,
+    )
     app.include_router(auth_router)
     app.include_router(capabilities_router)
     app.include_router(jobs_router)
@@ -147,7 +151,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         nonlocal shared_runtime
         session_id = transcript.reset()
         if runtime is None:
-            shared_runtime = _create_runtime(app_config, transcript)
+            shared_runtime = _create_runtime(app_config, transcript, app.state.job_service)
         return {"events": [], "session_id": session_id}
 
     return app
@@ -193,7 +197,11 @@ def main() -> None:
     uvicorn.run(create_app(config), host=config.web_host, port=config.web_port)
 
 
-def _create_runtime(config: AppConfig, transcript: TranscriptStore) -> AgentRuntime:
+def _create_runtime(
+    config: AppConfig,
+    transcript: TranscriptStore,
+    job_service: JobService | None = None,
+) -> AgentRuntime:
     if config.model_provider == "codex":
         return AgentRuntime(
             transcript=transcript,
@@ -206,6 +214,7 @@ def _create_runtime(config: AppConfig, transcript: TranscriptStore) -> AgentRunt
                 approval_policy=config.codex_approval_policy,
                 timeout_seconds=config.codex_timeout_seconds,
             ),
+            job_service=job_service,
         )
 
     if config.model_provider != "openai":
@@ -217,6 +226,7 @@ def _create_runtime(config: AppConfig, transcript: TranscriptStore) -> AgentRunt
         transcript=transcript,
         tools=WorkspaceTools(config.workspace_root, ApprovalStore()),
         model=OpenAIModelClient(api_key=config.openai_api_key or "", model=config.model),
+        job_service=job_service,
     )
 
 

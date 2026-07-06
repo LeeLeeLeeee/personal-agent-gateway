@@ -5,6 +5,9 @@ from pathlib import Path
 import pytest
 
 from personal_agent_gateway.approval import ApprovalStore
+from personal_agent_gateway.capabilities import CapabilityRegistry
+from personal_agent_gateway.db import Database
+from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ModelResponse, ToolCall
 from personal_agent_gateway.runtime import AgentRuntime
 from personal_agent_gateway.tools import WorkspaceTools
@@ -36,13 +39,14 @@ def make_runtime(
     tmp_path: Path,
     responses: list[ModelResponse],
     error: Exception | None = None,
+    job_service: JobService | None = None,
 ) -> tuple[AgentRuntime, TranscriptStore, WorkspaceTools, FakeModelClient, Path]:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     transcript = TranscriptStore(tmp_path / "sessions")
     tools = WorkspaceTools(root=workspace, approvals=ApprovalStore())
     model = FakeModelClient(responses, error=error)
-    return AgentRuntime(transcript, tools, model), transcript, tools, model, workspace
+    return AgentRuntime(transcript, tools, model, job_service=job_service), transcript, tools, model, workspace
 
 
 def event_payloads(transcript: TranscriptStore) -> list[tuple[str, dict[str, object]]]:
@@ -187,6 +191,39 @@ async def test_shell_run_requests_approval_without_executing(tmp_path: Path) -> 
         ),
     ]
     assert not (workspace / "ran.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_shell_run_creates_visible_job_when_job_service_is_configured(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    job_service = JobService(db, CapabilityRegistry.default())
+    runtime, _transcript, _tools, _model, _workspace = make_runtime(
+        tmp_path,
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="shell-call",
+                        name="shell.run",
+                        arguments={"command": "printf visible"},
+                    )
+                ],
+            )
+        ],
+        job_service=job_service,
+    )
+
+    await runtime.handle_user_message("run command")
+
+    jobs = job_service.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].capability_id == "shell.run"
+    assert jobs[0].status == "waiting_approval"
+    assert jobs[0].command_preview == "printf visible"
 
 
 @pytest.mark.asyncio
