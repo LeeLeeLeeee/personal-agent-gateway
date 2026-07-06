@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from personal_agent_gateway.runners.capture import CaptureRunner
+from personal_agent_gateway.runners.capture import CaptureRunner, _capture_command
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 
 
@@ -46,5 +46,22 @@ def test_capture_screen_builds_command(tmp_path: Path) -> None:
 
     command = runner.preview_command("capture.screen", {})
 
-    assert command[0:2] == ["screencapture", "-x"]
-    assert command[-1].endswith(".png")
+    assert command[0] == "screencapture"
+    assert ".png" in " ".join(command)
+
+
+def test_capture_command_uses_windows_powershell(tmp_path: Path) -> None:
+    output = tmp_path / "screen.png"
+
+    command = _capture_command("powershell", output, "win32")
+
+    assert command[:4] == ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass"]
+    assert str(output) in command[-1]
+
+
+def test_capture_command_uses_macos_screencapture(tmp_path: Path) -> None:
+    output = tmp_path / "screen.png"
+
+    command = _capture_command("screencapture", output, "darwin")
+
+    assert command == ["screencapture", "-x", str(output)]

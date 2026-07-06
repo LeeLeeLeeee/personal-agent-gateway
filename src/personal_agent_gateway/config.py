@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from typing import Self
 
@@ -14,6 +15,15 @@ def _default_codex_binary(os_name: str | None = None) -> str:
     if (os_name or os.name) == "nt":
         return "codex.cmd"
     return "codex"
+
+
+def _default_capture_binary(platform_name: str | None = None) -> str:
+    platform_name = platform_name or sys.platform
+    if platform_name == "darwin":
+        return "screencapture"
+    if platform_name == "win32":
+        return "powershell"
+    return "unsupported-capture"
 
 
 class AppConfig(BaseModel):
@@ -38,7 +48,7 @@ class AppConfig(BaseModel):
     codex_timeout_seconds: int = 600
     ffmpeg_binary: str = "ffmpeg"
     ffprobe_binary: str = "ffprobe"
-    capture_binary: str = "screencapture"
+    capture_binary: str = _default_capture_binary()
     job_worker_concurrency: int = 1
 
     @field_validator("web_host")
@@ -126,7 +136,7 @@ class AppConfig(BaseModel):
                 codex_timeout_seconds=int(env.get("AGENT_CODEX_TIMEOUT_SECONDS") or "600"),
                 ffmpeg_binary=env.get("AGENT_FFMPEG_BIN") or "ffmpeg",
                 ffprobe_binary=env.get("AGENT_FFPROBE_BIN") or "ffprobe",
-                capture_binary=env.get("AGENT_CAPTURE_BIN") or "screencapture",
+                capture_binary=env.get("AGENT_CAPTURE_BIN") or _default_capture_binary(),
                 job_worker_concurrency=int(env.get("AGENT_JOB_WORKER_CONCURRENCY") or "1"),
             )
         except ValueError as exc:

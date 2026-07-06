@@ -5,7 +5,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from personal_agent_gateway.auth import require_token
-from personal_agent_gateway.config import AppConfig, ConfigError, _default_codex_binary, load_config
+from personal_agent_gateway.config import (
+    AppConfig,
+    ConfigError,
+    _default_capture_binary,
+    _default_codex_binary,
+    load_config,
+)
 
 
 def test_load_config_does_not_require_web_token(
@@ -63,7 +69,7 @@ def test_load_config_derives_local_data_paths(
     assert config.auth_dir == tmp_path / "data" / "auth"
     assert config.ffmpeg_binary == "ffmpeg"
     assert config.ffprobe_binary == "ffprobe"
-    assert config.capture_binary == "screencapture"
+    assert config.capture_binary == _default_capture_binary()
     assert config.job_worker_concurrency == 1
 
 
@@ -103,6 +109,12 @@ def test_load_config_accepts_local_tool_and_auth_overrides(
 def test_default_codex_binary_uses_windows_cmd_shim() -> None:
     assert _default_codex_binary("nt") == "codex.cmd"
     assert _default_codex_binary("posix") == "codex"
+
+
+def test_default_capture_binary_matches_platform() -> None:
+    assert _default_capture_binary("darwin") == "screencapture"
+    assert _default_capture_binary("win32") == "powershell"
+    assert _default_capture_binary("linux") == "unsupported-capture"
 
 
 def test_require_token_accepts_query_token_and_sets_cookie() -> None:
