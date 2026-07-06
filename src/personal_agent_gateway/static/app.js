@@ -4,6 +4,9 @@ const state = {
   sessions: [],
   sessionQuery: "",
   status: null,
+  authStatus: null,
+  otpSetup: null,
+  recoveryCodes: [],
   busy: false,
 };
 
@@ -17,6 +20,16 @@ const elements = {
   errorBanner: document.querySelector("#error-banner"),
   messageInput: document.querySelector("#message-input"),
   messageList: document.querySelector("#message-list"),
+  otpCodeInput: document.querySelector("#otp-code-input"),
+  otpQr: document.querySelector("#otp-qr"),
+  otpRecoveryCodes: document.querySelector("#otp-recovery-codes"),
+  otpRecoveryPanel: document.querySelector("#otp-recovery-panel"),
+  otpSecret: document.querySelector("#otp-secret"),
+  otpSetupBody: document.querySelector("#otp-setup-body"),
+  otpSetupPanel: document.querySelector("#otp-setup-panel"),
+  otpSetupState: document.querySelector("#otp-setup-state"),
+  otpStartButton: document.querySelector("#otp-start-button"),
+  otpVerifyForm: document.querySelector("#otp-verify-form"),
   resetButton: document.querySelector("#reset-button"),
   sendButton: document.querySelector("#send-button"),
   sessionList: document.querySelector("#session-list"),
@@ -61,6 +74,58 @@ elements.chatForm?.addEventListener("submit", async (event) => {
     });
     applyRuntimeResponse(data);
     await refreshRuntimeMetadata();
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    setBusy(false);
+  }
+});
+
+elements.otpStartButton?.addEventListener("click", async () => {
+  if (state.busy) {
+    return;
+  }
+
+  setBusy(true);
+  hideError();
+
+  try {
+    const data = await apiFetch("/api/auth/setup/start", { method: "POST" });
+    state.otpSetup = normalizeOtpSetup(data);
+    state.recoveryCodes = [];
+    renderOtpSetup();
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    setBusy(false);
+  }
+});
+
+elements.otpVerifyForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const otp = elements.otpCodeInput?.value.trim() ?? "";
+  if (!otp || state.busy) {
+    return;
+  }
+
+  setBusy(true);
+  hideError();
+
+  try {
+    const data = await apiFetch("/api/auth/setup/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ otp }),
+    });
+    state.recoveryCodes = Array.isArray(data.recovery_codes)
+      ? data.recovery_codes.map(String)
+      : [];
+    state.otpSetup = null;
+    if (elements.otpCodeInput) {
+      elements.otpCodeInput.value = "";
+    }
+    await loadAuthStatus();
+    renderOtpSetup();
   } catch (error) {
     showError(error.message);
   } finally {
@@ -207,6 +272,14 @@ async function loadStatus() {
   };
 }
 
+async function loadAuthStatus() {
+  const data = await apiFetch("/api/auth/status");
+  state.authStatus = {
+    authenticated: Boolean(data.authenticated),
+    totpConfigured: Boolean(data.totp_configured),
+  };
+}
+
 async function loadSessions() {
   const query = state.sessionQuery.trim();
   const url = query
@@ -217,7 +290,7 @@ async function loadSessions() {
 }
 
 async function refreshRuntimeMetadata() {
-  await Promise.all([loadStatus(), loadSessions()]);
+  await Promise.all([loadStatus(), loadSessions(), loadAuthStatus()]);
 }
 
 async function activateSession(sessionId) {
@@ -406,6 +479,24 @@ function normalizeApproval(value) {
   return { id: value.id, command: value.command };
 }
 
+function normalizeOtpSetup(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if (
+    typeof value.secret !== "string" ||
+    typeof value.otpauth_uri !== "string" ||
+    typeof value.qr_svg !== "string"
+  ) {
+    return null;
+  }
+  return {
+    otpauthUri: value.otpauth_uri,
+    qrSvg: value.qr_svg,
+    secret: value.secret,
+  };
+}
+
 function normalizeSession(value) {
   if (!value || typeof value !== "object" || typeof value.id !== "string") {
     return null;
@@ -424,11 +515,53 @@ function normalizeSession(value) {
 function render() {
   renderMessages();
   renderApproval();
+  renderOtpSetup();
   renderSessions();
   if (elements.connectionState) {
     elements.connectionState.textContent = elements.tokenPanel?.hidden ? "Connected" : "Token required";
   }
   renderStatus();
+}
+
+function renderOtpSetup() {
+  if (!elements.otpSetupPanel || !elements.otpSetupState) {
+    return;
+  }
+
+  const configured = Boolean(state.authStatus?.totpConfigured);
+  const shouldShow = elements.tokenPanel?.hidden && (!configured || state.recoveryCodes.length > 0);
+  elements.otpSetupPanel.hidden = !shouldShow;
+  if (!shouldShow) {
+    return;
+  }
+
+  elements.otpSetupState.textContent = configured ? "Configured" : "Not configured";
+  if (elements.otpStartButton) {
+    elements.otpStartButton.hidden = configured || Boolean(state.otpSetup);
+  }
+  if (elements.otpSetupBody) {
+    elements.otpSetupBody.hidden = !state.otpSetup;
+  }
+  if (elements.otpQr) {
+    elements.otpQr.replaceChildren();
+    if (state.otpSetup) {
+      elements.otpQr.innerHTML = state.otpSetup.qrSvg;
+    }
+  }
+  if (elements.otpSecret) {
+    elements.otpSecret.textContent = state.otpSetup?.secret ?? "";
+  }
+  if (elements.otpRecoveryPanel) {
+    elements.otpRecoveryPanel.hidden = state.recoveryCodes.length === 0;
+  }
+  if (elements.otpRecoveryCodes) {
+    elements.otpRecoveryCodes.replaceChildren();
+    for (const code of state.recoveryCodes) {
+      const item = document.createElement("li");
+      item.textContent = code;
+      elements.otpRecoveryCodes.append(item);
+    }
+  }
 }
 
 function renderMessages() {
@@ -535,6 +668,9 @@ function showTokenPanel() {
   if (elements.tokenPanel) {
     elements.tokenPanel.hidden = false;
   }
+  if (elements.otpSetupPanel) {
+    elements.otpSetupPanel.hidden = true;
+  }
   state.status = null;
   if (elements.connectionState) {
     elements.connectionState.textContent = "Token required";
@@ -569,6 +705,7 @@ function setBusy(isBusy) {
     elements.denyButton,
     elements.resetButton,
     elements.sendButton,
+    elements.otpStartButton,
   ]) {
     if (button) {
       button.disabled = isBusy;

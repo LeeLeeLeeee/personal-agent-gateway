@@ -1,14 +1,21 @@
 import secrets
+from io import BytesIO
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, HTTPException, Request, Response
 from pydantic import BaseModel
+import qrcode
+import qrcode.image.svg
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 class LoginRequest(BaseModel):
+    otp: str
+
+
+class SetupVerifyRequest(BaseModel):
     otp: str
 
 
@@ -37,7 +44,47 @@ def login(request: Request, payload: LoginRequest, response: Response) -> dict[s
     return {"authenticated": True}
 
 
+@router.post("/setup/start")
+def start_setup(
+    request: Request,
+    web_token: Annotated[str | None, Cookie(alias="agent_web_token")] = None,
+) -> dict[str, str]:
+    _require_setup_access(request, web_token)
+    setup = request.app.state.auth_store.start_totp_setup(account_name="local-owner")
+    return {
+        "secret": setup.secret,
+        "otpauth_uri": setup.otpauth_uri,
+        "qr_svg": _qr_svg(setup.otpauth_uri),
+    }
+
+
+@router.post("/setup/verify")
+def verify_setup(
+    request: Request,
+    payload: SetupVerifyRequest,
+    web_token: Annotated[str | None, Cookie(alias="agent_web_token")] = None,
+) -> dict[str, object]:
+    _require_setup_access(request, web_token)
+    result = request.app.state.auth_store.verify_totp_setup(payload.otp)
+    if not result.enabled:
+        raise HTTPException(status_code=401, detail="Invalid OTP")
+    return {"enabled": True, "recovery_codes": result.recovery_codes}
+
+
 @router.post("/logout")
 def logout(response: Response) -> dict[str, bool]:
     response.delete_cookie(key="agent_session")
     return {"authenticated": False}
+
+
+def _require_setup_access(request: Request, web_token: str | None) -> None:
+    expected = request.app.state.app_config.web_token
+    if expected is not None and web_token != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _qr_svg(value: str) -> str:
+    image = qrcode.make(value, image_factory=qrcode.image.svg.SvgPathImage)
+    buffer = BytesIO()
+    image.save(buffer)
+    return buffer.getvalue().decode("utf-8")

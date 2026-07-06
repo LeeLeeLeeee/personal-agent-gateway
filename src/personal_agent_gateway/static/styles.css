@@ -121,6 +121,99 @@ h2 {
   padding: 0.75rem;
 }
 
+.otp-setup-panel {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+.otp-setup-header {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.otp-setup-state {
+  color: var(--muted);
+  font-size: 0.76rem;
+  margin-top: 0.1rem;
+}
+
+.otp-setup-body {
+  align-items: start;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.otp-qr {
+  border: 1px solid var(--border);
+  background: #ffffff;
+  min-height: 9rem;
+  padding: 0.45rem;
+  width: 9rem;
+}
+
+.otp-qr svg {
+  display: block;
+  height: auto;
+  max-width: 100%;
+}
+
+.otp-secret-block,
+.otp-verify-form {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.otp-secret-block label,
+.otp-verify-form label {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+#otp-secret {
+  border: 1px solid var(--border);
+  background: var(--code-bg);
+  overflow-wrap: anywhere;
+  padding: 0.5rem;
+}
+
+.otp-verify-row {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: minmax(0, 12rem) auto;
+}
+
+.otp-recovery-panel {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+}
+
+.otp-recovery-panel h3 {
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.otp-recovery-panel ol {
+  columns: 2;
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.otp-recovery-panel li {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  padding-bottom: 0.25rem;
+}
+
 .token-form {
   display: grid;
   gap: 0.45rem;
@@ -373,6 +466,9 @@ textarea {
 
   .app-header,
   .token-row,
+  .otp-setup-header,
+  .otp-setup-body,
+  .otp-verify-row,
   .workspace-layout,
   .session-search-row,
   .approval-panel,

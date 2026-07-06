@@ -51,3 +51,43 @@ def test_auth_logout_clears_cookie(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert "agent_session=" in response.headers["set-cookie"]
     assert "Max-Age=0" in response.headers["set-cookie"]
+
+
+def test_totp_setup_start_requires_web_token_cookie(tmp_path: Path) -> None:
+    client = TestClient(create_app(make_config(tmp_path)))
+
+    response = client.post("/api/auth/setup/start")
+
+    assert response.status_code == 401
+
+
+def test_totp_setup_start_returns_uri_and_qr_after_token_auth(tmp_path: Path) -> None:
+    client = TestClient(create_app(make_config(tmp_path)))
+    client.get("/?token=secret-token")
+
+    response = client.post("/api/auth/setup/start")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["otpauth_uri"].startswith("otpauth://totp/")
+    assert payload["secret"]
+    assert "<svg" in payload["qr_svg"]
+
+
+def test_totp_setup_verify_enables_login_from_browser_flow(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = TestClient(create_app(config))
+    client.get("/?token=secret-token")
+    setup_response = client.post("/api/auth/setup/start")
+    setup_code = AuthStore(config.auth_dir).current_code_for_test(
+        setup_response.json()["secret"],
+    )
+
+    response = client.post("/api/auth/setup/verify", json={"otp": setup_code})
+
+    assert response.status_code == 200
+    assert response.json()["enabled"] is True
+    assert len(response.json()["recovery_codes"]) == 10
+
+    login_response = client.post("/api/auth/login", json={"otp": setup_code})
+    assert login_response.status_code == 200
