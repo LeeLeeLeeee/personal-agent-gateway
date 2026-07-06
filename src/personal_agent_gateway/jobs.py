@@ -110,6 +110,9 @@ class JobService:
             for row in self._db.fetchall("select * from jobs order by created_at desc")
         ]
 
+    def runner_type_for(self, job: Job) -> str:
+        return self._capabilities.get(job.capability_id).runner_type
+
     def approve_job(self, job_id: str) -> Job:
         job = self.get_job(job_id)
         if job.status != "waiting_approval":
@@ -159,6 +162,21 @@ class JobService:
         self._set_status(job.id, "failed", finished_at=_now(), error_message=message)
         self.append_event(job.id, "failed", {"message": message})
         return self.get_job(job.id)
+
+    def recover_interrupted_jobs(self) -> None:
+        for job in self.list_jobs():
+            if job.status == "running":
+                self._set_status(
+                    job.id,
+                    "failed",
+                    finished_at=_now(),
+                    error_message="Gateway restarted while job was running",
+                )
+                self.append_event(
+                    job.id,
+                    "failed",
+                    {"message": "Gateway restarted while job was running"},
+                )
 
     def append_event(self, job_id: str, kind: str, payload: dict[str, object]) -> None:
         self._db.execute(
