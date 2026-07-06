@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 import personal_agent_gateway.app as app_module
 from personal_agent_gateway.app import create_app, main
 from personal_agent_gateway.approval import ApprovalStore
+from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.model_client import ModelResponse, ToolCall
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
@@ -131,6 +132,7 @@ def test_ui_assets_smoke(tmp_path: Path) -> None:
     assert 'id="app-root"' in page.text
     assert 'id="session-list"' in page.text
     assert 'id="session-search"' in page.text
+    assert 'id="otp-login-panel"' in page.text
     assert 'id="otp-setup-panel"' in page.text
     assert script.status_code == 200
     assert "text/javascript" in script.headers["content-type"]
@@ -139,8 +141,10 @@ def test_ui_assets_smoke(tmp_path: Path) -> None:
     assert "loadSessions" in script.text
     assert "activateSession" in script.text
     assert "deleteSession" in script.text
+    assert "/api/auth/login" in script.text
     assert "/api/auth/setup/start" in script.text
     assert "/api/auth/setup/verify" in script.text
+    assert "canSendMessage" in script.text
 
 
 def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
@@ -243,6 +247,18 @@ def test_chat_returns_runtime_output(tmp_path: Path) -> None:
         "pending_approval": {"id": "approval-1", "command": "printf ok"},
     }
     assert runtime.messages == ["hello"]
+
+
+def test_chat_requires_otp_session_after_totp_is_configured(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    auth_store = AuthStore(config.auth_dir)
+    setup = auth_store.start_totp_setup("local-owner")
+    auth_store.verify_totp_setup(auth_store.current_code_for_test(setup.secret))
+    client = auth_client(config, FakeRuntime())
+
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 401
 
 
 def test_app_reuses_one_runtime_instance(tmp_path: Path) -> None:

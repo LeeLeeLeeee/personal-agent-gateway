@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from personal_agent_gateway.auth import require_token
-from personal_agent_gateway.config import AppConfig, ConfigError, load_config
+from personal_agent_gateway.config import AppConfig, ConfigError, _default_codex_binary, load_config
 
 
 def test_load_config_does_not_require_web_token(
@@ -98,6 +98,11 @@ def test_load_config_accepts_local_tool_and_auth_overrides(
     assert config.ffprobe_binary == "/opt/homebrew/bin/ffprobe"
     assert config.capture_binary == "screencapture-custom"
     assert config.job_worker_concurrency == 2
+
+
+def test_default_codex_binary_uses_windows_cmd_shim() -> None:
+    assert _default_codex_binary("nt") == "codex.cmd"
+    assert _default_codex_binary("posix") == "codex"
 
 
 def test_require_token_accepts_query_token_and_sets_cookie() -> None:

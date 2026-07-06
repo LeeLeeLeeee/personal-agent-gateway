@@ -1,7 +1,8 @@
 from pathlib import Path
+from typing import Annotated
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -39,6 +40,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     running_session_id: str | None = None
     app = FastAPI()
     token_dependency = require_token(app_config.web_token or "", secure_cookie=app_config.cookie_secure)
+    otp_session_dependency = Depends(_require_otp_session_if_configured)
     static_dir = Path(__file__).parent / "static"
     _attach_local_services(app, app_config)
     shared_runtime = runtime or _create_runtime(
@@ -120,7 +122,11 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         return {"deleted": True, "active_session_id": transcript.active_id()}
 
     @app.post("/api/chat")
-    async def chat(request: ChatRequest, _token: None = token_dependency) -> dict[str, object]:
+    async def chat(
+        request: ChatRequest,
+        _token: None = token_dependency,
+        _session: None = otp_session_dependency,
+    ) -> dict[str, object]:
         nonlocal running_session_id
         running_session_id = transcript.active_id()
         try:
@@ -269,6 +275,14 @@ def _has_pending_shell_approval(events: list[object]) -> bool:
         elif kind in {"tool_result", "tool_denial"}:
             pending_by_tool_id.discard(str(payload.get("id", "")))
     return bool(pending_by_tool_id)
+
+
+def _require_otp_session_if_configured(
+    request: Request,
+    session: Annotated[str | None, Cookie(alias="agent_session")] = None,
+) -> None:
+    if request.app.state.auth_store.is_totp_enabled() and not session:
+        raise HTTPException(status_code=401, detail="OTP login required")
 
 
 __all__ = ["create_app", "main"]

@@ -21,6 +21,9 @@ const elements = {
   messageInput: document.querySelector("#message-input"),
   messageList: document.querySelector("#message-list"),
   otpCodeInput: document.querySelector("#otp-code-input"),
+  otpLoginForm: document.querySelector("#otp-login-form"),
+  otpLoginInput: document.querySelector("#otp-login-input"),
+  otpLoginPanel: document.querySelector("#otp-login-panel"),
   otpQr: document.querySelector("#otp-qr"),
   otpRecoveryCodes: document.querySelector("#otp-recovery-codes"),
   otpRecoveryPanel: document.querySelector("#otp-recovery-panel"),
@@ -55,7 +58,7 @@ elements.tokenForm?.addEventListener("submit", async (event) => {
 elements.chatForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const content = elements.messageInput?.value.trim() ?? "";
-  if (!content || state.busy) {
+  if (!content || state.busy || !canSendMessage()) {
     return;
   }
 
@@ -74,6 +77,34 @@ elements.chatForm?.addEventListener("submit", async (event) => {
     });
     applyRuntimeResponse(data);
     await refreshRuntimeMetadata();
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    setBusy(false);
+  }
+});
+
+elements.otpLoginForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const otp = elements.otpLoginInput?.value.trim() ?? "";
+  if (!otp || state.busy) {
+    return;
+  }
+
+  setBusy(true);
+  hideError();
+
+  try {
+    await apiFetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ otp }),
+    });
+    if (elements.otpLoginInput) {
+      elements.otpLoginInput.value = "";
+    }
+    await loadAuthStatus();
+    render();
   } catch (error) {
     showError(error.message);
   } finally {
@@ -125,7 +156,7 @@ elements.otpVerifyForm?.addEventListener("submit", async (event) => {
       elements.otpCodeInput.value = "";
     }
     await loadAuthStatus();
-    renderOtpSetup();
+    render();
   } catch (error) {
     showError(error.message);
   } finally {
@@ -515,12 +546,27 @@ function normalizeSession(value) {
 function render() {
   renderMessages();
   renderApproval();
+  renderOtpLogin();
   renderOtpSetup();
   renderSessions();
   if (elements.connectionState) {
-    elements.connectionState.textContent = elements.tokenPanel?.hidden ? "Connected" : "Token required";
+    elements.connectionState.textContent = connectionStateText();
   }
   renderStatus();
+  renderComposer();
+}
+
+function renderOtpLogin() {
+  if (!elements.otpLoginPanel) {
+    return;
+  }
+
+  const shouldShow = Boolean(
+    elements.tokenPanel?.hidden &&
+      state.authStatus?.totpConfigured &&
+      !state.authStatus?.authenticated
+  );
+  elements.otpLoginPanel.hidden = !shouldShow;
 }
 
 function renderOtpSetup() {
@@ -561,6 +607,15 @@ function renderOtpSetup() {
       item.textContent = code;
       elements.otpRecoveryCodes.append(item);
     }
+  }
+}
+
+function renderComposer() {
+  if (elements.sendButton) {
+    elements.sendButton.disabled = state.busy || !canSendMessage();
+  }
+  if (elements.messageInput) {
+    elements.messageInput.disabled = state.busy || !canSendMessage();
   }
 }
 
@@ -668,6 +723,9 @@ function showTokenPanel() {
   if (elements.tokenPanel) {
     elements.tokenPanel.hidden = false;
   }
+  if (elements.otpLoginPanel) {
+    elements.otpLoginPanel.hidden = true;
+  }
   if (elements.otpSetupPanel) {
     elements.otpSetupPanel.hidden = true;
   }
@@ -704,11 +762,28 @@ function setBusy(isBusy) {
     elements.approveButton,
     elements.denyButton,
     elements.resetButton,
-    elements.sendButton,
     elements.otpStartButton,
   ]) {
     if (button) {
       button.disabled = isBusy;
     }
   }
+  renderComposer();
+}
+
+function canSendMessage() {
+  return Boolean(elements.tokenPanel?.hidden && state.authStatus?.authenticated);
+}
+
+function connectionStateText() {
+  if (!elements.tokenPanel?.hidden) {
+    return "Token required";
+  }
+  if (!state.authStatus?.totpConfigured) {
+    return "OTP setup required";
+  }
+  if (!state.authStatus?.authenticated) {
+    return "OTP login required";
+  }
+  return "Connected";
 }

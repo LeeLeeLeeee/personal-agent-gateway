@@ -34,13 +34,7 @@ def status(
 def login(request: Request, payload: LoginRequest, response: Response) -> dict[str, bool]:
     if not request.app.state.auth_store.verify_login_code(payload.otp):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    response.set_cookie(
-        key="agent_session",
-        value=secrets.token_urlsafe(32),
-        httponly=True,
-        secure=request.app.state.app_config.cookie_secure,
-        samesite="strict",
-    )
+    _set_session_cookie(request, response)
     return {"authenticated": True}
 
 
@@ -62,12 +56,14 @@ def start_setup(
 def verify_setup(
     request: Request,
     payload: SetupVerifyRequest,
+    response: Response,
     web_token: Annotated[str | None, Cookie(alias="agent_web_token")] = None,
 ) -> dict[str, object]:
     _require_setup_access(request, web_token)
     result = request.app.state.auth_store.verify_totp_setup(payload.otp)
     if not result.enabled:
         raise HTTPException(status_code=401, detail="Invalid OTP")
+    _set_session_cookie(request, response)
     return {"enabled": True, "recovery_codes": result.recovery_codes}
 
 
@@ -75,6 +71,16 @@ def verify_setup(
 def logout(response: Response) -> dict[str, bool]:
     response.delete_cookie(key="agent_session")
     return {"authenticated": False}
+
+
+def _set_session_cookie(request: Request, response: Response) -> None:
+    response.set_cookie(
+        key="agent_session",
+        value=secrets.token_urlsafe(32),
+        httponly=True,
+        secure=request.app.state.app_config.cookie_secure,
+        samesite="strict",
+    )
 
 
 def _require_setup_access(request: Request, web_token: str | None) -> None:

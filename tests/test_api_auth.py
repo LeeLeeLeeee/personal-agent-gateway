@@ -88,6 +88,7 @@ def test_totp_setup_verify_enables_login_from_browser_flow(tmp_path: Path) -> No
     assert response.status_code == 200
     assert response.json()["enabled"] is True
     assert len(response.json()["recovery_codes"]) == 10
+    assert response.cookies.get("agent_session") is not None
 
     login_response = client.post("/api/auth/login", json={"otp": setup_code})
     assert login_response.status_code == 200

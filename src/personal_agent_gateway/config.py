@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Self
 
@@ -7,6 +8,12 @@ from pydantic import BaseModel, field_validator, model_validator
 
 class ConfigError(Exception):
     pass
+
+
+def _default_codex_binary(os_name: str | None = None) -> str:
+    if (os_name or os.name) == "nt":
+        return "codex.cmd"
+    return "codex"
 
 
 class AppConfig(BaseModel):
@@ -25,7 +32,7 @@ class AppConfig(BaseModel):
     auth_setup_token: str | None = None
     auth_require_token_and_otp: bool = False
     openai_api_key: str | None = None
-    codex_binary: str = "codex"
+    codex_binary: str = _default_codex_binary()
     codex_sandbox: str = "workspace-write"
     codex_approval_policy: str = "never"
     codex_timeout_seconds: int = 600
@@ -113,7 +120,7 @@ class AppConfig(BaseModel):
                 auth_setup_token=env.get("AGENT_AUTH_SETUP_TOKEN") or None,
                 auth_require_token_and_otp=env.get("AGENT_AUTH_REQUIRE_TOKEN_AND_OTP") or False,
                 openai_api_key=env.get("OPENAI_API_KEY"),
-                codex_binary=env.get("AGENT_CODEX_BIN") or "codex",
+                codex_binary=env.get("AGENT_CODEX_BIN") or _default_codex_binary(),
                 codex_sandbox=env.get("AGENT_CODEX_SANDBOX") or "workspace-write",
                 codex_approval_policy=env.get("AGENT_CODEX_APPROVAL_POLICY") or "never",
                 codex_timeout_seconds=int(env.get("AGENT_CODEX_TIMEOUT_SECONDS") or "600"),
