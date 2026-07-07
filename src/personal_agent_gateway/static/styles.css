@@ -74,3 +74,18 @@ h1,h2,h3,p{margin:0}
 .msg-body{padding:12px 14px;font-size:14px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
 .composer{flex:none;border-top:var(--bd);padding:14px 20px;display:flex;gap:10px;align-items:flex-end}
 .composer .input-field{flex:1;resize:none}
+
+/* ---- loader (self-contained 3D cube) ---- */
+.loader{display:flex;align-items:center;gap:16px;max-width:720px;margin:0 auto 18px;padding:14px 16px;border:var(--bd-in);border-style:dashed}
+.cube-wrap{width:34px;height:34px;flex:none;perspective:120px}
+.cube{width:34px;height:34px;position:relative;transform-style:preserve-3d;animation:cube-spin 1.6s linear infinite}
+.cube .face{position:absolute;width:34px;height:34px;background:var(--c-white);border:2px solid var(--c-black)}
+.cube .f1{transform:translateZ(17px)}
+.cube .f2{transform:rotateY(180deg) translateZ(17px)}
+.cube .f3{transform:rotateY(90deg) translateZ(17px)}
+.cube .f4{transform:rotateY(-90deg) translateZ(17px)}
+.cube .f5{transform:rotateX(90deg) translateZ(17px)}
+.cube .f6{transform:rotateX(-90deg) translateZ(17px)}
+@keyframes cube-spin{from{transform:rotateX(-24deg) rotateY(0)}to{transform:rotateX(-24deg) rotateY(360deg)}}
+.loader-label{font-family:var(--font-mono);font-size:12px;letter-spacing:2px;color:var(--c-grey);animation:rb-blink 1.2s step-end infinite}
+@keyframes rb-blink{0%,60%{opacity:1}61%,100%{opacity:.35}}

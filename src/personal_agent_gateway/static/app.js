@@ -7,7 +7,7 @@ const PLANNED = new Set(["jobs", "schedules", "capabilities", "artifacts", "sett
 const state = {
   screen: "chat", status: null,
   authStage: "login", otpInput: "", authError: "", setup: null, recoveryCodes: [],
-  messages: [], sessions: [], sessionQuery: "", pendingApproval: null,
+  messages: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false,
 };
 
 const api = {
@@ -113,6 +113,14 @@ function renderLogin() {
 }
 
 // ---- chat ----
+function loaderEl(label) {
+  const cube = el("div", { class: "cube" }, ["f1", "f2", "f3", "f4", "f5", "f6"].map(f => el("div", { class: `face ${f}` })));
+  return el("div", { class: "loader" }, [
+    el("div", { class: "cube-wrap" }, cube),
+    el("span", { class: "loader-label" }, `${label || "WORKING"}…`),
+  ]);
+}
+
 function renderSessionRail() {
   const search = el("input", { class: "input-field", type: "search", placeholder: "Search" });
   search.value = state.sessionQuery || "";
@@ -138,19 +146,25 @@ function renderSessionRail() {
 function renderComposer() {
   const ta = el("textarea", { class: "input-field", rows: "2", placeholder: "Ask the agent, or describe a local action…" });
   const send = async () => {
-    const msg = ta.value.trim(); if (!msg) return;
-    state.messages.push({ role: "user", content: msg }); ta.value = ""; renderShell();
-    const data = await api.sendChat(msg);
-    if (data) {
-      for (const m of (data.messages || [])) if (typeof m.content === "string") state.messages.push({ role: m.role || "assistant", content: m.content });
-      state.pendingApproval = normalizeApproval(data.pending_approval);
+    const msg = ta.value.trim(); if (!msg || state.busy) return;
+    state.messages.push({ role: "user", content: msg }); ta.value = ""; state.busy = true; renderShell();
+    try {
+      const data = await api.sendChat(msg);
+      if (data) {
+        for (const m of (data.messages || [])) if (typeof m.content === "string") state.messages.push({ role: m.role || "assistant", content: m.content });
+        state.pendingApproval = normalizeApproval(data.pending_approval);
+      }
+      state.messages = messagesFromEvents(await api.history());
+      state.status = await api.getStatus();
+    } finally {
+      state.busy = false; renderShell();
     }
-    state.messages = messagesFromEvents(await api.history());
-    state.status = await api.getStatus();
-    renderShell();
   };
   ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
-  return el("div", { class: "composer" }, [ta, el("button", { class: "btn btn-primary", onclick: send }, "Send")]);
+  if (state.busy) ta.disabled = true;
+  const btn = el("button", { class: "btn btn-primary", onclick: send }, "Send");
+  if (state.busy) btn.disabled = true;
+  return el("div", { class: "composer" }, [ta, btn]);
 }
 
 function renderChatDrawer() {
@@ -172,7 +186,7 @@ function renderChat() {
   ]));
   return el("div", { class: "chat" }, [
     renderSessionRail(),
-    el("div", { class: "chat-col" }, [el("div", { class: "transcript" }, msgs), renderComposer()]),
+    el("div", { class: "chat-col" }, [el("div", { class: "transcript" }, [...msgs, state.busy ? loaderEl("AGENT WORKING") : ""]), renderComposer()]),
     renderChatDrawer(),
   ]);
 }
