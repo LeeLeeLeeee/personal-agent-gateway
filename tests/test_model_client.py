@@ -172,6 +172,43 @@ async def test_codex_client_runs_local_codex_exec_and_parses_final_message(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_codex_client_publishes_json_events_while_collecting_final_message(tmp_path: Path) -> None:
+    first = '{"type":"thread.started","thread_id":"thread-1"}'
+    second = '{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"streamed answer"}}'
+    if os.name == "nt":
+        body = f"echo {first}\r\necho {second}"
+    else:
+        body = f"printf '%s\\n%s\\n' '{first}' '{second}'"
+    codex_bin = write_fake_codex(tmp_path, body)
+    events: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        events.append(event)
+
+    client = CodexModelClient(
+        binary=str(codex_bin),
+        model="default",
+        workspace_root=tmp_path,
+        on_event=publish,
+    )
+
+    response = await client.complete([{"role": "user", "content": "hello"}])
+
+    assert response == ModelResponse(content="streamed answer", tool_calls=[])
+    assert events == [
+        {"type": "thread.started", "thread_id": "thread-1"},
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "item-1",
+                "type": "agent_message",
+                "text": "streamed answer",
+            },
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_codex_client_reports_local_codex_failure(tmp_path: Path) -> None:
     if os.name == "nt":
         body = "echo not logged in 1>&2\r\nexit /b 7"

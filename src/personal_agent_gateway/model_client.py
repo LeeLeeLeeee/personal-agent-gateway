@@ -2,6 +2,7 @@ import json
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Literal, Protocol
 
 import httpx
@@ -86,6 +87,7 @@ class CodexModelClient:
         sandbox: str = "workspace-write",
         approval_policy: str = "never",
         timeout_seconds: int = 600,
+        on_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
     ) -> None:
         self._binary = binary
         self._model = model
@@ -93,6 +95,7 @@ class CodexModelClient:
         self._sandbox = sandbox
         self._approval_policy = approval_policy
         self._timeout_seconds = timeout_seconds
+        self._on_event = on_event
 
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
         try:
@@ -105,10 +108,9 @@ class CodexModelClient:
         except FileNotFoundError as exc:
             raise RuntimeError(f"Codex binary not found: {self._binary}") from exc
 
-        prompt = _codex_prompt(messages).encode()
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(prompt),
+            stdout_text, stderr_text = await asyncio.wait_for(
+                self._communicate_stream(process, _codex_prompt(messages).encode()),
                 timeout=self._timeout_seconds,
             )
         except TimeoutError as exc:
@@ -116,14 +118,40 @@ class CodexModelClient:
             await process.communicate()
             raise RuntimeError("Codex execution timed out") from exc
 
-        stdout_text = stdout.decode(errors="replace")
-        stderr_text = stderr.decode(errors="replace")
         if process.returncode != 0:
             detail = _summarize_process_output(stderr_text, stdout_text)
             raise RuntimeError(f"Codex exited with status {process.returncode}: {detail}")
 
         content = _parse_codex_output(stdout_text).strip()
         return ModelResponse(content=content, tool_calls=[])
+
+    async def _communicate_stream(
+        self,
+        process: asyncio.subprocess.Process,
+        prompt: bytes,
+    ) -> tuple[str, str]:
+        if process.stdin is None or process.stdout is None or process.stderr is None:
+            raise RuntimeError("Codex process pipes were not available")
+
+        process.stdin.write(prompt)
+        await process.stdin.drain()
+        process.stdin.close()
+
+        stderr_task = asyncio.create_task(process.stderr.read())
+        stdout_parts: list[str] = []
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            text = line.decode(errors="replace")
+            stdout_parts.append(text)
+            event = _parse_json_line(text)
+            if event is not None and self._on_event is not None:
+                await self._on_event(event)
+
+        stderr = await stderr_task
+        await process.wait()
+        return "".join(stdout_parts), stderr.decode(errors="replace")
 
     def _command(self) -> list[str]:
         command = [
@@ -163,11 +191,8 @@ def _codex_prompt(messages: list[dict[str, object]]) -> str:
 def _parse_codex_output(output: str) -> str:
     final_message = ""
     for line in output.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
+        event = _parse_json_line(line)
+        if event is None:
             continue
         item = event.get("item")
         if not isinstance(item, dict):
@@ -179,6 +204,16 @@ def _parse_codex_output(output: str) -> str:
     if final_message:
         return final_message
     return output
+
+
+def _parse_json_line(line: str) -> dict[str, object] | None:
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(event, dict):
+        return None
+    return {str(key): value for key, value in event.items()}
 
 
 def _summarize_process_output(stderr_text: str, stdout_text: str) -> str:
