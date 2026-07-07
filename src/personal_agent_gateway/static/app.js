@@ -149,6 +149,7 @@ function renderComposer() {
     state.status = await api.getStatus();
     renderShell();
   };
+  ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
   return el("div", { class: "composer" }, [ta, el("button", { class: "btn btn-primary", onclick: send }, "Send")]);
 }
 
