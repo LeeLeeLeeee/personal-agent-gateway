@@ -2,6 +2,9 @@
 
 **Status:** Future (not scheduled). Captured 2026-07-07 during frontend Slice 1.
 
+> The SSE activity-stream portion is now detailed with a real codex event schema in
+> `2026-07-07-live-activity-stream-plan.md`. The model + reasoning-effort display item below remains separate.
+
 ## Motivation
 
 Slice 1's chat shows a single generic "AGENT WORKING" loader while a request is in
