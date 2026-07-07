@@ -9,7 +9,7 @@ const state = {
   authStage: "login", otpInput: "", authError: "", setup: null, recoveryCodes: [],
   timeline: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false, navOpen: false,
   eventSource: null, sseState: "idle", turnStart: null, turnEnd: null, turnHadAgent: false, turnStreamed: false,
-  openCmd: {}, elapsedTimer: null, autoScroll: true,
+  openCmd: {}, elapsedTimer: null, forceBottom: false, editingSession: null, editTitle: "",
 };
 
 const api = {
@@ -29,6 +29,7 @@ const api = {
   async approve(id) { const r = await fetch(`/api/approvals/${encodeURIComponent(id)}/approve`, { method: "POST" }); return r.ok ? r.json() : null; },
   async deny(id) { const r = await fetch(`/api/approvals/${encodeURIComponent(id)}/deny`, { method: "POST" }); return r.ok ? r.json() : null; },
   async artifacts() { const r = await fetch("/api/artifacts"); return r.ok ? (await r.json()).artifacts : []; },
+  async renameSession(id, title) { const r = await fetch(`/api/sessions/${encodeURIComponent(id)}/title`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }); return r.ok ? r.json() : null; },
 };
 
 function normalizeApproval(v) {
@@ -119,7 +120,7 @@ function applySse(event) {
     } else {
       state.timeline.push(entry);
     }
-    renderShell(); scrollBottom();
+    renderShell();
   }
 }
 
@@ -162,10 +163,6 @@ function el(tag, attrs = {}, kids = []) {
 
 function setScreen(name) { state.screen = name; state.navOpen = false; renderShell(); }
 
-function scrollBottom() {
-  if (!state.autoScroll) return;
-  requestAnimationFrame(() => { const t = document.querySelector(".transcript"); if (t) t.scrollTop = t.scrollHeight; });
-}
 function startElapsedTimer() { if (state.elapsedTimer) return; state.elapsedTimer = setInterval(() => { if (state.screen === "chat" && state.busy) renderShell(); }, 1000); }
 function stopElapsedTimer() { if (state.elapsedTimer) { clearInterval(state.elapsedTimer); state.elapsedTimer = null; } }
 
@@ -237,15 +234,40 @@ function renderSessionRail() {
   search.value = state.sessionQuery || "";
   search.oninput = async () => { state.sessionQuery = search.value.trim(); state.sessions = state.sessionQuery ? await api.searchSessions(state.sessionQuery) : await api.sessions(); renderShell(); };
   const items = (state.sessions || []).map(se => {
+    if (state.editingSession === se.id) {
+      const input = el("input", { class: "sess-edit", type: "text", maxlength: "120" });
+      input.value = state.editTitle;
+      input.oninput = () => { state.editTitle = input.value; };
+      const cancel = () => { state.editingSession = null; state.editTitle = ""; renderShell(); };
+      const save = async () => {
+        const title = (state.editTitle || "").trim();
+        if (title) await api.renameSession(se.id, title);
+        state.editingSession = null; state.editTitle = "";
+        state.sessions = await api.sessions(); renderShell();
+      };
+      input.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); save(); } else if (ev.key === "Escape") { cancel(); } };
+      setTimeout(() => input.focus(), 0);
+      return el("div", { class: `sess-item${se.is_active ? " sess-item-active" : ""}` }, [
+        input,
+        el("div", { class: "sess-actions" }, [
+          el("button", { class: "btn btn-sm btn-primary", onclick: save }, "Save"),
+          el("button", { class: "btn btn-sm", onclick: cancel }, "Cancel"),
+        ]),
+      ]);
+    }
     const card = el("div", { class: `sess-item${se.is_active ? " sess-item-active" : ""}`, style: "cursor:pointer" }, [
       el("div", { style: "font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, se.title || "Untitled"),
       el("div", { class: "mono", style: "font-size:10px;color:var(--c-grey);margin-top:3px" }, `${se.status} · ${se.message_count} msg`),
-      el("button", { class: "btn btn-sm", style: "margin-top:6px",
-        onclick: async (e) => { e.stopPropagation(); if (window.confirm("Delete session?")) { await api.deleteSession(se.id); state.sessions = await api.sessions(); renderShell(); } } }, "Delete"),
+      el("div", { class: "sess-actions" }, [
+        el("button", { class: "btn btn-sm",
+          onclick: (e) => { e.stopPropagation(); state.editingSession = se.id; state.editTitle = se.title || ""; renderShell(); } }, "Rename"),
+        el("button", { class: "btn btn-sm btn-destructive",
+          onclick: async (e) => { e.stopPropagation(); if (window.confirm("Delete session?")) { await api.deleteSession(se.id); state.sessions = await api.sessions(); renderShell(); } } }, "Delete"),
+      ]),
     ]);
     card.onclick = async () => {
       const d = await api.activate(se.id);
-      if (d) { state.timeline = timelineFromHistory(d.events); state.pendingApproval = null; state.turnStart = null; state.turnEnd = null; state.turnStreamed = false; state.autoScroll = true; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); scrollBottom(); }
+      if (d) { state.timeline = timelineFromHistory(d.events); state.pendingApproval = null; state.turnStart = null; state.turnEnd = null; state.turnStreamed = false; state.forceBottom = true; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); }
     };
     return card;
   });
@@ -266,13 +288,13 @@ function renderComposer() {
     const msg = ta.value.trim(); if (!msg || state.busy) return;
     state.timeline.push({ type: "user", text: msg, time: nowHM() });
     ta.value = ""; state.busy = true; state.turnStart = Date.now(); state.turnEnd = null;
-    state.turnHadAgent = false; state.turnStreamed = false; state.autoScroll = true;
-    startElapsedTimer(); renderShell(); scrollBottom();
+    state.turnHadAgent = false; state.turnStreamed = false; state.forceBottom = true;
+    startElapsedTimer(); renderShell();
     try {
       const data = await api.sendChat(msg);
       await postTurn(data);
     } finally {
-      state.busy = false; state.turnEnd = Date.now(); stopElapsedTimer(); renderShell(); scrollBottom();
+      state.busy = false; state.turnEnd = Date.now(); stopElapsedTimer(); renderShell();
     }
   };
   ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -309,12 +331,12 @@ async function resolveApproval(action) {
   if (!state.pendingApproval || state.busy) return;
   const id = state.pendingApproval.id;
   state.busy = true; state.turnStart = state.turnStart || Date.now(); state.turnEnd = null;
-  state.turnHadAgent = false; state.turnStreamed = true; startElapsedTimer(); renderShell();
+  state.turnHadAgent = false; state.turnStreamed = true; state.forceBottom = true; startElapsedTimer(); renderShell();
   try {
     const data = action === "approve" ? await api.approve(id) : await api.deny(id);
     await postTurn(data);
   } finally {
-    state.busy = false; state.turnEnd = Date.now(); stopElapsedTimer(); renderShell(); scrollBottom();
+    state.busy = false; state.turnEnd = Date.now(); stopElapsedTimer(); renderShell();
   }
 }
 
@@ -401,8 +423,63 @@ function renderUser(e) {
   ]);
 }
 
+// ---- minimal, XSS-safe markdown (nodes only, no innerHTML) ----
+function mdInline(text) {
+  const out = [];
+  const re = /`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\n]+)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(document.createTextNode(text.slice(last, m.index)));
+    if (m[1] !== undefined) out.push(el("code", { class: "md-code" }, m[1]));
+    else if (m[2] !== undefined) out.push(el("strong", {}, m[2]));
+    else if (m[3] !== undefined) out.push(el("em", {}, m[3]));
+    else out.push(el("a", { href: m[5], target: "_blank", rel: "noopener noreferrer" }, m[4]));
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push(document.createTextNode(text.slice(last)));
+  return out;
+}
+
+function renderMarkdown(src) {
+  const root = el("div", { class: "md" });
+  const lines = String(src).replace(/\r\n/g, "\n").split("\n");
+  let i = 0;
+  const isUl = (l) => /^\s*[-*]\s+/.test(l);
+  const isOl = (l) => /^\s*\d+\.\s+/.test(l);
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^```/.test(line)) {
+      i++;
+      const buf = [];
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++; // skip closing fence
+      root.append(el("pre", { class: "md-pre" }, el("code", {}, buf.join("\n"))));
+      continue;
+    }
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) { root.append(el("h" + h[1].length, {}, mdInline(h[2]))); i++; continue; }
+    if (isUl(line)) {
+      const ul = el("ul", {});
+      while (i < lines.length && isUl(lines[i])) { ul.append(el("li", {}, mdInline(lines[i].replace(/^\s*[-*]\s+/, "")))); i++; }
+      root.append(ul); continue;
+    }
+    if (isOl(line)) {
+      const ol = el("ol", {});
+      while (i < lines.length && isOl(lines[i])) { ol.append(el("li", {}, mdInline(lines[i].replace(/^\s*\d+\.\s+/, "")))); i++; }
+      root.append(ol); continue;
+    }
+    if (/^\s*$/.test(line)) { i++; continue; }
+    const para = [];
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^```/.test(lines[i]) && !/^#{1,6}\s/.test(lines[i]) && !isUl(lines[i]) && !isOl(lines[i])) { para.push(lines[i]); i++; }
+    const p = el("p", {});
+    para.forEach((ln, idx) => { if (idx) p.append(el("br")); mdInline(ln).forEach((n) => p.append(n)); });
+    root.append(p);
+  }
+  return root;
+}
+
 function renderAgent(e) {
-  const bubble = el("div", { class: "bubble" }, e.text);
+  const bubble = el("div", { class: "bubble" }, renderMarkdown(e.text || ""));
   if (e.streaming) bubble.append(el("span", { class: "agent-cursor" }));
   return el("div", { class: "msg-agent" }, [
     el("div", { class: "msg-meta" }, `AGENT · ${e.time || ""}`),
@@ -492,7 +569,6 @@ function renderChat() {
     (state.busy && !state.turnStreamed) ? loaderEl("AGENT WORKING") : "",
     state.pendingApproval ? renderProposal(state.pendingApproval) : "",
   ]);
-  transcript.onscroll = () => { state.autoScroll = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80; };
   return el("div", { class: "chat" }, [
     renderSessionRail(),
     el("div", { class: "chat-col" }, [renderChatHeader(), renderLiveStatusSummary(), transcript, renderComposer()]),
@@ -550,6 +626,13 @@ function renderMain() {
 
 function renderShell() {
   const app = document.getElementById("app");
+  // Preserve transcript scroll across full re-renders so live events / the elapsed
+  // tick don't yank the view to the top. Stick to the bottom only when the user was
+  // already there (or an explicit forceBottom, e.g. send / session switch / load).
+  const prev = document.querySelector(".transcript");
+  const keep = prev
+    ? { top: prev.scrollTop, atBottom: prev.scrollHeight - prev.scrollTop - prev.clientHeight < 40 }
+    : null;
   app.replaceChildren(el("div", { class: `shell${state.navOpen ? " nav-open" : ""}` }, [
     renderSidebar(),
     el("div", { class: "main-col" }, [
@@ -558,6 +641,12 @@ function renderShell() {
     ]),
     state.navOpen ? el("div", { class: "nav-backdrop", onclick: () => { state.navOpen = false; renderShell(); } }) : "",
   ]));
+  const next = document.querySelector(".transcript");
+  if (next) {
+    if (state.forceBottom || (keep && keep.atBottom)) next.scrollTop = next.scrollHeight;
+    else if (keep) next.scrollTop = keep.top;
+  }
+  state.forceBottom = false;
 }
 
 // ---- bootstrap ----
@@ -565,9 +654,9 @@ async function afterAuth() {
   state.status = await api.getStatus();
   state.sessions = await api.sessions();
   state.timeline = timelineFromHistory(await api.history());
+  state.forceBottom = true;
   connectEvents();
   renderShell();
-  scrollBottom();
 }
 
 async function bootstrap() {

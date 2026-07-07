@@ -4,9 +4,9 @@
   --c-danger:#FF0000; --c-link:#0000FF;
   --bd:3px solid var(--c-black); --bd-hero:5px solid var(--c-black);
   --bd-sm:2px solid var(--c-black); --bd-in:1px solid var(--c-black);
-  --font-headline:"Arial Black","Helvetica Neue",Arial,sans-serif;
-  --font-body:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
-  --font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace;
+  --font-headline:"Arial Black","Segoe UI","Apple SD Gothic Neo","Malgun Gothic",Roboto,sans-serif;
+  --font-body:system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",Roboto,Arial,sans-serif;
+  --font-mono:ui-monospace,"Cascadia Mono",Consolas,"D2Coding","Malgun Gothic",Menlo,monospace;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;height:100%;background:var(--c-bg);color:var(--c-black);font-family:var(--font-body);-webkit-font-smoothing:antialiased}
@@ -16,7 +16,16 @@ button,input,textarea{font:inherit;color:inherit}
 h1,h2,h3,p{margin:0}
 [hidden]{display:none!important}
 .mono{font-family:var(--font-mono)}
-.headline{font-family:var(--font-headline);text-transform:uppercase;letter-spacing:.5px}
+.headline{font-family:var(--font-headline);font-weight:800;text-transform:uppercase;letter-spacing:.5px}
+
+/* ---- subtle, auto-hiding scrollbars (visible on hover/scroll) ---- */
+*{scrollbar-width:thin;scrollbar-color:transparent transparent}
+*:hover{scrollbar-color:rgba(128,128,128,.5) transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:transparent;border:2px solid transparent;background-clip:padding-box;border-radius:6px}
+*:hover::-webkit-scrollbar-thumb{background:rgba(128,128,128,.5);background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:rgba(90,90,90,.75);background-clip:padding-box}
 
 /* ---- components ---- */
 .btn{border:var(--bd);background:var(--c-white);color:var(--c-black);font-family:var(--font-mono);font-size:13px;padding:8px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:1px}
@@ -100,7 +109,7 @@ h1,h2,h3,p{margin:0}
 @keyframes blink-hard{0%,49%{opacity:1}50%,100%{opacity:0}}
 
 .chat-header{flex:none;border-bottom:var(--bd);padding:12px 20px;display:flex;align-items:center;gap:12px}
-.chat-header .title{font-family:var(--font-headline);font-size:16px;text-transform:uppercase;letter-spacing:.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-header .title{font-family:var(--font-headline);font-weight:800;font-size:16px;text-transform:uppercase;letter-spacing:.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-header .meta{font-family:var(--font-mono);font-size:10px;color:var(--c-grey);margin-left:auto;flex:none;white-space:nowrap}
 
 .summary-bar{flex:none;border-bottom:var(--bd);display:flex}
@@ -117,6 +126,24 @@ h1,h2,h3,p{margin:0}
 .msg-agent .bubble{font-size:14px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
 .msg-meta{font-family:var(--font-mono);font-size:10px;letter-spacing:1px;color:var(--c-grey);margin-bottom:6px}
 .agent-cursor{display:inline-block;width:8px;height:15px;background:var(--c-black);margin-left:3px;vertical-align:-2px;animation:blink-hard 1s step-end infinite}
+
+/* ---- markdown (agent messages) ---- */
+.md{font-size:14px;line-height:1.6}
+.md>*:first-child{margin-top:0}
+.md>*:last-child{margin-bottom:0}
+.md p{margin:0 0 10px;overflow-wrap:anywhere}
+.md h1,.md h2,.md h3,.md h4{margin:14px 0 8px;font-family:var(--font-headline);font-weight:800;line-height:1.25}
+.md h1{font-size:19px}.md h2{font-size:17px}.md h3{font-size:15px}.md h4{font-size:14px}
+.md ul,.md ol{margin:0 0 10px;padding-left:22px}
+.md li{margin:2px 0;overflow-wrap:anywhere}
+.md a{color:var(--c-link);text-decoration:underline}
+.md code.md-code{font-family:var(--font-mono);font-size:12px;background:var(--c-panel);border:1px solid #ddd;padding:1px 5px}
+.md pre.md-pre{background:var(--c-black);padding:12px 14px;overflow-x:auto;margin:0 0 10px;border:var(--bd)}
+.md pre.md-pre code{font-family:var(--font-mono);font-size:12px;line-height:1.55;white-space:pre;color:#E6E6E6}
+
+/* ---- session rename (inline edit) ---- */
+.sess-edit{width:100%;border:var(--bd-sm);background:var(--c-white);padding:6px 8px;font-family:var(--font-body);font-size:13px}
+.sess-actions{margin-top:6px;display:flex;gap:6px}
 
 .tl-wrap{align-self:stretch}
 .tl-label-head{font-family:var(--font-mono);font-size:10px;letter-spacing:2px;color:var(--c-grey);margin-bottom:10px}
