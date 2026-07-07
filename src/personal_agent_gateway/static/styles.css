@@ -99,6 +99,11 @@ h1,h2,h3,p{margin:0}
 .kv>div{padding:8px 10px;font-family:var(--font-mono);font-size:12px;border-bottom:var(--bd-in)}
 .kv .k{border-right:var(--bd-in);color:var(--c-grey);font-size:10px;letter-spacing:1px}
 .console{background:var(--c-black);color:var(--c-white);padding:12px 14px;font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;overflow-x:auto}
+.activity-list{display:flex;flex-direction:column;gap:8px}
+.activity-item{border:var(--bd-sm);background:var(--c-white)}
+.activity-head{display:flex;justify-content:space-between;gap:8px;border-bottom:var(--bd-in);padding:6px 8px;font-family:var(--font-mono);font-size:10px;letter-spacing:1px}
+.activity-title{padding:8px;font-size:11px;overflow-wrap:anywhere}
+.activity-console{margin:0 8px 8px;max-height:140px;overflow:auto;font-size:11px}
 
 /* ---- responsive ---- */
 .nav-toggle{display:none}

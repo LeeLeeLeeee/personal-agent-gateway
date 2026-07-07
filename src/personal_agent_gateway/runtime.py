@@ -2,6 +2,7 @@ import json
 import os
 from dataclasses import dataclass
 
+from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ModelClient, ToolCall
 from personal_agent_gateway.tools import ShellResult, WorkspaceTools
@@ -28,11 +29,16 @@ class AgentRuntime:
         tools: WorkspaceTools,
         model: ModelClient,
         job_service: JobService | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._transcript = transcript
         self._tools = tools
         self._model = model
         self._job_service = job_service
+        self._event_bus = event_bus
+
+    def attach_event_bus(self, event_bus: EventBus) -> None:
+        self._event_bus = event_bus
 
     async def handle_user_message(self, content: str) -> RuntimeResult:
         try:
@@ -41,9 +47,22 @@ class AgentRuntime:
                 self._restore_pending_shell(pending)
                 return RuntimeResult(messages=[], pending_approval=_pending_response(pending))
 
+            await self._publish(
+                "runtime.user_message.started",
+                {"message": content, "session_id": self._transcript.active_id()},
+            )
             self._append("user", {"content": content})
-            return await self._run_model_loop()
+            result = await self._run_model_loop()
+            await self._publish(
+                "runtime.completed",
+                {
+                    "session_id": self._transcript.active_id(),
+                    "pending_approval": result.pending_approval,
+                },
+            )
+            return result
         except Exception as exc:
+            await self._publish("runtime.error", {"message": _redact_text(str(exc))})
             return self._handle_runtime_error(exc)
 
     async def approve(self, approval_id: str) -> RuntimeResult:
@@ -177,6 +196,11 @@ class AgentRuntime:
             messages=[{"role": "assistant", "content": f"Error: {message}"}],
             pending_approval=None,
         )
+
+    async def _publish(self, event_type: str, payload: dict[str, object]) -> None:
+        if self._event_bus is None:
+            return
+        await self._event_bus.publish({"type": event_type, **_redact_payload(payload)})
 
 
 def _events_to_messages(events: list[TranscriptEvent]) -> list[dict[str, object]]:

@@ -1,9 +1,11 @@
+import asyncio
+import json
 from pathlib import Path
 from typing import Annotated
 
 import uvicorn
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from personal_agent_gateway.api import (
@@ -20,6 +22,7 @@ from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.capabilities import CapabilityRegistry
 from personal_agent_gateway.config import AppConfig, ConfigError, load_config
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import CodexModelClient, OpenAIModelClient
@@ -43,12 +46,17 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app = FastAPI()
     session_dependency = Depends(_require_agent_session)
     static_dir = Path(__file__).parent / "static"
+    event_bus = EventBus()
+    app.state.event_bus = event_bus
     _attach_local_services(app, app_config)
     shared_runtime = runtime or _create_runtime(
         app_config,
         transcript,
         app.state.job_service,
+        event_bus,
     )
+    if hasattr(shared_runtime, "attach_event_bus"):
+        shared_runtime.attach_event_bus(event_bus)
     app.include_router(auth_router)
     app.include_router(capabilities_router)
     app.include_router(jobs_router)
@@ -93,6 +101,19 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             "session_status": _session_status(events, session_id, running_session_id),
             "cookie_secure": app_config.cookie_secure,
         }
+
+    @app.get("/api/events")
+    async def events(
+        request: Request,
+        _session: None = session_dependency,
+    ) -> StreamingResponse:
+        last_event_id = request.headers.get("last-event-id")
+        subscriber = event_bus.subscribe(last_event_id=last_event_id)
+        return StreamingResponse(
+            _sse_events(request, event_bus, subscriber),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/api/sessions")
     def sessions(_session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
@@ -211,8 +232,13 @@ def _create_runtime(
     config: AppConfig,
     transcript: TranscriptStore,
     job_service: JobService | None = None,
+    event_bus: EventBus | None = None,
 ) -> AgentRuntime:
     if config.model_provider == "codex":
+        async def publish_codex_event(event: dict[str, object]) -> None:
+            if event_bus is not None:
+                await event_bus.publish({"type": "codex.event", **event})
+
         return AgentRuntime(
             transcript=transcript,
             tools=WorkspaceTools(config.workspace_root, ApprovalStore()),
@@ -223,8 +249,10 @@ def _create_runtime(
                 sandbox=config.codex_sandbox,
                 approval_policy=config.codex_approval_policy,
                 timeout_seconds=config.codex_timeout_seconds,
+                on_event=publish_codex_event,
             ),
             job_service=job_service,
+            event_bus=event_bus,
         )
 
     if config.model_provider != "openai":
@@ -237,7 +265,27 @@ def _create_runtime(
         tools=WorkspaceTools(config.workspace_root, ApprovalStore()),
         model=OpenAIModelClient(api_key=config.openai_api_key or "", model=config.model),
         job_service=job_service,
+        event_bus=event_bus,
     )
+
+
+async def _sse_events(
+    request: Request,
+    event_bus: EventBus,
+    subscriber: asyncio.Queue[dict[str, object]],
+):
+    try:
+        yield ": connected\n\n"
+        while not await request.is_disconnected():
+            try:
+                event = await asyncio.wait_for(subscriber.get(), timeout=15)
+            except TimeoutError:
+                yield ": heartbeat\n\n"
+                continue
+            event_id = event.get("id")
+            yield f"id: {event_id}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+    finally:
+        event_bus.unsubscribe(subscriber)
 
 
 def _event_payload(event: BaseModel) -> dict[str, object]:

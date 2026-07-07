@@ -1,6 +1,18 @@
 # Live Activity Stream (codex --json → SSE → web) Plan
 
-**Status:** Planned (future slice). Not part of frontend Slice 1. Captured 2026-07-07 with a real codex 0.142.5 `exec --json` sample.
+**Status:** Active implementation on `feat/live-activity-stream` (started 2026-07-07).
+Captured 2026-07-07 with a real codex 0.142.5 `exec --json` sample.
+
+**Execution note:** Backend work lands first with tests for JSONL event parsing,
+event fan-out, and `/api/events` session gating. Frontend work then consumes the
+same event contract with `EventSource` and promotes the existing Activity drawer
+from PLANNED to live timeline.
+
+**Implementation status (2026-07-07):** Implemented on `feat/live-activity-stream`.
+Automated verification: `python -m pytest --basetemp=.tmp-pytest-final -o cache_dir=.tmp-pytest-cache-final`
+(`125 passed`), `python -m ruff check .` (`All checks passed`), and
+`node --check src/personal_agent_gateway/static/app.js` (syntax clean). Manual
+browser verification with a real Codex run is still pending.
 
 **Goal:** Show codex's live activity in the web UI as it works — reasoning text and shell-command execution (start/output/exit) — instead of only the final answer. "Show, not gate": `approval_policy=never` stays; we surface what codex does, we don't intercept it.
 

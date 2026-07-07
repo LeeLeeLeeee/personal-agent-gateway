@@ -8,6 +8,7 @@ const state = {
   screen: "chat", status: null,
   authStage: "login", otpInput: "", authError: "", setup: null, recoveryCodes: [],
   messages: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false, navOpen: false,
+  activity: [], eventSource: null,
 };
 
 const api = {
@@ -44,6 +45,46 @@ function messagesFromEvents(events) {
     else if (e.kind === "tool_result" && typeof p.command === "string") out.push({ role: "tool", content: `$ ${p.command}\nexit ${p.exit_code ?? ""}\n${p.stdout || ""}${p.stderr || ""}` });
   }
   return out;
+}
+
+function connectEvents() {
+  if (state.eventSource) state.eventSource.close();
+  if (typeof EventSource === "undefined") return;
+  const source = new EventSource("/api/events");
+  state.eventSource = source;
+  source.onmessage = (event) => {
+    try {
+      addActivity(JSON.parse(event.data));
+    } catch (_err) {
+      addActivity({ type: "runtime.event_parse_error" });
+    }
+  };
+}
+
+function addActivity(event) {
+  const item = activityItem(event);
+  state.activity = [item, ...state.activity].slice(0, 40);
+  renderShell();
+}
+
+function activityItem(event) {
+  const item = event.item || {};
+  if (event.type === "codex.event" && item.type === "command_execution") {
+    return {
+      kind: (item.status || "command").toUpperCase(),
+      title: item.command || "command",
+      body: item.aggregated_output || "",
+      exitCode: item.exit_code,
+    };
+  }
+  if (event.type === "codex.event" && item.type === "agent_message") {
+    return { kind: "MESSAGE", title: "codex", body: item.text || "" };
+  }
+  return {
+    kind: String(event.type || "EVENT").replace("runtime.", "").toUpperCase(),
+    title: event.message || event.session_id || "",
+    body: event.pending_approval ? "Waiting for approval" : "",
+  };
 }
 
 function el(tag, attrs = {}, kids = []) {
@@ -98,7 +139,7 @@ function renderLogin() {
         onclick: async () => { const r = await api.setupVerify((state.otpInput || "").trim()); if (r && r.enabled) { state.recoveryCodes = r.recovery_codes || []; state.otpInput = ""; state.authStage = "recovery"; renderLogin(); } else { state.authError = "Code did not match. Try the current code."; renderLogin(); } } }, "Verify & enable")),
       el("div", { style: "margin-top:16px" },
         el("button", { class: "mono", style: "background:none;border:none;padding:0;color:var(--c-link);cursor:pointer;text-decoration:underline;font-size:12px",
-          onclick: () => { state.authStage = "login"; state.authError = ""; state.otpInput = ""; renderLogin(); } }, "← Back to sign in")),
+          onclick: () => { state.authStage = "login"; state.authError = ""; state.otpInput = ""; renderLogin(); } }, "Back to sign in")),
     ];
   } else {
     body = [
@@ -107,7 +148,7 @@ function renderLogin() {
       el("div", { class: "mono", style: "border:3px solid var(--c-black);padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px" },
         (state.recoveryCodes || []).map(c => el("span", {}, c))),
       el("div", { class: "mono", style: "margin-top:16px;border:3px solid var(--c-warn);padding:10px 12px;font-size:12px" }, "These codes will not be shown again."),
-      el("div", { style: "margin-top:24px" }, el("button", { class: "btn btn-primary btn-lg", style: "width:100%", onclick: () => afterAuth() }, "I have saved these — continue")),
+      el("div", { style: "margin-top:24px" }, el("button", { class: "btn btn-primary btn-lg", style: "width:100%", onclick: () => afterAuth() }, "I have saved these - continue")),
     ];
   }
   app.replaceChildren(el("div", { style: "height:100%;overflow-y:auto;display:flex;align-items:flex-start;justify-content:center;padding:48px 24px" },
@@ -119,7 +160,7 @@ function loaderEl(label) {
   const cube = el("div", { class: "cube" }, ["f1", "f2", "f3", "f4", "f5", "f6"].map(f => el("div", { class: `face ${f}` })));
   return el("div", { class: "loader" }, [
     el("div", { class: "cube-wrap" }, cube),
-    el("span", { class: "loader-label" }, `${label || "WORKING"}…`),
+    el("span", { class: "loader-label" }, `${label || "WORKING"}...`),
   ]);
 }
 
@@ -149,7 +190,7 @@ function renderSessionRail() {
 }
 
 function renderComposer() {
-  const ta = el("textarea", { class: "input-field", rows: "2", placeholder: "Ask the agent, or describe a local action…" });
+  const ta = el("textarea", { class: "input-field", rows: "2", placeholder: "Ask the agent, or describe a local action..." });
   const send = async () => {
     const msg = ta.value.trim(); if (!msg || state.busy) return;
     state.messages.push({ role: "user", content: msg }); ta.value = ""; state.busy = true; renderShell();
@@ -200,7 +241,7 @@ function renderProposal(a) {
   return el("div", { class: "proposal" }, [
     el("div", { class: "proposal-head" }, [
       el("span", {}, "JOB PROPOSAL"),
-      el("span", { style: "color:var(--c-warn)" }, "● WAITING APPROVAL"),
+      el("span", { style: "color:var(--c-warn)" }, "WAITING APPROVAL"),
     ]),
     el("div", { style: "padding:16px" }, [
       el("div", { class: "kv" }, [
@@ -216,6 +257,23 @@ function renderProposal(a) {
   ]);
 }
 
+function renderActivity() {
+  const items = state.activity.length
+    ? state.activity.map(a => el("div", { class: "activity-item" }, [
+        el("div", { class: "activity-head" }, [
+          el("span", {}, a.kind),
+          a.exitCode === null || a.exitCode === undefined ? "" : el("span", {}, `exit ${a.exitCode}`),
+        ]),
+        a.title ? el("div", { class: "mono activity-title" }, a.title) : "",
+        a.body ? el("div", { class: "console activity-console" }, a.body) : "",
+      ]))
+    : [el("div", { class: "mono", style: "font-size:11px;color:var(--c-grey)" }, "No activity yet.")];
+  return el("div", { style: "margin:14px" }, [
+    el("div", { class: "mono", style: "font-size:11px;letter-spacing:1px;margin-bottom:8px" }, "ACTIVITY"),
+    el("div", { class: "activity-list" }, items),
+  ]);
+}
+
 function renderChatDrawer() {
   const slot = state.pendingApproval
     ? el("div", { style: "padding:14px" }, [
@@ -227,8 +285,8 @@ function renderChatDrawer() {
   return el("aside", { class: "drawer" }, [
     el("div", { class: "mono", style: "background:var(--c-warn);padding:8px 14px;font-size:11px;letter-spacing:1px" }, "PENDING APPROVAL"),
     slot,
-    el("div", { class: "planned", style: "margin:14px" }, "SESSION ARTIFACTS — PLANNED"),
-    el("div", { class: "planned", style: "margin:14px" }, "ACTIVITY — PLANNED"),
+    el("div", { class: "planned", style: "margin:14px" }, "SESSION ARTIFACTS - PLANNED"),
+    renderActivity(),
   ]);
 }
 
@@ -248,13 +306,13 @@ function renderChat() {
 function renderStatusbar() {
   const s = state.status || {};
   const items = [
-    ["WORKSPACE", s.workspace_root || "—"],
+    ["WORKSPACE", s.workspace_root || "--"],
     ["MODEL", `${s.provider || "codex"}/${s.model || "default"}`],
     ["SESSION", `${s.session_status || "idle"} ${(s.session_id || "").slice(0, 8)}`],
     ["PENDING", s.pending_approval ? "1" : "0"],
     ["RUNNING", "PLANNED"], ["TUNNEL", "PLANNED"],
   ];
-  const toggle = el("button", { class: "nav-toggle", onclick: () => { state.navOpen = !state.navOpen; renderShell(); } }, "☰");
+  const toggle = el("button", { class: "nav-toggle", onclick: () => { state.navOpen = !state.navOpen; renderShell(); } }, "Menu");
   const cells = items.map(([k, v]) => el("div", { class: "status-item" },
     [el("span", { class: "status-k" }, k), el("span", { class: "status-v" }, String(v))]));
   return el("header", { class: "statusbar" }, [toggle, ...cells]);
@@ -276,7 +334,7 @@ function renderSidebar() {
 function renderMain() {
   if (state.screen === "chat") return renderChat();
   const label = NAV.find(n => n.key === state.screen).label.toUpperCase();
-  return el("div", { class: "planned" }, `${label} — PLANNED`);
+  return el("div", { class: "planned" }, `${label} - PLANNED`);
 }
 
 function renderShell() {
@@ -296,6 +354,7 @@ async function afterAuth() {
   state.status = await api.getStatus();
   state.messages = messagesFromEvents(await api.history());
   state.sessions = await api.sessions();
+  connectEvents();
   renderShell();
 }
 

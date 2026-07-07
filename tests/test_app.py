@@ -5,10 +5,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import personal_agent_gateway.app as app_module
-from personal_agent_gateway.app import create_app, main
+from personal_agent_gateway.app import _sse_events, create_app, main
 from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.config import AppConfig
+from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse, ToolCall
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.tools import WorkspaceTools
@@ -104,6 +105,31 @@ def test_browser_shell_is_public_but_data_routes_require_session(tmp_path: Path)
     assert client.post("/api/reset").status_code == 401
     assert client.post("/api/approvals/approval-1/approve").status_code == 401
     assert client.post("/api/approvals/approval-1/deny").status_code == 401
+    assert client.get("/api/events").status_code == 401
+
+
+class DisconnectAfterEventRequest:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def is_disconnected(self) -> bool:
+        self.calls += 1
+        return self.calls > 1
+
+
+async def test_sse_events_formats_published_events() -> None:
+    bus = EventBus()
+    await bus.publish({"type": "runtime.started"})
+    subscriber = bus.subscribe()
+    chunks: list[str] = []
+
+    async for chunk in _sse_events(DisconnectAfterEventRequest(), bus, subscriber):
+        chunks.append(chunk)
+
+    assert chunks == [
+        ": connected\n\n",
+        'id: 1\ndata: {"id": 1, "type": "runtime.started"}\n\n',
+    ]
 
 
 def test_query_token_is_not_required_to_load_browser_shell(tmp_path: Path) -> None:
@@ -136,6 +162,10 @@ def test_ui_assets_smoke(tmp_path: Path) -> None:
     assert "text/javascript" in script.headers["content-type"]
     assert "renderShell" in script.text
     assert "/api/status" in script.text
+    assert "EventSource" in script.text
+    assert "/api/events" in script.text
+    assert "state.activity" in script.text
+    assert "renderActivity" in script.text
 
 
 def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
@@ -175,6 +205,27 @@ def test_status_reports_active_session_after_real_runtime_message(tmp_path: Path
     assert payload["session_id"]
     assert payload["message_count"] == 2
     assert payload["session_status"] == "idle"
+
+
+def test_chat_records_runtime_events_for_sse_subscribers(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient([ModelResponse(content="stored answer", tool_calls=[])]),
+    )
+    client = auth_client(config, runtime)
+
+    response = client.post("/api/chat", json={"message": "remember this"})
+
+    assert response.status_code == 200
+    recent = client.app.state.event_bus.recent()
+    assert [event["type"] for event in recent] == [
+        "runtime.user_message.started",
+        "runtime.completed",
+    ]
+    assert recent[0]["message"] == "remember this"
+    assert recent[1]["pending_approval"] is None
 
 
 def test_sessions_api_lists_activate_delete_and_searches_sessions(tmp_path: Path) -> None:
