@@ -10,6 +10,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;height:100%;background:var(--c-bg);color:var(--c-black);font-family:var(--font-body);-webkit-font-smoothing:antialiased}
+#app{height:100%}
 button,input,textarea{font:inherit;color:inherit}
 h1,h2,h3,p{margin:0}
 [hidden]{display:none!important}
