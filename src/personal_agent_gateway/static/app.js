@@ -7,7 +7,7 @@ const PLANNED = new Set(["jobs", "schedules", "capabilities", "artifacts", "sett
 const state = {
   screen: "chat", status: null,
   authStage: "login", otpInput: "", authError: "", setup: null, recoveryCodes: [],
-  messages: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false,
+  messages: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false, navOpen: false,
 };
 
 const api = {
@@ -58,7 +58,7 @@ function el(tag, attrs = {}, kids = []) {
   return n;
 }
 
-function setScreen(name) { state.screen = name; renderShell(); }
+function setScreen(name) { state.screen = name; state.navOpen = false; renderShell(); }
 
 // ---- login ----
 function renderLogin() {
@@ -254,9 +254,10 @@ function renderStatusbar() {
     ["PENDING", s.pending_approval ? "1" : "0"],
     ["RUNNING", "PLANNED"], ["TUNNEL", "PLANNED"],
   ];
-  return el("header", { class: "statusbar" },
-    items.map(([k, v]) => el("div", { class: "status-item" },
-      [el("span", { class: "status-k" }, k), el("span", { class: "status-v" }, String(v))])));
+  const toggle = el("button", { class: "nav-toggle", onclick: () => { state.navOpen = !state.navOpen; renderShell(); } }, "☰");
+  const cells = items.map(([k, v]) => el("div", { class: "status-item" },
+    [el("span", { class: "status-k" }, k), el("span", { class: "status-v" }, String(v))]));
+  return el("header", { class: "statusbar" }, [toggle, ...cells]);
 }
 
 function renderSidebar() {
@@ -280,7 +281,7 @@ function renderMain() {
 
 function renderShell() {
   const app = document.getElementById("app");
-  app.replaceChildren(el("div", { class: "shell" }, [
+  app.replaceChildren(el("div", { class: `shell${state.navOpen ? " nav-open" : ""}` }, [
     renderSidebar(),
     el("div", { class: "main-col" }, [
       renderStatusbar(),
