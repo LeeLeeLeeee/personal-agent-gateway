@@ -7,8 +7,9 @@ const PLANNED = new Set(["jobs", "schedules", "capabilities", "artifacts", "sett
 const state = {
   screen: "chat", status: null,
   authStage: "login", otpInput: "", authError: "", setup: null, recoveryCodes: [],
-  timeline: [], live: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false, navOpen: false,
-  eventSource: null, sseState: "idle", turnStart: null, turnEnd: null, openCmd: {}, elapsedTimer: null, autoScroll: true,
+  timeline: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false, navOpen: false,
+  eventSource: null, sseState: "idle", turnStart: null, turnEnd: null, turnHadAgent: false, turnStreamed: false,
+  openCmd: {}, elapsedTimer: null, autoScroll: true,
 };
 
 const api = {
@@ -73,15 +74,17 @@ function timelineFromHistory(events) {
 }
 
 function entryFromSse(ev) {
-  if (ev.type === "codex.event") {
-    const it = ev.item || {};
+  // Codex streams item.started/item.completed carrying an `item` (command_execution | agent_message).
+  const it = ev.item;
+  if (it && typeof it === "object") {
     if (it.type === "command_execution") {
-      const status = it.status || "running";
+      let status = it.status === "in_progress" ? "running" : (it.status || "running");
+      if (status === "completed" && it.exit_code != null && it.exit_code !== 0) status = "failed";
       const done = status === "completed" || status === "failed";
       return {
-        type: "command", key: "l" + (it.id || it.command || ""), command: it.command || "command",
+        type: "command", key: "c" + (it.id || it.command || ""), command: it.command || "command",
         status, exit: it.exit_code, lines: linesFrom(it.aggregated_output || ""), time: nowHMS(),
-        duration: done ? "" : "live", live: true,
+        duration: done ? "" : "live",
       };
     }
     if (it.type === "agent_message") return { type: "agent", text: it.text || "", time: nowHM(), streaming: false };
@@ -90,7 +93,7 @@ function entryFromSse(ev) {
   if (ev.type === "runtime.user_message.started") return { type: "event_row", label: "runtime.user_message.started", detail: "message accepted", dotColor: "#000", time: nowHMS() };
   if (ev.type === "runtime.completed") return { type: "event_row", label: "runtime.completed", detail: "session finished", dotColor: "#008000", time: nowHMS() };
   if (ev.type === "runtime.error") return { type: "runtime_error", message: typeof ev.message === "string" ? ev.message : "runtime error", time: nowHMS() };
-  return null;
+  return null; // thread.started / turn.started / turn.completed etc. are not rendered
 }
 
 function connectEvents() {
@@ -107,19 +110,22 @@ function applySse(event) {
   if (event.type === "runtime.user_message.started") { state.turnStart = Date.now(); state.turnEnd = null; }
   const entry = entryFromSse(event);
   if (entry) {
+    state.turnStreamed = true;
+    if (entry.type === "agent") state.turnHadAgent = true;
     if (entry.type === "command") {
-      const idx = state.live.findIndex((e) => e.type === "command" && e.key === entry.key);
-      if (idx >= 0) state.live[idx] = entry; else state.live.push(entry);
+      // Reconcile item.started -> item.completed in place (same item id).
+      const idx = state.timeline.findIndex((e) => e.type === "command" && e.key === entry.key);
+      if (idx >= 0) state.timeline[idx] = entry; else state.timeline.push(entry);
     } else {
-      state.live.push(entry);
+      state.timeline.push(entry);
     }
+    renderShell(); scrollBottom();
   }
-  renderShell(); scrollBottom();
 }
 
 function deriveLive() {
-  const entries = state.timeline.concat(state.live);
-  const running = state.live.filter((e) => e.type === "command" && e.status !== "completed" && e.status !== "failed").length;
+  const entries = state.timeline;
+  const running = entries.filter((e) => e.type === "command" && e.status !== "completed" && e.status !== "failed").length;
   let phase, color;
   if (running > 0) { phase = "COMMAND RUNNING"; color = "var(--c-warn)"; }
   else if (state.busy) { phase = "WORKING"; color = "var(--c-warn)"; }
@@ -239,7 +245,7 @@ function renderSessionRail() {
     ]);
     card.onclick = async () => {
       const d = await api.activate(se.id);
-      if (d) { state.timeline = timelineFromHistory(d.events); state.live = []; state.pendingApproval = null; state.turnStart = null; state.turnEnd = null; state.autoScroll = true; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); scrollBottom(); }
+      if (d) { state.timeline = timelineFromHistory(d.events); state.pendingApproval = null; state.turnStart = null; state.turnEnd = null; state.turnStreamed = false; state.autoScroll = true; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); scrollBottom(); }
     };
     return card;
   });
@@ -247,7 +253,7 @@ function renderSessionRail() {
     el("div", { class: "sess-head" }, [
       el("span", { class: "headline", style: "font-size:12px" }, "Sessions"),
       el("button", { class: "btn btn-sm",
-        onclick: async () => { await api.reset(); state.timeline = []; state.live = []; state.pendingApproval = null; state.turnStart = null; state.turnEnd = null; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); } }, "+"),
+        onclick: async () => { await api.reset(); state.timeline = []; state.pendingApproval = null; state.turnStart = null; state.turnEnd = null; state.turnStreamed = false; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); } }, "+"),
     ]),
     el("div", { style: "padding:10px 12px" }, search),
     el("div", { style: "flex:1;overflow-y:auto" }, items),
@@ -259,12 +265,12 @@ function renderComposer() {
   const send = async () => {
     const msg = ta.value.trim(); if (!msg || state.busy) return;
     state.timeline.push({ type: "user", text: msg, time: nowHM() });
-    ta.value = ""; state.busy = true; state.live = []; state.turnStart = Date.now(); state.turnEnd = null; state.autoScroll = true;
+    ta.value = ""; state.busy = true; state.turnStart = Date.now(); state.turnEnd = null;
+    state.turnHadAgent = false; state.turnStreamed = false; state.autoScroll = true;
     startElapsedTimer(); renderShell(); scrollBottom();
     try {
       const data = await api.sendChat(msg);
-      if (data) state.pendingApproval = normalizeApproval(data.pending_approval);
-      await afterTurn();
+      await postTurn(data);
     } finally {
       state.busy = false; state.turnEnd = Date.now(); stopElapsedTimer(); renderShell(); scrollBottom();
     }
@@ -276,10 +282,17 @@ function renderComposer() {
   return el("div", { class: "composer" }, [ta, btn]);
 }
 
-async function afterTurn() {
-  state.timeline = timelineFromHistory(await api.history());
-  state.live = [];
+async function postTurn(data) {
+  state.pendingApproval = data ? normalizeApproval(data.pending_approval) : null;
+  // The codex SSE stream already carried the agent's reply as agent_message entries.
+  // For providers that don't stream one (e.g. openai/WorkspaceTools), fall back to the chat response.
+  if (!state.turnHadAgent && data && Array.isArray(data.messages)) {
+    for (const m of data.messages) {
+      if (typeof m.content === "string") state.timeline.push({ type: "agent", text: m.content, time: nowHM() });
+    }
+  }
   state.status = await api.getStatus();
+  state.sessions = await api.sessions();
   await maybeArtifact();
 }
 
@@ -295,11 +308,11 @@ async function maybeArtifact() {
 async function resolveApproval(action) {
   if (!state.pendingApproval || state.busy) return;
   const id = state.pendingApproval.id;
-  state.busy = true; state.turnStart = state.turnStart || Date.now(); state.turnEnd = null; startElapsedTimer(); renderShell();
+  state.busy = true; state.turnStart = state.turnStart || Date.now(); state.turnEnd = null;
+  state.turnHadAgent = false; state.turnStreamed = true; startElapsedTimer(); renderShell();
   try {
     const data = action === "approve" ? await api.approve(id) : await api.deny(id);
-    if (data) state.pendingApproval = normalizeApproval(data.pending_approval);
-    await afterTurn();
+    await postTurn(data);
   } finally {
     state.busy = false; state.turnEnd = Date.now(); stopElapsedTimer(); renderShell(); scrollBottom();
   }
@@ -430,7 +443,7 @@ function idleEmpty() {
 }
 
 function renderTimeline() {
-  const entries = state.timeline.concat(state.live);
+  const entries = state.timeline;
   if (!entries.length && !state.busy) return el("div", { class: "stream" }, idleEmpty());
   const nodes = [];
   let cluster = [];
@@ -476,7 +489,7 @@ function renderLiveStatusSummary() {
 function renderChat() {
   const transcript = el("div", { class: "transcript" }, [
     renderTimeline(),
-    (state.busy && !state.live.length) ? loaderEl("AGENT WORKING") : "",
+    (state.busy && !state.turnStreamed) ? loaderEl("AGENT WORKING") : "",
     state.pendingApproval ? renderProposal(state.pendingApproval) : "",
   ]);
   transcript.onscroll = () => { state.autoScroll = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80; };
@@ -552,7 +565,6 @@ async function afterAuth() {
   state.status = await api.getStatus();
   state.sessions = await api.sessions();
   state.timeline = timelineFromHistory(await api.history());
-  state.live = [];
   connectEvents();
   renderShell();
   scrollBottom();
