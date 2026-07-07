@@ -85,7 +85,26 @@ The `jobs` table has `created_at/started_at/finished_at`; `job_events` records l
 - [ ] Failing tests first (filter by status; by source; combined; empty → all).
 - [ ] Verify: pytest + ruff.
 
-## Task 7: Final Verification
+## Task 7: OTP-first browser auth — remove the web_token page gate
+
+**Problem:** The backend is half-migrated. `require_token` (web_token) still gates the browser-facing routes (`GET /`, `/static/app.js`, `/static/styles.css`, `/api/status`, `/api/history`, `/api/sessions*`, `/api/reset`, `/api/approvals/*`) while OTP only guards `/api/chat`. The result is a confusing double gate: the user needs a token in the URL just to load the page **and** an OTP. Per the UI/UX brief, browser login must be **OTP-only**; the token is for first-time setup, recovery, and optional API bearer — never a page gate.
+
+**Files:** Modify `src/personal_agent_gateway/app.py` (route dependencies), possibly `src/personal_agent_gateway/auth.py`; tests `tests/test_app.py`, `tests/test_api_auth.py`.
+
+**Target behavior:**
+- Fresh browser, **no** `agent_session`, TOTP **configured** → `GET /` serves the app; the app shows the OTP login. **No `?token=` required.**
+- No session, TOTP **not** configured → the app shows first-time setup; setup endpoints stay gated by the setup token (`_require_setup_access` / `AGENT_AUTH_SETUP_TOKEN`), unchanged.
+- Valid `agent_session` → full access.
+- Optional hardening: when `auth_require_token_and_otp` is true, additionally require the token (keeps the strict mode available, off by default).
+
+- [ ] Replace `require_token` on the browser-facing routes with an OTP-session gate (reuse/adjust `_require_otp_session_if_configured`), so `GET /`, `/static/*`, and the read/session/approval/reset APIs no longer demand `?token=`.
+- [ ] `GET /` must serve the shell HTML **without** a token so the JS can render the OTP login (the page itself is not a secret; the session/OTP protects actions and data).
+- [ ] Keep `/api/chat` and state-changing/data routes gated by the OTP session.
+- [ ] Keep setup routes (`/api/auth/setup/*`) gated by the setup token.
+- [ ] Update tests: `test_unauthenticated_routes_return_401` and `test_query_token_authenticates_and_sets_cookie` must be rewritten for the OTP model — page/static reachable without a token; data/action routes require an `agent_session`; setup still token-gated. Coordinate with the frontend track, which owns `test_ui_assets_smoke`.
+- [ ] Verify: pytest + ruff.
+
+## Task 8: Final Verification
 
 - [ ] `python -m pytest` — all green.
 - [ ] `python -m ruff check .` — clean.
