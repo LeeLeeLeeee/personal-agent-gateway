@@ -24,6 +24,8 @@ const api = {
   async activate(id) { const r = await fetch(`/api/sessions/${encodeURIComponent(id)}/activate`, { method: "POST" }); return r.ok ? r.json() : null; },
   async deleteSession(id) { const r = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }); return r.ok ? r.json() : null; },
   async reset() { const r = await fetch("/api/reset", { method: "POST" }); return r.ok ? r.json() : null; },
+  async approve(id) { const r = await fetch(`/api/approvals/${encodeURIComponent(id)}/approve`, { method: "POST" }); return r.ok ? r.json() : null; },
+  async deny(id) { const r = await fetch(`/api/approvals/${encodeURIComponent(id)}/deny`, { method: "POST" }); return r.ok ? r.json() : null; },
 };
 
 function normalizeApproval(v) {
@@ -170,9 +172,57 @@ function renderComposer() {
   return el("div", { class: "composer" }, [ta, btn]);
 }
 
+async function resolveApproval(action) {
+  if (!state.pendingApproval || state.busy) return;
+  const id = state.pendingApproval.id;
+  state.busy = true; renderShell();
+  try {
+    const data = action === "approve" ? await api.approve(id) : await api.deny(id);
+    if (data) {
+      for (const m of (data.messages || [])) if (typeof m.content === "string") state.messages.push({ role: m.role || "assistant", content: m.content });
+      state.pendingApproval = normalizeApproval(data.pending_approval);
+    }
+    state.messages = messagesFromEvents(await api.history());
+    state.status = await api.getStatus();
+  } finally {
+    state.busy = false; renderShell();
+  }
+}
+
+function approvalActions(size) {
+  return el("div", { style: "margin-top:14px;display:flex;gap:8px" }, [
+    el("button", { class: `btn btn-primary ${size}`, onclick: () => resolveApproval("approve") }, "Approve"),
+    el("button", { class: `btn btn-destructive ${size}`, onclick: () => resolveApproval("deny") }, "Deny"),
+  ]);
+}
+
+function renderProposal(a) {
+  return el("div", { class: "proposal" }, [
+    el("div", { class: "proposal-head" }, [
+      el("span", {}, "JOB PROPOSAL"),
+      el("span", { style: "color:var(--c-warn)" }, "● WAITING APPROVAL"),
+    ]),
+    el("div", { style: "padding:16px" }, [
+      el("div", { class: "kv" }, [
+        el("div", { class: "k" }, "CAPABILITY"), el("div", {}, "shell.run"),
+        el("div", { class: "k" }, "RISK"), el("div", { style: "color:var(--c-danger)" }, "HIGH · runs a local command"),
+      ]),
+      el("div", { style: "margin-top:12px" }, [
+        el("div", { class: "mono", style: "font-size:10px;letter-spacing:1px;color:var(--c-grey);margin-bottom:4px" }, "COMMAND PREVIEW"),
+        el("div", { class: "console" }, a.command),
+      ]),
+      approvalActions("btn-sm"),
+    ]),
+  ]);
+}
+
 function renderChatDrawer() {
   const slot = state.pendingApproval
-    ? el("div", { class: "mono", style: "padding:14px;font-size:11px;word-break:break-all" }, state.pendingApproval.command)
+    ? el("div", { style: "padding:14px" }, [
+        el("div", { class: "mono", style: "font-size:12px;margin-bottom:4px" }, "shell.run"),
+        el("div", { class: "mono", style: "font-size:10px;color:var(--c-grey);word-break:break-all;line-height:1.5" }, state.pendingApproval.command),
+        approvalActions("btn-sm"),
+      ])
     : el("div", { class: "mono", style: "padding:14px;font-size:11px;color:var(--c-grey)" }, "No approvals waiting.");
   return el("aside", { class: "drawer" }, [
     el("div", { class: "mono", style: "background:var(--c-warn);padding:8px 14px;font-size:11px;letter-spacing:1px" }, "PENDING APPROVAL"),
@@ -189,7 +239,7 @@ function renderChat() {
   ]));
   return el("div", { class: "chat" }, [
     renderSessionRail(),
-    el("div", { class: "chat-col" }, [el("div", { class: "transcript" }, [...msgs, state.busy ? loaderEl("AGENT WORKING") : ""]), renderComposer()]),
+    el("div", { class: "chat-col" }, [el("div", { class: "transcript" }, [...msgs, state.pendingApproval ? renderProposal(state.pendingApproval) : "", state.busy ? loaderEl("AGENT WORKING") : ""]), renderComposer()]),
     renderChatDrawer(),
   ]);
 }
