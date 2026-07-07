@@ -59,7 +59,7 @@ function renderLogin() {
       el("div", { class: "headline", style: "font-size:22px;margin-bottom:6px" }, "Set up authenticator"),
       el("div", { style: "font-size:13px;color:var(--c-dark);margin-bottom:16px" }, "Scan the QR in Google Authenticator, then enter the 6-digit code."),
       el("div", { style: "display:flex;gap:16px;align-items:flex-start" }, [
-        el("div", { html: s.qr_svg || "", style: "width:140px;height:140px;flex:none;border:3px solid var(--c-black);background:#fff;overflow:hidden" }),
+        el("div", { class: "qr", html: s.qr_svg || "" }),
         el("div", { style: "flex:1;min-width:0" }, [
           el("div", { class: "mono", style: "font-size:10px;letter-spacing:1px;color:var(--c-grey);margin-bottom:4px" }, "MANUAL SETUP KEY"),
           el("div", { class: "mono", style: "font-size:13px;word-break:break-all;border:2px solid var(--c-black);padding:8px 10px" }, s.secret || ""),
