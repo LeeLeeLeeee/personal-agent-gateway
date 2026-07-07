@@ -77,6 +77,10 @@ class ScheduleService:
             for row in self._db.fetchall("select * from schedules order by created_at desc")
         ]
 
+    def delete(self, schedule_id: str) -> None:
+        self.get_schedule(schedule_id)
+        self._db.execute("delete from schedules where id = ?", (schedule_id,))
+
     def pause(self, schedule_id: str) -> Schedule:
         self._set_enabled(schedule_id, enabled=False)
         return self.get_schedule(schedule_id)
