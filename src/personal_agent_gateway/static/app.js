@@ -125,13 +125,16 @@ function renderSessionRail() {
   const search = el("input", { class: "input-field", type: "search", placeholder: "Search" });
   search.value = state.sessionQuery || "";
   search.oninput = async () => { state.sessionQuery = search.value.trim(); state.sessions = state.sessionQuery ? await api.searchSessions(state.sessionQuery) : await api.sessions(); renderShell(); };
-  const items = (state.sessions || []).map(se => el("div", { class: `sess-item${se.is_active ? " sess-item-active" : ""}` }, [
-    el("div", { style: "font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer",
-      onclick: async () => { const d = await api.activate(se.id); if (d) { state.messages = messagesFromEvents(d.events); state.pendingApproval = null; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); } } }, se.title || "Untitled"),
-    el("div", { class: "mono", style: "font-size:10px;color:var(--c-grey);margin-top:3px" }, `${se.status} · ${se.message_count} msg`),
-    el("button", { class: "btn btn-sm", style: "margin-top:6px",
-      onclick: async () => { if (window.confirm("Delete session?")) { await api.deleteSession(se.id); state.sessions = await api.sessions(); renderShell(); } } }, "Delete"),
-  ]));
+  const items = (state.sessions || []).map(se => {
+    const card = el("div", { class: `sess-item${se.is_active ? " sess-item-active" : ""}`, style: "cursor:pointer" }, [
+      el("div", { style: "font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, se.title || "Untitled"),
+      el("div", { class: "mono", style: "font-size:10px;color:var(--c-grey);margin-top:3px" }, `${se.status} · ${se.message_count} msg`),
+      el("button", { class: "btn btn-sm", style: "margin-top:6px",
+        onclick: async (e) => { e.stopPropagation(); if (window.confirm("Delete session?")) { await api.deleteSession(se.id); state.sessions = await api.sessions(); renderShell(); } } }, "Delete"),
+    ]);
+    card.onclick = async () => { const d = await api.activate(se.id); if (d) { state.messages = messagesFromEvents(d.events); state.pendingApproval = null; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); } };
+    return card;
+  });
   return el("div", { class: "sess-rail" }, [
     el("div", { class: "sess-head" }, [
       el("span", { class: "headline", style: "font-size:12px" }, "Sessions"),

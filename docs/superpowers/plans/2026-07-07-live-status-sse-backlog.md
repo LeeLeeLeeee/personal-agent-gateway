@@ -34,3 +34,8 @@ live local machine state. We want richer, phase-aware feedback and live status.
 ## Deferred sub-ideas
 - Per-job live log tailing over the same stream.
 - Progress bars for long ffmpeg/capture runs (needs runner progress parsing).
+
+## Show codex model + reasoning effort in status (future)
+- **Backend (Codex/Python):** add config `codex_reasoning_effort` (`low|medium|high`); in `CodexModelClient._command()` append `-c model_reasoning_effort=<val>`; expose `model` (already in `/api/status`) + a new `reasoning_effort` field.
+- Optionally report the *actually resolved* codex model from `codex exec --json` output instead of only `config.model` (which is "default" unless `AGENT_MODEL` is set).
+- **Frontend:** status bar MODEL → `codex/<model> · <EFFORT>` (e.g. `codex/gpt-5-codex · HIGH`).
