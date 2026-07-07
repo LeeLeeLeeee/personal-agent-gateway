@@ -7,6 +7,7 @@ const PLANNED = new Set(["jobs", "schedules", "capabilities", "artifacts", "sett
 const state = {
   screen: "chat", status: null,
   authStage: "login", otpInput: "", authError: "", setup: null, recoveryCodes: [],
+  messages: [], sessions: [], sessionQuery: "", pendingApproval: null,
 };
 
 const api = {
@@ -16,7 +17,32 @@ const api = {
   async setupStart() { const r = await fetch("/api/auth/setup/start", { method: "POST" }); return r.ok ? r.json() : null; },
   async setupVerify(otp) { const r = await fetch("/api/auth/setup/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ otp }) }); return r.ok ? r.json() : null; },
   async logout() { await fetch("/api/auth/logout", { method: "POST" }); },
+  async history() { const r = await fetch("/api/history"); return r.ok ? (await r.json()).events : []; },
+  async sendChat(message) { const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message }) }); return r.ok ? r.json() : null; },
+  async sessions() { const r = await fetch("/api/sessions"); return r.ok ? (await r.json()).sessions : []; },
+  async searchSessions(q) { const r = await fetch(`/api/sessions/search?q=${encodeURIComponent(q)}`); return r.ok ? (await r.json()).sessions : []; },
+  async activate(id) { const r = await fetch(`/api/sessions/${encodeURIComponent(id)}/activate`, { method: "POST" }); return r.ok ? r.json() : null; },
+  async deleteSession(id) { const r = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }); return r.ok ? r.json() : null; },
+  async reset() { const r = await fetch("/api/reset", { method: "POST" }); return r.ok ? r.json() : null; },
 };
+
+function normalizeApproval(v) {
+  if (!v || typeof v !== "object") return null;
+  if (typeof v.id !== "string" || typeof v.command !== "string") return null;
+  return { id: v.id, command: v.command };
+}
+
+function messagesFromEvents(events) {
+  const out = [];
+  for (const e of events) {
+    const p = e.payload || {};
+    if ((e.kind === "user" || e.kind === "assistant") && typeof p.content === "string") out.push({ role: e.kind, content: p.content });
+    else if (e.kind === "runtime_error" && typeof p.message === "string") out.push({ role: "system", content: `Error: ${p.message}` });
+    else if (e.kind === "tool_denial" && typeof p.command === "string") out.push({ role: "system", content: `Denied: ${p.command}` });
+    else if (e.kind === "tool_result" && typeof p.command === "string") out.push({ role: "tool", content: `$ ${p.command}\nexit ${p.exit_code ?? ""}\n${p.stdout || ""}${p.stderr || ""}` });
+  }
+  return out;
+}
 
 function el(tag, attrs = {}, kids = []) {
   const n = document.createElement(tag);
@@ -86,6 +112,70 @@ function renderLogin() {
     el("div", { class: "card-hero", style: "padding:32px" }, body)));
 }
 
+// ---- chat ----
+function renderSessionRail() {
+  const search = el("input", { class: "input-field", type: "search", placeholder: "Search" });
+  search.value = state.sessionQuery || "";
+  search.oninput = async () => { state.sessionQuery = search.value.trim(); state.sessions = state.sessionQuery ? await api.searchSessions(state.sessionQuery) : await api.sessions(); renderShell(); };
+  const items = (state.sessions || []).map(se => el("div", { class: `sess-item${se.is_active ? " sess-item-active" : ""}` }, [
+    el("div", { style: "font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer",
+      onclick: async () => { const d = await api.activate(se.id); if (d) { state.messages = messagesFromEvents(d.events); state.pendingApproval = null; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); } } }, se.title || "Untitled"),
+    el("div", { class: "mono", style: "font-size:10px;color:var(--c-grey);margin-top:3px" }, `${se.status} · ${se.message_count} msg`),
+    el("button", { class: "btn btn-sm", style: "margin-top:6px",
+      onclick: async () => { if (window.confirm("Delete session?")) { await api.deleteSession(se.id); state.sessions = await api.sessions(); renderShell(); } } }, "Delete"),
+  ]));
+  return el("div", { class: "sess-rail" }, [
+    el("div", { class: "sess-head" }, [
+      el("span", { class: "headline", style: "font-size:12px" }, "Sessions"),
+      el("button", { class: "btn btn-sm",
+        onclick: async () => { await api.reset(); state.messages = []; state.pendingApproval = null; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); } }, "+"),
+    ]),
+    el("div", { style: "padding:10px 12px" }, search),
+    el("div", { style: "flex:1;overflow-y:auto" }, items),
+  ]);
+}
+
+function renderComposer() {
+  const ta = el("textarea", { class: "input-field", rows: "2", placeholder: "Ask the agent, or describe a local action…" });
+  const send = async () => {
+    const msg = ta.value.trim(); if (!msg) return;
+    state.messages.push({ role: "user", content: msg }); ta.value = ""; renderShell();
+    const data = await api.sendChat(msg);
+    if (data) {
+      for (const m of (data.messages || [])) if (typeof m.content === "string") state.messages.push({ role: m.role || "assistant", content: m.content });
+      state.pendingApproval = normalizeApproval(data.pending_approval);
+    }
+    state.messages = messagesFromEvents(await api.history());
+    state.status = await api.getStatus();
+    renderShell();
+  };
+  return el("div", { class: "composer" }, [ta, el("button", { class: "btn btn-primary", onclick: send }, "Send")]);
+}
+
+function renderChatDrawer() {
+  const slot = state.pendingApproval
+    ? el("div", { class: "mono", style: "padding:14px;font-size:11px;word-break:break-all" }, state.pendingApproval.command)
+    : el("div", { class: "mono", style: "padding:14px;font-size:11px;color:var(--c-grey)" }, "No approvals waiting.");
+  return el("aside", { class: "drawer" }, [
+    el("div", { class: "mono", style: "background:var(--c-warn);padding:8px 14px;font-size:11px;letter-spacing:1px" }, "PENDING APPROVAL"),
+    slot,
+    el("div", { class: "planned", style: "margin:14px" }, "SESSION ARTIFACTS — PLANNED"),
+    el("div", { class: "planned", style: "margin:14px" }, "ACTIVITY — PLANNED"),
+  ]);
+}
+
+function renderChat() {
+  const msgs = (state.messages || []).map(m => el("div", { class: "msg" }, [
+    el("div", { class: "msg-head" }, [el("span", {}, m.role.toUpperCase()), el("span", { style: "color:var(--c-grey)" }, "")]),
+    el("div", { class: `msg-body${m.role === "tool" || m.role === "system" ? " mono" : ""}` }, m.content),
+  ]));
+  return el("div", { class: "chat" }, [
+    renderSessionRail(),
+    el("div", { class: "chat-col" }, [el("div", { class: "transcript" }, msgs), renderComposer()]),
+    renderChatDrawer(),
+  ]);
+}
+
 // ---- shell ----
 function renderStatusbar() {
   const s = state.status || {};
@@ -115,7 +205,7 @@ function renderSidebar() {
 }
 
 function renderMain() {
-  if (state.screen === "chat") return el("div", { class: "planned" }, "CHAT — rendered in Task 3");
+  if (state.screen === "chat") return renderChat();
   const label = NAV.find(n => n.key === state.screen).label.toUpperCase();
   return el("div", { class: "planned" }, `${label} — PLANNED`);
 }
@@ -134,6 +224,8 @@ function renderShell() {
 // ---- bootstrap ----
 async function afterAuth() {
   state.status = await api.getStatus();
+  state.messages = messagesFromEvents(await api.history());
+  state.sessions = await api.sessions();
   renderShell();
 }
 
