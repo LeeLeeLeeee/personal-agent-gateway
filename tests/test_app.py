@@ -127,24 +127,15 @@ def test_ui_assets_smoke(tmp_path: Path) -> None:
     page = client.get("/")
     script = client.get("/static/app.js")
 
+    # UI is JS-rendered (frontend redesign): served HTML is a #app skeleton;
+    # behavior lives in app.js. Frontend-owned smoke assertions.
     assert page.status_code == 200
     assert "text/html" in page.headers["content-type"]
-    assert 'id="app-root"' in page.text
-    assert 'id="session-list"' in page.text
-    assert 'id="session-search"' in page.text
-    assert 'id="otp-login-panel"' in page.text
-    assert 'id="otp-setup-panel"' in page.text
+    assert 'id="app"' in page.text
     assert script.status_code == 200
     assert "text/javascript" in script.headers["content-type"]
-    assert "history.replaceState" in script.text
-    assert "confirm(" in script.text
-    assert "loadSessions" in script.text
-    assert "activateSession" in script.text
-    assert "deleteSession" in script.text
-    assert "/api/auth/login" in script.text
-    assert "/api/auth/setup/start" in script.text
-    assert "/api/auth/setup/verify" in script.text
-    assert "canSendMessage" in script.text
+    assert "renderShell" in script.text
+    assert "/api/status" in script.text
 
 
 def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
