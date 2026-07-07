@@ -36,7 +36,18 @@ class Job:
     approval_id: str | None
     source_session_id: str | None = None
     source_schedule_id: str | None = None
+    created_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
     error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class JobEvent:
+    id: str
+    kind: str
+    payload: dict[str, object]
+    created_at: str
 
 
 class JobService:
@@ -104,10 +115,42 @@ class JobService:
             raise KeyError(f"Job not found: {job_id}")
         return _job_from_row(row)
 
-    def list_jobs(self) -> list[Job]:
+    def list_jobs(
+        self,
+        statuses: list[str] | None = None,
+        sources: list[str] | None = None,
+        capability_ids: list[str] | None = None,
+    ) -> list[Job]:
+        filters = {
+            "status": statuses or [],
+            "source": sources or [],
+            "capability_id": capability_ids or [],
+        }
+        clauses: list[str] = []
+        parameters: list[object] = []
+        for column, values in filters.items():
+            if not values:
+                continue
+            placeholders = ", ".join("?" for _ in values)
+            clauses.append(f"{column} in ({placeholders})")
+            parameters.extend(values)
+        where_clause = f"where {' and '.join(clauses)}" if clauses else ""
         return [
             _job_from_row(row)
-            for row in self._db.fetchall("select * from jobs order by created_at desc")
+            for row in self._db.fetchall(
+                f"select * from jobs {where_clause} order by created_at desc",
+                parameters,
+            )
+        ]
+
+    def list_events(self, job_id: str) -> list[JobEvent]:
+        self.get_job(job_id)
+        return [
+            _job_event_from_row(row)
+            for row in self._db.fetchall(
+                "select * from job_events where job_id = ? order by created_at asc",
+                (job_id,),
+            )
         ]
 
     def runner_type_for(self, job: Job) -> str:
@@ -221,7 +264,19 @@ def _job_from_row(row: object) -> Job:
         input_json=json.loads(row["input_json"]),
         command_preview=row["command_preview"],
         approval_id=row["approval_id"],
+        created_at=row["created_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
         error_message=row["error_message"],
+    )
+
+
+def _job_event_from_row(row: object) -> JobEvent:
+    return JobEvent(
+        id=row["id"],
+        kind=row["kind"],
+        payload=json.loads(row["payload_json"]),
+        created_at=row["created_at"],
     )
 
 

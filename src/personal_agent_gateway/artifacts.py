@@ -26,6 +26,7 @@ class Artifact:
     thumbnail_path: Path | None
     source_job_id: str | None
     source_session_id: str | None
+    created_at: datetime
     tags: list[str]
     metadata: dict[str, object]
 
@@ -103,7 +104,16 @@ class ArtifactStore:
 
     def content_path(self, artifact_id: str) -> Path:
         artifact = self.get(artifact_id)
-        path = artifact.file_path.resolve()
+        return self._stored_path(artifact.file_path)
+
+    def thumbnail_path(self, artifact_id: str) -> Path | None:
+        artifact = self.get(artifact_id)
+        if artifact.thumbnail_path is None:
+            return None
+        return self._stored_path(artifact.thumbnail_path)
+
+    def _stored_path(self, stored_path: Path) -> Path:
+        path = stored_path.resolve()
         try:
             path.relative_to(self._root)
         except ValueError as exc:
@@ -173,6 +183,7 @@ def _artifact_from_row(row: object) -> Artifact:
         thumbnail_path=Path(thumbnail_path) if thumbnail_path else None,
         source_job_id=row["source_job_id"],
         source_session_id=row["source_session_id"],
+        created_at=datetime.fromisoformat(row["created_at"]),
         tags=json.loads(row["tags_json"]),
         metadata=json.loads(row["metadata_json"]),
     )

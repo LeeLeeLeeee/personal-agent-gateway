@@ -11,10 +11,11 @@ from personal_agent_gateway.api import (
     auth_router,
     capabilities_router,
     jobs_router,
+    schedules_router,
+    settings_router,
 )
 from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.artifacts import ArtifactStore
-from personal_agent_gateway.auth import require_token
 from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.capabilities import CapabilityRegistry
 from personal_agent_gateway.config import AppConfig, ConfigError, load_config
@@ -26,6 +27,7 @@ from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
+from personal_agent_gateway.schedules import ScheduleService
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
 
@@ -39,8 +41,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     transcript = TranscriptStore(app_config.session_dir)
     running_session_id: str | None = None
     app = FastAPI()
-    token_dependency = require_token(app_config.web_token or "", secure_cookie=app_config.cookie_secure)
-    otp_session_dependency = Depends(_require_otp_session_if_configured)
+    session_dependency = Depends(_require_agent_session)
     static_dir = Path(__file__).parent / "static"
     _attach_local_services(app, app_config)
     shared_runtime = runtime or _create_runtime(
@@ -52,6 +53,8 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(capabilities_router)
     app.include_router(jobs_router)
     app.include_router(artifacts_router)
+    app.include_router(schedules_router)
+    app.include_router(settings_router)
 
     @app.exception_handler(Exception)
     async def internal_error_handler(_request: Request, _exc: Exception) -> JSONResponse:
@@ -61,23 +64,23 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         )
 
     @app.get("/", response_class=HTMLResponse)
-    def index(_token: None = token_dependency) -> str:
+    def index() -> str:
         return (static_dir / "index.html").read_text(encoding="utf-8")
 
     @app.get("/static/app.js")
-    def app_script(_token: None = token_dependency) -> FileResponse:
+    def app_script() -> FileResponse:
         return FileResponse(static_dir / "app.js", media_type="text/javascript")
 
     @app.get("/static/styles.css")
-    def styles(_token: None = token_dependency) -> FileResponse:
+    def styles() -> FileResponse:
         return FileResponse(static_dir / "styles.css", media_type="text/css")
 
     @app.get("/api/history")
-    def history(_token: None = token_dependency) -> dict[str, list[dict[str, object]]]:
+    def history(_session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
         return {"events": [_event_payload(event) for event in transcript.load_active()]}
 
     @app.get("/api/status")
-    def status(_token: None = token_dependency) -> dict[str, object]:
+    def status(_session: None = session_dependency) -> dict[str, object]:
         events = transcript.load_active()
         session_id = transcript.active_id()
         return {
@@ -92,7 +95,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         }
 
     @app.get("/api/sessions")
-    def sessions(_token: None = token_dependency) -> dict[str, list[dict[str, object]]]:
+    def sessions(_session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
         return {
             "sessions": [
                 _session_payload(session, running_session_id)
@@ -101,7 +104,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         }
 
     @app.get("/api/sessions/search")
-    def search_sessions(q: str = "", _token: None = token_dependency) -> dict[str, list[dict[str, object]]]:
+    def search_sessions(q: str = "", _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
         return {
             "sessions": [
                 _session_payload(session, running_session_id)
@@ -110,13 +113,13 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         }
 
     @app.post("/api/sessions/{session_id}/activate")
-    def activate_session(session_id: str, _token: None = token_dependency) -> dict[str, object]:
+    def activate_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:
         if not transcript.activate(session_id):
             raise HTTPException(status_code=404, detail="Session not found")
         return {"session_id": session_id, "events": [_event_payload(event) for event in transcript.load_active()]}
 
     @app.delete("/api/sessions/{session_id}")
-    def delete_session(session_id: str, _token: None = token_dependency) -> dict[str, object]:
+    def delete_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:
         if not transcript.delete(session_id):
             raise HTTPException(status_code=404, detail="Session not found")
         return {"deleted": True, "active_session_id": transcript.active_id()}
@@ -124,8 +127,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     @app.post("/api/chat")
     async def chat(
         request: ChatRequest,
-        _token: None = token_dependency,
-        _session: None = otp_session_dependency,
+        _session: None = session_dependency,
     ) -> dict[str, object]:
         nonlocal running_session_id
         running_session_id = transcript.active_id()
@@ -135,7 +137,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             running_session_id = None
 
     @app.post("/api/approvals/{approval_id}/approve")
-    async def approve(approval_id: str, _token: None = token_dependency) -> dict[str, object]:
+    async def approve(approval_id: str, _session: None = session_dependency) -> dict[str, object]:
         nonlocal running_session_id
         running_session_id = transcript.active_id()
         try:
@@ -144,7 +146,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             running_session_id = None
 
     @app.post("/api/approvals/{approval_id}/deny")
-    async def deny(approval_id: str, _token: None = token_dependency) -> dict[str, object]:
+    async def deny(approval_id: str, _session: None = session_dependency) -> dict[str, object]:
         nonlocal running_session_id
         running_session_id = transcript.active_id()
         try:
@@ -153,7 +155,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             running_session_id = None
 
     @app.post("/api/reset")
-    def reset(_token: None = token_dependency) -> dict[str, object]:
+    def reset(_session: None = session_dependency) -> dict[str, object]:
         nonlocal shared_runtime
         session_id = transcript.reset()
         if runtime is None:
@@ -172,6 +174,7 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
     db.initialize()
     registry = CapabilityRegistry.default()
     job_service = JobService(db, registry)
+    schedule_service = ScheduleService(db, registry)
     artifact_store = ArtifactStore(db, config.artifact_root)
     job_worker = JobWorker(
         job_service,
@@ -194,6 +197,7 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
     app.state.auth_store = AuthStore(config.auth_dir)
     app.state.capability_registry = registry
     app.state.job_service = job_service
+    app.state.schedule_service = schedule_service
     app.state.artifact_store = artifact_store
     app.state.job_worker = job_worker
 
@@ -277,11 +281,10 @@ def _has_pending_shell_approval(events: list[object]) -> bool:
     return bool(pending_by_tool_id)
 
 
-def _require_otp_session_if_configured(
-    request: Request,
+def _require_agent_session(
     session: Annotated[str | None, Cookie(alias="agent_session")] = None,
 ) -> None:
-    if request.app.state.auth_store.is_totp_enabled() and not session:
+    if not session:
         raise HTTPException(status_code=401, detail="OTP login required")
 
 

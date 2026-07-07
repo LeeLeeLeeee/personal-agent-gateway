@@ -83,17 +83,17 @@ def make_config(tmp_path: Path) -> AppConfig:
 
 def auth_client(config: AppConfig, runtime: AgentRuntime | FakeRuntime) -> TestClient:
     client = TestClient(create_app(config=config, runtime=runtime))
-    client.get("/?token=secret-token")
+    client.cookies.set("agent_session", "test-session")
     return client
 
 
-def test_unauthenticated_routes_return_401(tmp_path: Path) -> None:
+def test_browser_shell_is_public_but_data_routes_require_session(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     client = TestClient(create_app(config=config, runtime=FakeRuntime()))
 
-    assert client.get("/").status_code == 401
-    assert client.get("/static/app.js").status_code == 401
-    assert client.get("/static/styles.css").status_code == 401
+    assert client.get("/").status_code == 200
+    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/static/styles.css").status_code == 200
     assert client.get("/api/history").status_code == 401
     assert client.get("/api/status").status_code == 401
     assert client.get("/api/sessions").status_code == 401
@@ -106,16 +106,16 @@ def test_unauthenticated_routes_return_401(tmp_path: Path) -> None:
     assert client.post("/api/approvals/approval-1/deny").status_code == 401
 
 
-def test_query_token_authenticates_and_sets_cookie(tmp_path: Path) -> None:
+def test_query_token_is_not_required_to_load_browser_shell(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     client = TestClient(create_app(config=config, runtime=FakeRuntime()))
 
-    response = client.get("/?token=secret-token")
+    response = client.get("/")
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert response.cookies.get("agent_web_token") == "secret-token"
-    assert client.get("/api/history").status_code == 200
+    assert response.cookies.get("agent_web_token") is None
+    assert client.get("/api/history").status_code == 401
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/static/styles.css").status_code == 200
 
@@ -254,7 +254,7 @@ def test_chat_requires_otp_session_after_totp_is_configured(tmp_path: Path) -> N
     auth_store = AuthStore(config.auth_dir)
     setup = auth_store.start_totp_setup("local-owner")
     auth_store.verify_totp_setup(auth_store.current_code_for_test(setup.secret))
-    client = auth_client(config, FakeRuntime())
+    client = TestClient(create_app(config=config, runtime=FakeRuntime()))
 
     response = client.post("/api/chat", json={"message": "hello"})
 
@@ -465,7 +465,7 @@ def test_runtime_errors_return_json_without_stack_trace(tmp_path: Path) -> None:
         create_app(config=config, runtime=BrokenRuntime()),
         raise_server_exceptions=False,
     )
-    client.get("/?token=secret-token")
+    client.cookies.set("agent_session", "test-session")
 
     response = client.post("/api/chat", json={"message": "boom"})
 

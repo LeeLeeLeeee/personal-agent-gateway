@@ -14,6 +14,11 @@ from personal_agent_gateway.config import (
 )
 
 
+@pytest.fixture(autouse=True)
+def disable_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("personal_agent_gateway.config.load_dotenv", lambda: None)
+
+
 def test_load_config_does_not_require_web_token(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
