@@ -110,8 +110,8 @@ function renderLogin() {
       el("div", { style: "margin-top:24px" }, el("button", { class: "btn btn-primary btn-lg", style: "width:100%", onclick: () => afterAuth() }, "I have saved these — continue")),
     ];
   }
-  app.replaceChildren(el("div", { style: "max-width:520px;margin:64px auto;padding:0 24px" },
-    el("div", { class: "card-hero", style: "padding:32px" }, body)));
+  app.replaceChildren(el("div", { style: "height:100%;overflow-y:auto;display:flex;align-items:flex-start;justify-content:center;padding:48px 24px" },
+    el("div", { class: "card-hero", style: "width:100%;max-width:520px;padding:32px" }, body)));
 }
 
 // ---- chat ----
@@ -287,6 +287,7 @@ function renderShell() {
       renderStatusbar(),
       el("div", { class: "content-row" }, el("main", { class: "main" }, renderMain())),
     ]),
+    state.navOpen ? el("div", { class: "nav-backdrop", onclick: () => { state.navOpen = false; renderShell(); } }) : "",
   ]));
 }
 
