@@ -7,8 +7,8 @@ const PLANNED = new Set(["jobs", "schedules", "capabilities", "artifacts", "sett
 const state = {
   screen: "chat", status: null,
   authStage: "login", otpInput: "", authError: "", setup: null, recoveryCodes: [],
-  messages: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false, navOpen: false,
-  activity: [], eventSource: null,
+  timeline: [], live: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false, navOpen: false,
+  eventSource: null, sseState: "idle", turnStart: null, turnEnd: null, openCmd: {}, elapsedTimer: null, autoScroll: true,
 };
 
 const api = {
@@ -27,6 +27,7 @@ const api = {
   async reset() { const r = await fetch("/api/reset", { method: "POST" }); return r.ok ? r.json() : null; },
   async approve(id) { const r = await fetch(`/api/approvals/${encodeURIComponent(id)}/approve`, { method: "POST" }); return r.ok ? r.json() : null; },
   async deny(id) { const r = await fetch(`/api/approvals/${encodeURIComponent(id)}/deny`, { method: "POST" }); return r.ok ? r.json() : null; },
+  async artifacts() { const r = await fetch("/api/artifacts"); return r.ok ? (await r.json()).artifacts : []; },
 };
 
 function normalizeApproval(v) {
@@ -35,16 +36,61 @@ function normalizeApproval(v) {
   return { id: v.id, command: v.command };
 }
 
-function messagesFromEvents(events) {
+// ---- time / text helpers ----
+function fmtTime(iso, withSeconds) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return withSeconds ? `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` : `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function nowHMS() { return fmtTime(new Date().toISOString(), true); }
+function nowHM() { return fmtTime(new Date().toISOString(), false); }
+function fmtElapsed(sec) { const s = Math.floor(sec); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }
+function linesFrom(text) { if (!text) return []; return String(text).replace(/\s+$/, "").split("\n").map((t) => ({ text: t, color: "#E6E6E6" })); }
+
+// ---- timeline model ----
+function timelineFromHistory(events) {
   const out = [];
-  for (const e of events) {
+  events.forEach((e, i) => {
     const p = e.payload || {};
-    if ((e.kind === "user" || e.kind === "assistant") && typeof p.content === "string") out.push({ role: e.kind, content: p.content });
-    else if (e.kind === "runtime_error" && typeof p.message === "string") out.push({ role: "system", content: `Error: ${p.message}` });
-    else if (e.kind === "tool_denial" && typeof p.command === "string") out.push({ role: "system", content: `Denied: ${p.command}` });
-    else if (e.kind === "tool_result" && typeof p.command === "string") out.push({ role: "tool", content: `$ ${p.command}\nexit ${p.exit_code ?? ""}\n${p.stdout || ""}${p.stderr || ""}` });
-  }
+    const t = fmtTime(e.created_at, false);
+    if (e.kind === "user" && typeof p.content === "string") out.push({ type: "user", text: p.content, time: t });
+    else if (e.kind === "assistant" && typeof p.content === "string") out.push({ type: "agent", text: p.content, time: t });
+    else if (e.kind === "tool_result" && typeof p.command === "string") {
+      out.push({
+        type: "command", key: "h" + i, command: p.command,
+        status: p.exit_code === 0 ? "completed" : "failed", exit: p.exit_code,
+        lines: linesFrom(`${p.stdout || ""}${p.stderr || ""}`), time: fmtTime(e.created_at, true), duration: "",
+      });
+    } else if (e.kind === "tool_denial" && typeof p.command === "string") {
+      out.push({ type: "event_row", label: "tool_denial", detail: p.command, dotColor: "#FF0000", time: fmtTime(e.created_at, true) });
+    } else if (e.kind === "runtime_error" && typeof p.message === "string") {
+      out.push({ type: "runtime_error", message: p.message, time: fmtTime(e.created_at, true) });
+    }
+  });
   return out;
+}
+
+function entryFromSse(ev) {
+  if (ev.type === "codex.event") {
+    const it = ev.item || {};
+    if (it.type === "command_execution") {
+      const status = it.status || "running";
+      const done = status === "completed" || status === "failed";
+      return {
+        type: "command", key: "l" + (it.id || it.command || ""), command: it.command || "command",
+        status, exit: it.exit_code, lines: linesFrom(it.aggregated_output || ""), time: nowHMS(),
+        duration: done ? "" : "live", live: true,
+      };
+    }
+    if (it.type === "agent_message") return { type: "agent", text: it.text || "", time: nowHM(), streaming: false };
+    return null;
+  }
+  if (ev.type === "runtime.user_message.started") return { type: "event_row", label: "runtime.user_message.started", detail: "message accepted", dotColor: "#000", time: nowHMS() };
+  if (ev.type === "runtime.completed") return { type: "event_row", label: "runtime.completed", detail: "session finished", dotColor: "#008000", time: nowHMS() };
+  if (ev.type === "runtime.error") return { type: "runtime_error", message: typeof ev.message === "string" ? ev.message : "runtime error", time: nowHMS() };
+  return null;
 }
 
 function connectEvents() {
@@ -52,39 +98,48 @@ function connectEvents() {
   if (typeof EventSource === "undefined") return;
   const source = new EventSource("/api/events");
   state.eventSource = source;
-  source.onmessage = (event) => {
-    try {
-      addActivity(JSON.parse(event.data));
-    } catch (_err) {
-      addActivity({ type: "runtime.event_parse_error" });
+  source.onopen = () => { if (!state.busy) state.sseState = "connected"; renderShell(); };
+  source.onerror = () => { state.sseState = "error"; renderShell(); };
+  source.onmessage = (event) => { try { applySse(JSON.parse(event.data)); } catch (_err) { /* ignore malformed */ } };
+}
+
+function applySse(event) {
+  if (event.type === "runtime.user_message.started") { state.turnStart = Date.now(); state.turnEnd = null; }
+  const entry = entryFromSse(event);
+  if (entry) {
+    if (entry.type === "command") {
+      const idx = state.live.findIndex((e) => e.type === "command" && e.key === entry.key);
+      if (idx >= 0) state.live[idx] = entry; else state.live.push(entry);
+    } else {
+      state.live.push(entry);
     }
-  };
+  }
+  renderShell(); scrollBottom();
 }
 
-function addActivity(event) {
-  const item = activityItem(event);
-  state.activity = [item, ...state.activity].slice(0, 40);
-  renderShell();
-}
-
-function activityItem(event) {
-  const item = event.item || {};
-  if (event.type === "codex.event" && item.type === "command_execution") {
-    return {
-      kind: (item.status || "command").toUpperCase(),
-      title: item.command || "command",
-      body: item.aggregated_output || "",
-      exitCode: item.exit_code,
-    };
+function deriveLive() {
+  const entries = state.timeline.concat(state.live);
+  const running = state.live.filter((e) => e.type === "command" && e.status !== "completed" && e.status !== "failed").length;
+  let phase, color;
+  if (running > 0) { phase = "COMMAND RUNNING"; color = "var(--c-warn)"; }
+  else if (state.busy) { phase = "WORKING"; color = "var(--c-warn)"; }
+  else if (!entries.length) { phase = "IDLE"; color = "var(--c-grey)"; }
+  else {
+    // Find the last significant execution in the current turn (ignore trailing plain messages, stop at the turn's user message).
+    let sig = null;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.type === "runtime_error" || e.type === "command") { sig = e; break; }
+      if (e.type === "user") break;
+    }
+    if (sig && sig.type === "runtime_error") { phase = "ERROR"; color = "var(--c-danger)"; }
+    else if (sig && sig.type === "command" && sig.status === "failed") { phase = "FAILED"; color = "var(--c-danger)"; }
+    else { phase = "DONE"; color = "var(--c-ok)"; }
   }
-  if (event.type === "codex.event" && item.type === "agent_message") {
-    return { kind: "MESSAGE", title: "codex", body: item.text || "" };
-  }
-  return {
-    kind: String(event.type || "EVENT").replace("runtime.", "").toUpperCase(),
-    title: event.message || event.session_id || "",
-    body: event.pending_approval ? "Waiting for approval" : "",
-  };
+  const kindMap = { "COMMAND RUNNING": "running", WORKING: "working", DONE: "completed", FAILED: "failed", ERROR: "error", IDLE: "idle" };
+  let elapsed = "—";
+  if (state.turnStart) { const end = state.busy ? Date.now() : (state.turnEnd || Date.now()); elapsed = fmtElapsed(Math.max(0, (end - state.turnStart) / 1000)); }
+  return { phase, color, running, lastKind: kindMap[phase], elapsed, events: entries.length };
 }
 
 function el(tag, attrs = {}, kids = []) {
@@ -100,6 +155,13 @@ function el(tag, attrs = {}, kids = []) {
 }
 
 function setScreen(name) { state.screen = name; state.navOpen = false; renderShell(); }
+
+function scrollBottom() {
+  if (!state.autoScroll) return;
+  requestAnimationFrame(() => { const t = document.querySelector(".transcript"); if (t) t.scrollTop = t.scrollHeight; });
+}
+function startElapsedTimer() { if (state.elapsedTimer) return; state.elapsedTimer = setInterval(() => { if (state.screen === "chat" && state.busy) renderShell(); }, 1000); }
+function stopElapsedTimer() { if (state.elapsedTimer) { clearInterval(state.elapsedTimer); state.elapsedTimer = null; } }
 
 // ---- login ----
 function renderLogin() {
@@ -175,14 +237,17 @@ function renderSessionRail() {
       el("button", { class: "btn btn-sm", style: "margin-top:6px",
         onclick: async (e) => { e.stopPropagation(); if (window.confirm("Delete session?")) { await api.deleteSession(se.id); state.sessions = await api.sessions(); renderShell(); } } }, "Delete"),
     ]);
-    card.onclick = async () => { const d = await api.activate(se.id); if (d) { state.messages = messagesFromEvents(d.events); state.pendingApproval = null; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); } };
+    card.onclick = async () => {
+      const d = await api.activate(se.id);
+      if (d) { state.timeline = timelineFromHistory(d.events); state.live = []; state.pendingApproval = null; state.turnStart = null; state.turnEnd = null; state.autoScroll = true; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); scrollBottom(); }
+    };
     return card;
   });
   return el("div", { class: "sess-rail" }, [
     el("div", { class: "sess-head" }, [
       el("span", { class: "headline", style: "font-size:12px" }, "Sessions"),
       el("button", { class: "btn btn-sm",
-        onclick: async () => { await api.reset(); state.messages = []; state.pendingApproval = null; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); } }, "+"),
+        onclick: async () => { await api.reset(); state.timeline = []; state.live = []; state.pendingApproval = null; state.turnStart = null; state.turnEnd = null; state.status = await api.getStatus(); state.sessions = await api.sessions(); renderShell(); } }, "+"),
     ]),
     el("div", { style: "padding:10px 12px" }, search),
     el("div", { style: "flex:1;overflow-y:auto" }, items),
@@ -190,20 +255,18 @@ function renderSessionRail() {
 }
 
 function renderComposer() {
-  const ta = el("textarea", { class: "input-field", rows: "2", placeholder: "Ask the agent, or describe a local action..." });
+  const ta = el("textarea", { class: "input-field", rows: "2", placeholder: "Message the agent, or describe a local action..." });
   const send = async () => {
     const msg = ta.value.trim(); if (!msg || state.busy) return;
-    state.messages.push({ role: "user", content: msg }); ta.value = ""; state.busy = true; renderShell();
+    state.timeline.push({ type: "user", text: msg, time: nowHM() });
+    ta.value = ""; state.busy = true; state.live = []; state.turnStart = Date.now(); state.turnEnd = null; state.autoScroll = true;
+    startElapsedTimer(); renderShell(); scrollBottom();
     try {
       const data = await api.sendChat(msg);
-      if (data) {
-        for (const m of (data.messages || [])) if (typeof m.content === "string") state.messages.push({ role: m.role || "assistant", content: m.content });
-        state.pendingApproval = normalizeApproval(data.pending_approval);
-      }
-      state.messages = messagesFromEvents(await api.history());
-      state.status = await api.getStatus();
+      if (data) state.pendingApproval = normalizeApproval(data.pending_approval);
+      await afterTurn();
     } finally {
-      state.busy = false; renderShell();
+      state.busy = false; state.turnEnd = Date.now(); stopElapsedTimer(); renderShell(); scrollBottom();
     }
   };
   ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -213,20 +276,32 @@ function renderComposer() {
   return el("div", { class: "composer" }, [ta, btn]);
 }
 
+async function afterTurn() {
+  state.timeline = timelineFromHistory(await api.history());
+  state.live = [];
+  state.status = await api.getStatus();
+  await maybeArtifact();
+}
+
+async function maybeArtifact() {
+  if (!state.turnStart) return;
+  let arts = [];
+  try { arts = await api.artifacts(); } catch (_e) { return; }
+  const sid = state.status && state.status.session_id;
+  const fresh = arts.filter((a) => a.source_session_id === sid && Date.parse(a.created_at) >= state.turnStart - 2000);
+  for (const a of fresh) state.timeline.push({ type: "artifact", artifact: a });
+}
+
 async function resolveApproval(action) {
   if (!state.pendingApproval || state.busy) return;
   const id = state.pendingApproval.id;
-  state.busy = true; renderShell();
+  state.busy = true; state.turnStart = state.turnStart || Date.now(); state.turnEnd = null; startElapsedTimer(); renderShell();
   try {
     const data = action === "approve" ? await api.approve(id) : await api.deny(id);
-    if (data) {
-      for (const m of (data.messages || [])) if (typeof m.content === "string") state.messages.push({ role: m.role || "assistant", content: m.content });
-      state.pendingApproval = normalizeApproval(data.pending_approval);
-    }
-    state.messages = messagesFromEvents(await api.history());
-    state.status = await api.getStatus();
+    if (data) state.pendingApproval = normalizeApproval(data.pending_approval);
+    await afterTurn();
   } finally {
-    state.busy = false; renderShell();
+    state.busy = false; state.turnEnd = Date.now(); stopElapsedTimer(); renderShell(); scrollBottom();
   }
 }
 
@@ -257,65 +332,188 @@ function renderProposal(a) {
   ]);
 }
 
-function renderActivity() {
-  const items = state.activity.length
-    ? state.activity.map(a => el("div", { class: "activity-item" }, [
-        el("div", { class: "activity-head" }, [
-          el("span", {}, a.kind),
-          a.exitCode === null || a.exitCode === undefined ? "" : el("span", {}, `exit ${a.exitCode}`),
-        ]),
-        a.title ? el("div", { class: "mono activity-title" }, a.title) : "",
-        a.body ? el("div", { class: "console activity-console" }, a.body) : "",
-      ]))
-    : [el("div", { class: "mono", style: "font-size:11px;color:var(--c-grey)" }, "No activity yet.")];
-  return el("div", { style: "margin:14px" }, [
-    el("div", { class: "mono", style: "font-size:11px;letter-spacing:1px;margin-bottom:8px" }, "ACTIVITY"),
-    el("div", { class: "activity-list" }, items),
+// ---- timeline renderers ----
+function statusBadge(kind) {
+  const L = { running: "RUNNING", working: "WORKING", completed: "COMPLETED", failed: "FAILED", error: "ERROR", idle: "IDLE" };
+  const dot = kind === "running" || kind === "working";
+  return el("span", { class: `badge badge-${kind}` }, [dot ? el("span", { class: "dot" }) : "", L[kind] || "IDLE"]);
+}
+
+function toggleCmd(key, def) { const cur = key in state.openCmd ? state.openCmd[key] : def; state.openCmd[key] = !cur; renderShell(); }
+
+function renderCommandBlock(e) {
+  const def = e.status !== "completed";
+  const open = e.key in state.openCmd ? state.openCmd[e.key] : def;
+  const badgeKind = e.status === "completed" ? "completed" : (e.status === "failed" ? "failed" : "running");
+  const dotColor = badgeKind === "completed" ? "#008000" : (badgeKind === "failed" ? "#FF0000" : "#FFA500");
+  const dotBlink = badgeKind === "running" ? "animation:blink-hard 1s step-end infinite;" : "";
+  const exit = (e.exit === undefined || e.exit === null) ? "—" : String(e.exit);
+  const exitColor = e.status === "completed" ? "var(--c-ok)" : (e.status === "failed" ? "var(--c-danger)" : "var(--c-grey)");
+  const head = el("button", { class: "cmd-head", onclick: () => toggleCmd(e.key, def) }, [
+    e.time ? el("span", { class: "tl-time" }, e.time) : "",
+    el("span", { class: "cmd-name" }, `$ ${e.command}`),
+    statusBadge(badgeKind),
+  ]);
+  const out = open
+    ? el("div", { class: "cmd-out" }, [
+        el("div", { class: "cmd-out-label" }, "AGGREGATED OUTPUT"),
+        ...(e.lines && e.lines.length ? e.lines : [{ text: "(no output)", color: "#606060" }]).map((ln) => el("div", { class: "cmd-line", style: `color:${ln.color}` }, ln.text)),
+      ])
+    : "";
+  const foot = el("div", { class: "cmd-foot" }, [
+    el("span", {}, ["EXIT ", el("span", { style: `color:${exitColor}` }, exit)]),
+    e.duration ? el("span", {}, e.duration) : "",
+    el("span", { class: "toggle" }, open ? "▾ HIDE OUTPUT" : `▸ SHOW OUTPUT · ${(e.lines || []).length} LINES`),
+  ]);
+  return el("div", { class: "tl-cmd" }, [
+    el("span", { class: "tl-dot", style: `background:${dotColor};${dotBlink}` }),
+    el("div", { class: "cmd-block" }, [head, out, foot]),
   ]);
 }
 
-function renderChatDrawer() {
-  const slot = state.pendingApproval
-    ? el("div", { style: "padding:14px" }, [
-        el("div", { class: "mono", style: "font-size:12px;margin-bottom:4px" }, "shell.run"),
-        el("div", { class: "mono", style: "font-size:10px;color:var(--c-grey);word-break:break-all;line-height:1.5" }, state.pendingApproval.command),
-        approvalActions("btn-sm"),
-      ])
-    : el("div", { class: "mono", style: "padding:14px;font-size:11px;color:var(--c-grey)" }, "No approvals waiting.");
-  return el("aside", { class: "drawer" }, [
-    el("div", { class: "mono", style: "background:var(--c-warn);padding:8px 14px;font-size:11px;letter-spacing:1px" }, "PENDING APPROVAL"),
-    slot,
-    el("div", { class: "planned", style: "margin:14px" }, "SESSION ARTIFACTS - PLANNED"),
-    renderActivity(),
+function renderEventRow(e) {
+  const blink = e.dotColor === "#FFA500" ? "animation:blink-hard 1s step-end infinite;" : "";
+  return el("div", { class: "tl-row" }, [
+    el("span", { class: "tl-dot", style: `background:${e.dotColor || "#000"};${blink}` }),
+    e.time ? el("span", { class: "tl-time" }, e.time) : "",
+    el("span", { class: "tl-label" }, e.label || ""),
+    e.detail ? el("span", { class: "tl-detail" }, e.detail) : "",
+  ]);
+}
+
+function renderUser(e) {
+  return el("div", { class: "msg-user" }, [
+    el("div", { class: "msg-meta" }, `YOU · ${e.time || ""}`),
+    el("div", { class: "bubble" }, e.text),
+  ]);
+}
+
+function renderAgent(e) {
+  const bubble = el("div", { class: "bubble" }, e.text);
+  if (e.streaming) bubble.append(el("span", { class: "agent-cursor" }));
+  return el("div", { class: "msg-agent" }, [
+    el("div", { class: "msg-meta" }, `AGENT · ${e.time || ""}`),
+    bubble,
+  ]);
+}
+
+function renderArtifactCard(e) {
+  const a = e.artifact || {};
+  const type = String(a.type || "");
+  const glyph = type.startsWith("audio") ? "♪" : type.startsWith("image") ? "▣" : type.startsWith("video") ? "►" : "▤";
+  const size = a.size_bytes ? `${(a.size_bytes / 1024 / 1024).toFixed(1)} MB` : "";
+  return el("div", { class: "artifact-card" }, [
+    el("div", { class: "head" }, "OUTPUT GENERATED"),
+    el("div", { class: "body" }, [
+      el("span", { class: "glyph" }, glyph),
+      el("span", { style: "flex:1;min-width:0" }, [
+        el("span", { style: "display:block;font-family:var(--font-mono);font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, a.title || "artifact"),
+        el("span", { style: "display:block;font-family:var(--font-mono);font-size:10px;color:var(--c-grey);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, `${(a.type || "FILE").toUpperCase()}${size ? ` · ${size}` : ""}${a.relative_path ? ` · ${a.relative_path}` : ""}`),
+      ]),
+      el("span", { style: "font-family:var(--font-mono);font-size:9px;letter-spacing:1px;color:var(--c-grey);border:1px solid var(--c-grey);padding:2px 6px;flex:none;white-space:nowrap" }, "ARTIFACT READY"),
+    ]),
+  ]);
+}
+
+function renderRuntimeError(e) {
+  return el("div", { class: "rt-error" }, [
+    el("div", { class: "head" }, `RUNTIME ERROR${e.time ? ` · ${e.time}` : ""}`),
+    el("div", { class: "body" }, e.message),
+  ]);
+}
+
+function idleEmpty() {
+  return el("div", { class: "idle-empty" }, [
+    el("div", { class: "k" }, "AGENT IDLE"),
+    el("div", { class: "d" }, "No active runtime. Send a message and the live activity stream appears here in real time."),
+  ]);
+}
+
+function renderTimeline() {
+  const entries = state.timeline.concat(state.live);
+  if (!entries.length && !state.busy) return el("div", { class: "stream" }, idleEmpty());
+  const nodes = [];
+  let cluster = [];
+  const flush = () => {
+    if (!cluster.length) return;
+    const rows = cluster.map((e) => (e.type === "command" ? renderCommandBlock(e) : renderEventRow(e)));
+    nodes.push(el("div", { class: "tl-wrap" }, [el("div", { class: "tl-label-head" }, "AGENT ACTIVITY"), el("div", { class: "timeline" }, rows)]));
+    cluster = [];
+  };
+  for (const e of entries) {
+    if (e.type === "event_row" || e.type === "command") { cluster.push(e); continue; }
+    flush();
+    if (e.type === "user") nodes.push(renderUser(e));
+    else if (e.type === "agent") nodes.push(renderAgent(e));
+    else if (e.type === "artifact") nodes.push(renderArtifactCard(e));
+    else if (e.type === "runtime_error") nodes.push(renderRuntimeError(e));
+  }
+  flush();
+  return el("div", { class: "stream" }, nodes);
+}
+
+function renderChatHeader() {
+  const active = (state.sessions || []).find((s) => s.is_active);
+  const title = (active && active.title) || "New session";
+  const started = active && active.created_at ? fmtTime(active.created_at, false) : "";
+  return el("div", { class: "chat-header" }, [
+    el("span", { class: "title" }, title),
+    el("span", { class: "meta" }, `SESSION · ${title.slice(0, 28)}${started ? ` · started ${started}` : ""}`),
+  ]);
+}
+
+function renderLiveStatusSummary() {
+  const d = deriveLive();
+  const cell = (k, node) => el("div", { class: "summary-cell" }, [el("span", { class: "summary-k" }, k), node]);
+  return el("div", { class: "summary-bar" }, [
+    cell("CURRENT PHASE", el("span", { class: "summary-v", style: `color:${d.color}` }, d.phase)),
+    cell("RUNNING", el("span", { class: "summary-v", style: `color:${d.running > 0 ? "var(--c-warn)" : "var(--c-grey)"}` }, String(d.running))),
+    cell("LAST EVENT", el("div", { style: "margin-top:4px" }, statusBadge(d.lastKind))),
+    cell("ELAPSED", el("span", { class: "summary-v" }, d.elapsed)),
   ]);
 }
 
 function renderChat() {
-  const msgs = (state.messages || []).map(m => el("div", { class: "msg" }, [
-    el("div", { class: "msg-head" }, [el("span", {}, m.role.toUpperCase()), el("span", { style: "color:var(--c-grey)" }, "")]),
-    el("div", { class: `msg-body${m.role === "tool" || m.role === "system" ? " mono" : ""}` }, m.content),
-  ]));
+  const transcript = el("div", { class: "transcript" }, [
+    renderTimeline(),
+    (state.busy && !state.live.length) ? loaderEl("AGENT WORKING") : "",
+    state.pendingApproval ? renderProposal(state.pendingApproval) : "",
+  ]);
+  transcript.onscroll = () => { state.autoScroll = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80; };
   return el("div", { class: "chat" }, [
     renderSessionRail(),
-    el("div", { class: "chat-col" }, [el("div", { class: "transcript" }, [...msgs, state.pendingApproval ? renderProposal(state.pendingApproval) : "", state.busy ? loaderEl("AGENT WORKING") : ""]), renderComposer()]),
-    renderChatDrawer(),
+    el("div", { class: "chat-col" }, [renderChatHeader(), renderLiveStatusSummary(), transcript, renderComposer()]),
   ]);
 }
 
 // ---- shell ----
+function sseIndicator() {
+  let color, label, blink = false;
+  if (state.busy) { color = "var(--c-warn)"; label = "STREAMING /api/events"; blink = true; }
+  else if (state.sseState === "error") { color = "var(--c-danger)"; label = "DISCONNECTED"; }
+  else { color = "var(--c-ok)"; label = state.timeline.length ? "CONNECTED" : "IDLE · CONNECTED"; }
+  return el("div", { class: "sse-wrap" }, [
+    el("span", { class: "sse-dot", style: `background:${color};${blink ? "animation:blink-hard 1s step-end infinite;" : ""}` }),
+    el("span", { class: "sse-label" }, label),
+  ]);
+}
+
 function renderStatusbar() {
   const s = state.status || {};
+  const d = deriveLive();
   const items = [
     ["WORKSPACE", s.workspace_root || "--"],
     ["MODEL", `${s.provider || "codex"}/${s.model || "default"}`],
     ["SESSION", `${s.session_status || "idle"} ${(s.session_id || "").slice(0, 8)}`],
+    ["PHASE", d.phase],
+    ["RUNNING", String(d.running)],
     ["PENDING", s.pending_approval ? "1" : "0"],
-    ["RUNNING", "PLANNED"], ["TUNNEL", "PLANNED"],
+    ["EVENTS", String(d.events)],
   ];
   const toggle = el("button", { class: "nav-toggle", onclick: () => { state.navOpen = !state.navOpen; renderShell(); } }, "Menu");
   const cells = items.map(([k, v]) => el("div", { class: "status-item" },
     [el("span", { class: "status-k" }, k), el("span", { class: "status-v" }, String(v))]));
-  return el("header", { class: "statusbar" }, [toggle, ...cells]);
+  return el("header", { class: "statusbar" }, [toggle, ...cells, sseIndicator()]);
 }
 
 function renderSidebar() {
@@ -352,10 +550,12 @@ function renderShell() {
 // ---- bootstrap ----
 async function afterAuth() {
   state.status = await api.getStatus();
-  state.messages = messagesFromEvents(await api.history());
   state.sessions = await api.sessions();
+  state.timeline = timelineFromHistory(await api.history());
+  state.live = [];
   connectEvents();
   renderShell();
+  scrollBottom();
 }
 
 async function bootstrap() {
