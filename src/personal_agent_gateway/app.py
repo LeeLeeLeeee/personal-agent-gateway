@@ -39,6 +39,10 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class RenameRequest(BaseModel):
+    title: str
+
+
 def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = None) -> FastAPI:
     app_config = config or load_config()
     transcript = TranscriptStore(app_config.session_dir)
@@ -138,6 +142,17 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         if not transcript.activate(session_id):
             raise HTTPException(status_code=404, detail="Session not found")
         return {"session_id": session_id, "events": [_event_payload(event) for event in transcript.load_active()]}
+
+    @app.post("/api/sessions/{session_id}/title")
+    def rename_session(
+        session_id: str, payload: RenameRequest, _session: None = session_dependency
+    ) -> dict[str, object]:
+        title = payload.title.strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Title is required")
+        if not transcript.set_title(session_id, title[:120]):
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"session_id": session_id, "title": title[:120]}
 
     @app.delete("/api/sessions/{session_id}")
     def delete_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:

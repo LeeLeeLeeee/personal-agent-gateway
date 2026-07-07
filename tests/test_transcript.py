@@ -22,6 +22,25 @@ def test_active_id_returns_none_before_session_exists(tmp_path: Path) -> None:
     assert store.active_id() is None
 
 
+def test_set_title_overrides_derived_title(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    transcript_id = store.start_new()
+    store.append("user", {"content": "original first message"})
+
+    assert store.list_sessions()[0].title == "original first message"
+    assert store.set_title(transcript_id, "Renamed session") is True
+
+    summary = store.list_sessions()[0]
+    assert summary.title == "Renamed session"
+    assert summary.message_count == 1  # rename event is not counted as a message
+
+
+def test_set_title_unknown_session_returns_false(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+
+    assert store.set_title("missing", "x") is False
+
+
 def test_append_writes_jsonl_events_in_order(tmp_path: Path) -> None:
     store = TranscriptStore(tmp_path)
     transcript_id = store.start_new()

@@ -14,6 +14,7 @@ TranscriptKind = Literal[
     "tool_result",
     "tool_denial",
     "runtime_error",
+    "session_rename",
 ]
 SessionStatus = Literal["idle", "waiting_approval", "failed"]
 
@@ -77,6 +78,20 @@ class TranscriptStore:
             return False
 
         self._write_active(transcript_id)
+        return True
+
+    def set_title(self, transcript_id: str, title: str) -> bool:
+        if not self._transcript_path(transcript_id).exists():
+            return False
+
+        event = TranscriptEvent(
+            id=uuid4().hex,
+            transcript_id=transcript_id,
+            kind="session_rename",
+            payload={"title": title},
+        )
+        with self._transcript_path(transcript_id).open("a", encoding="utf-8") as transcript_file:
+            transcript_file.write(f"{event.model_dump_json()}\n")
         return True
 
     def delete(self, transcript_id: str) -> bool:
@@ -192,6 +207,11 @@ def _created_at(events: list[TranscriptEvent], transcript_path: Path) -> datetim
 
 
 def _session_title(events: list[TranscriptEvent]) -> str:
+    for event in reversed(events):
+        if event.kind == "session_rename":
+            title = event.payload.get("title")
+            if isinstance(title, str) and title.strip():
+                return _compact_title(title)
     for event in events:
         if event.kind != "user":
             continue

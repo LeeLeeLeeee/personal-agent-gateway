@@ -164,8 +164,31 @@ def test_ui_assets_smoke(tmp_path: Path) -> None:
     assert "/api/status" in script.text
     assert "EventSource" in script.text
     assert "/api/events" in script.text
-    assert "state.activity" in script.text
-    assert "renderActivity" in script.text
+    assert "state.timeline" in script.text
+    assert "renderTimeline" in script.text
+
+
+def test_rename_session_sets_custom_title(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    transcript_id = store.start_new()
+    store.append("user", {"content": "first message here"})
+    client = auth_client(config, FakeRuntime())
+
+    response = client.post(f"/api/sessions/{transcript_id}/title", json={"title": "My renamed chat"})
+
+    assert response.status_code == 200
+    assert response.json() == {"session_id": transcript_id, "title": "My renamed chat"}
+    sessions = client.get("/api/sessions").json()["sessions"]
+    assert any(s["id"] == transcript_id and s["title"] == "My renamed chat" for s in sessions)
+
+
+def test_rename_session_rejects_empty_and_unknown(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = auth_client(config, FakeRuntime())
+
+    assert client.post("/api/sessions/whatever/title", json={"title": "  "}).status_code == 400
+    assert client.post("/api/sessions/missing/title", json={"title": "x"}).status_code == 404
 
 
 def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
