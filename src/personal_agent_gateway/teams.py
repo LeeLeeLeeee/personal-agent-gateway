@@ -163,6 +163,23 @@ class TeamRunService:
             )
         ]
 
+    def set_agent_status(self, agent_id: str, status: AgentStatus) -> TeamAgent:
+        self._get_agent(agent_id)
+        started_at = _now() if status == "running" else None
+        finished_at = _now() if status in ("completed", "failed", "canceled") else None
+        self._db.execute(
+            """
+            update team_agents
+            set status = ?,
+                started_at = coalesce(?, started_at),
+                finished_at = coalesce(?, finished_at),
+                updated_at = ?
+            where id = ?
+            """,
+            (status, started_at, finished_at, _now(), agent_id),
+        )
+        return self._get_agent(agent_id)
+
     def create_task(
         self,
         team_run_id: str,

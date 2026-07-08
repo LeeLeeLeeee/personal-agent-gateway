@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
@@ -35,7 +36,8 @@ from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
-from personal_agent_gateway.teams import TeamRunService
+from personal_agent_gateway.team_runtime import TeamRuntime
+from personal_agent_gateway.teams import TeamAgent, TeamRunService
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
 
@@ -60,6 +62,11 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     event_bus = EventBus()
     app.state.event_bus = event_bus
     _attach_local_services(app, app_config)
+    app.state.team_runtime = TeamRuntime(
+        app.state.team_run_service,
+        _team_model_factory(app_config),
+        event_bus,
+    )
     shared_runtime = runtime or _create_runtime(
         app_config,
         transcript,
@@ -258,6 +265,20 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
 def main() -> None:
     config = load_config()
     uvicorn.run(create_app(config), host=config.web_host, port=config.web_port)
+
+
+def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], CodexModelClient]:
+    def team_model_factory(agent: TeamAgent) -> CodexModelClient:
+        return CodexModelClient(
+            binary=config.codex_binary,
+            model=agent.model,
+            workspace_root=config.workspace_root,
+            sandbox=config.codex_sandbox,
+            approval_policy=config.codex_approval_policy,
+            timeout_seconds=config.codex_timeout_seconds,
+        )
+
+    return team_model_factory
 
 
 def _create_runtime(

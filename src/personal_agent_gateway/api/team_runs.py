@@ -55,9 +55,9 @@ def get_team_run(request: Request, team_run_id: str, _session: None = session_de
 
 
 @router.post("/{team_run_id}/start")
-def start_team_run(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, object]:
+async def start_team_run(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, object]:
     try:
-        run = request.app.state.team_run_service.set_run_status(team_run_id, "planning")
+        run = await request.app.state.team_runtime.start(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     return {"team_run": _team_run_payload(run)}
