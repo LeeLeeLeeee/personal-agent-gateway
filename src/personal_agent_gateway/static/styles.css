@@ -1,3 +1,10 @@
+@font-face {
+  font-family: "Pretendard Variable";
+  src: url("/static/vendor/PretendardVariable.woff2") format("woff2-variations");
+  font-weight: 45 920;
+  font-display: swap;
+}
+
 :root {
   --c-black:#000; --c-white:#fff; --c-bg:#E8E8E8; --c-panel:#F0F0F0;
   --c-grey:#808080; --c-dark:#333; --c-warn:#FFA500; --c-ok:#008000;
@@ -5,7 +12,7 @@
   --bd:3px solid var(--c-black); --bd-hero:5px solid var(--c-black);
   --bd-sm:2px solid var(--c-black); --bd-in:1px solid var(--c-black);
   --font-headline:"Arial Black","Segoe UI","Apple SD Gothic Neo","Malgun Gothic",Roboto,sans-serif;
-  --font-body:system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",Roboto,Arial,sans-serif;
+  --font-body:"Pretendard Variable",Pretendard,system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",Roboto,Arial,sans-serif;
   --font-mono:ui-monospace,"Cascadia Mono",Consolas,"D2Coding","Malgun Gothic",Menlo,monospace;
 }
 *{box-sizing:border-box}
@@ -132,7 +139,7 @@ h1,h2,h3,p{margin:0}
 .md>*:first-child{margin-top:0}
 .md>*:last-child{margin-bottom:0}
 .md p{margin:0 0 10px;overflow-wrap:anywhere}
-.md h1,.md h2,.md h3,.md h4{margin:14px 0 8px;font-family:var(--font-headline);font-weight:800;line-height:1.25}
+.md h1,.md h2,.md h3,.md h4{margin:14px 0 8px;font-family:var(--font-body);font-weight:700;line-height:1.3}
 .md h1{font-size:19px}.md h2{font-size:17px}.md h3{font-size:15px}.md h4{font-size:14px}
 .md ul,.md ol{margin:0 0 10px;padding-left:22px}
 .md li{margin:2px 0;overflow-wrap:anywhere}
@@ -145,17 +152,17 @@ h1,h2,h3,p{margin:0}
 .code-wrap{margin:0 0 10px;border:var(--bd)}
 .code-bar{display:flex;align-items:center;justify-content:space-between;background:var(--c-black);color:var(--c-white);padding:5px 10px;border-bottom:var(--bd-in)}
 .code-lang{font-family:var(--font-mono);font-size:10px;letter-spacing:1px;color:var(--c-grey);text-transform:uppercase}
-.code-copy{font-family:var(--font-mono);font-size:10px;letter-spacing:1px;background:none;border:1px solid var(--c-grey);color:var(--c-white);padding:2px 8px;cursor:pointer}
-.code-copy:hover{background:var(--c-white);color:var(--c-black)}
+.code-copy{font-family:var(--font-body);font-weight:600;font-size:11px;letter-spacing:.2px;background:transparent;border:1px solid #555;color:var(--c-white);padding:3px 9px;cursor:pointer;line-height:1.4;white-space:nowrap}
+.code-copy:hover{background:var(--c-white);color:var(--c-black);border-color:var(--c-white)}
 .code-wrap .md-pre{margin:0;border:none}
 
 /* mermaid */
 .mermaid-wrap{margin:0 0 10px;border:var(--bd)}
 .mermaid-wrap .code-wrap{margin:0;border:none}
 .mermaid-wrap .md-pre{margin:0;border:none}
-.mermaid-svg{position:relative;background:var(--c-white);padding:14px;overflow:auto;text-align:center}
+.mermaid-svg{position:relative;background:var(--c-white);padding:16px;overflow:auto;display:flex;justify-content:center;min-height:90px}
 .mermaid-svg svg{max-width:100%;height:auto}
-.zoom-btn{position:absolute;top:6px;right:6px;z-index:2;font-family:var(--font-mono);font-size:12px;background:var(--c-white);border:var(--bd-sm);cursor:pointer;padding:1px 7px;line-height:1.3}
+.zoom-btn{position:absolute;top:8px;right:8px;z-index:2;font-family:var(--font-body);font-weight:600;font-size:13px;background:var(--c-white);border:var(--bd-sm);cursor:pointer;padding:1px 8px;line-height:1.4}
 .zoom-btn:hover{background:var(--c-black);color:var(--c-white)}
 
 /* tables */
