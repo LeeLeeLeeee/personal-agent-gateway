@@ -5,6 +5,7 @@ from typing import Annotated
 
 import uvicorn
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -197,6 +198,8 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         if runtime is None:
             shared_runtime = _create_runtime(app_config, transcript, app.state.job_service)
         return {"events": [], "session_id": session_id}
+
+    app.mount("/static/vendor", StaticFiles(directory=static_dir / "vendor"), name="vendor")
 
     return app
 

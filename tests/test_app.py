@@ -168,6 +168,15 @@ def test_ui_assets_smoke(tmp_path: Path) -> None:
     assert "renderTimeline" in script.text
 
 
+def test_vendor_assets_served(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = TestClient(create_app(config=config, runtime=FakeRuntime()))
+
+    assert client.get("/static/vendor/highlight.min.js").status_code == 200
+    assert client.get("/static/vendor/mermaid.min.js").status_code == 200
+    assert client.get("/static/vendor/github.min.css").status_code == 200
+
+
 def test_rename_session_sets_custom_title(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     store = TranscriptStore(config.session_dir)
