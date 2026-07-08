@@ -61,6 +61,21 @@ describe("GatewayApp", () => {
     expect(screen.getByText("JOBS - PLANNED")).toBeInTheDocument();
   });
 
+  it("shows the active session config in the statusbar even when /api/status is stale", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": { ...status, provider: "codex", model: "default" },
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: { agent_id: "claude", model: "sonnet", options: {}, editable: true } }
+    });
+
+    render(<GatewayApp />);
+
+    expect(await screen.findByText("claude/sonnet")).toBeInTheDocument();
+  });
+
   it("supports OTP login before loading protected API data", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: false, totp_configured: true },
@@ -149,6 +164,37 @@ describe("GatewayApp", () => {
       "/api/sessions/active/config",
       expect.objectContaining({ method: "PUT" })
     ));
+  });
+
+  it("clears config save errors after activating another session", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": { ...status, session_config: { agent_id: "codex", model: "default", options: {}, editable: true } },
+      "GET /api/sessions": { sessions: [
+        sessions[0],
+        { ...sessions[0], id: "session-2", title: "Old chat", is_active: false }
+      ] },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [
+        { id: "codex", label: "Codex CLI", available: true, models: ["default"], default_model: "default", defaults: {}, options_schema: [] },
+        { id: "claude", label: "Claude Code", available: true, models: ["sonnet"], default_model: "sonnet", defaults: { effort: "medium" }, options_schema: [{ name: "effort", kind: "select", choices: ["medium", "high"] }] }
+      ] },
+      "GET /api/sessions/active/config": { config: { agent_id: "codex", model: "default", options: {}, editable: true } },
+      "PUT /api/sessions/active/config": response({}, false),
+      "POST /api/sessions/session-2/activate": {
+        session_id: "session-2",
+        events: []
+      }
+    });
+
+    render(<GatewayApp />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Claude Code/ }));
+    expect(await screen.findByText("Config update failed")).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByText("Old chat"));
+
+    await waitFor(() => expect(screen.queryByText("Config update failed")).not.toBeInTheDocument());
   });
 
   it("shows locked session config read-only after history has messages", async () => {

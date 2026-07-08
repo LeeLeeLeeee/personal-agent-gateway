@@ -17,6 +17,16 @@ function appendOrReconcileCommand(entries, entry) {
   return next;
 }
 
+function withSessionConfigStatus(nextStatus, nextConfig) {
+  if (!nextConfig) return nextStatus;
+  return {
+    ...(nextStatus || {}),
+    provider: nextConfig.agent_id ?? nextStatus?.provider,
+    model: nextConfig.model ?? nextStatus?.model,
+    session_config: nextConfig
+  };
+}
+
 function useForceTick(active) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -61,7 +71,7 @@ export function GatewayApp() {
       api.agents(),
       api.activeSessionConfig()
     ]);
-    setStatus(nextStatus);
+    setStatus(withSessionConfigStatus(nextStatus, nextConfig));
     setSessions(nextSessions);
     setAgents(nextAgents);
     setSessionConfig(nextConfig || nextStatus?.session_config || null);
@@ -153,7 +163,7 @@ export function GatewayApp() {
       api.sessions(),
       api.activeSessionConfig()
     ]);
-    setStatus(nextStatus);
+    setStatus(withSessionConfigStatus(nextStatus, nextConfig));
     setSessions(nextSessions);
     setSessionConfig(nextConfig || nextStatus?.session_config || null);
     return nextStatus;
@@ -254,6 +264,7 @@ export function GatewayApp() {
     turnHadAgentRef.current = false;
     turnStreamedRef.current = false;
     setTurnStreamed(false);
+    setSessionConfigError("");
     await refreshStatusAndSessions();
   }
 
@@ -264,6 +275,7 @@ export function GatewayApp() {
     setTurnStart(null);
     setTurnEnd(null);
     turnStartRef.current = null;
+    setSessionConfigError("");
     await refreshStatusAndSessions();
   }
 
