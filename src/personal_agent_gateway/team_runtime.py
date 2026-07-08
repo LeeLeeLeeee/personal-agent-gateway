@@ -24,41 +24,52 @@ class TeamRuntime:
         self._event_bus = event_bus
 
     async def start(self, team_run_id: str) -> TeamRun:
-        run = self._teams.set_run_status(team_run_id, "planning")
-        await self._publish({"type": "team.run.started", "team_run_id": run.id})
+        run = self._teams.get_team_run(team_run_id)
+        leader: TeamAgent | None = None
+        try:
+            leader = _find_leader(self._teams.list_agents(run.id))
+            run = self._teams.set_run_status(run.id, "planning")
+            leader = self._teams.set_agent_status(leader.id, "running")
+            await self._publish({"type": "team.run.started", "team_run_id": run.id})
 
-        leader = _find_leader(self._teams.list_agents(run.id))
-        leader = self._teams.set_agent_status(leader.id, "running")
+            model = self._model_factory(leader)
+            prompt = PLANNING_PROMPT.format(
+                goal=run.goal,
+                persona_snapshot_json=json.dumps(leader.persona_snapshot, ensure_ascii=False),
+            )
+            response = await model.complete([{"role": "user", "content": prompt}])
+            tasks = _parse_task_plan(response.content)
 
-        model = self._model_factory(leader)
-        prompt = PLANNING_PROMPT.format(
-            goal=run.goal,
-            persona_snapshot_json=json.dumps(leader.persona_snapshot, ensure_ascii=False),
-        )
-        response = await model.complete([{"role": "user", "content": prompt}])
-        tasks = _parse_task_plan(response.content)
+            for task in tasks:
+                created = self._teams.create_task(run.id, task["title"], task["description"])
+                await self._publish(
+                    {"type": "team.task.created", "team_run_id": run.id, "task_id": created.id}
+                )
 
-        for task in tasks:
-            created = self._teams.create_task(run.id, task["title"], task["description"])
-            await self._publish(
-                {"type": "team.task.created", "team_run_id": run.id, "task_id": created.id}
+            self._teams.append_message(
+                run.id,
+                leader.id,
+                None,
+                "note",
+                f"Planning completed with {len(tasks)} tasks.",
+                {},
             )
 
-        self._teams.append_message(
-            run.id,
-            leader.id,
-            None,
-            "note",
-            f"Planning completed with {len(tasks)} tasks.",
-            {},
-        )
+            run = self._teams.get_team_run(run.id)
+            if run.run_mode == "planning_only":
+                run = self._teams.set_run_status(run.id, "completed")
+                self._teams.set_agent_status(leader.id, "completed")
+                await self._publish({"type": "team.run.completed", "team_run_id": run.id})
 
-        run = self._teams.get_team_run(run.id)
-        if run.run_mode == "planning_only":
-            run = self._teams.set_run_status(run.id, "completed")
-            await self._publish({"type": "team.run.completed", "team_run_id": run.id})
-
-        return run
+            return run
+        except Exception as exc:  # noqa: BLE001 - graceful containment, matches AgentRuntime
+            run = self._teams.set_run_status(run.id, "failed", error_message=str(exc))
+            if leader is not None:
+                self._teams.set_agent_status(leader.id, "failed")
+            await self._publish(
+                {"type": "team.run.failed", "team_run_id": run.id, "error": str(exc)}
+            )
+            return run
 
     async def _publish(self, event: dict[str, object]) -> None:
         if self._event_bus is not None:
