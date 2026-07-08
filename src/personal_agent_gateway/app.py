@@ -17,22 +17,20 @@ from personal_agent_gateway.api import (
     schedules_router,
     settings_router,
 )
-from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.artifacts import ArtifactStore
 from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.capabilities import CapabilityRegistry
-from personal_agent_gateway.config import AppConfig, ConfigError, load_config
+from personal_agent_gateway.config import AppConfig, load_config
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
-from personal_agent_gateway.model_client import CodexModelClient, OpenAIModelClient
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
+from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
-from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
 
 
@@ -56,12 +54,13 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     event_bus = EventBus()
     app.state.event_bus = event_bus
     _attach_local_services(app, app_config)
-    shared_runtime = runtime or _create_runtime(
+    runtime_factory = AgentRuntimeFactory(
         app_config,
         transcript,
         app.state.job_service,
         event_bus,
     )
+    shared_runtime = runtime or runtime_factory.create_default_runtime()
     if hasattr(shared_runtime, "attach_event_bus"):
         shared_runtime.attach_event_bus(event_bus)
     app.include_router(auth_router)
@@ -198,7 +197,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         nonlocal shared_runtime
         session_id = transcript.reset()
         if runtime is None:
-            shared_runtime = _create_runtime(app_config, transcript, app.state.job_service)
+            shared_runtime = runtime_factory.create_default_runtime()
         return {"events": [], "session_id": session_id}
 
     app.mount("/static/vendor", StaticFiles(directory=static_dir / "vendor"), name="vendor")
@@ -248,47 +247,6 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
 def main() -> None:
     config = load_config()
     uvicorn.run(create_app(config), host=config.web_host, port=config.web_port)
-
-
-def _create_runtime(
-    config: AppConfig,
-    transcript: TranscriptStore,
-    job_service: JobService | None = None,
-    event_bus: EventBus | None = None,
-) -> AgentRuntime:
-    if config.model_provider == "codex":
-        async def publish_codex_event(event: dict[str, object]) -> None:
-            if event_bus is not None:
-                await event_bus.publish({"type": "codex.event", **event})
-
-        return AgentRuntime(
-            transcript=transcript,
-            tools=WorkspaceTools(config.workspace_root, ApprovalStore()),
-            model=CodexModelClient(
-                binary=config.codex_binary,
-                model=config.model,
-                workspace_root=config.workspace_root,
-                sandbox=config.codex_sandbox,
-                approval_policy=config.codex_approval_policy,
-                timeout_seconds=config.codex_timeout_seconds,
-                on_event=publish_codex_event,
-            ),
-            job_service=job_service,
-            event_bus=event_bus,
-        )
-
-    if config.model_provider != "openai":
-        raise ConfigError(f"Unsupported model provider: {config.model_provider}")
-    if not config.openai_api_key:
-        raise ConfigError("OPENAI_API_KEY is required when AGENT_MODEL_PROVIDER=openai")
-
-    return AgentRuntime(
-        transcript=transcript,
-        tools=WorkspaceTools(config.workspace_root, ApprovalStore()),
-        model=OpenAIModelClient(api_key=config.openai_api_key or "", model=config.model),
-        job_service=job_service,
-        event_bus=event_bus,
-    )
 
 
 async def _sse_events(

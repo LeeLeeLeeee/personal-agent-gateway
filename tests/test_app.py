@@ -365,6 +365,35 @@ def test_app_reuses_one_runtime_instance(tmp_path: Path) -> None:
     assert runtime.messages == ["one", "two"]
 
 
+def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    created: list[dict[str, object]] = []
+
+    class StubFactory:
+        def __init__(self, app_config, transcript, job_service, event_bus) -> None:
+            created.append(
+                {
+                    "config": app_config,
+                    "transcript": transcript,
+                    "job_service": job_service,
+                    "event_bus": event_bus,
+                }
+            )
+
+        def create_default_runtime(self) -> FakeRuntime:
+            return FakeRuntime()
+
+    monkeypatch.setattr(app_module, "AgentRuntimeFactory", StubFactory)
+    client = auth_client(config, runtime=None)
+
+    response = client.post("/api/chat", json={"message": "factory"})
+
+    assert response.status_code == 200
+    assert response.json()["messages"][0]["content"] == "reply: factory"
+    assert len(created) == 1
+    assert created[0]["config"] is config
+
+
 def test_history_returns_restored_transcript_after_app_recreation(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     first_runtime = AgentRuntime(
