@@ -55,8 +55,8 @@ class SessionAgentConfigService:
         events = self._transcript.load(resolved_id)
         if not _is_editable(events):
             raise ValueError("Session config is locked")
-        self._transcript.activate(resolved_id)
-        event = self._transcript.append(
+        event = self._transcript.append_to(
+            resolved_id,
             "session_config_set",
             {"agent_id": agent_id, "model": model, "options": dict(options)},
         )

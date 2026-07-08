@@ -119,6 +119,14 @@ class TranscriptStore:
         if transcript_id is None:
             transcript_id = self.start_new()
 
+        return self.append_to(transcript_id, kind, payload)
+
+    def append_to(
+        self,
+        transcript_id: str,
+        kind: TranscriptKind,
+        payload: dict[str, object],
+    ) -> TranscriptEvent:
         event = TranscriptEvent(
             id=uuid4().hex,
             transcript_id=transcript_id,
