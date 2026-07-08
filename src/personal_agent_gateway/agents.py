@@ -26,7 +26,6 @@ class AgentDescriptor(BaseModel):
     availability_error: str | None = None
     models: list[str]
     default_model: str
-    allow_custom_model: bool = False
     options_schema: list[AgentOption]
     defaults: dict[str, Any]
 
@@ -84,10 +83,7 @@ class AgentRegistry:
         descriptor = self.get(agent_id)
         if not descriptor.available:
             raise ValueError(f"Agent unavailable: {agent_id}")
-        model = model.strip()
-        if not model:
-            raise ValueError("Model is required")
-        if model not in descriptor.models and not descriptor.allow_custom_model:
+        if model not in descriptor.models:
             raise ValueError(f"Unsupported model for {agent_id}: {model}")
         schema = {option.name: option for option in descriptor.options_schema}
         for key, value in options.items():
@@ -110,7 +106,6 @@ class AgentRegistry:
             availability_error=probe.error,
             models=["default"],
             default_model="default",
-            allow_custom_model=True,
             options_schema=[
                 AgentOption(
                     name="sandbox",
@@ -140,7 +135,6 @@ class AgentRegistry:
             availability_error=probe.error,
             models=["sonnet", "opus"],
             default_model="sonnet",
-            allow_custom_model=True,
             options_schema=[
                 AgentOption(
                     name="effort",

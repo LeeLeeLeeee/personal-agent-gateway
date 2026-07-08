@@ -36,15 +36,13 @@ def test_registry_lists_codex_and_claude_with_safe_defaults(tmp_path: Path) -> N
     assert codex.available is True
     assert codex.binary == "codex-test"
     assert codex.default_model == "default"
-    assert codex.allow_custom_model is True
     assert codex.defaults["sandbox"] == "workspace-write"
     assert claude.available is False
     assert claude.availability_error == "not found"
-    assert claude.allow_custom_model is True
     assert claude.defaults["effort"] == "medium"
 
 
-def test_registry_rejects_unknown_agent_empty_model_and_option(tmp_path: Path) -> None:
+def test_registry_rejects_unknown_agent_model_and_option(tmp_path: Path) -> None:
     registry = AgentRegistry(
         make_config(tmp_path),
         probe=lambda _binary: CliProbeResult(True, None),
@@ -53,8 +51,8 @@ def test_registry_rejects_unknown_agent_empty_model_and_option(tmp_path: Path) -
     with pytest.raises(ValueError, match="Unknown agent"):
         registry.validate_config("missing", "default", {})
 
-    with pytest.raises(ValueError, match="Model is required"):
-        registry.validate_config("codex", "", {})
+    with pytest.raises(ValueError, match="Unsupported model"):
+        registry.validate_config("codex", "not-listed", {})
 
     with pytest.raises(ValueError, match="Unsupported option"):
         registry.validate_config("codex", "default", {"not_allowed": True})
@@ -106,13 +104,3 @@ def test_registry_rejects_unavailable_agent_for_new_config(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="Agent unavailable"):
         registry.validate_config("claude", "sonnet", {})
-
-
-def test_registry_accepts_custom_cli_model_names(tmp_path: Path) -> None:
-    registry = AgentRegistry(
-        make_config(tmp_path),
-        probe=lambda _binary: CliProbeResult(True, None),
-    )
-
-    assert registry.validate_config("codex", "gpt-5.4", {})["model"] == "gpt-5.4"
-    assert registry.validate_config("claude", "claude-sonnet-4-5", {})["model"] == "claude-sonnet-4-5"
