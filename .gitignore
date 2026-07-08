@@ -8,3 +8,4 @@ data/
 .worktrees/
 node_modules/
 src/personal_agent_gateway/frontend_dist/
+.superpowers/
