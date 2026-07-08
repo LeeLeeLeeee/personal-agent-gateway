@@ -72,3 +72,51 @@ def test_agents_returns_safe_catalog(tmp_path: Path, monkeypatch) -> None:
     assert claude["availability_error"] == "not found"
     assert "openai_api_key" not in response.text
     assert "web_token" not in response.text
+
+
+def test_active_session_config_defaults_and_can_be_updated_while_empty(tmp_path: Path, monkeypatch) -> None:
+    from personal_agent_gateway import agents as agents_module
+
+    monkeypatch.setattr(agents_module, "probe_cli", lambda _binary: agents_module.CliProbeResult(True, None))
+    client = TestClient(create_app(make_config(tmp_path)))
+    client.cookies.set("agent_session", "test-session")
+
+    default_response = client.get("/api/sessions/active/config")
+
+    assert default_response.status_code == 200
+    assert default_response.json()["config"]["agent_id"] == "codex"
+    assert default_response.json()["config"]["editable"] is True
+
+    update_response = client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "claude", "model": "sonnet", "options": {"effort": "high"}},
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["config"]["agent_id"] == "claude"
+    assert update_response.json()["config"]["options"] == {"effort": "high"}
+
+
+def test_active_session_config_rejects_invalid_and_locked_updates(tmp_path: Path, monkeypatch) -> None:
+    from personal_agent_gateway import agents as agents_module
+    from personal_agent_gateway.transcript import TranscriptStore
+
+    monkeypatch.setattr(agents_module, "probe_cli", lambda _binary: agents_module.CliProbeResult(True, None))
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    store.start_new()
+    store.append("user", {"content": "already started"})
+    client = TestClient(create_app(config))
+    client.cookies.set("agent_session", "test-session")
+
+    invalid_response = client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "claude", "model": "missing", "options": {}},
+    )
+    locked_response = client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "claude", "model": "sonnet", "options": {}},
+    )
+
+    assert invalid_response.status_code == 400
+    assert locked_response.status_code == 409

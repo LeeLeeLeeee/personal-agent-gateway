@@ -16,6 +16,7 @@ from personal_agent_gateway.api import (
     capabilities_router,
     jobs_router,
     schedules_router,
+    session_config_router,
     settings_router,
 )
 from personal_agent_gateway.artifacts import ArtifactStore
@@ -48,6 +49,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     transcript = TranscriptStore(app_config.session_dir)
     running_session_id: str | None = None
     app = FastAPI()
+    app.state.transcript_store = transcript
     session_dependency = Depends(_require_agent_session)
     package_dir = Path(__file__).parent
     static_dir = package_dir / "static"
@@ -70,6 +72,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(artifacts_router)
     app.include_router(schedules_router)
     app.include_router(agents_router)
+    app.include_router(session_config_router)
     app.include_router(settings_router)
 
     @app.exception_handler(Exception)
