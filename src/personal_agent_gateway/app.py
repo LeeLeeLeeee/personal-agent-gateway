@@ -50,7 +50,9 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     running_session_id: str | None = None
     app = FastAPI()
     session_dependency = Depends(_require_agent_session)
-    static_dir = Path(__file__).parent / "static"
+    package_dir = Path(__file__).parent
+    static_dir = package_dir / "static"
+    frontend_assets_dir = package_dir / "frontend_dist" / "assets"
     event_bus = EventBus()
     app.state.event_bus = event_bus
     _attach_local_services(app, app_config)
@@ -78,7 +80,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return (static_dir / "index.html").read_text(encoding="utf-8")
+        return _select_frontend_index(package_dir).read_text(encoding="utf-8")
 
     @app.get("/static/app.js")
     def app_script() -> FileResponse:
@@ -200,6 +202,8 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         return {"events": [], "session_id": session_id}
 
     app.mount("/static/vendor", StaticFiles(directory=static_dir / "vendor"), name="vendor")
+    if frontend_assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=frontend_assets_dir), name="frontend_assets")
 
     return app
 
@@ -345,6 +349,13 @@ def _has_pending_shell_approval(events: list[object]) -> bool:
         elif kind in {"tool_result", "tool_denial"}:
             pending_by_tool_id.discard(str(payload.get("id", "")))
     return bool(pending_by_tool_id)
+
+
+def _select_frontend_index(package_dir: Path) -> Path:
+    vite_index = package_dir / "frontend_dist" / "index.html"
+    if vite_index.exists():
+        return vite_index
+    return package_dir / "static" / "index.html"
 
 
 def _require_agent_session(

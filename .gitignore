@@ -6,3 +6,5 @@ __pycache__/
 data/
 *.egg-info/
 .worktrees/
+node_modules/
+src/personal_agent_gateway/frontend_dist/

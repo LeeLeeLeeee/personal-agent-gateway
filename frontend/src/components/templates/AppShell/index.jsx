@@ -1,0 +1,40 @@
+import { Sidebar } from "../../organisms/Sidebar/index.jsx";
+import { Statusbar } from "../../organisms/Statusbar/index.jsx";
+
+export function AppShell({
+  children,
+  screen,
+  status,
+  entries,
+  busy,
+  turnStart,
+  turnEnd,
+  sseState,
+  navOpen,
+  onToggleNav,
+  onCloseNav,
+  onScreenChange,
+  onLogout
+}) {
+  return (
+    <div className={`shell${navOpen ? " nav-open" : ""}`}>
+      <Sidebar screen={screen} onScreenChange={onScreenChange} onLogout={onLogout} />
+      <div className="main-col">
+        <Statusbar
+          status={status}
+          entries={entries}
+          busy={busy}
+          turnStart={turnStart}
+          turnEnd={turnEnd}
+          sseState={sseState}
+          navOpen={navOpen}
+          onToggleNav={onToggleNav}
+        />
+        <div className="content-row">
+          <main className="main">{children}</main>
+        </div>
+      </div>
+      {navOpen ? <div className="nav-backdrop" onClick={onCloseNav} /> : null}
+    </div>
+  );
+}

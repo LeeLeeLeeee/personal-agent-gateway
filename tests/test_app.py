@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import personal_agent_gateway.app as app_module
-from personal_agent_gateway.app import _sse_events, create_app, main
+from personal_agent_gateway.app import _select_frontend_index, _sse_events, create_app, main
 from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.config import AppConfig
@@ -175,6 +175,25 @@ def test_vendor_assets_served(tmp_path: Path) -> None:
     assert client.get("/static/vendor/highlight.min.js").status_code == 200
     assert client.get("/static/vendor/mermaid.min.js").status_code == 200
     assert client.get("/static/vendor/github-dark.min.css").status_code == 200
+
+
+def test_frontend_index_prefers_vite_dist_when_present(tmp_path: Path) -> None:
+    static_dir = tmp_path / "static"
+    dist_dir = tmp_path / "frontend_dist"
+    static_dir.mkdir()
+    dist_dir.mkdir()
+    (static_dir / "index.html").write_text("legacy", encoding="utf-8")
+    (dist_dir / "index.html").write_text("vite", encoding="utf-8")
+
+    assert _select_frontend_index(tmp_path) == dist_dir / "index.html"
+
+
+def test_frontend_index_falls_back_to_legacy_static(tmp_path: Path) -> None:
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("legacy", encoding="utf-8")
+
+    assert _select_frontend_index(tmp_path) == static_dir / "index.html"
 
 
 def test_rename_session_sets_custom_title(tmp_path: Path) -> None:
