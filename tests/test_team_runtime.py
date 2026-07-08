@@ -64,3 +64,31 @@ async def test_planning_failure_fails_run_and_settles_leader(tmp_path):
     assert failed.status == "failed"
     assert failed.error_message
     assert teams.list_agents(run.id)[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_plan_and_execute_assigns_tasks_to_workers(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, workspace)
+    leader = personas.create_persona("Tech Lead", "Planning", "Plans work.", ["Plan"], [])
+    worker = personas.create_persona("QA Tester", "Quality", "Checks work.", ["Test"], [])
+    run = teams.create_team_run("Build teams", leader.id, [worker.id], "plan_and_execute", 1)
+
+    responses = iter([
+        '[{"title":"Verify API","description":"Check team run endpoints"}]',
+        "Verified API behavior. No files changed. Evidence: tests passed.",
+    ])
+    runtime = TeamRuntime(teams=teams, model_factory=lambda _agent: FakeModel(next(responses)))
+
+    completed = await runtime.start(run.id)
+
+    tasks = teams.list_tasks(run.id)
+    messages = teams.list_messages(run.id)
+    assert completed.status == "completed"
+    assert tasks[0].status == "completed"
+    assert "Verified API behavior" in tasks[0].result
+    assert any(message.kind == "agent_output" for message in messages)

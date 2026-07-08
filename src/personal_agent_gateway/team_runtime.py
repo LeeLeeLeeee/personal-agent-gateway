@@ -11,6 +11,14 @@ Each object must have "title" and "description".
 Goal: {goal}
 Persona snapshot: {persona_snapshot_json}"""
 
+WORKER_PROMPT = """You are an agent in a personal-agent-gateway Team Run.
+Persona:
+{persona_snapshot_json}
+Goal: {goal}
+Assigned task: {task_title}
+Task description: {task_description}
+Return concise result, changed files, and verification evidence."""
+
 
 class TeamRuntime:
     def __init__(
@@ -56,10 +64,66 @@ class TeamRuntime:
             )
 
             run = self._teams.get_team_run(run.id)
-            if run.run_mode == "planning_only":
+            if run.run_mode != "plan_and_execute":
                 run = self._teams.set_run_status(run.id, "completed")
                 self._teams.set_agent_status(leader.id, "completed")
                 await self._publish({"type": "team.run.completed", "team_run_id": run.id})
+                return run
+
+            workers = _find_workers(self._teams.list_agents(run.id))
+            created_tasks = self._teams.list_tasks(run.id)
+            for index, task in enumerate(created_tasks):
+                worker = workers[index % len(workers)] if workers else None
+                if worker is None:
+                    continue
+
+                self._teams.set_task_status(task.id, "in_progress")
+                self._teams.set_agent_status(worker.id, "running")
+
+                worker_model = self._model_factory(worker)
+                worker_prompt = WORKER_PROMPT.format(
+                    persona_snapshot_json=json.dumps(
+                        worker.persona_snapshot, ensure_ascii=False
+                    ),
+                    goal=run.goal,
+                    task_title=task.title,
+                    task_description=task.description,
+                )
+                worker_response = await worker_model.complete(
+                    [{"role": "user", "content": worker_prompt}]
+                )
+
+                self._teams.set_task_status(task.id, "completed", result=worker_response.content)
+                await self._publish(
+                    {"type": "team.task.updated", "team_run_id": run.id, "task_id": task.id}
+                )
+
+                message = self._teams.append_message(
+                    run.id,
+                    worker.id,
+                    None,
+                    "agent_output",
+                    worker_response.content,
+                    {"task_id": task.id},
+                )
+                await self._publish(
+                    {
+                        "type": "team.message.created",
+                        "team_run_id": run.id,
+                        "message_id": message.id,
+                    }
+                )
+
+                self._teams.set_agent_status(worker.id, "completed")
+
+            self._teams.set_agent_status(leader.id, "completed")
+            run = self._teams.set_run_status(run.id, "summarizing")
+            run = self._teams.set_run_status(
+                run.id,
+                "completed",
+                summary=f"Completed {len(created_tasks)} tasks.",
+            )
+            await self._publish({"type": "team.run.completed", "team_run_id": run.id})
 
             return run
         except Exception as exc:  # noqa: BLE001 - graceful containment, matches AgentRuntime
@@ -81,6 +145,10 @@ def _find_leader(agents: list[TeamAgent]) -> TeamAgent:
         if agent.role == "leader":
             return agent
     raise ValueError("Team run has no leader agent")
+
+
+def _find_workers(agents: list[TeamAgent]) -> list[TeamAgent]:
+    return [agent for agent in agents if agent.role != "leader"]
 
 
 def _parse_task_plan(content: str) -> list[dict[str, str]]:
