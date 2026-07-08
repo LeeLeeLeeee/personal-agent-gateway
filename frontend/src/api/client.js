@@ -92,5 +92,40 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title })
     }));
+  },
+  async personas() {
+    return jsonList(await fetch("/api/personas"), "personas");
+  },
+  async createPersona(payload) {
+    const body = await jsonOrNull(await fetch("/api/personas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }));
+    return body?.persona || null;
+  },
+  async teamRuns() {
+    return jsonList(await fetch("/api/team-runs"), "team_runs");
+  },
+  async createTeamRun(payload) {
+    const body = await jsonOrNull(await fetch("/api/team-runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }));
+    return body?.team_run || null;
+  },
+  async startTeamRun(id) {
+    const body = await jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/start`, { method: "POST" }));
+    return body?.team_run || null;
+  },
+  async teamRunDetail(id) {
+    const [run, agents, tasks, messages] = await Promise.all([
+      jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}`)),
+      jsonList(await fetch(`/api/team-runs/${encodeURIComponent(id)}/agents`), "agents"),
+      jsonList(await fetch(`/api/team-runs/${encodeURIComponent(id)}/tasks`), "tasks"),
+      jsonList(await fetch(`/api/team-runs/${encodeURIComponent(id)}/messages`), "messages")
+    ]);
+    return { run: run?.team_run || null, agents, tasks, messages };
   }
 };

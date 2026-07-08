@@ -56,4 +56,23 @@ describe("api client", () => {
       body: JSON.stringify({ agent_id: "claude", model: "sonnet", options: {} })
     }));
   });
+
+  it("supports persona and team-run endpoints", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ personas: [{ id: "p1", name: "Tech Lead" }] }))
+      .mockResolvedValueOnce(jsonResponse({ persona: { id: "p2", name: "QA Tester" } }))
+      .mockResolvedValueOnce(jsonResponse({ team_runs: [{ id: "r1", goal: "Ship" }] }))
+      .mockResolvedValueOnce(jsonResponse({ team_run: { id: "r2", goal: "Design" } }))
+      .mockResolvedValueOnce(jsonResponse({ team_run: { id: "r2", status: "planning" } }));
+
+    await expect(api.personas()).resolves.toEqual([{ id: "p1", name: "Tech Lead" }]);
+    await expect(api.createPersona({ name: "QA Tester" })).resolves.toEqual({ id: "p2", name: "QA Tester" });
+    await expect(api.teamRuns()).resolves.toEqual([{ id: "r1", goal: "Ship" }]);
+    await api.createTeamRun({ goal: "Design", leader_persona_id: "p1" });
+    await api.startTeamRun("r2");
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/personas");
+    expect(fetch).toHaveBeenNthCalledWith(4, "/api/team-runs", expect.objectContaining({ method: "POST" }));
+    expect(fetch).toHaveBeenNthCalledWith(5, "/api/team-runs/r2/start", expect.objectContaining({ method: "POST" }));
+  });
 });
