@@ -55,3 +55,9 @@ Project-local Atomic Design catalog for the Vite React frontend.
 - Props: `{ personas, onSubmit }`
 - Use when: Rendering the new-team-run form (goal, leader select, member checkboxes, run mode, max workers).
 - Don't use when: Loading personas or creating the team run via API; the container owns that call.
+
+### TeamRunDetail
+- Path: `src/components/organisms/TeamRunDetail/`
+- Props: `{ detail: { run, agents, tasks, messages } }`
+- Use when: Rendering a team run's header/meta strip, agent session lanes (persona/role/status/current task), the pending/in_progress/blocked/completed/failed task board, the live activity list, and per-agent result reports plus the final summary. Renders "No team run selected." when `detail?.run` is absent.
+- Don't use when: Loading team run data or reacting to `/api/events` SSE updates; the container owns fetching and refetches `detail` on `team.*` events for the selected run.

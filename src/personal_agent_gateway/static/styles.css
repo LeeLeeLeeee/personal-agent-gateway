@@ -282,6 +282,68 @@ h1,h2,h3,p{margin:0}
 .team-run-members{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
 .team-run-member{display:flex;align-items:center;gap:8px;border:var(--bd-sm);padding:8px 10px;font-size:13px}
 
+/* ---- team runs home ---- */
+.team-runs-home-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}
+.team-run-list{display:flex;flex-direction:column;gap:12px;margin-bottom:26px}
+.team-run-list-item{display:flex;align-items:center;gap:12px;border:var(--bd);background:var(--c-white);padding:14px 16px;text-align:left;cursor:pointer}
+.team-run-list-item:hover{background:var(--c-panel)}
+.team-run-list-id{color:var(--c-grey)}
+.team-run-list-goal{font-size:16px}
+
+/* ---- team run detail ---- */
+.team-run-back{display:inline-block;margin-bottom:10px}
+.team-run-detail-id-row{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.team-run-detail-id{color:var(--c-grey)}
+.team-run-detail-goal{font-size:26px;margin:0}
+.team-run-meta{display:grid;grid-template-columns:repeat(5,1fr);border:var(--bd-in);margin-top:14px}
+.team-run-meta-cell{padding:9px 12px;border-right:var(--bd-in)}
+.team-run-meta-cell:last-child{border-right:none}
+.team-run-meta-k{font-size:9px;letter-spacing:1px;color:var(--c-grey)}
+.team-run-meta-v{font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-section-head{display:flex;align-items:baseline;gap:12px;margin:22px 0 12px}
+.team-section-label{font-size:11px;letter-spacing:2px;text-transform:uppercase}
+.team-section-rule{flex:1;height:1px;background:var(--c-black)}
+.team-lanes{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.team-lane{border:var(--bd)}
+.team-lane-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:var(--bd-in)}
+.team-lane-avatar{width:28px;height:28px;flex:none;border:var(--bd-sm);object-fit:cover}
+.team-lane-avatar-initials{display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px}
+.team-lane-title{min-width:0;flex:1}
+.team-lane-name{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.team-lane-role{font-size:10px;color:var(--c-grey)}
+.team-lane-lead{font-size:8px;letter-spacing:1px;border:var(--bd-sm);padding:1px 4px;flex:none}
+.team-lane-body{padding:10px 12px}
+.team-lane-task{font-size:12px;color:var(--c-dark);margin-top:8px;line-height:1.4;min-height:34px}
+.team-lane-snapshot{font-size:9px;letter-spacing:1px;color:var(--c-grey);margin-top:8px;border-top:1px solid var(--c-panel);padding-top:7px}
+.team-task-board{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:start}
+.team-task-column{border:var(--bd)}
+.team-task-column-head{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:var(--bd-in);background:var(--c-panel);font-size:10px;letter-spacing:1px;text-transform:uppercase}
+.team-task-column-body{padding:8px;display:flex;flex-direction:column;gap:8px;min-height:60px}
+.team-task-empty{font-size:10px;color:#ccc;padding:6px}
+.team-task-card{border:var(--bd-sm);padding:8px 10px}
+.team-task-title{font-size:11.5px;line-height:1.35}
+.team-task-meta{display:flex;align-items:center;gap:6px;margin-top:7px}
+.team-task-owner,.team-task-owner-avatar{width:18px;height:18px;flex:none;border:var(--bd-sm);display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;object-fit:cover}
+.team-task-note{font-size:9px}
+.team-task-note-danger{color:var(--c-danger)}
+.team-task-note-warning{color:var(--c-warn)}
+.team-activity-results{display:grid;grid-template-columns:1fr 420px;gap:22px;margin-top:26px;align-items:start}
+.team-activity-agent{border:1px solid var(--c-black);padding:0 5px;font-size:9px;letter-spacing:1px}
+.team-reports{display:flex;flex-direction:column;gap:8px}
+.team-report-card{border:var(--bd)}
+.team-report-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:var(--bd-in)}
+.team-report-owner{width:22px;height:22px;flex:none;border:var(--bd-sm);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700}
+.team-report-name{font-size:11px;font-weight:700;flex:1}
+.team-report-body{padding:9px 12px;font-size:12px;line-height:1.5;color:var(--c-dark);margin:0}
+.team-final-summary{border:var(--bd-hero);margin-top:14px}
+.team-final-summary-head{background:var(--c-black);color:var(--c-white);padding:8px 12px;font-size:11px;letter-spacing:1px}
+.team-final-summary-body{padding:13px 14px;font-size:13px;line-height:1.6}
+.team-run-empty{border:var(--bd-in);border-style:dashed;padding:24px;text-align:center;color:var(--c-grey)}
+@media (max-width:1100px){
+  .team-task-board{grid-template-columns:repeat(2,1fr)}
+  .team-activity-results{grid-template-columns:1fr}
+}
+
 /* ---- responsive ---- */
 .nav-toggle{display:none}
 .nav-backdrop{display:none}

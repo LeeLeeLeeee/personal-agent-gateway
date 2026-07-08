@@ -234,4 +234,95 @@ describe("GatewayApp", () => {
     expect(await screen.findByText(/Locked/)).toBeInTheDocument();
     expect(screen.getByText(/Claude Code/)).toBeInTheDocument();
   });
+
+  it("loads the persona library and seeds default personas", async () => {
+    let personaCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": () => {
+        personaCalls += 1;
+        return response({ personas: personaCalls > 1 ? [{ id: "p1", name: "Tech Lead", role: "Planning" }] : [] });
+      },
+      "POST /api/personas": { persona: { id: "p1", name: "Tech Lead", role: "Planning" } }
+    });
+
+    render(<GatewayApp />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Personas" }));
+    expect(await screen.findByRole("heading", { name: "Personas" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /seed defaults/i }));
+
+    expect(await screen.findByText("Tech Lead")).toBeInTheDocument();
+  });
+
+  it("creates and starts a team run, shows its detail, and refreshes on team SSE events", async () => {
+    let taskCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [{ id: "p1", name: "Tech Lead", role: "Planning" }] },
+      "GET /api/team-runs": { team_runs: [] },
+      "POST /api/team-runs": { team_run: { id: "run-1", goal: "Ship it", status: "draft", run_mode: "planning_only" } },
+      "POST /api/team-runs/run-1/start": {
+        team_run: { id: "run-1", goal: "Ship it", status: "running", run_mode: "planning_only" }
+      },
+      "GET /api/team-runs/run-1": {
+        team_run: {
+          id: "run-1",
+          goal: "Ship it",
+          status: "running",
+          run_mode: "planning_only",
+          leader_agent_id: "a1",
+          max_workers: 3
+        }
+      },
+      "GET /api/team-runs/run-1/agents": {
+        agents: [{
+          id: "a1",
+          team_run_id: "run-1",
+          name: "Tech Lead",
+          role: "leader",
+          persona_snapshot: { role: "Planning" },
+          backend: "codex",
+          model: "default",
+          status: "running",
+          current_task_id: null
+        }]
+      },
+      "GET /api/team-runs/run-1/tasks": () => {
+        taskCalls += 1;
+        return response({ tasks: taskCalls > 1 ? [{ id: "t1", title: "Define schema", status: "in_progress" }] : [] });
+      },
+      "GET /api/team-runs/run-1/messages": { messages: [] }
+    });
+
+    render(<GatewayApp />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Agent Teams" }));
+    await userEvent.type(await screen.findByLabelText(/goal/i), "Ship it");
+    await userEvent.selectOptions(screen.getByLabelText(/leader/i), "p1");
+    await userEvent.click(screen.getByRole("button", { name: /create team run/i }));
+
+    expect((await screen.findAllByText("Tech Lead")).length).toBeGreaterThan(0);
+    expect(screen.getByText("LEAD")).toBeInTheDocument();
+    expect(screen.queryByText("Define schema")).not.toBeInTheDocument();
+
+    const source = MockEventSource.instances[0];
+    source.emit({ type: "team.task.updated", team_run_id: "run-1", task_id: "t1" });
+
+    expect(await screen.findByText("Define schema")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("← TEAM RUNS"));
+    expect(screen.queryByText("Ship it")).not.toBeInTheDocument();
+  });
 });

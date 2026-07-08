@@ -37,3 +37,9 @@ Project-local Atomic Design catalog for the Vite React frontend.
 - Props: `{ persona }`
 - Use when: Rendering a persona summary (avatar/initials, name, role, description, top responsibilities) in a library grid.
 - Don't use when: Editing persona fields is needed; use the `PersonaLibrary` create form.
+
+### TeamTaskCard
+- Path: `src/components/molecules/TeamTaskCard/`
+- Props: `{ task, owner? }`
+- Use when: Rendering a single team-run task card (title, owner avatar/initials, optional failed/blocked note) inside a task board column.
+- Don't use when: Rendering the full task board layout or columns; use the `TeamRunDetail` organism.

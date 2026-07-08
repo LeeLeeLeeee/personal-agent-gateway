@@ -7,6 +7,58 @@ import { AuthTemplate } from "../../templates/AuthTemplate/index.jsx";
 import { AppShell } from "../../templates/AppShell/index.jsx";
 import { ChatView } from "../../organisms/ChatView/index.jsx";
 import { NAV } from "../../organisms/Sidebar/index.jsx";
+import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
+import { PersonaLibrary } from "../../organisms/PersonaLibrary/index.jsx";
+import { TeamRunForm } from "../../organisms/TeamRunForm/index.jsx";
+import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
+
+const DEFAULT_PERSONAS = [
+  {
+    name: "Tech Lead",
+    role: "Planning",
+    description: "Breaks a goal into a task plan and coordinates the team.",
+    responsibilities: ["Plan tasks", "Assign owners", "Review results"],
+    constraints: ["Do not write implementation code directly"],
+    default_backend: "codex",
+    default_model: "default"
+  },
+  {
+    name: "Backend Engineer",
+    role: "Implementation",
+    description: "Implements server-side logic and APIs.",
+    responsibilities: ["Write backend code", "Write tests"],
+    constraints: ["Follow existing API contracts"],
+    default_backend: "codex",
+    default_model: "default"
+  },
+  {
+    name: "Frontend Engineer",
+    role: "Implementation",
+    description: "Implements UI components and wiring.",
+    responsibilities: ["Write UI code", "Write component tests"],
+    constraints: ["Match the design system"],
+    default_backend: "codex",
+    default_model: "default"
+  },
+  {
+    name: "QA Engineer",
+    role: "Verification",
+    description: "Verifies changes and reports defects.",
+    responsibilities: ["Run tests", "Report issues"],
+    constraints: ["Do not merge without verification"],
+    default_backend: "codex",
+    default_model: "default"
+  },
+  {
+    name: "Technical Writer",
+    role: "Documentation",
+    description: "Writes release notes and documentation.",
+    responsibilities: ["Document changes", "Write release notes"],
+    constraints: ["Keep docs concise"],
+    default_backend: "codex",
+    default_model: "default"
+  }
+];
 
 function appendOrReconcileCommand(entries, entry) {
   if (entry.type !== "command") return [...entries, entry];
@@ -63,9 +115,14 @@ export function GatewayApp() {
   const [turnStart, setTurnStart] = useState(null);
   const [turnEnd, setTurnEnd] = useState(null);
   const [turnStreamed, setTurnStreamed] = useState(false);
+  const [personas, setPersonas] = useState([]);
+  const [teamRuns, setTeamRuns] = useState([]);
+  const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
+  const [teamRunDetail, setTeamRunDetail] = useState(null);
   const turnHadAgentRef = useRef(false);
   const turnStreamedRef = useRef(false);
   const turnStartRef = useRef(null);
+  const selectedTeamRunIdRef = useRef(null);
 
   useForceTick(screen === "chat" && busy);
 
@@ -126,6 +183,9 @@ export function GatewayApp() {
         setTurnStart(started);
         setTurnEnd(null);
       }
+      if (parsed.type?.startsWith("team.") && parsed.team_run_id === selectedTeamRunIdRef.current) {
+        api.teamRunDetail(selectedTeamRunIdRef.current).then(setTeamRunDetail);
+      }
       const entry = entryFromSse(parsed);
       if (!entry) return;
       turnStreamedRef.current = true;
@@ -135,6 +195,34 @@ export function GatewayApp() {
     };
     return () => source.close();
   }, [authenticated, busy]);
+
+  useEffect(() => {
+    selectedTeamRunIdRef.current = selectedTeamRunId;
+  }, [selectedTeamRunId]);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    if (screen === "personas") {
+      api.personas().then(setPersonas);
+    } else if (screen === "teams") {
+      api.personas().then(setPersonas);
+      api.teamRuns().then(setTeamRuns);
+    }
+  }, [screen, authenticated]);
+
+  useEffect(() => {
+    if (!selectedTeamRunId) {
+      setTeamRunDetail(null);
+      return undefined;
+    }
+    let alive = true;
+    api.teamRunDetail(selectedTeamRunId).then((detail) => {
+      if (alive) setTeamRunDetail(detail);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [selectedTeamRunId]);
 
   async function handleLogin(otp) {
     const ok = await api.login(otp);
@@ -300,6 +388,32 @@ export function GatewayApp() {
     window.location.reload();
   }
 
+  async function handleCreatePersona(payload) {
+    await api.createPersona(payload);
+    setPersonas(await api.personas());
+  }
+
+  async function handleSeedDefaults() {
+    await Promise.all(DEFAULT_PERSONAS.map((persona) => api.createPersona(persona)));
+    setPersonas(await api.personas());
+  }
+
+  async function handleCreateTeamRun(payload) {
+    const created = await api.createTeamRun(payload);
+    if (!created) return;
+    const started = await api.startTeamRun(created.id);
+    setTeamRuns(await api.teamRuns());
+    setSelectedTeamRunId((started || created).id);
+  }
+
+  function handleSelectTeamRun(id) {
+    setSelectedTeamRunId(id);
+  }
+
+  function handleBackToTeamRuns() {
+    setSelectedTeamRunId(null);
+  }
+
   if (booting) {
     return <AuthTemplate><div className="headline" style={{ fontSize: 22 }}>Loading</div></AuthTemplate>;
   }
@@ -362,6 +476,45 @@ export function GatewayApp() {
           onDelete={handleDelete}
           onResolveApproval={handleResolveApproval}
         />
+      ) : screen === "personas" ? (
+        <PersonaLibrary personas={personas} onCreate={handleCreatePersona} onSeedDefaults={handleSeedDefaults} />
+      ) : screen === "teams" ? (
+        selectedTeamRunId ? (
+          <div>
+            <a
+              href="#"
+              className="mono team-run-back"
+              onClick={(event) => {
+                event.preventDefault();
+                handleBackToTeamRuns();
+              }}
+            >
+              ← TEAM RUNS
+            </a>
+            <TeamRunDetail detail={teamRunDetail} />
+          </div>
+        ) : (
+          <div className="team-runs-home">
+            <div className="team-runs-home-head">
+              <h1 className="headline" style={{ fontSize: 28 }}>Team Runs</h1>
+            </div>
+            <div className="team-run-list">
+              {teamRuns.map((run) => (
+                <button
+                  key={run.id}
+                  type="button"
+                  className="team-run-list-item"
+                  onClick={() => handleSelectTeamRun(run.id)}
+                >
+                  <span className="mono team-run-list-id">{run.id}</span>
+                  <StatusBadge kind={run.status} />
+                  <span className="headline team-run-list-goal">{run.goal}</span>
+                </button>
+              ))}
+            </div>
+            <TeamRunForm personas={personas} onSubmit={handleCreateTeamRun} />
+          </div>
+        )
       ) : (
         <div className="planned">{(activeNav?.label || screen).toUpperCase()} - PLANNED</div>
       )}
