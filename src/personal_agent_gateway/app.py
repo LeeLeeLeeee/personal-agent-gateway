@@ -14,6 +14,7 @@ from personal_agent_gateway.api import (
     auth_router,
     capabilities_router,
     jobs_router,
+    personas_router,
     schedules_router,
     settings_router,
 )
@@ -27,6 +28,7 @@ from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import CodexModelClient, OpenAIModelClient
+from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
@@ -70,6 +72,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(artifacts_router)
     app.include_router(schedules_router)
     app.include_router(settings_router)
+    app.include_router(personas_router)
 
     @app.exception_handler(Exception)
     async def internal_error_handler(_request: Request, _exc: Exception) -> JSONResponse:
@@ -215,6 +218,7 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
     assert config.auth_dir is not None
     db = Database(config.app_db_path)
     db.initialize()
+    persona_service = PersonaService(db)
     registry = CapabilityRegistry.default()
     job_service = JobService(db, registry)
     schedule_service = ScheduleService(db, registry)
@@ -243,6 +247,7 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
     app.state.schedule_service = schedule_service
     app.state.artifact_store = artifact_store
     app.state.job_worker = job_worker
+    app.state.persona_service = persona_service
 
 
 def main() -> None:
