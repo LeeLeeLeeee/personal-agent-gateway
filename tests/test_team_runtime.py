@@ -96,6 +96,30 @@ async def test_plan_and_execute_assigns_tasks_to_workers(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_plan_and_execute_with_no_workers_fails_run(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, workspace)
+    leader = personas.create_persona("Tech Lead", "Planning", "Plans work.", ["Plan"], [])
+    run = teams.create_team_run("Build teams", leader.id, [], "plan_and_execute", 1)
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=lambda _agent: FakeModel(
+            '[{"title":"Verify API","description":"Check team run endpoints"}]'
+        ),
+    )
+
+    result = await runtime.start(run.id)
+
+    assert result.status == "failed"
+    assert result.error_message and "worker" in result.error_message
+    assert result.status != "completed"
+
+
+@pytest.mark.asyncio
 async def test_team_runtime_publishes_team_events(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

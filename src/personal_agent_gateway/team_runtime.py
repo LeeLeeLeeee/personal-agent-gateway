@@ -71,6 +71,15 @@ class TeamRuntime:
                 return run
 
             workers = _find_workers(self._teams.list_agents(run.id))
+            if not workers:
+                error = "plan_and_execute run has no worker agents (empty member_persona_ids)"
+                run = self._teams.set_run_status(run.id, "failed", error_message=error)
+                self._teams.set_agent_status(leader.id, "failed")
+                await self._publish(
+                    {"type": "team.run.failed", "team_run_id": run.id, "error": error}
+                )
+                return run
+
             created_tasks = self._teams.list_tasks(run.id)
             for index, task in enumerate(created_tasks):
                 worker = workers[index % len(workers)] if workers else None
