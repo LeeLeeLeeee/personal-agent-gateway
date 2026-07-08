@@ -503,6 +503,21 @@ async function toggleMermaid(key, code) {
   renderShell();
 }
 
+function svgBaseWidth(svg) {
+  if (svg && svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) return svg.viewBox.baseVal.width;
+  const w = svg && parseFloat(svg.getAttribute("width"));
+  return w && !isNaN(w) ? w : 600;
+}
+
+// Render the SVG at its natural pixel size (crisp) instead of shrinking to fit — container scrolls if wide.
+function sizeSvgNatural(svg) {
+  if (!svg) return;
+  svg.setAttribute("width", Math.round(svgBaseWidth(svg)));
+  svg.removeAttribute("height");
+  svg.style.maxWidth = "none";
+  svg.style.height = "auto";
+}
+
 function renderMermaidBlock(code) {
   const key = hashStr(code);
   const shown = state.mermaidShown.has(key);
@@ -516,8 +531,12 @@ function renderMermaidBlock(code) {
   const wrap = el("div", { class: "mermaid-wrap" }, [header]);
   if (shown && state.mermaidSvg[key]) {
     const g = el("div", { class: "mermaid-svg", html: state.mermaidSvg[key] });
-    g.append(el("button", { class: "zoom-btn", onclick: () => openModal(state.mermaidSvg[key], true) }, "⤢"));
-    wrap.append(g);
+    sizeSvgNatural(g.querySelector("svg"));
+    const holder = el("div", { class: "mermaid-holder" }, [
+      g,
+      el("button", { class: "zoom-btn", onclick: () => openModal(state.mermaidSvg[key], true) }, "⤢"),
+    ]);
+    wrap.append(holder);
   } else {
     wrap.append(codePre("mermaid", code));
     if (shown) wrap.append(el("div", { class: "mono", style: "font-size:11px;color:var(--c-grey);padding:6px 12px" }, "렌더링 중…"));
@@ -529,16 +548,23 @@ function renderMermaidBlock(code) {
 function openModal(html, zoomable) { state.modal = { html, zoomable: !!zoomable }; state.zoom = { scale: 1, x: 0, y: 0 }; renderShell(); }
 function closeModal() { if (state.modal) { state.modal = null; renderShell(); } }
 function setScale(s) { state.zoom.scale = Math.min(8, Math.max(0.2, s)); }
-function applyZoom(stage) { stage.style.transform = `translate(${state.zoom.x}px, ${state.zoom.y}px) scale(${state.zoom.scale})`; }
 
 function renderZoomModal() {
   const stage = el("div", { class: "zoom-stage", html: state.modal.html });
-  applyZoom(stage);
+  const svg = stage.querySelector("svg");
+  const baseW = svgBaseWidth(svg);
+  if (svg) { svg.removeAttribute("width"); svg.removeAttribute("height"); svg.style.maxWidth = "none"; svg.style.height = "auto"; }
+  // Zoom by resizing the SVG (vector re-layout = always crisp); pan by translate (no rasterization).
+  const apply = () => {
+    if (svg) svg.style.width = Math.round(baseW * state.zoom.scale) + "px";
+    stage.style.transform = `translate(${state.zoom.x}px, ${state.zoom.y}px)`;
+  };
+  apply();
   const viewport = el("div", { class: "zoom-viewport" }, stage);
-  viewport.onwheel = (e) => { e.preventDefault(); setScale(state.zoom.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); applyZoom(stage); };
+  viewport.onwheel = (e) => { e.preventDefault(); setScale(state.zoom.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); apply(); };
   let drag = false, sx = 0, sy = 0, ox = 0, oy = 0;
   viewport.onpointerdown = (e) => { drag = true; sx = e.clientX; sy = e.clientY; ox = state.zoom.x; oy = state.zoom.y; viewport.setPointerCapture(e.pointerId); viewport.style.cursor = "grabbing"; };
-  viewport.onpointermove = (e) => { if (!drag) return; state.zoom.x = ox + (e.clientX - sx); state.zoom.y = oy + (e.clientY - sy); applyZoom(stage); };
+  viewport.onpointermove = (e) => { if (!drag) return; state.zoom.x = ox + (e.clientX - sx); state.zoom.y = oy + (e.clientY - sy); apply(); };
   const stop = () => { drag = false; viewport.style.cursor = "grab"; };
   viewport.onpointerup = stop; viewport.onpointercancel = stop;
   const btn = (label, fn) => el("button", { class: "code-copy", onclick: fn }, label);

@@ -160,8 +160,9 @@ h1,h2,h3,p{margin:0}
 .mermaid-wrap{margin:0 0 10px;border:var(--bd)}
 .mermaid-wrap .code-wrap{margin:0;border:none}
 .mermaid-wrap .md-pre{margin:0;border:none}
-.mermaid-svg{position:relative;background:var(--c-white);padding:16px;overflow:auto;display:flex;justify-content:center;min-height:90px}
-.mermaid-svg svg{max-width:100%;height:auto}
+.mermaid-holder{position:relative}
+.mermaid-svg{background:var(--c-white);padding:16px;overflow:auto;max-height:520px;text-align:center;min-height:90px}
+.mermaid-svg svg{height:auto;display:inline-block;vertical-align:top}
 .zoom-btn{position:absolute;top:8px;right:8px;z-index:2;font-family:var(--font-body);font-weight:600;font-size:13px;background:var(--c-white);border:var(--bd-sm);cursor:pointer;padding:1px 8px;line-height:1.4}
 .zoom-btn:hover{background:var(--c-black);color:var(--c-white)}
 
