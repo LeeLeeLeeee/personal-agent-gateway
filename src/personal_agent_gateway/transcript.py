@@ -38,6 +38,8 @@ class SessionSummary(BaseModel):
     is_active: bool
     agent_id: str = "codex"
     model: str = "default"
+    options: dict[str, object] = Field(default_factory=dict)
+    editable: bool = True
 
 
 class TranscriptStore:
@@ -198,7 +200,7 @@ class TranscriptStore:
         events = self._load(transcript_id)
         created_at = _created_at(events, self._transcript_path(transcript_id))
         updated_at = events[-1].created_at if events else created_at
-        agent_id, model = _session_agent_model(events)
+        agent_id, model, options = _session_agent_config(events)
         return SessionSummary(
             id=transcript_id,
             title=_session_title(events),
@@ -209,6 +211,8 @@ class TranscriptStore:
             is_active=transcript_id == active_id,
             agent_id=agent_id,
             model=model,
+            options=options,
+            editable=_is_session_editable(events),
         )
 
 
@@ -250,17 +254,23 @@ def _session_status(events: list[TranscriptEvent]) -> SessionStatus:
     return "idle"
 
 
-def _session_agent_model(events: list[TranscriptEvent]) -> tuple[str, str]:
+def _session_agent_config(events: list[TranscriptEvent]) -> tuple[str, str, dict[str, object]]:
     for event in reversed(events):
         if event.kind != "session_config_set":
             continue
         agent_id = event.payload.get("agent_id")
         model = event.payload.get("model")
+        options = event.payload.get("options")
         return (
             agent_id if isinstance(agent_id, str) else "codex",
             model if isinstance(model, str) else "default",
+            dict(options) if isinstance(options, dict) else {},
         )
-    return "codex", "default"
+    return "codex", "default", {}
+
+
+def _is_session_editable(events: list[TranscriptEvent]) -> bool:
+    return all(event.kind in {"session_config_set", "session_rename"} for event in events)
 
 
 def _has_pending_shell_approval(events: list[TranscriptEvent]) -> bool:

@@ -230,17 +230,18 @@ def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
     assert payload["provider"] == "codex"
     assert payload["model"] == "default"
     assert payload["workspace_root"] == str(config.workspace_root)
-    assert payload["session_id"]
+    assert payload["session_id"] is None
     assert payload["message_count"] == 0
     assert payload["pending_approval"] is False
     assert payload["session_status"] == "idle"
     assert payload["cookie_secure"] is False
-    assert payload["session_config"]["session_id"] == payload["session_id"]
+    assert payload["session_config"]["session_id"] is None
     assert payload["session_config"]["agent_id"] == "codex"
     assert payload["session_config"]["model"] == "default"
     assert payload["session_config"]["options"] == {}
     assert payload["session_config"]["editable"] is True
     assert payload["session_config"]["updated_at"] is None
+    assert client.get("/api/sessions").json() == {"sessions": []}
     assert "secret-token" not in response.text
 
 
@@ -259,6 +260,7 @@ def test_status_reports_active_session_agent_config(tmp_path: Path) -> None:
     assert status["provider"] == "claude"
     assert status["model"] == "sonnet"
     assert status["session_config"]["agent_id"] == "claude"
+    assert status["session_config"]["options"] == {"effort": "high"}
     assert status["session_config"]["editable"] is True
 
 

@@ -101,19 +101,35 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
 
     @app.get("/api/status")
     def status(_session: None = session_dependency) -> dict[str, object]:
-        session_config = SessionAgentConfigService(transcript).effective_config()
-        session_id = session_config.session_id
-        events = transcript.load(session_id)
+        session_id = transcript.active_id()
+        if session_id is None:
+            session_config = {
+                "session_id": None,
+                "agent_id": "codex",
+                "model": "default",
+                "options": {},
+                "editable": True,
+                "updated_at": None,
+            }
+            events = []
+            provider = "codex"
+            model = "default"
+        else:
+            effective_config = SessionAgentConfigService(transcript).effective_config(session_id)
+            session_config = effective_config.model_dump(mode="json")
+            events = transcript.load(session_id)
+            provider = effective_config.agent_id
+            model = effective_config.model
         return {
-            "provider": session_config.agent_id,
-            "model": session_config.model,
+            "provider": provider,
+            "model": model,
             "workspace_root": str(app_config.workspace_root),
             "session_id": session_id,
             "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
             "pending_approval": _has_pending_shell_approval(events),
             "session_status": _session_status(events, session_id, running_session_id),
             "cookie_secure": app_config.cookie_secure,
-            "session_config": session_config.model_dump(mode="json"),
+            "session_config": session_config,
         }
 
     @app.get("/api/events")

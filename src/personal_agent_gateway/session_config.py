@@ -9,7 +9,7 @@ AgentId = Literal["codex", "claude"]
 
 
 class SessionAgentConfig(BaseModel):
-    session_id: str
+    session_id: str | None
     agent_id: AgentId
     model: str
     options: dict[str, Any]
