@@ -15,6 +15,7 @@ TranscriptKind = Literal[
     "tool_denial",
     "runtime_error",
     "session_rename",
+    "session_config_set",
 ]
 SessionStatus = Literal["idle", "waiting_approval", "failed"]
 
