@@ -258,6 +258,30 @@ h1,h2,h3,p{margin:0}
 .agent-field-label{font-size:10px;letter-spacing:1px;text-transform:uppercase}
 .agent-picker-error{border:3px solid var(--c-danger);color:var(--c-danger);padding:10px 12px;font-size:12px}
 
+/* ---- persona library ---- */
+.persona-library-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:20px}
+.persona-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-bottom:22px}
+.persona-card{border:var(--bd);background:var(--c-white);padding:14px;display:grid;gap:8px}
+.persona-card-head{display:flex;align-items:center;gap:10px}
+.persona-card-title{min-width:0}
+.persona-avatar{width:30px;height:30px;flex:none;border:var(--bd-sm);object-fit:cover}
+.persona-avatar-initials{display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px}
+.chip-row{display:flex;flex-wrap:wrap;gap:6px}
+.persona-edit{border:var(--bd-hero);background:var(--c-white)}
+.persona-edit-head{background:var(--c-black);color:var(--c-white);padding:8px 14px;letter-spacing:1px}
+.persona-edit-body{padding:18px;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.persona-field{display:grid;gap:6px}
+.persona-field-label{font-size:10px;letter-spacing:1px;color:var(--c-grey);text-transform:uppercase}
+.persona-field-wide{grid-column:1 / -1}
+.persona-field-danger .input-field{border-color:var(--c-warn)}
+.persona-edit-foot{padding:0 18px 18px;display:flex;justify-content:flex-end}
+
+/* ---- team run form ---- */
+.team-run-form{display:flex;flex-direction:column;gap:18px;max-width:640px}
+.team-run-field{display:grid;gap:8px}
+.team-run-members{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
+.team-run-member{display:flex;align-items:center;gap:8px;border:var(--bd-sm);padding:8px 10px;font-size:13px}
+
 /* ---- responsive ---- */
 .nav-toggle{display:none}
 .nav-backdrop{display:none}

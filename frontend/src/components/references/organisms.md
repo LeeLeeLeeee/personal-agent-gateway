@@ -43,3 +43,15 @@ Project-local Atomic Design catalog for the Vite React frontend.
 - Props: `{ agents, config, onChange, error? }`
 - Use when: Rendering editable or locked session agent configuration state.
 - Don't use when: Loading agents or persisting config changes; the container owns API calls.
+
+### PersonaLibrary
+- Path: `src/components/organisms/PersonaLibrary/`
+- Props: `{ personas, onCreate, onSeedDefaults? }`
+- Use when: Rendering the persona grid plus a create-persona form (name/role/description/responsibilities/constraints/backend/model/avatar slug).
+- Don't use when: Loading personas or persisting persona changes; the container owns API calls. Note: this is a create-only form and the avatar field is a plain slug text input, not a full avatar-grid picker.
+
+### TeamRunForm
+- Path: `src/components/organisms/TeamRunForm/`
+- Props: `{ personas, onSubmit }`
+- Use when: Rendering the new-team-run form (goal, leader select, member checkboxes, run mode, max workers).
+- Don't use when: Loading personas or creating the team run via API; the container owns that call.
