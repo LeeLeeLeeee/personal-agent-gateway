@@ -16,6 +16,7 @@ class Persona:
     constraints: list[str]
     default_backend: str
     default_model: str
+    avatar: str
     created_at: str
     updated_at: str
 
@@ -33,6 +34,7 @@ class PersonaService:
         constraints: list[str],
         default_backend: str = "codex",
         default_model: str = "default",
+        avatar: str = "",
     ) -> Persona:
         persona_id = uuid4().hex
         now = _now()
@@ -40,9 +42,9 @@ class PersonaService:
             """
             insert into personas (
                 id, name, role, description, responsibilities_json,
-                constraints_json, default_backend, default_model, created_at, updated_at
+                constraints_json, default_backend, default_model, avatar, created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 persona_id,
@@ -53,6 +55,7 @@ class PersonaService:
                 json.dumps(constraints, ensure_ascii=False),
                 default_backend,
                 default_model,
+                avatar,
                 now,
                 now,
             ),
@@ -81,6 +84,7 @@ class PersonaService:
         constraints: list[str] | None = None,
         default_backend: str | None = None,
         default_model: str | None = None,
+        avatar: str | None = None,
     ) -> Persona:
         current = self.get_persona(persona_id)
         updated_at = _now()
@@ -88,7 +92,7 @@ class PersonaService:
             """
             update personas
             set name = ?, role = ?, description = ?, responsibilities_json = ?,
-                constraints_json = ?, default_backend = ?, default_model = ?, updated_at = ?
+                constraints_json = ?, default_backend = ?, default_model = ?, avatar = ?, updated_at = ?
             where id = ?
             """,
             (
@@ -99,6 +103,7 @@ class PersonaService:
                 json.dumps(constraints if constraints is not None else current.constraints, ensure_ascii=False),
                 default_backend if default_backend is not None else current.default_backend,
                 default_model if default_model is not None else current.default_model,
+                avatar if avatar is not None else current.avatar,
                 updated_at,
                 persona_id,
             ),
@@ -120,6 +125,7 @@ def _persona_from_row(row) -> Persona:
         constraints=list(json.loads(row["constraints_json"])),
         default_backend=row["default_backend"],
         default_model=row["default_model"],
+        avatar=row["avatar"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

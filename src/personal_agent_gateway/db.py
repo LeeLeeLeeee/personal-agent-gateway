@@ -84,6 +84,7 @@ create table if not exists personas (
     constraints_json text not null,
     default_backend text not null,
     default_model text not null,
+    avatar text not null default '',
     created_at text not null,
     updated_at text not null
 );
@@ -172,6 +173,7 @@ class Database:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA_SQL)
+            _migrate(connection)
 
     def execute(self, sql: str, parameters: Sequence[object] = ()) -> None:
         with self.connect() as connection:
@@ -192,3 +194,18 @@ class Database:
     ) -> list[sqlite3.Row]:
         with self.connect() as connection:
             return list(connection.execute(sql, parameters).fetchall())
+
+
+def _migrate(connection: sqlite3.Connection) -> None:
+    """Additive column migrations for databases created before a column existed.
+
+    ``create table if not exists`` never alters an existing table, so columns
+    added to SCHEMA_SQL after a table already shipped must be backfilled here.
+    """
+    persona_columns = {
+        row["name"] for row in connection.execute("pragma table_info(personas)")
+    }
+    if "avatar" not in persona_columns:
+        connection.execute(
+            "alter table personas add column avatar text not null default ''"
+        )

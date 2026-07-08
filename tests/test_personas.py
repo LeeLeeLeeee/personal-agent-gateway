@@ -47,3 +47,52 @@ def test_update_persona_does_not_change_id_or_created_at(tmp_path):
     assert updated.created_at == persona.created_at
     assert updated.name == "Strict QA Tester"
     assert updated.constraints == ["Report evidence", "Do not modify product code"]
+
+
+def test_create_persona_stores_avatar(tmp_path):
+    service = make_service(tmp_path)
+
+    persona = service.create_persona(
+        name="Designer",
+        role="UI",
+        description="Reviews UI.",
+        responsibilities=[],
+        constraints=[],
+        avatar="designer-beret",
+    )
+
+    assert persona.avatar == "designer-beret"
+    assert service.list_personas()[0].avatar == "designer-beret"
+
+
+def test_create_persona_defaults_avatar_to_empty(tmp_path):
+    service = make_service(tmp_path)
+
+    persona = service.create_persona(
+        name="X",
+        role="r",
+        description="d",
+        responsibilities=[],
+        constraints=[],
+    )
+
+    assert persona.avatar == ""
+
+
+def test_update_persona_sets_and_preserves_avatar(tmp_path):
+    service = make_service(tmp_path)
+    persona = service.create_persona(
+        name="X",
+        role="r",
+        description="d",
+        responsibilities=[],
+        constraints=[],
+        avatar="fox",
+    )
+
+    updated = service.update_persona(persona.id, avatar="wolf")
+    assert updated.avatar == "wolf"
+
+    again = service.update_persona(persona.id, name="Y")
+    assert again.name == "Y"
+    assert again.avatar == "wolf"

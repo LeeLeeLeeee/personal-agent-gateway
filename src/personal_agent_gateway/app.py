@@ -215,6 +215,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         return {"events": [], "session_id": session_id}
 
     app.mount("/static/vendor", StaticFiles(directory=static_dir / "vendor"), name="vendor")
+    app.mount("/static/avatars", StaticFiles(directory=static_dir / "avatars"), name="avatars")
     if frontend_assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=frontend_assets_dir), name="frontend_assets")
 

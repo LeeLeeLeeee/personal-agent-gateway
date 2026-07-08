@@ -10,7 +10,8 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": "http://127.0.0.1:8787",
-      "/static/vendor": "http://127.0.0.1:8787"
+      "/static/vendor": "http://127.0.0.1:8787",
+      "/static/avatars": "http://127.0.0.1:8787"
     }
   },
   build: {

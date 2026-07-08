@@ -17,6 +17,7 @@ class PersonaRequest(BaseModel):
     constraints: list[str] = []
     default_backend: str = "codex"
     default_model: str = "default"
+    avatar: str = ""
 
 
 class PersonaUpdateRequest(BaseModel):
@@ -27,6 +28,7 @@ class PersonaUpdateRequest(BaseModel):
     constraints: list[str] | None = None
     default_backend: str | None = None
     default_model: str | None = None
+    avatar: str | None = None
 
 
 def require_session(session: Annotated[str | None, Cookie(alias="agent_session")] = None) -> None:
@@ -88,6 +90,7 @@ def _persona_payload(persona: Persona) -> dict[str, object]:
         "constraints": persona.constraints,
         "default_backend": persona.default_backend,
         "default_model": persona.default_model,
+        "avatar": persona.avatar,
         "created_at": persona.created_at,
         "updated_at": persona.updated_at,
     }

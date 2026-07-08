@@ -47,3 +47,37 @@ def test_database_initializes_agent_team_tables(tmp_path: Path) -> None:
         "team_tasks",
         "team_messages",
     }
+
+
+def _columns(db: Database, table: str) -> set[str]:
+    return {row["name"] for row in db.fetchall(f"pragma table_info({table})")}
+
+
+def test_personas_table_has_avatar_column(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+
+    assert "avatar" in _columns(db, "personas")
+
+
+def test_initialize_migrates_avatar_onto_legacy_personas(tmp_path: Path) -> None:
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "create table personas ("
+        "id text primary key, name text not null, role text not null, "
+        "description text not null, responsibilities_json text not null, "
+        "constraints_json text not null, default_backend text not null, "
+        "default_model text not null, created_at text not null, updated_at text not null)"
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    assert "avatar" not in _columns(db, "personas")
+
+    db.initialize()
+
+    assert "avatar" in _columns(db, "personas")

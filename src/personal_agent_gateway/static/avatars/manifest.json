@@ -1,0 +1,304 @@
+{
+  "avatars": [
+    {
+      "slug": "dev-glasses",
+      "label": "Developer (glasses)",
+      "category": "person"
+    },
+    {
+      "slug": "support-headset",
+      "label": "Support (headset)",
+      "category": "person"
+    },
+    {
+      "slug": "dev-hoodie",
+      "label": "Developer (hoodie)",
+      "category": "person"
+    },
+    {
+      "slug": "analyst-magnifier",
+      "label": "Analyst (magnifier)",
+      "category": "person"
+    },
+    {
+      "slug": "pm-mug",
+      "label": "PM (mug)",
+      "category": "person"
+    },
+    {
+      "slug": "designer-beret",
+      "label": "Designer (beret)",
+      "category": "person"
+    },
+    {
+      "slug": "robot",
+      "label": "Robot",
+      "category": "tech"
+    },
+    {
+      "slug": "computer-retro",
+      "label": "Retro computer",
+      "category": "tech"
+    },
+    {
+      "slug": "server",
+      "label": "Server",
+      "category": "tech"
+    },
+    {
+      "slug": "wolf",
+      "label": "Wolf",
+      "category": "animal"
+    },
+    {
+      "slug": "cat-glasses",
+      "label": "Cat (glasses)",
+      "category": "animal"
+    },
+    {
+      "slug": "owl",
+      "label": "Owl",
+      "category": "animal"
+    },
+    {
+      "slug": "raccoon",
+      "label": "Raccoon",
+      "category": "animal"
+    },
+    {
+      "slug": "fox",
+      "label": "Fox",
+      "category": "animal"
+    },
+    {
+      "slug": "bear",
+      "label": "Bear",
+      "category": "animal"
+    },
+    {
+      "slug": "frog",
+      "label": "Frog",
+      "category": "animal"
+    },
+    {
+      "slug": "penguin",
+      "label": "Penguin",
+      "category": "animal"
+    },
+    {
+      "slug": "turtle",
+      "label": "Turtle",
+      "category": "animal"
+    },
+    {
+      "slug": "octopus",
+      "label": "Octopus",
+      "category": "animal"
+    },
+    {
+      "slug": "rabbit",
+      "label": "Rabbit",
+      "category": "animal"
+    },
+    {
+      "slug": "shark",
+      "label": "Shark",
+      "category": "animal"
+    },
+    {
+      "slug": "crow",
+      "label": "Crow",
+      "category": "animal"
+    },
+    {
+      "slug": "lizard",
+      "label": "Lizard",
+      "category": "animal"
+    },
+    {
+      "slug": "monkey",
+      "label": "Monkey",
+      "category": "animal"
+    },
+    {
+      "slug": "ghost",
+      "label": "Ghost",
+      "category": "creature"
+    },
+    {
+      "slug": "slime",
+      "label": "Slime",
+      "category": "creature"
+    },
+    {
+      "slug": "cactus",
+      "label": "Cactus",
+      "category": "creature"
+    },
+    {
+      "slug": "mushroom",
+      "label": "Mushroom",
+      "category": "creature"
+    },
+    {
+      "slug": "alien",
+      "label": "Alien",
+      "category": "creature"
+    },
+    {
+      "slug": "skull",
+      "label": "Skull",
+      "category": "creature"
+    },
+    {
+      "slug": "dev-visor",
+      "label": "Developer (visor)",
+      "category": "person"
+    },
+    {
+      "slug": "engineer-wrench",
+      "label": "Engineer (wrench)",
+      "category": "person"
+    },
+    {
+      "slug": "support-notepad",
+      "label": "Support (notepad)",
+      "category": "person"
+    },
+    {
+      "slug": "scientist-goggles",
+      "label": "Scientist (goggles)",
+      "category": "person"
+    },
+    {
+      "slug": "security-hooded",
+      "label": "Security (hooded)",
+      "category": "person"
+    },
+    {
+      "slug": "dev-scarf",
+      "label": "Developer (scarf)",
+      "category": "person"
+    },
+    {
+      "slug": "drone",
+      "label": "Drone bot",
+      "category": "tech"
+    },
+    {
+      "slug": "cube-device",
+      "label": "Cube device",
+      "category": "tech"
+    },
+    {
+      "slug": "satellite",
+      "label": "Satellite",
+      "category": "tech"
+    },
+    {
+      "slug": "hamster",
+      "label": "Hamster",
+      "category": "animal"
+    },
+    {
+      "slug": "deer",
+      "label": "Deer",
+      "category": "animal"
+    },
+    {
+      "slug": "panda",
+      "label": "Panda",
+      "category": "animal"
+    },
+    {
+      "slug": "tiger",
+      "label": "Tiger",
+      "category": "animal"
+    },
+    {
+      "slug": "koala",
+      "label": "Koala",
+      "category": "animal"
+    },
+    {
+      "slug": "elephant",
+      "label": "Elephant",
+      "category": "animal"
+    },
+    {
+      "slug": "pig",
+      "label": "Pig",
+      "category": "animal"
+    },
+    {
+      "slug": "sheep",
+      "label": "Sheep",
+      "category": "animal"
+    },
+    {
+      "slug": "goat",
+      "label": "Goat",
+      "category": "animal"
+    },
+    {
+      "slug": "duck",
+      "label": "Duck",
+      "category": "animal"
+    },
+    {
+      "slug": "bat",
+      "label": "Bat",
+      "category": "animal"
+    },
+    {
+      "slug": "bee-bot",
+      "label": "Bee bot",
+      "category": "tech"
+    },
+    {
+      "slug": "otter",
+      "label": "Otter",
+      "category": "animal"
+    },
+    {
+      "slug": "hedgehog",
+      "label": "Hedgehog",
+      "category": "animal"
+    },
+    {
+      "slug": "chameleon",
+      "label": "Chameleon",
+      "category": "animal"
+    },
+    {
+      "slug": "cloud",
+      "label": "Cloud",
+      "category": "creature"
+    },
+    {
+      "slug": "flame",
+      "label": "Flame",
+      "category": "creature"
+    },
+    {
+      "slug": "bonsai",
+      "label": "Bonsai",
+      "category": "creature"
+    },
+    {
+      "slug": "leaf-hat",
+      "label": "Leaf-hat character",
+      "category": "creature"
+    },
+    {
+      "slug": "moon",
+      "label": "Moon",
+      "category": "creature"
+    },
+    {
+      "slug": "glitch-panda",
+      "label": "Glitch panda",
+      "category": "creature"
+    }
+  ]
+}

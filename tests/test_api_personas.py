@@ -87,3 +87,40 @@ def test_patch_persona_partial_update_preserves_unset_fields(tmp_path: Path) -> 
     assert persona["constraints"] == ["No flaky tests"]
     assert persona["default_backend"] == "openai"
     assert persona["default_model"] == "gpt-5"
+
+
+def test_create_persona_with_avatar_returns_it(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+
+    response = client.post(
+        "/api/personas",
+        json={"name": "Lead", "role": "r", "description": "d", "avatar": "dev-glasses"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["persona"]["avatar"] == "dev-glasses"
+
+
+def test_patch_persona_preserves_avatar(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    created = client.post(
+        "/api/personas",
+        json={"name": "Lead", "role": "r", "description": "d", "avatar": "owl"},
+    ).json()["persona"]
+
+    patched = client.patch(
+        f"/api/personas/{created['id']}",
+        json={"name": "Lead 2"},
+    ).json()["persona"]
+
+    assert patched["name"] == "Lead 2"
+    assert patched["avatar"] == "owl"
+
+
+def test_avatar_asset_is_served(tmp_path: Path) -> None:
+    client = TestClient(create_app(make_config(tmp_path)))
+
+    response = client.get("/static/avatars/fox.png")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/")
