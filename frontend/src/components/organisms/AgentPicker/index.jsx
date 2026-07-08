@@ -3,7 +3,11 @@ import { AgentAvailabilityBadge } from "../../molecules/AgentAvailabilityBadge/i
 import { AgentOptionField } from "../../molecules/AgentOptionField/index.jsx";
 
 function selectedAgent(agents, config) {
-  return agents.find((agent) => agent.id === config?.agent_id) || agents[0] || null;
+  const configured = agents.find((agent) => agent.id === config?.agent_id);
+
+  if (configured) return configured;
+
+  return agents.find((agent) => agent.available) || agents[0] || null;
 }
 
 function optionValue(config, agent, name) {
@@ -29,6 +33,21 @@ export function AgentPicker({ agents = [], config, onChange, error = "" }) {
         <div className="agent-picker-summary mono">
           Locked - {current.label} / {config.model}{options ? ` / ${options}` : ""}
         </div>
+      </section>
+    );
+  }
+
+  if (!current.available) {
+    return (
+      <section className="agent-picker agent-picker-unavailable" aria-label="Agent configuration">
+        <div className="agent-picker-head">
+          <span className="headline" style={{ fontSize: 12 }}>Agent</span>
+          <AgentAvailabilityBadge available={current.available} reason={current.availability_error} />
+        </div>
+        <div className="agent-picker-summary mono">{current.label}</div>
+        {current.availability_error ? (
+          <div className="agent-picker-error mono">{current.availability_error}</div>
+        ) : null}
       </section>
     );
   }

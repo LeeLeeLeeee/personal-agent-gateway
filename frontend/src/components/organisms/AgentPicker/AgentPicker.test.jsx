@@ -31,6 +31,7 @@ const agents = [
 describe("AgentPicker", () => {
   it("shows editable available agents and disables unavailable agents", async () => {
     const onChange = vi.fn();
+    const user = userEvent.setup();
 
     render(
       <AgentPicker
@@ -43,10 +44,33 @@ describe("AgentPicker", () => {
     expect(screen.getByText("Codex CLI")).toBeInTheDocument();
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
     expect(screen.getByText("not found on PATH")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Claude Code/i })).toBeDisabled();
 
-    await userEvent.selectOptions(screen.getByLabelText("Model"), "default");
+    await user.click(screen.getByRole("button", { name: /Claude Code/i }));
+    expect(onChange).not.toHaveBeenCalled();
+
+    await user.selectOptions(screen.getByLabelText("Model"), "default");
 
     expect(onChange).toHaveBeenCalled();
+  });
+
+  it("shows an unavailable current config as read-only summary", () => {
+    const onChange = vi.fn();
+
+    render(
+      <AgentPicker
+        agents={agents}
+        config={{ agent_id: "claude", model: "sonnet", options: { effort: "medium" }, editable: true }}
+        onChange={onChange}
+      />
+    );
+
+    expect(screen.getByText("Claude Code")).toBeInTheDocument();
+    expect(screen.getByText("not found on PATH")).toBeInTheDocument();
+    expect(screen.getByText("UNAVAILABLE")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/effort/i)).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("renders locked config as read-only summary", () => {
