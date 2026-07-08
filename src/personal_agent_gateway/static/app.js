@@ -10,7 +10,7 @@ const state = {
   timeline: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false, navOpen: false,
   eventSource: null, sseState: "idle", turnStart: null, turnEnd: null, turnHadAgent: false, turnStreamed: false,
   openCmd: {}, elapsedTimer: null, forceBottom: false, editingSession: null, editTitle: "",
-  hlCache: {}, mermaidShown: new Set(), mermaidSvg: {}, mermaidSeq: 0, modal: null,
+  hlCache: {}, mermaidShown: new Set(), mermaidSvg: {}, mermaidSeq: 0, modal: null, zoom: { scale: 1, x: 0, y: 0 },
 };
 
 const api = {
@@ -516,7 +516,7 @@ function renderMermaidBlock(code) {
   const wrap = el("div", { class: "mermaid-wrap" }, [header]);
   if (shown && state.mermaidSvg[key]) {
     const g = el("div", { class: "mermaid-svg", html: state.mermaidSvg[key] });
-    g.append(el("button", { class: "zoom-btn", onclick: () => openModal(state.mermaidSvg[key]) }, "⤢"));
+    g.append(el("button", { class: "zoom-btn", onclick: () => openModal(state.mermaidSvg[key], true) }, "⤢"));
     wrap.append(g);
   } else {
     wrap.append(codePre("mermaid", code));
@@ -525,9 +525,32 @@ function renderMermaidBlock(code) {
   return wrap;
 }
 
-// ---- expand modal ----
-function openModal(html) { state.modal = html; renderShell(); }
-function closeModal() { if (state.modal !== null) { state.modal = null; renderShell(); } }
+// ---- expand modal (zoomable = pan/zoom for diagrams) ----
+function openModal(html, zoomable) { state.modal = { html, zoomable: !!zoomable }; state.zoom = { scale: 1, x: 0, y: 0 }; renderShell(); }
+function closeModal() { if (state.modal) { state.modal = null; renderShell(); } }
+function setScale(s) { state.zoom.scale = Math.min(8, Math.max(0.2, s)); }
+function applyZoom(stage) { stage.style.transform = `translate(${state.zoom.x}px, ${state.zoom.y}px) scale(${state.zoom.scale})`; }
+
+function renderZoomModal() {
+  const stage = el("div", { class: "zoom-stage", html: state.modal.html });
+  applyZoom(stage);
+  const viewport = el("div", { class: "zoom-viewport" }, stage);
+  viewport.onwheel = (e) => { e.preventDefault(); setScale(state.zoom.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); applyZoom(stage); };
+  let drag = false, sx = 0, sy = 0, ox = 0, oy = 0;
+  viewport.onpointerdown = (e) => { drag = true; sx = e.clientX; sy = e.clientY; ox = state.zoom.x; oy = state.zoom.y; viewport.setPointerCapture(e.pointerId); viewport.style.cursor = "grabbing"; };
+  viewport.onpointermove = (e) => { if (!drag) return; state.zoom.x = ox + (e.clientX - sx); state.zoom.y = oy + (e.clientY - sy); applyZoom(stage); };
+  const stop = () => { drag = false; viewport.style.cursor = "grab"; };
+  viewport.onpointerup = stop; viewport.onpointercancel = stop;
+  const btn = (label, fn) => el("button", { class: "code-copy", onclick: fn }, label);
+  const ctrl = el("div", { class: "zoom-ctrl" }, [
+    btn("＋", () => { setScale(state.zoom.scale * 1.25); applyZoom(stage); }),
+    btn("－", () => { setScale(state.zoom.scale / 1.25); applyZoom(stage); }),
+    btn("리셋", () => { state.zoom = { scale: 1, x: 0, y: 0 }; applyZoom(stage); }),
+    el("span", { class: "zoom-hint" }, "드래그로 이동 · 휠로 확대"),
+    btn("✕ 닫기", closeModal),
+  ]);
+  return el("div", { class: "modal-zoom", onclick: (e) => e.stopPropagation() }, [ctrl, viewport]);
+}
 
 // ---- minimal, XSS-safe markdown (nodes only, no innerHTML) ----
 function mdInline(text) {
@@ -761,9 +784,11 @@ function renderShell() {
     state.navOpen ? el("div", { class: "nav-backdrop", onclick: () => { state.navOpen = false; renderShell(); } }) : "",
   ]);
   const children = [shell];
-  if (state.modal !== null) {
-    children.push(el("div", { class: "modal-backdrop", onclick: closeModal },
-      el("div", { class: "modal-body", onclick: (e) => e.stopPropagation(), html: state.modal })));
+  if (state.modal) {
+    const body = state.modal.zoomable
+      ? renderZoomModal()
+      : el("div", { class: "modal-body", onclick: (e) => e.stopPropagation(), html: state.modal.html });
+    children.push(el("div", { class: "modal-backdrop", onclick: closeModal }, body));
   }
   app.replaceChildren(...children);
   const next = document.querySelector(".transcript");
