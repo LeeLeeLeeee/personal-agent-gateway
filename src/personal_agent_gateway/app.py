@@ -5,6 +5,7 @@ from typing import Annotated
 
 import uvicorn
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -37,6 +38,10 @@ from personal_agent_gateway.transcript import TranscriptStore
 
 class ChatRequest(BaseModel):
     message: str
+
+
+class RenameRequest(BaseModel):
+    title: str
 
 
 def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = None) -> FastAPI:
@@ -139,6 +144,17 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             raise HTTPException(status_code=404, detail="Session not found")
         return {"session_id": session_id, "events": [_event_payload(event) for event in transcript.load_active()]}
 
+    @app.post("/api/sessions/{session_id}/title")
+    def rename_session(
+        session_id: str, payload: RenameRequest, _session: None = session_dependency
+    ) -> dict[str, object]:
+        title = payload.title.strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Title is required")
+        if not transcript.set_title(session_id, title[:120]):
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"session_id": session_id, "title": title[:120]}
+
     @app.delete("/api/sessions/{session_id}")
     def delete_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:
         if not transcript.delete(session_id):
@@ -182,6 +198,8 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         if runtime is None:
             shared_runtime = _create_runtime(app_config, transcript, app.state.job_service)
         return {"events": [], "session_id": session_id}
+
+    app.mount("/static/vendor", StaticFiles(directory=static_dir / "vendor"), name="vendor")
 
     return app
 
