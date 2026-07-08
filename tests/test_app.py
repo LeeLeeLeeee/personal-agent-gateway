@@ -174,7 +174,7 @@ def test_vendor_assets_served(tmp_path: Path) -> None:
 
     assert client.get("/static/vendor/highlight.min.js").status_code == 200
     assert client.get("/static/vendor/mermaid.min.js").status_code == 200
-    assert client.get("/static/vendor/github.min.css").status_code == 200
+    assert client.get("/static/vendor/github-dark.min.css").status_code == 200
 
 
 def test_rename_session_sets_custom_title(tmp_path: Path) -> None:

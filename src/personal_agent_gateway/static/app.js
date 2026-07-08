@@ -10,6 +10,7 @@ const state = {
   timeline: [], sessions: [], sessionQuery: "", pendingApproval: null, busy: false, navOpen: false,
   eventSource: null, sseState: "idle", turnStart: null, turnEnd: null, turnHadAgent: false, turnStreamed: false,
   openCmd: {}, elapsedTimer: null, forceBottom: false, editingSession: null, editTitle: "",
+  hlCache: {}, mermaidShown: new Set(), mermaidSvg: {}, mermaidSeq: 0, modal: null,
 };
 
 const api = {
@@ -423,6 +424,111 @@ function renderUser(e) {
   ]);
 }
 
+// ---- structured blocks: code highlight, mermaid, tables ----
+function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return String(h); }
+
+function highlight(lang, code) {
+  const key = lang + " " + hashStr(code);
+  if (state.hlCache[key] !== undefined) return state.hlCache[key];
+  let html = null;
+  try {
+    if (window.hljs) {
+      html = (lang && window.hljs.getLanguage(lang))
+        ? window.hljs.highlight(code, { language: lang }).value
+        : window.hljs.highlightAuto(code).value;
+    }
+  } catch (_e) { html = null; }
+  state.hlCache[key] = html;
+  return html;
+}
+
+function copyText(text) { if (navigator.clipboard) navigator.clipboard.writeText(text); }
+
+function codePre(lang, code) {
+  const codeEl = el("code", { class: "hljs" });
+  const html = highlight(lang, code);
+  if (html) codeEl.innerHTML = html; else codeEl.textContent = code; // hljs output is escaped
+  return el("pre", { class: "md-pre" }, codeEl);
+}
+
+function renderCodeBlock(lang, code) {
+  const bar = el("div", { class: "code-bar" }, [
+    el("span", { class: "code-lang" }, lang || "text"),
+    el("button", { class: "code-copy", onclick: () => copyText(code) }, "COPY"),
+  ]);
+  return el("div", { class: "code-wrap" }, [bar, codePre(lang, code)]);
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+// ---- tables (GFM pipe) ----
+function splitRow(line) { return line.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()); }
+
+function renderTable(rows) {
+  const head = rows[0] || [];
+  const body = rows.slice(1);
+  const table = el("table", { class: "md-table" }, [
+    el("thead", {}, el("tr", {}, head.map((c) => el("th", {}, mdInline(c))))),
+    el("tbody", {}, body.map((r) => el("tr", {}, r.map((c) => el("td", {}, mdInline(c)))))),
+  ]);
+  const zoom = el("button", { class: "zoom-btn", onclick: () => openModal(table.outerHTML) }, "⤢");
+  return el("div", { class: "table-wrap" }, [zoom, el("div", { class: "table-scroll" }, table)]);
+}
+
+// ---- mermaid (lazy: loaded only on first "그래프 보기") ----
+let _mermaidP = null;
+function loadMermaid() {
+  if (_mermaidP) return _mermaidP;
+  _mermaidP = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "/static/vendor/mermaid.min.js";
+    s.onload = () => { try { window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" }); } catch (_e) { /* ignore */ } resolve(window.mermaid); };
+    s.onerror = () => reject(new Error("mermaid load failed"));
+    document.head.append(s);
+  });
+  return _mermaidP;
+}
+
+async function toggleMermaid(key, code) {
+  if (state.mermaidShown.has(key)) { state.mermaidShown.delete(key); renderShell(); return; }
+  state.mermaidShown.add(key); renderShell();
+  if (state.mermaidSvg[key]) return;
+  try {
+    const m = await loadMermaid();
+    const { svg } = await m.render("mmd" + (state.mermaidSeq++), code);
+    state.mermaidSvg[key] = svg;
+  } catch (e) {
+    state.mermaidSvg[key] = `<div class="rt-error" style="max-width:none"><div class="head">MERMAID 오류</div><div class="body">${escapeHtml((e && e.message) || e)}</div></div>`;
+  }
+  renderShell();
+}
+
+function renderMermaidBlock(code) {
+  const key = hashStr(code);
+  const shown = state.mermaidShown.has(key);
+  const header = el("div", { class: "code-bar" }, [
+    el("span", { class: "code-lang" }, "mermaid"),
+    el("div", { style: "display:flex;gap:6px" }, [
+      el("button", { class: "code-copy", onclick: () => copyText(code) }, "COPY"),
+      el("button", { class: "code-copy", onclick: () => toggleMermaid(key, code) }, shown ? "▾ 코드 보기" : "▸ 그래프 보기"),
+    ]),
+  ]);
+  const wrap = el("div", { class: "mermaid-wrap" }, [header]);
+  if (shown && state.mermaidSvg[key]) {
+    const g = el("div", { class: "mermaid-svg", html: state.mermaidSvg[key] });
+    g.append(el("button", { class: "zoom-btn", onclick: () => openModal(state.mermaidSvg[key]) }, "⤢"));
+    wrap.append(g);
+  } else {
+    wrap.append(codePre("mermaid", code));
+    if (shown) wrap.append(el("div", { class: "mono", style: "font-size:11px;color:var(--c-grey);padding:6px 12px" }, "렌더링 중…"));
+  }
+  return wrap;
+}
+
+// ---- expand modal ----
+function openModal(html) { state.modal = html; renderShell(); }
+function closeModal() { if (state.modal !== null) { state.modal = null; renderShell(); } }
+
 // ---- minimal, XSS-safe markdown (nodes only, no innerHTML) ----
 function mdInline(text) {
   const out = [];
@@ -449,15 +555,28 @@ function renderMarkdown(src) {
   while (i < lines.length) {
     const line = lines[i];
     if (/^```/.test(line)) {
+      const lang = line.replace(/^```/, "").trim().split(/\s+/)[0];
       i++;
       const buf = [];
-      while (i < lines.length && !/^```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
-      i++; // skip closing fence
-      root.append(el("pre", { class: "md-pre" }, el("code", {}, buf.join("\n"))));
+      let closed = false;
+      while (i < lines.length) {
+        if (/^```\s*$/.test(lines[i])) { closed = true; i++; break; }
+        buf.push(lines[i]); i++;
+      }
+      const code = buf.join("\n");
+      if (lang === "mermaid" && closed) root.append(renderMermaidBlock(code));
+      else root.append(renderCodeBlock(lang, code));
       continue;
     }
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) { root.append(el("h" + h[1].length, {}, mdInline(h[2]))); i++; continue; }
+    if (/\|/.test(line) && i + 1 < lines.length && /-/.test(lines[i + 1]) && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1])) {
+      const rows = [splitRow(line)];
+      i += 2; // skip header + separator
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") { rows.push(splitRow(lines[i])); i++; }
+      root.append(renderTable(rows));
+      continue;
+    }
     if (isUl(line)) {
       const ul = el("ul", {});
       while (i < lines.length && isUl(lines[i])) { ul.append(el("li", {}, mdInline(lines[i].replace(/^\s*[-*]\s+/, "")))); i++; }
@@ -633,14 +752,20 @@ function renderShell() {
   const keep = prev
     ? { top: prev.scrollTop, atBottom: prev.scrollHeight - prev.scrollTop - prev.clientHeight < 40 }
     : null;
-  app.replaceChildren(el("div", { class: `shell${state.navOpen ? " nav-open" : ""}` }, [
+  const shell = el("div", { class: `shell${state.navOpen ? " nav-open" : ""}` }, [
     renderSidebar(),
     el("div", { class: "main-col" }, [
       renderStatusbar(),
       el("div", { class: "content-row" }, el("main", { class: "main" }, renderMain())),
     ]),
     state.navOpen ? el("div", { class: "nav-backdrop", onclick: () => { state.navOpen = false; renderShell(); } }) : "",
-  ]));
+  ]);
+  const children = [shell];
+  if (state.modal !== null) {
+    children.push(el("div", { class: "modal-backdrop", onclick: closeModal },
+      el("div", { class: "modal-body", onclick: (e) => e.stopPropagation(), html: state.modal })));
+  }
+  app.replaceChildren(...children);
   const next = document.querySelector(".transcript");
   if (next) {
     if (state.forceBottom || (keep && keep.atBottom)) next.scrollTop = next.scrollHeight;
@@ -658,6 +783,8 @@ async function afterAuth() {
   connectEvents();
   renderShell();
 }
+
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 
 async function bootstrap() {
   const auth = await api.authStatus();

@@ -139,7 +139,37 @@ h1,h2,h3,p{margin:0}
 .md a{color:var(--c-link);text-decoration:underline}
 .md code.md-code{font-family:var(--font-mono);font-size:12px;background:var(--c-panel);border:1px solid #ddd;padding:1px 5px}
 .md pre.md-pre{background:var(--c-black);padding:12px 14px;overflow-x:auto;margin:0 0 10px;border:var(--bd)}
-.md pre.md-pre code{font-family:var(--font-mono);font-size:12px;line-height:1.55;white-space:pre;color:#E6E6E6}
+.md pre.md-pre code{font-family:var(--font-mono);font-size:12px;line-height:1.55;white-space:pre}
+
+/* code block with lang bar + copy */
+.code-wrap{margin:0 0 10px;border:var(--bd)}
+.code-bar{display:flex;align-items:center;justify-content:space-between;background:var(--c-black);color:var(--c-white);padding:5px 10px;border-bottom:var(--bd-in)}
+.code-lang{font-family:var(--font-mono);font-size:10px;letter-spacing:1px;color:var(--c-grey);text-transform:uppercase}
+.code-copy{font-family:var(--font-mono);font-size:10px;letter-spacing:1px;background:none;border:1px solid var(--c-grey);color:var(--c-white);padding:2px 8px;cursor:pointer}
+.code-copy:hover{background:var(--c-white);color:var(--c-black)}
+.code-wrap .md-pre{margin:0;border:none}
+
+/* mermaid */
+.mermaid-wrap{margin:0 0 10px;border:var(--bd)}
+.mermaid-wrap .code-wrap{margin:0;border:none}
+.mermaid-wrap .md-pre{margin:0;border:none}
+.mermaid-svg{position:relative;background:var(--c-white);padding:14px;overflow:auto;text-align:center}
+.mermaid-svg svg{max-width:100%;height:auto}
+.zoom-btn{position:absolute;top:6px;right:6px;z-index:2;font-family:var(--font-mono);font-size:12px;background:var(--c-white);border:var(--bd-sm);cursor:pointer;padding:1px 7px;line-height:1.3}
+.zoom-btn:hover{background:var(--c-black);color:var(--c-white)}
+
+/* tables */
+.table-wrap{position:relative;margin:0 0 10px;border:var(--bd)}
+.table-scroll{overflow-x:auto}
+.md-table{border-collapse:collapse;width:100%;font-size:13px}
+.md-table th,.md-table td{border:var(--bd-in);padding:6px 10px;text-align:left;white-space:nowrap}
+.md-table th{background:var(--c-panel);font-weight:700}
+
+/* expand modal */
+.modal-backdrop{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:32px}
+.modal-body{background:var(--c-white);border:var(--bd-hero);max-width:92vw;max-height:92vh;overflow:auto;padding:20px}
+.modal-body svg{max-width:none;height:auto}
+.modal-body .md-table{font-size:14px}
 
 /* ---- session rename (inline edit) ---- */
 .sess-edit{width:100%;border:var(--bd-sm);background:var(--c-white);padding:6px 8px;font-family:var(--font-body);font-size:13px}
