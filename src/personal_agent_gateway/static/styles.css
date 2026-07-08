@@ -240,6 +240,24 @@ h1,h2,h3,p{margin:0}
 .sse-dot{width:8px;height:8px;flex:none}
 .sse-label{font-family:var(--font-mono);font-size:11px;letter-spacing:1px;color:var(--c-white)}
 
+/* ---- agent picker ---- */
+.agent-picker{border:var(--bd);padding:12px;background:var(--c-white);display:grid;gap:10px}
+.agent-picker-locked{opacity:.82}
+.agent-picker-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.agent-picker-summary{border:var(--bd-in);padding:10px 12px;font-size:12px;line-height:1.5;background:var(--c-panel)}
+.agent-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.agent-choice{border:var(--bd);background:var(--c-white);padding:10px;display:grid;gap:6px;text-align:left;cursor:pointer}
+.agent-choice:hover:not(:disabled){background:var(--c-panel)}
+.agent-choice.active{background:var(--c-black);color:var(--c-white)}
+.agent-choice:disabled{opacity:.6;cursor:not-allowed}
+.agent-choice-row{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.agent-choice-label{font-weight:700;font-size:13px;line-height:1.3}
+.agent-choice-meta{font-size:10px;letter-spacing:1px;color:var(--c-grey)}
+.agent-choice.active .agent-choice-meta{color:#d0d0d0}
+.agent-field{display:grid;gap:4px}
+.agent-field-label{font-size:10px;letter-spacing:1px;text-transform:uppercase}
+.agent-picker-error{border:3px solid var(--c-danger);color:var(--c-danger);padding:10px 12px;font-size:12px}
+
 /* ---- responsive ---- */
 .nav-toggle{display:none}
 .nav-backdrop{display:none}
