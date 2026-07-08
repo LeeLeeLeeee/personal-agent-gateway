@@ -116,6 +116,7 @@ export function GatewayApp() {
   const [turnEnd, setTurnEnd] = useState(null);
   const [turnStreamed, setTurnStreamed] = useState(false);
   const [personas, setPersonas] = useState([]);
+  const [avatarChoices, setAvatarChoices] = useState([]);
   const [teamRuns, setTeamRuns] = useState([]);
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
@@ -204,6 +205,7 @@ export function GatewayApp() {
     if (!authenticated) return;
     if (screen === "personas") {
       api.personas().then(setPersonas);
+      api.avatarManifest().then(setAvatarChoices);
     } else if (screen === "teams") {
       api.personas().then(setPersonas);
       api.teamRuns().then(setTeamRuns);
@@ -477,7 +479,12 @@ export function GatewayApp() {
           onResolveApproval={handleResolveApproval}
         />
       ) : screen === "personas" ? (
-        <PersonaLibrary personas={personas} onCreate={handleCreatePersona} onSeedDefaults={handleSeedDefaults} />
+        <PersonaLibrary
+          personas={personas}
+          avatars={avatarChoices}
+          onCreate={handleCreatePersona}
+          onSeedDefaults={handleSeedDefaults}
+        />
       ) : screen === "teams" ? (
         selectedTeamRunId ? (
           <div>

@@ -119,6 +119,9 @@ export const api = {
     const body = await jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/start`, { method: "POST" }));
     return body?.team_run || null;
   },
+  async avatarManifest() {
+    return jsonList(await fetch("/static/avatars/manifest.json"), "avatars");
+  },
   async teamRunDetail(id) {
     const [run, agents, tasks, messages] = await Promise.all([
       jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}`)),

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "../../atoms/Button/index.jsx";
 import { InputField } from "../../atoms/Field/index.jsx";
 import { PersonaCard } from "../../molecules/PersonaCard/index.jsx";
+import { AvatarPicker } from "../AvatarPicker/index.jsx";
 
 const EMPTY_FORM = {
   name: "",
@@ -21,7 +22,7 @@ function splitLines(text) {
     .filter(Boolean);
 }
 
-export function PersonaLibrary({ personas = [], onCreate, onSeedDefaults }) {
+export function PersonaLibrary({ personas = [], avatars = [], onCreate, onSeedDefaults }) {
   const [form, setForm] = useState(EMPTY_FORM);
 
   function update(field, value) {
@@ -120,13 +121,18 @@ export function PersonaLibrary({ personas = [], onCreate, onSeedDefaults }) {
               onChange={(event) => update("default_model", event.target.value)}
             />
           </label>
-          <label className="persona-field">
-            <span className="mono persona-field-label">Avatar slug (optional)</span>
-            <InputField
-              aria-label="Avatar slug"
-              value={form.avatar}
-              onChange={(event) => update("avatar", event.target.value)}
-            />
+          <label className="persona-field persona-field-wide">
+            <span className="mono persona-field-label">Avatar (optional)</span>
+            <div className="persona-avatar-picker-row">
+              {form.avatar ? (
+                <img
+                  className="persona-avatar-preview"
+                  src={`/static/avatars/${form.avatar}.png`}
+                  alt="Selected avatar"
+                />
+              ) : null}
+              <AvatarPicker avatars={avatars} value={form.avatar} onSelect={(slug) => update("avatar", slug)} />
+            </div>
           </label>
         </div>
         <div className="persona-edit-foot">

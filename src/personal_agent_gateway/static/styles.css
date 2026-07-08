@@ -277,6 +277,15 @@ h1,h2,h3,p{margin:0}
 .persona-field-wide{grid-column:1 / -1}
 .persona-field-danger .input-field{border-color:var(--c-warn)}
 .persona-edit-foot{padding:0 18px 18px;display:flex;justify-content:flex-end}
+.persona-avatar-picker-row{display:flex;align-items:flex-start;gap:14px}
+.persona-avatar-preview{width:48px;height:48px;flex:none;border:var(--bd);object-fit:cover}
+.avatar-picker{border:var(--bd-in);background:var(--c-panel);padding:10px;display:grid;gap:10px;max-height:260px;overflow-y:auto;flex:1;min-width:0}
+.avatar-picker-group-label{font-size:10px;letter-spacing:1px;color:var(--c-grey);text-transform:uppercase;margin-bottom:6px}
+.avatar-picker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:8px}
+.avatar-tile{border:var(--bd-sm);background:var(--c-white);padding:4px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.avatar-tile:hover{background:var(--c-bg)}
+.avatar-tile img{width:100%;height:100%;object-fit:cover;aspect-ratio:1/1;display:block}
+.avatar-tile-selected{border:var(--bd-hero);background:var(--c-black)}
 
 /* ---- team run form ---- */
 .team-run-form{display:flex;flex-direction:column;gap:18px;max-width:640px}

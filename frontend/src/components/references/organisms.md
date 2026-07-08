@@ -46,9 +46,15 @@ Project-local Atomic Design catalog for the Vite React frontend.
 
 ### PersonaLibrary
 - Path: `src/components/organisms/PersonaLibrary/`
-- Props: `{ personas, onCreate, onSeedDefaults? }`
-- Use when: Rendering the persona grid plus a create-persona form (name/role/description/responsibilities/constraints/backend/model/avatar slug).
-- Don't use when: Loading personas or persisting persona changes; the container owns API calls. Note: this is a create-only form and the avatar field is a plain slug text input, not a full avatar-grid picker.
+- Props: `{ personas, avatars, onCreate, onSeedDefaults? }`
+- Use when: Rendering the persona grid plus a create-persona form (name/role/description/responsibilities/constraints/backend/model/avatar picker).
+- Don't use when: Loading personas or the avatar manifest, or persisting persona changes; the container owns API calls. Note: this is a create-only form; the avatar field renders `AvatarPicker` plus a small preview of the selected avatar.
+
+### AvatarPicker
+- Path: `src/components/organisms/AvatarPicker/`
+- Props: `{ avatars, value, onSelect }`
+- Use when: Rendering the 60-avatar grid (grouped by category: People/Tech/Animals/Creatures) for picking a persona avatar slug.
+- Don't use when: Loading the avatar manifest; the container fetches `/static/avatars/manifest.json` and passes `avatars` down.
 
 ### TeamRunForm
 - Path: `src/components/organisms/TeamRunForm/`
