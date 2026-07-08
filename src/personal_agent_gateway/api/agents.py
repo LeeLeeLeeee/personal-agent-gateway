@@ -69,6 +69,7 @@ def _public_agent_payload(agent: AgentDescriptor) -> dict[str, object]:
         "availability_error": agent.availability_error,
         "models": agent.models,
         "default_model": agent.default_model,
+        "allow_custom_model": agent.allow_custom_model,
         "options_schema": [_public_option_payload(option) for option in agent.options_schema],
         "defaults": agent.defaults,
     }

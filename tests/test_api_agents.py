@@ -53,6 +53,7 @@ def test_agents_returns_safe_catalog(tmp_path: Path, monkeypatch) -> None:
         "availability_error",
         "models",
         "default_model",
+        "allow_custom_model",
         "options_schema",
         "defaults",
     }
@@ -68,7 +69,9 @@ def test_agents_returns_safe_catalog(tmp_path: Path, monkeypatch) -> None:
             assert "binary" not in option
 
     assert codex["available"] is True
+    assert codex["allow_custom_model"] is True
     assert claude["available"] is False
+    assert claude["allow_custom_model"] is True
     assert claude["availability_error"] == "not found"
     assert "openai_api_key" not in response.text
     assert "web_token" not in response.text
@@ -97,6 +100,22 @@ def test_active_session_config_defaults_and_can_be_updated_while_empty(tmp_path:
     assert update_response.json()["config"]["options"] == {"effort": "high"}
 
 
+def test_active_session_config_accepts_custom_cli_model(tmp_path: Path, monkeypatch) -> None:
+    from personal_agent_gateway import agents as agents_module
+
+    monkeypatch.setattr(agents_module, "probe_cli", lambda _binary: agents_module.CliProbeResult(True, None))
+    client = TestClient(create_app(make_config(tmp_path)))
+    client.cookies.set("agent_session", "test-session")
+
+    response = client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "codex", "model": "gpt-5.4", "options": {}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["config"]["model"] == "gpt-5.4"
+
+
 def test_active_session_config_rejects_invalid_and_locked_updates(tmp_path: Path, monkeypatch) -> None:
     from personal_agent_gateway import agents as agents_module
     from personal_agent_gateway.transcript import TranscriptStore
@@ -111,7 +130,7 @@ def test_active_session_config_rejects_invalid_and_locked_updates(tmp_path: Path
 
     invalid_response = client.put(
         "/api/sessions/active/config",
-        json={"agent_id": "claude", "model": "missing", "options": {}},
+        json={"agent_id": "claude", "model": "sonnet", "options": {"unknown": True}},
     )
     locked_response = client.put(
         "/api/sessions/active/config",

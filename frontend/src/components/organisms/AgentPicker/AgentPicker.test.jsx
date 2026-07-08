@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AgentPicker } from "./index.jsx";
 
@@ -10,6 +11,7 @@ const agents = [
     available: true,
     models: ["default"],
     default_model: "default",
+    allow_custom_model: true,
     defaults: { sandbox: "workspace-write", approval_policy: "never" },
     options_schema: [
       { name: "sandbox", kind: "select", choices: ["read-only", "workspace-write"] },
@@ -23,10 +25,22 @@ const agents = [
     availability_error: "not found on PATH",
     models: ["sonnet"],
     default_model: "sonnet",
+    allow_custom_model: true,
     defaults: { effort: "medium" },
     options_schema: [{ name: "effort", kind: "select", choices: ["medium", "high"] }]
   }
 ];
+
+function StatefulAgentPicker({ initialConfig, onChange }) {
+  const [config, setConfig] = useState(initialConfig);
+
+  function handleChange(nextConfig) {
+    setConfig(nextConfig);
+    onChange(nextConfig);
+  }
+
+  return <AgentPicker agents={agents} config={config} onChange={handleChange} />;
+}
 
 describe("AgentPicker", () => {
   it("shows editable available agents and disables unavailable agents", async () => {
@@ -34,11 +48,10 @@ describe("AgentPicker", () => {
     const user = userEvent.setup();
 
     render(
-      <AgentPicker
-        agents={agents}
-        config={{ agent_id: "codex", model: "default", options: {}, editable: true }}
+      <StatefulAgentPicker
+        initialConfig={{ agent_id: "codex", model: "default", options: {}, editable: true }}
         onChange={onChange}
-      />
+      />,
     );
 
     expect(screen.getByText("Codex CLI")).toBeInTheDocument();
@@ -49,9 +62,15 @@ describe("AgentPicker", () => {
     await user.click(screen.getByRole("button", { name: /Claude Code/i }));
     expect(onChange).not.toHaveBeenCalled();
 
-    await user.selectOptions(screen.getByLabelText("Model"), "default");
+    await user.clear(screen.getByLabelText("Model"));
+    await user.type(screen.getByLabelText("Model"), "gpt-5.4");
 
-    expect(onChange).toHaveBeenCalled();
+    expect(onChange).toHaveBeenLastCalledWith({
+      agent_id: "codex",
+      model: "gpt-5.4",
+      options: {},
+      editable: true
+    });
   });
 
   it("keeps editable agent choices visible when the current config is unavailable", async () => {

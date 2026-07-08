@@ -85,16 +85,25 @@ export function AgentPicker({ agents = [], config, onChange, error = "" }) {
         <>
           <label className="agent-field">
             <span className="agent-field-label mono">Model</span>
-            <InputField
-              as="select"
-              aria-label="Model"
-              value={config.model}
-              onChange={(event) => emit({ model: event.target.value })}
-            >
-              {(current.models || []).map((model) => (
-                <option key={model} value={model}>{model}</option>
-              ))}
-            </InputField>
+            {current.allow_custom_model ? (
+              <InputField
+                aria-label="Model"
+                value={config.model || ""}
+                placeholder={current.default_model}
+                onChange={(event) => emit({ model: event.target.value })}
+              />
+            ) : (
+              <InputField
+                as="select"
+                aria-label="Model"
+                value={config.model}
+                onChange={(event) => emit({ model: event.target.value })}
+              >
+                {(current.models || []).map((model) => (
+                  <option key={model} value={model}>{model}</option>
+                ))}
+              </InputField>
+            )}
           </label>
           {(current.options_schema || []).map((option) => (
             <AgentOptionField
