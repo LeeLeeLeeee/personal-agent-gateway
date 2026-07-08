@@ -36,6 +36,9 @@ export function GatewayApp() {
   const [screen, setScreen] = useState("chat");
   const [status, setStatus] = useState(null);
   const [sessions, setSessions] = useState([]);
+  const [agents, setAgents] = useState([]);
+  const [sessionConfig, setSessionConfig] = useState(null);
+  const [sessionConfigError, setSessionConfigError] = useState("");
   const [entries, setEntries] = useState([]);
   const [pendingApproval, setPendingApproval] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -51,13 +54,17 @@ export function GatewayApp() {
   useForceTick(screen === "chat" && busy);
 
   const loadApp = useCallback(async () => {
-    const [nextStatus, nextSessions, history] = await Promise.all([
+    const [nextStatus, nextSessions, history, nextAgents, nextConfig] = await Promise.all([
       api.getStatus(),
       api.sessions(),
-      api.history()
+      api.history(),
+      api.agents(),
+      api.activeSessionConfig()
     ]);
     setStatus(nextStatus);
     setSessions(nextSessions);
+    setAgents(nextAgents);
+    setSessionConfig(nextConfig || nextStatus?.session_config || null);
     setEntries(timelineFromHistory(history));
     setAuthenticated(true);
     setBooting(false);
@@ -141,10 +148,36 @@ export function GatewayApp() {
   }
 
   async function refreshStatusAndSessions() {
-    const [nextStatus, nextSessions] = await Promise.all([api.getStatus(), api.sessions()]);
+    const [nextStatus, nextSessions, nextConfig] = await Promise.all([
+      api.getStatus(),
+      api.sessions(),
+      api.activeSessionConfig()
+    ]);
     setStatus(nextStatus);
     setSessions(nextSessions);
+    setSessionConfig(nextConfig || nextStatus?.session_config || null);
     return nextStatus;
+  }
+
+  async function handleSessionConfigChange(nextConfig) {
+    setSessionConfigError("");
+    let saved;
+    try {
+      saved = await api.updateActiveSessionConfig({
+        agent_id: nextConfig.agent_id,
+        model: nextConfig.model,
+        options: nextConfig.options || {}
+      });
+    } catch (_error) {
+      setSessionConfigError("Config update failed");
+      return;
+    }
+    if (!saved) {
+      setSessionConfigError("Config update failed");
+      return;
+    }
+    setSessionConfig(saved);
+    await refreshStatusAndSessions();
   }
 
   async function maybeAppendArtifact(nextStatus) {
@@ -292,13 +325,17 @@ export function GatewayApp() {
     >
       {screen === "chat" ? (
         <ChatView
+          agents={agents}
           sessions={sessions}
+          sessionConfig={sessionConfig}
+          sessionConfigError={sessionConfigError}
           entries={entries}
           busy={busy}
           turnStart={turnStart}
           turnEnd={turnEnd}
           pendingApproval={pendingApproval}
           turnStreamed={turnStreamed}
+          onSessionConfigChange={handleSessionConfigChange}
           onSend={handleSend}
           onSearch={handleSearch}
           onActivate={handleActivate}
