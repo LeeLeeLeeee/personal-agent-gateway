@@ -115,17 +115,22 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
                 "model": "default",
                 "options": {},
                 "editable": True,
+                "source": "default",
                 "updated_at": None,
             }
             events = []
-            provider = "codex"
-            model = "default"
+            provider = app_config.model_provider
+            model = app_config.model
         else:
             effective_config = SessionAgentConfigService(transcript).effective_config(session_id)
             session_config = effective_config.model_dump(mode="json")
             events = transcript.load(session_id)
-            provider = effective_config.agent_id
-            model = effective_config.model
+            if effective_config.source == "explicit":
+                provider = effective_config.agent_id
+                model = effective_config.model
+            else:
+                provider = app_config.model_provider
+                model = app_config.model
         return {
             "provider": provider,
             "model": model,

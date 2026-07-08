@@ -64,16 +64,38 @@ describe("GatewayApp", () => {
   it("shows the active session config in the statusbar even when /api/status is stale", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
-      "GET /api/status": { ...status, provider: "codex", model: "default" },
+      "GET /api/status": { ...status, provider: "openai", model: "legacy-model" },
       "GET /api/sessions": { sessions },
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
-      "GET /api/sessions/active/config": { config: { agent_id: "claude", model: "sonnet", options: {}, editable: true } }
+      "GET /api/sessions/active/config": { config: { agent_id: "claude", model: "sonnet", options: {}, editable: true, source: "explicit" } }
     });
 
     render(<GatewayApp />);
 
     expect(await screen.findByText("claude/sonnet")).toBeInTheDocument();
+  });
+
+  it("preserves legacy app status metadata when no explicit session config exists", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": {
+        ...status,
+        provider: "openai",
+        model: "legacy-model",
+        session_config: { agent_id: "codex", model: "default", options: {}, editable: true, source: "default" }
+      },
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": {
+        config: { agent_id: "codex", model: "default", options: {}, editable: true, source: "default" }
+      }
+    });
+
+    render(<GatewayApp />);
+
+    expect(await screen.findByText("openai/legacy-model")).toBeInTheDocument();
   });
 
   it("supports OTP login before loading protected API data", async () => {

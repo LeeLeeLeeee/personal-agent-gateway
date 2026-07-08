@@ -49,6 +49,7 @@ class AgentRuntimeFactory:
                     workspace_root=self._config.workspace_root,
                     sandbox=str(options.get("sandbox") or self._config.codex_sandbox),
                     approval_policy=str(options.get("approval_policy") or self._config.codex_approval_policy),
+                    profile=str(options["profile"]) if options.get("profile") else None,
                     timeout_seconds=self._config.codex_timeout_seconds,
                     on_event=publish_codex_event,
                 )
@@ -63,6 +64,7 @@ class AgentRuntimeFactory:
                     workspace_root=self._config.workspace_root,
                     effort=str(options.get("effort") or "medium"),
                     permission_mode=str(options.get("permission_mode") or "manual"),
+                    agent=str(options["agent"]) if options.get("agent") else None,
                     timeout_seconds=self._config.codex_timeout_seconds,
                 )
             )

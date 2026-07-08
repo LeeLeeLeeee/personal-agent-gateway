@@ -81,6 +81,8 @@ class AgentRegistry:
         options: dict[str, Any],
     ) -> dict[str, Any]:
         descriptor = self.get(agent_id)
+        if not descriptor.available:
+            raise ValueError(f"Agent unavailable: {agent_id}")
         if model not in descriptor.models:
             raise ValueError(f"Unsupported model for {agent_id}: {model}")
         schema = {option.name: option for option in descriptor.options_schema}

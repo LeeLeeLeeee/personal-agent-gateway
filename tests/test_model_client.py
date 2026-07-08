@@ -295,3 +295,54 @@ def test_claude_client_builds_expected_command(tmp_path: Path) -> None:
         "--permission-mode",
         "manual",
     ]
+
+
+def test_codex_client_includes_profile_flag_when_configured(tmp_path: Path) -> None:
+    client = CodexModelClient(
+        binary="codex",
+        model="default",
+        workspace_root=tmp_path,
+        profile="local-dev",
+    )
+
+    assert client._command() == [
+        "codex",
+        "exec",
+        "--json",
+        "-c",
+        'approval_policy="never"',
+        "--sandbox",
+        "workspace-write",
+        "-C",
+        str(tmp_path),
+        "--skip-git-repo-check",
+        "--profile",
+        "local-dev",
+        "-",
+    ]
+
+
+def test_claude_client_includes_agent_flag_when_configured(tmp_path: Path) -> None:
+    client = ClaudeModelClient(
+        binary="claude",
+        model="sonnet",
+        workspace_root=tmp_path,
+        effort="high",
+        permission_mode="manual",
+        agent="reviewer",
+    )
+
+    assert client._command() == [
+        "claude",
+        "-p",
+        "--output-format",
+        "json",
+        "--model",
+        "sonnet",
+        "--effort",
+        "high",
+        "--permission-mode",
+        "manual",
+        "--agent",
+        "reviewer",
+    ]

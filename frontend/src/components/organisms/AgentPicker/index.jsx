@@ -37,21 +37,6 @@ export function AgentPicker({ agents = [], config, onChange, error = "" }) {
     );
   }
 
-  if (!current.available) {
-    return (
-      <section className="agent-picker agent-picker-unavailable" aria-label="Agent configuration">
-        <div className="agent-picker-head">
-          <span className="headline" style={{ fontSize: 12 }}>Agent</span>
-          <AgentAvailabilityBadge available={current.available} reason={current.availability_error} />
-        </div>
-        <div className="agent-picker-summary mono">{current.label}</div>
-        {current.availability_error ? (
-          <div className="agent-picker-error mono">{current.availability_error}</div>
-        ) : null}
-      </section>
-    );
-  }
-
   function emit(next) {
     onChange({ ...config, ...next });
   }
@@ -96,27 +81,31 @@ export function AgentPicker({ agents = [], config, onChange, error = "" }) {
           </button>
         ))}
       </div>
-      <label className="agent-field">
-        <span className="agent-field-label mono">Model</span>
-        <InputField
-          as="select"
-          aria-label="Model"
-          value={config.model}
-          onChange={(event) => emit({ model: event.target.value })}
-        >
-          {(current.models || []).map((model) => (
-            <option key={model} value={model}>{model}</option>
+      {current.available ? (
+        <>
+          <label className="agent-field">
+            <span className="agent-field-label mono">Model</span>
+            <InputField
+              as="select"
+              aria-label="Model"
+              value={config.model}
+              onChange={(event) => emit({ model: event.target.value })}
+            >
+              {(current.models || []).map((model) => (
+                <option key={model} value={model}>{model}</option>
+              ))}
+            </InputField>
+          </label>
+          {(current.options_schema || []).map((option) => (
+            <AgentOptionField
+              key={option.name}
+              option={option}
+              value={optionValue(config, current, option.name)}
+              onChange={changeOption}
+            />
           ))}
-        </InputField>
-      </label>
-      {(current.options_schema || []).map((option) => (
-        <AgentOptionField
-          key={option.name}
-          option={option}
-          value={optionValue(config, current, option.name)}
-          onChange={changeOption}
-        />
-      ))}
+        </>
+      ) : null}
       {error ? <div className="agent-picker-error mono">{error}</div> : null}
     </section>
   );

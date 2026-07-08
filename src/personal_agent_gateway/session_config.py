@@ -14,6 +14,7 @@ class SessionAgentConfig(BaseModel):
     model: str
     options: dict[str, Any]
     editable: bool
+    source: Literal["default", "explicit"] = "default"
     updated_at: datetime | None = None
 
 
@@ -33,6 +34,7 @@ class SessionAgentConfigService:
                 model="default",
                 options={},
                 editable=editable,
+                source="default",
                 updated_at=None,
             )
         return SessionAgentConfig(
@@ -41,6 +43,7 @@ class SessionAgentConfigService:
             model=str(latest.payload["model"]),
             options=dict(latest.payload.get("options") or {}),
             editable=editable,
+            source="explicit",
             updated_at=latest.created_at,
         )
 
@@ -66,6 +69,7 @@ class SessionAgentConfigService:
             model=model,
             options=dict(options),
             editable=True,
+            source="explicit",
             updated_at=event.created_at,
         )
 

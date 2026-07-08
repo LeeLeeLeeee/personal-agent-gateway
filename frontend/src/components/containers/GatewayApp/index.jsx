@@ -19,6 +19,12 @@ function appendOrReconcileCommand(entries, entry) {
 
 function withSessionConfigStatus(nextStatus, nextConfig) {
   if (!nextConfig) return nextStatus;
+  if (nextConfig.source !== "explicit") {
+    return {
+      ...(nextStatus || {}),
+      session_config: nextConfig
+    };
+  }
   return {
     ...(nextStatus || {}),
     provider: nextConfig.agent_id ?? nextStatus?.provider,

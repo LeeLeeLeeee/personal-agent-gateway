@@ -54,8 +54,9 @@ describe("AgentPicker", () => {
     expect(onChange).toHaveBeenCalled();
   });
 
-  it("shows an unavailable current config as read-only summary", () => {
+  it("keeps editable agent choices visible when the current config is unavailable", async () => {
     const onChange = vi.fn();
+    const user = userEvent.setup();
 
     render(
       <AgentPicker
@@ -70,7 +71,16 @@ describe("AgentPicker", () => {
     expect(screen.getByText("UNAVAILABLE")).toBeInTheDocument();
     expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/effort/i)).not.toBeInTheDocument();
-    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Claude Code/i })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: /Codex CLI/i }));
+
+    expect(onChange).toHaveBeenCalledWith({
+      agent_id: "codex",
+      model: "default",
+      options: { sandbox: "workspace-write", approval_policy: "never" },
+      editable: true
+    });
   });
 
   it("renders locked config as read-only summary", () => {

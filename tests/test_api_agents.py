@@ -120,3 +120,23 @@ def test_active_session_config_rejects_invalid_and_locked_updates(tmp_path: Path
 
     assert invalid_response.status_code == 400
     assert locked_response.status_code == 409
+
+
+def test_active_session_config_rejects_unavailable_agent_updates(tmp_path: Path, monkeypatch) -> None:
+    from personal_agent_gateway import agents as agents_module
+
+    monkeypatch.setattr(
+        agents_module,
+        "probe_cli",
+        lambda binary: agents_module.CliProbeResult(binary == "codex-test", "not found on PATH"),
+    )
+    client = TestClient(create_app(make_config(tmp_path)))
+    client.cookies.set("agent_session", "test-session")
+
+    response = client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "claude", "model": "sonnet", "options": {}},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Agent unavailable: claude"

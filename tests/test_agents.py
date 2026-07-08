@@ -94,3 +94,13 @@ def test_registry_rejects_invalid_option_choice(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Unsupported option value"):
         registry.validate_config("codex", "default", {"sandbox": "invalid-choice"})
+
+
+def test_registry_rejects_unavailable_agent_for_new_config(tmp_path: Path) -> None:
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        probe=lambda binary: CliProbeResult(binary == "codex-test", "not found on PATH"),
+    )
+
+    with pytest.raises(ValueError, match="Agent unavailable"):
+        registry.validate_config("claude", "sonnet", {})

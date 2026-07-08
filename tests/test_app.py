@@ -262,6 +262,26 @@ def test_status_reports_active_session_agent_config(tmp_path: Path) -> None:
     assert status["session_config"]["agent_id"] == "claude"
     assert status["session_config"]["options"] == {"effort": "high"}
     assert status["session_config"]["editable"] is True
+    assert status["session_config"]["source"] == "explicit"
+
+
+def test_status_preserves_legacy_app_config_metadata_without_explicit_session_override(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path)
+    config.model_provider = "openai"
+    config.model = "legacy-model"
+    store = TranscriptStore(config.session_dir)
+    store.start_new()
+    client = auth_client(config, FakeRuntime())
+
+    status = client.get("/api/status").json()
+
+    assert status["provider"] == "openai"
+    assert status["model"] == "legacy-model"
+    assert status["session_config"]["agent_id"] == "codex"
+    assert status["session_config"]["model"] == "default"
+    assert status["session_config"]["source"] == "default"
 
 
 def test_status_reports_active_session_after_real_runtime_message(tmp_path: Path) -> None:
@@ -482,6 +502,56 @@ def test_chat_without_explicit_session_config_falls_back_to_app_config(tmp_path:
         "pending_approval": None,
     }
     assert used_models == ["legacy-model"]
+
+
+def test_chat_passes_codex_profile_from_session_config(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    captured: list[dict[str, object]] = []
+
+    class FakeCodexModelClient:
+        def __init__(self, **kwargs) -> None:
+            captured.append(kwargs)
+
+        async def complete(self, _messages: list[dict[str, object]]) -> ModelResponse:
+            return ModelResponse(content="codex", tool_calls=[])
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    client = auth_client(config, runtime=None)
+
+    assert client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "codex", "model": "default", "options": {"profile": "local-dev"}},
+    ).status_code == 200
+
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert captured[-1]["profile"] == "local-dev"
+
+
+def test_chat_passes_claude_agent_from_session_config(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    captured: list[dict[str, object]] = []
+
+    class FakeClaudeModelClient:
+        def __init__(self, **kwargs) -> None:
+            captured.append(kwargs)
+
+        async def complete(self, _messages: list[dict[str, object]]) -> ModelResponse:
+            return ModelResponse(content="claude", tool_calls=[])
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.ClaudeModelClient", FakeClaudeModelClient)
+    client = auth_client(config, runtime=None)
+
+    assert client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "claude", "model": "sonnet", "options": {"agent": "reviewer"}},
+    ).status_code == 200
+
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert captured[-1]["agent"] == "reviewer"
 
 
 def test_history_returns_restored_transcript_after_app_recreation(tmp_path: Path) -> None:

@@ -86,6 +86,7 @@ class CodexModelClient:
         workspace_root: Path,
         sandbox: str = "workspace-write",
         approval_policy: str = "never",
+        profile: str | None = None,
         timeout_seconds: int = 600,
         on_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
     ) -> None:
@@ -94,6 +95,7 @@ class CodexModelClient:
         self._workspace_root = workspace_root
         self._sandbox = sandbox
         self._approval_policy = approval_policy
+        self._profile = profile
         self._timeout_seconds = timeout_seconds
         self._on_event = on_event
 
@@ -168,6 +170,8 @@ class CodexModelClient:
         ]
         if self._model and self._model != "default":
             command.extend(["-m", self._model])
+        if self._profile:
+            command.extend(["--profile", self._profile])
         command.append("-")
         return command
 
@@ -180,6 +184,7 @@ class ClaudeModelClient:
         workspace_root: Path,
         effort: str = "medium",
         permission_mode: str = "manual",
+        agent: str | None = None,
         timeout_seconds: int = 600,
     ) -> None:
         self._binary = binary
@@ -187,6 +192,7 @@ class ClaudeModelClient:
         self._workspace_root = workspace_root
         self._effort = effort
         self._permission_mode = permission_mode
+        self._agent = agent
         self._timeout_seconds = timeout_seconds
 
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
@@ -223,6 +229,8 @@ class ClaudeModelClient:
             command.extend(["--effort", self._effort])
         if self._permission_mode:
             command.extend(["--permission-mode", self._permission_mode])
+        if self._agent:
+            command.extend(["--agent", self._agent])
         return command
 
 
