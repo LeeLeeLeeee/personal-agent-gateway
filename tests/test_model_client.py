@@ -5,7 +5,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from personal_agent_gateway.model_client import CodexModelClient, ModelResponse, OpenAIModelClient, ToolCall
+from personal_agent_gateway.model_client import (
+    ClaudeModelClient,
+    CodexModelClient,
+    ModelResponse,
+    OpenAIModelClient,
+    ToolCall,
+)
 
 
 def write_fake_codex(tmp_path: Path, body: str) -> Path:
@@ -18,6 +24,18 @@ def write_fake_codex(tmp_path: Path, body: str) -> Path:
     codex_bin.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
     codex_bin.chmod(0o755)
     return codex_bin
+
+
+def write_fake_claude(tmp_path: Path, body: str) -> Path:
+    if os.name == "nt":
+        claude_bin = tmp_path / "claude.cmd"
+        claude_bin.write_text(f"@echo off\r\n{body}\r\n", encoding="utf-8")
+        return claude_bin
+
+    claude_bin = tmp_path / "claude"
+    claude_bin.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    claude_bin.chmod(0o755)
+    return claude_bin
 
 
 @pytest.mark.asyncio
@@ -232,3 +250,48 @@ async def test_codex_client_reports_missing_binary() -> None:
 
     with pytest.raises(RuntimeError, match="Codex binary not found"):
         await client.complete([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.asyncio
+async def test_claude_client_runs_print_json_and_parses_result(tmp_path: Path) -> None:
+    payload = '{"result":"claude answer"}'
+    if os.name == "nt":
+        body = f"echo {payload}"
+    else:
+        body = f"printf '%s\\n' '{payload}'"
+    claude_bin = write_fake_claude(tmp_path, body)
+
+    client = ClaudeModelClient(
+        binary=str(claude_bin),
+        model="sonnet",
+        workspace_root=tmp_path,
+        effort="high",
+        permission_mode="manual",
+    )
+
+    response = await client.complete([{"role": "user", "content": "hello"}])
+
+    assert response == ModelResponse(content="claude answer", tool_calls=[])
+
+
+def test_claude_client_builds_expected_command(tmp_path: Path) -> None:
+    client = ClaudeModelClient(
+        binary="claude",
+        model="sonnet",
+        workspace_root=tmp_path,
+        effort="high",
+        permission_mode="manual",
+    )
+
+    assert client._command() == [
+        "claude",
+        "-p",
+        "--output-format",
+        "json",
+        "--model",
+        "sonnet",
+        "--effort",
+        "high",
+        "--permission-mode",
+        "manual",
+    ]

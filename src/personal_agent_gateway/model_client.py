@@ -172,6 +172,60 @@ class CodexModelClient:
         return command
 
 
+class ClaudeModelClient:
+    def __init__(
+        self,
+        binary: str,
+        model: str,
+        workspace_root: Path,
+        effort: str = "medium",
+        permission_mode: str = "manual",
+        timeout_seconds: int = 600,
+    ) -> None:
+        self._binary = binary
+        self._model = model
+        self._workspace_root = workspace_root
+        self._effort = effort
+        self._permission_mode = permission_mode
+        self._timeout_seconds = timeout_seconds
+
+    async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *self._command(),
+                _claude_prompt(messages),
+                cwd=str(self._workspace_root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"Claude binary not found: {self._binary}") from exc
+
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self._timeout_seconds)
+        except TimeoutError as exc:
+            process.kill()
+            await process.communicate()
+            raise RuntimeError("Claude execution timed out") from exc
+
+        stdout_text = stdout.decode(errors="replace")
+        stderr_text = stderr.decode(errors="replace")
+        if process.returncode != 0:
+            detail = _summarize_process_output(stderr_text, stdout_text)
+            raise RuntimeError(f"Claude exited with status {process.returncode}: {detail}")
+        return ModelResponse(content=_parse_claude_output(stdout_text), tool_calls=[])
+
+    def _command(self) -> list[str]:
+        command = [self._binary, "-p", "--output-format", "json"]
+        if self._model and self._model != "default":
+            command.extend(["--model", self._model])
+        if self._effort:
+            command.extend(["--effort", self._effort])
+        if self._permission_mode:
+            command.extend(["--permission-mode", self._permission_mode])
+        return command
+
+
 def _codex_prompt(messages: list[dict[str, object]]) -> str:
     lines = [
         "You are the local Codex agent behind a personal web gateway.",
@@ -186,6 +240,22 @@ def _codex_prompt(messages: list[dict[str, object]]) -> str:
         if isinstance(content, str) and content:
             lines.append(f"{role}: {content}")
     return "\n".join(lines).strip() + "\n"
+
+
+def _claude_prompt(messages: list[dict[str, object]]) -> str:
+    return _codex_prompt(messages)
+
+
+def _parse_claude_output(output: str) -> str:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return output.strip()
+    if isinstance(payload, dict):
+        result = payload.get("result") or payload.get("content")
+        if isinstance(result, str):
+            return result.strip()
+    return output.strip()
 
 
 def _parse_codex_output(output: str) -> str:
