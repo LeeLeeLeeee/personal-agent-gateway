@@ -120,6 +120,7 @@ export function GatewayApp() {
   const [teamRuns, setTeamRuns] = useState([]);
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
+  const [teamActionError, setTeamActionError] = useState("");
   const turnHadAgentRef = useRef(false);
   const turnStreamedRef = useRef(false);
   const turnStartRef = useRef(null);
@@ -391,21 +392,51 @@ export function GatewayApp() {
   }
 
   async function handleCreatePersona(payload) {
-    await api.createPersona(payload);
-    setPersonas(await api.personas());
+    try {
+      const created = await api.createPersona(payload);
+      if (!created) {
+        setTeamActionError("Failed to create persona");
+        return;
+      }
+      setTeamActionError("");
+      setPersonas(await api.personas());
+    } catch (_error) {
+      setTeamActionError("Failed to create persona");
+    }
   }
 
   async function handleSeedDefaults() {
-    await Promise.all(DEFAULT_PERSONAS.map((persona) => api.createPersona(persona)));
-    setPersonas(await api.personas());
+    try {
+      const created = await Promise.all(DEFAULT_PERSONAS.map((persona) => api.createPersona(persona)));
+      if (created.some((persona) => !persona)) {
+        setTeamActionError("Failed to seed default personas");
+        return;
+      }
+      setTeamActionError("");
+      setPersonas(await api.personas());
+    } catch (_error) {
+      setTeamActionError("Failed to seed default personas");
+    }
   }
 
   async function handleCreateTeamRun(payload) {
-    const created = await api.createTeamRun(payload);
-    if (!created) return;
-    const started = await api.startTeamRun(created.id);
-    setTeamRuns(await api.teamRuns());
-    setSelectedTeamRunId((started || created).id);
+    try {
+      const created = await api.createTeamRun(payload);
+      if (!created) {
+        setTeamActionError("Failed to create team run");
+        return;
+      }
+      const started = await api.startTeamRun(created.id);
+      if (!started) {
+        setTeamActionError("Failed to start team run");
+        return;
+      }
+      setTeamActionError("");
+      setTeamRuns(await api.teamRuns());
+      setSelectedTeamRunId(started.id);
+    } catch (_error) {
+      setTeamActionError("Failed to create team run");
+    }
   }
 
   function handleSelectTeamRun(id) {
@@ -452,6 +483,10 @@ export function GatewayApp() {
       onToggleNav={() => setNavOpen((value) => !value)}
       onCloseNav={() => setNavOpen(false)}
       onScreenChange={(nextScreen) => {
+        if (screen === "teams" && nextScreen !== "teams") {
+          setSelectedTeamRunId(null);
+          setTeamRunDetail(null);
+        }
         setScreen(nextScreen);
         setNavOpen(false);
       }}
@@ -479,12 +514,15 @@ export function GatewayApp() {
           onResolveApproval={handleResolveApproval}
         />
       ) : screen === "personas" ? (
-        <PersonaLibrary
-          personas={personas}
-          avatars={avatarChoices}
-          onCreate={handleCreatePersona}
-          onSeedDefaults={handleSeedDefaults}
-        />
+        <div>
+          {teamActionError ? <div className="agent-picker-error mono" style={{ marginBottom: 16 }}>{teamActionError}</div> : null}
+          <PersonaLibrary
+            personas={personas}
+            avatars={avatarChoices}
+            onCreate={handleCreatePersona}
+            onSeedDefaults={handleSeedDefaults}
+          />
+        </div>
       ) : screen === "teams" ? (
         selectedTeamRunId ? (
           <div>
@@ -505,6 +543,7 @@ export function GatewayApp() {
             <div className="team-runs-home-head">
               <h1 className="headline" style={{ fontSize: 28 }}>Team Runs</h1>
             </div>
+            {teamActionError ? <div className="agent-picker-error mono" style={{ marginBottom: 16 }}>{teamActionError}</div> : null}
             <div className="team-run-list">
               {teamRuns.map((run) => (
                 <button

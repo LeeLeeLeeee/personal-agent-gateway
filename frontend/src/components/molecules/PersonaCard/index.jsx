@@ -27,8 +27,8 @@ export function PersonaCard({ persona }) {
       {persona.description ? <p style={{ fontSize: 12 }}>{persona.description}</p> : null}
       {responsibilities.length ? (
         <div className="chip-row">
-          {responsibilities.map((item) => (
-            <span className="chip" key={item}>{item}</span>
+          {responsibilities.map((item, index) => (
+            <span className="chip" key={index}>{item}</span>
           ))}
         </div>
       ) : null}

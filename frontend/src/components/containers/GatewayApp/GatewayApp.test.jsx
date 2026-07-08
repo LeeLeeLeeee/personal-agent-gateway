@@ -325,4 +325,59 @@ describe("GatewayApp", () => {
     await userEvent.click(screen.getByText("← TEAM RUNS"));
     expect(screen.queryByText("Ship it")).not.toBeInTheDocument();
   });
+
+  it("shows an error and keeps the app usable when creating a team run fails", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [{ id: "p1", name: "Tech Lead", role: "Planning" }] },
+      "GET /api/team-runs": { team_runs: [] },
+      "POST /api/team-runs": response({}, false)
+    });
+
+    render(<GatewayApp />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Agent Teams" }));
+    await userEvent.type(await screen.findByLabelText(/goal/i), "Ship it");
+    await userEvent.selectOptions(screen.getByLabelText(/leader/i), "p1");
+    await userEvent.click(screen.getByRole("button", { name: /create team run/i }));
+
+    expect(await screen.findByText("Failed to create team run")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create team run/i })).toBeInTheDocument();
+  });
+
+  it("clears the selected team run detail when navigating away from the teams screen", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [{ id: "p1", name: "Tech Lead", role: "Planning" }] },
+      "GET /api/team-runs": { team_runs: [{ id: "run-1", goal: "Ship it", status: "running" }] },
+      "GET /api/team-runs/run-1": {
+        team_run: { id: "run-1", goal: "Ship it", status: "running", run_mode: "planning_only" }
+      },
+      "GET /api/team-runs/run-1/agents": { agents: [] },
+      "GET /api/team-runs/run-1/tasks": { tasks: [] },
+      "GET /api/team-runs/run-1/messages": { messages: [] }
+    });
+
+    render(<GatewayApp />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Agent Teams" }));
+    await userEvent.click(await screen.findByText("Ship it"));
+    expect(await screen.findByText("← TEAM RUNS")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Chat" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Agent Teams" }));
+
+    expect(await screen.findByRole("heading", { name: "Team Runs" })).toBeInTheDocument();
+    expect(screen.queryByText("← TEAM RUNS")).not.toBeInTheDocument();
+  });
 });
