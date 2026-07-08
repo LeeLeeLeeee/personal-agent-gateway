@@ -50,7 +50,7 @@ def probe_cli(binary: str) -> CliProbeResult:
         )
     except FileNotFoundError:
         return CliProbeResult(False, "not found on PATH")
-    except TimeoutError:
+    except subprocess.TimeoutExpired:
         return CliProbeResult(False, "probe timed out")
     except OSError as exc:
         return CliProbeResult(False, str(exc))
@@ -83,10 +83,15 @@ class AgentRegistry:
         descriptor = self.get(agent_id)
         if model not in descriptor.models:
             raise ValueError(f"Unsupported model for {agent_id}: {model}")
-        allowed = {option.name for option in descriptor.options_schema}
-        for key in options:
-            if key not in allowed:
+        schema = {option.name: option for option in descriptor.options_schema}
+        for key, value in options.items():
+            option = schema.get(key)
+            if option is None:
                 raise ValueError(f"Unsupported option for {agent_id}: {key}")
+            if option.choices and value not in option.choices:
+                raise ValueError(
+                    f"Unsupported option value for {agent_id}: {key}={value}"
+                )
         return {"agent_id": descriptor.id, "model": model, "options": dict(options)}
 
     def _codex(self) -> AgentDescriptor:

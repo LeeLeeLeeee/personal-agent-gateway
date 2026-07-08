@@ -1,8 +1,9 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
-from personal_agent_gateway.agents import AgentRegistry, CliProbeResult
+from personal_agent_gateway.agents import AgentRegistry, CliProbeResult, probe_cli
 from personal_agent_gateway.config import AppConfig
 
 
@@ -72,3 +73,24 @@ def test_registry_accepts_supported_provider_options(tmp_path: Path) -> None:
         "model": "sonnet",
         "options": {"effort": "high", "permission_mode": "manual"},
     }
+
+
+def test_probe_cli_returns_timeout_result_for_hung_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["codex-test", "--help"], timeout=5)
+
+    monkeypatch.setattr("personal_agent_gateway.agents.subprocess.run", fake_run)
+
+    assert probe_cli("codex-test") == CliProbeResult(False, "probe timed out")
+
+
+def test_registry_rejects_invalid_option_choice(tmp_path: Path) -> None:
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        probe=lambda _binary: CliProbeResult(True, None),
+    )
+
+    with pytest.raises(ValueError, match="Unsupported option value"):
+        registry.validate_config("codex", "default", {"sandbox": "invalid-choice"})
