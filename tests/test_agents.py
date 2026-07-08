@@ -1,0 +1,74 @@
+from pathlib import Path
+
+import pytest
+
+from personal_agent_gateway.agents import AgentRegistry, CliProbeResult
+from personal_agent_gateway.config import AppConfig
+
+
+def make_config(tmp_path: Path) -> AppConfig:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    return AppConfig(
+        workspace_root=workspace,
+        session_dir=tmp_path / "sessions",
+        codex_binary="codex-test",
+        claude_binary="claude-test",
+    )
+
+
+def test_registry_lists_codex_and_claude_with_safe_defaults(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    registry = AgentRegistry(
+        config,
+        probe=lambda binary: CliProbeResult(
+            available=binary == "codex-test",
+            error=None if binary == "codex-test" else "not found",
+        ),
+    )
+
+    catalog = registry.catalog()
+
+    assert [agent.id for agent in catalog] == ["codex", "claude"]
+    codex = catalog[0]
+    claude = catalog[1]
+    assert codex.available is True
+    assert codex.binary == "codex-test"
+    assert codex.default_model == "default"
+    assert codex.defaults["sandbox"] == "workspace-write"
+    assert claude.available is False
+    assert claude.availability_error == "not found"
+    assert claude.defaults["effort"] == "medium"
+
+
+def test_registry_rejects_unknown_agent_model_and_option(tmp_path: Path) -> None:
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        probe=lambda _binary: CliProbeResult(True, None),
+    )
+
+    with pytest.raises(ValueError, match="Unknown agent"):
+        registry.validate_config("missing", "default", {})
+
+    with pytest.raises(ValueError, match="Unsupported model"):
+        registry.validate_config("codex", "not-listed", {})
+
+    with pytest.raises(ValueError, match="Unsupported option"):
+        registry.validate_config("codex", "default", {"not_allowed": True})
+
+
+def test_registry_accepts_supported_provider_options(tmp_path: Path) -> None:
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        probe=lambda _binary: CliProbeResult(True, None),
+    )
+
+    assert registry.validate_config(
+        "claude",
+        "sonnet",
+        {"effort": "high", "permission_mode": "manual"},
+    ) == {
+        "agent_id": "claude",
+        "model": "sonnet",
+        "options": {"effort": "high", "permission_mode": "manual"},
+    }

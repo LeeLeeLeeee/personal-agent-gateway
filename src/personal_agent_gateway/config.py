@@ -17,6 +17,12 @@ def _default_codex_binary(os_name: str | None = None) -> str:
     return "codex"
 
 
+def _default_claude_binary(os_name: str | None = None) -> str:
+    if (os_name or os.name) == "nt":
+        return "claude.cmd"
+    return "claude"
+
+
 def _default_capture_binary(platform_name: str | None = None) -> str:
     platform_name = platform_name or sys.platform
     if platform_name == "darwin":
@@ -43,6 +49,7 @@ class AppConfig(BaseModel):
     auth_require_token_and_otp: bool = False
     openai_api_key: str | None = None
     codex_binary: str = _default_codex_binary()
+    claude_binary: str = _default_claude_binary()
     codex_sandbox: str = "workspace-write"
     codex_approval_policy: str = "never"
     codex_timeout_seconds: int = 600
@@ -131,6 +138,7 @@ class AppConfig(BaseModel):
                 auth_require_token_and_otp=env.get("AGENT_AUTH_REQUIRE_TOKEN_AND_OTP") or False,
                 openai_api_key=env.get("OPENAI_API_KEY"),
                 codex_binary=env.get("AGENT_CODEX_BIN") or _default_codex_binary(),
+                claude_binary=env.get("AGENT_CLAUDE_BIN") or _default_claude_binary(),
                 codex_sandbox=env.get("AGENT_CODEX_SANDBOX") or "workspace-write",
                 codex_approval_policy=env.get("AGENT_CODEX_APPROVAL_POLICY") or "never",
                 codex_timeout_seconds=int(env.get("AGENT_CODEX_TIMEOUT_SECONDS") or "600"),
@@ -166,6 +174,7 @@ def load_config() -> AppConfig:
             "AGENT_AUTH_REQUIRE_TOKEN_AND_OTP": os.getenv("AGENT_AUTH_REQUIRE_TOKEN_AND_OTP"),
             "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
             "AGENT_CODEX_BIN": os.getenv("AGENT_CODEX_BIN"),
+            "AGENT_CLAUDE_BIN": os.getenv("AGENT_CLAUDE_BIN"),
             "AGENT_CODEX_SANDBOX": os.getenv("AGENT_CODEX_SANDBOX"),
             "AGENT_CODEX_APPROVAL_POLICY": os.getenv("AGENT_CODEX_APPROVAL_POLICY"),
             "AGENT_CODEX_TIMEOUT_SECONDS": os.getenv("AGENT_CODEX_TIMEOUT_SECONDS"),
