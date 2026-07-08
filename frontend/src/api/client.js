@@ -50,8 +50,23 @@ export const api = {
   async sessions() {
     return jsonList(await fetch("/api/sessions"), "sessions");
   },
+  async agents() {
+    return jsonList(await fetch("/api/agents"), "agents");
+  },
   async searchSessions(query) {
     return jsonList(await fetch(`/api/sessions/search?q=${encodeURIComponent(query)}`), "sessions");
+  },
+  async activeSessionConfig() {
+    const body = await jsonOrNull(await fetch("/api/sessions/active/config"));
+    return body?.config || null;
+  },
+  async updateActiveSessionConfig(config) {
+    const body = await jsonOrNull(await fetch("/api/sessions/active/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config)
+    }));
+    return body?.config || null;
   },
   async activate(id) {
     return jsonOrNull(await fetch(`/api/sessions/${encodeURIComponent(id)}/activate`, { method: "POST" }));
