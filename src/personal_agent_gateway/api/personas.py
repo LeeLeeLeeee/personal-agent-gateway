@@ -19,6 +19,16 @@ class PersonaRequest(BaseModel):
     default_model: str = "default"
 
 
+class PersonaUpdateRequest(BaseModel):
+    name: str | None = None
+    role: str | None = None
+    description: str | None = None
+    responsibilities: list[str] | None = None
+    constraints: list[str] | None = None
+    default_backend: str | None = None
+    default_model: str | None = None
+
+
 def require_session(session: Annotated[str | None, Cookie(alias="agent_session")] = None) -> None:
     if not session:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -48,9 +58,12 @@ def get_persona(request: Request, persona_id: str, _session: None = session_depe
 
 
 @router.patch("/{persona_id}")
-def update_persona(request: Request, persona_id: str, payload: PersonaRequest, _session: None = session_dependency) -> dict[str, object]:
+def update_persona(request: Request, persona_id: str, payload: PersonaUpdateRequest, _session: None = session_dependency) -> dict[str, object]:
     try:
-        persona = request.app.state.persona_service.update_persona(persona_id, **payload.model_dump())
+        persona = request.app.state.persona_service.update_persona(
+            persona_id,
+            **{k: v for k, v in payload.model_dump().items() if v is not None},
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Persona not found") from exc
     return {"persona": _persona_payload(persona)}
