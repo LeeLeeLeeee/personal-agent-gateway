@@ -17,6 +17,7 @@ from personal_agent_gateway.api import (
     personas_router,
     schedules_router,
     settings_router,
+    team_runs_router,
 )
 from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.artifacts import ArtifactStore
@@ -34,6 +35,7 @@ from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
+from personal_agent_gateway.teams import TeamRunService
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
 
@@ -73,6 +75,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(schedules_router)
     app.include_router(settings_router)
     app.include_router(personas_router)
+    app.include_router(team_runs_router)
 
     @app.exception_handler(Exception)
     async def internal_error_handler(_request: Request, _exc: Exception) -> JSONResponse:
@@ -219,6 +222,7 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
     db = Database(config.app_db_path)
     db.initialize()
     persona_service = PersonaService(db)
+    team_run_service = TeamRunService(db, persona_service, config.workspace_root)
     registry = CapabilityRegistry.default()
     job_service = JobService(db, registry)
     schedule_service = ScheduleService(db, registry)
@@ -248,6 +252,7 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
     app.state.artifact_store = artifact_store
     app.state.job_worker = job_worker
     app.state.persona_service = persona_service
+    app.state.team_run_service = team_run_service
 
 
 def main() -> None:
