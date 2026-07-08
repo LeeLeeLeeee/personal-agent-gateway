@@ -226,17 +226,40 @@ def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
     response = client.get("/api/status")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "provider": "codex",
-        "model": "default",
-        "workspace_root": str(config.workspace_root),
-        "session_id": None,
-        "message_count": 0,
-        "pending_approval": False,
-        "session_status": "idle",
-        "cookie_secure": False,
-    }
+    payload = response.json()
+    assert payload["provider"] == "codex"
+    assert payload["model"] == "default"
+    assert payload["workspace_root"] == str(config.workspace_root)
+    assert payload["session_id"]
+    assert payload["message_count"] == 0
+    assert payload["pending_approval"] is False
+    assert payload["session_status"] == "idle"
+    assert payload["cookie_secure"] is False
+    assert payload["session_config"]["session_id"] == payload["session_id"]
+    assert payload["session_config"]["agent_id"] == "codex"
+    assert payload["session_config"]["model"] == "default"
+    assert payload["session_config"]["options"] == {}
+    assert payload["session_config"]["editable"] is True
+    assert payload["session_config"]["updated_at"] is None
     assert "secret-token" not in response.text
+
+
+def test_status_reports_active_session_agent_config(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = auth_client(config, FakeRuntime())
+
+    response = client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "claude", "model": "sonnet", "options": {"effort": "high"}},
+    )
+    assert response.status_code == 200
+
+    status = client.get("/api/status").json()
+
+    assert status["provider"] == "claude"
+    assert status["model"] == "sonnet"
+    assert status["session_config"]["agent_id"] == "claude"
+    assert status["session_config"]["editable"] is True
 
 
 def test_status_reports_active_session_after_real_runtime_message(tmp_path: Path) -> None:

@@ -36,6 +36,8 @@ class SessionSummary(BaseModel):
     message_count: int
     status: SessionStatus
     is_active: bool
+    agent_id: str = "codex"
+    model: str = "default"
 
 
 class TranscriptStore:
@@ -196,6 +198,7 @@ class TranscriptStore:
         events = self._load(transcript_id)
         created_at = _created_at(events, self._transcript_path(transcript_id))
         updated_at = events[-1].created_at if events else created_at
+        agent_id, model = _session_agent_model(events)
         return SessionSummary(
             id=transcript_id,
             title=_session_title(events),
@@ -204,6 +207,8 @@ class TranscriptStore:
             message_count=sum(1 for event in events if event.kind in {"user", "assistant"}),
             status=_session_status(events),
             is_active=transcript_id == active_id,
+            agent_id=agent_id,
+            model=model,
         )
 
 
@@ -243,6 +248,19 @@ def _session_status(events: list[TranscriptEvent]) -> SessionStatus:
     if _has_pending_shell_approval(events):
         return "waiting_approval"
     return "idle"
+
+
+def _session_agent_model(events: list[TranscriptEvent]) -> tuple[str, str]:
+    for event in reversed(events):
+        if event.kind != "session_config_set":
+            continue
+        agent_id = event.payload.get("agent_id")
+        model = event.payload.get("model")
+        return (
+            agent_id if isinstance(agent_id, str) else "codex",
+            model if isinstance(model, str) else "default",
+        )
+    return "codex", "default"
 
 
 def _has_pending_shell_approval(events: list[TranscriptEvent]) -> bool:

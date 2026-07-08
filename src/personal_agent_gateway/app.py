@@ -33,6 +33,7 @@ from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
+from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.transcript import TranscriptStore
 
 
@@ -100,17 +101,19 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
 
     @app.get("/api/status")
     def status(_session: None = session_dependency) -> dict[str, object]:
-        events = transcript.load_active()
-        session_id = transcript.active_id()
+        session_config = SessionAgentConfigService(transcript).effective_config()
+        session_id = session_config.session_id
+        events = transcript.load(session_id)
         return {
-            "provider": app_config.model_provider,
-            "model": app_config.model,
+            "provider": session_config.agent_id,
+            "model": session_config.model,
             "workspace_root": str(app_config.workspace_root),
             "session_id": session_id,
             "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
             "pending_approval": _has_pending_shell_approval(events),
             "session_status": _session_status(events, session_id, running_session_id),
             "cookie_secure": app_config.cookie_secure,
+            "session_config": session_config.model_dump(mode="json"),
         }
 
     @app.get("/api/events")
