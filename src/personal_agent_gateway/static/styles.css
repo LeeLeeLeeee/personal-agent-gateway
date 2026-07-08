@@ -222,6 +222,8 @@ h1,h2,h3,p{margin:0}
 .badge-error{color:var(--c-white);background:var(--c-danger);border-color:var(--c-danger)}
 .badge-error .dot{background:var(--c-white)}
 .badge-idle{color:var(--c-grey);border-color:var(--c-grey)}
+.badge-planning,.badge-summarizing,.badge-in_progress,.badge-waiting,.badge-pending{color:var(--c-warn);border-color:var(--c-warn)}
+.badge-draft,.badge-blocked,.badge-canceled{color:var(--c-grey);border-color:var(--c-grey)}
 
 .artifact-card{border:var(--bd);max-width:88%;align-self:flex-start}
 .artifact-card .head{background:var(--c-black);color:var(--c-white);padding:6px 12px;font-family:var(--font-mono);font-size:10px;letter-spacing:1px}
