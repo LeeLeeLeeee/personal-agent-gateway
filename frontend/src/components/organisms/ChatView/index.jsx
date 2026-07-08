@@ -4,6 +4,7 @@ import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 import { Composer } from "../../molecules/Composer/index.jsx";
 import { LoaderCube } from "../../molecules/LoaderCube/index.jsx";
+import { AgentPicker } from "../AgentPicker/index.jsx";
 import { SessionRail } from "../SessionRail/index.jsx";
 import { Timeline } from "../Timeline/index.jsx";
 
@@ -64,13 +65,17 @@ function Proposal({ approval, onResolve }) {
 }
 
 export function ChatView({
+  agents,
   sessions,
+  sessionConfig,
+  sessionConfigError,
   entries,
   busy,
   turnStart,
   turnEnd,
   pendingApproval,
   turnStreamed,
+  onSessionConfigChange,
   onSend,
   onSearch,
   onActivate,
@@ -84,6 +89,12 @@ export function ChatView({
       <SessionRail sessions={sessions} onSearch={onSearch} onActivate={onActivate} onReset={onReset} onRename={onRename} onDelete={onDelete} />
       <div className="chat-col">
         <ChatHeader sessions={sessions} />
+        <AgentPicker
+          agents={agents}
+          config={sessionConfig}
+          error={sessionConfigError}
+          onChange={onSessionConfigChange}
+        />
         <LiveStatusSummary entries={entries} busy={busy} turnStart={turnStart} turnEnd={turnEnd} />
         <div className="transcript">
           <Timeline entries={entries} busy={busy} />

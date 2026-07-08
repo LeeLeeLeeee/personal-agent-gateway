@@ -38,4 +38,22 @@ describe("api client", () => {
     await expect(api.history()).resolves.toEqual([{ kind: "user" }]);
     await expect(api.artifacts()).resolves.toEqual([{ id: "a1" }]);
   });
+
+  it("supports agent registry and active session config endpoints", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: "codex" }] }))
+      .mockResolvedValueOnce(jsonResponse({ config: { agent_id: "codex", model: "default" } }))
+      .mockResolvedValueOnce(jsonResponse({ config: { agent_id: "claude", model: "sonnet" } }));
+
+    await expect(api.agents()).resolves.toEqual([{ id: "codex" }]);
+    await expect(api.activeSessionConfig()).resolves.toEqual({ agent_id: "codex", model: "default" });
+    await api.updateActiveSessionConfig({ agent_id: "claude", model: "sonnet", options: {} });
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/agents");
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/sessions/active/config");
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/sessions/active/config", expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ agent_id: "claude", model: "sonnet", options: {} })
+    }));
+  });
 });

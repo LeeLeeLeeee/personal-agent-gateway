@@ -149,6 +149,37 @@ def test_list_sessions_reports_waiting_and_failed_status(tmp_path: Path) -> None
     assert sessions[failed_id].status == "failed"
 
 
+def test_list_sessions_includes_agent_config_metadata(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    session_id = store.start_new()
+    store.append(
+        "session_config_set",
+        {"agent_id": "claude", "model": "sonnet", "options": {"effort": "high"}},
+    )
+
+    session = store.list_sessions()[0]
+
+    assert session.id == session_id
+    assert session.agent_id == "claude"
+    assert session.model == "sonnet"
+    assert session.options == {"effort": "high"}
+    assert session.editable is True
+
+
+def test_list_sessions_marks_session_config_locked_after_user_message(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    store.start_new()
+    store.append(
+        "session_config_set",
+        {"agent_id": "claude", "model": "sonnet", "options": {"effort": "high"}},
+    )
+    store.append("user", {"content": "hello"})
+
+    session = store.list_sessions()[0]
+
+    assert session.editable is False
+
+
 def test_activate_session_switches_active_transcript(tmp_path: Path) -> None:
     store = TranscriptStore(tmp_path)
     first_id = store.start_new()

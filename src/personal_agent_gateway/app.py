@@ -11,34 +11,36 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from pydantic import BaseModel
 
 from personal_agent_gateway.api import (
+    agents_router,
     artifacts_router,
     auth_router,
     capabilities_router,
     jobs_router,
     personas_router,
     schedules_router,
+    session_config_router,
     settings_router,
     team_runs_router,
 )
-from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.artifacts import ArtifactStore
 from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.capabilities import CapabilityRegistry
-from personal_agent_gateway.config import AppConfig, ConfigError, load_config
+from personal_agent_gateway.config import AppConfig, load_config
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
-from personal_agent_gateway.model_client import CodexModelClient, OpenAIModelClient
+from personal_agent_gateway.model_client import CodexModelClient
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
+from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
-from personal_agent_gateway.tools import WorkspaceTools
+from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.transcript import TranscriptStore
 
 
@@ -55,6 +57,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     transcript = TranscriptStore(app_config.session_dir)
     running_session_id: str | None = None
     app = FastAPI()
+    app.state.transcript_store = transcript
     session_dependency = Depends(_require_agent_session)
     package_dir = Path(__file__).parent
     static_dir = package_dir / "static"
@@ -67,19 +70,28 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         _team_model_factory(app_config),
         event_bus,
     )
-    shared_runtime = runtime or _create_runtime(
+    runtime_factory = AgentRuntimeFactory(
         app_config,
         transcript,
         app.state.job_service,
         event_bus,
     )
-    if hasattr(shared_runtime, "attach_event_bus"):
-        shared_runtime.attach_event_bus(event_bus)
+    injected_runtime = runtime
+    if injected_runtime is not None and hasattr(injected_runtime, "attach_event_bus"):
+        injected_runtime.attach_event_bus(event_bus)
+
+    def active_runtime() -> AgentRuntime:
+        if injected_runtime is not None:
+            return injected_runtime
+        return runtime_factory.create_runtime_for_active_session()
+
     app.include_router(auth_router)
     app.include_router(capabilities_router)
     app.include_router(jobs_router)
     app.include_router(artifacts_router)
     app.include_router(schedules_router)
+    app.include_router(agents_router)
+    app.include_router(session_config_router)
     app.include_router(settings_router)
     app.include_router(personas_router)
     app.include_router(team_runs_router)
@@ -109,17 +121,40 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
 
     @app.get("/api/status")
     def status(_session: None = session_dependency) -> dict[str, object]:
-        events = transcript.load_active()
         session_id = transcript.active_id()
+        if session_id is None:
+            session_config = {
+                "session_id": None,
+                "agent_id": "codex",
+                "model": "default",
+                "options": {},
+                "editable": True,
+                "source": "default",
+                "updated_at": None,
+            }
+            events = []
+            provider = app_config.model_provider
+            model = app_config.model
+        else:
+            effective_config = SessionAgentConfigService(transcript).effective_config(session_id)
+            session_config = effective_config.model_dump(mode="json")
+            events = transcript.load(session_id)
+            if effective_config.source == "explicit":
+                provider = effective_config.agent_id
+                model = effective_config.model
+            else:
+                provider = app_config.model_provider
+                model = app_config.model
         return {
-            "provider": app_config.model_provider,
-            "model": app_config.model,
+            "provider": provider,
+            "model": model,
             "workspace_root": str(app_config.workspace_root),
             "session_id": session_id,
             "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
             "pending_approval": _has_pending_shell_approval(events),
             "session_status": _session_status(events, session_id, running_session_id),
             "cookie_secure": app_config.cookie_secure,
+            "session_config": session_config,
         }
 
     @app.get("/api/events")
@@ -184,7 +219,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         nonlocal running_session_id
         running_session_id = transcript.active_id()
         try:
-            return _runtime_response(await shared_runtime.handle_user_message(request.message))
+            return _runtime_response(await active_runtime().handle_user_message(request.message))
         finally:
             running_session_id = None
 
@@ -193,7 +228,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         nonlocal running_session_id
         running_session_id = transcript.active_id()
         try:
-            return _runtime_response(await shared_runtime.approve(approval_id))
+            return _runtime_response(await active_runtime().approve(approval_id))
         finally:
             running_session_id = None
 
@@ -202,16 +237,13 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         nonlocal running_session_id
         running_session_id = transcript.active_id()
         try:
-            return _runtime_response(await shared_runtime.deny(approval_id))
+            return _runtime_response(await active_runtime().deny(approval_id))
         finally:
             running_session_id = None
 
     @app.post("/api/reset")
     def reset(_session: None = session_dependency) -> dict[str, object]:
-        nonlocal shared_runtime
         session_id = transcript.reset()
-        if runtime is None:
-            shared_runtime = _create_runtime(app_config, transcript, app.state.job_service)
         return {"events": [], "session_id": session_id}
 
     app.mount("/static/vendor", StaticFiles(directory=static_dir / "vendor"), name="vendor")
@@ -280,47 +312,6 @@ def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], CodexModelCl
         )
 
     return team_model_factory
-
-
-def _create_runtime(
-    config: AppConfig,
-    transcript: TranscriptStore,
-    job_service: JobService | None = None,
-    event_bus: EventBus | None = None,
-) -> AgentRuntime:
-    if config.model_provider == "codex":
-        async def publish_codex_event(event: dict[str, object]) -> None:
-            if event_bus is not None:
-                await event_bus.publish({"type": "codex.event", **event})
-
-        return AgentRuntime(
-            transcript=transcript,
-            tools=WorkspaceTools(config.workspace_root, ApprovalStore()),
-            model=CodexModelClient(
-                binary=config.codex_binary,
-                model=config.model,
-                workspace_root=config.workspace_root,
-                sandbox=config.codex_sandbox,
-                approval_policy=config.codex_approval_policy,
-                timeout_seconds=config.codex_timeout_seconds,
-                on_event=publish_codex_event,
-            ),
-            job_service=job_service,
-            event_bus=event_bus,
-        )
-
-    if config.model_provider != "openai":
-        raise ConfigError(f"Unsupported model provider: {config.model_provider}")
-    if not config.openai_api_key:
-        raise ConfigError("OPENAI_API_KEY is required when AGENT_MODEL_PROVIDER=openai")
-
-    return AgentRuntime(
-        transcript=transcript,
-        tools=WorkspaceTools(config.workspace_root, ApprovalStore()),
-        model=OpenAIModelClient(api_key=config.openai_api_key or "", model=config.model),
-        job_service=job_service,
-        event_bus=event_bus,
-    )
 
 
 async def _sse_events(

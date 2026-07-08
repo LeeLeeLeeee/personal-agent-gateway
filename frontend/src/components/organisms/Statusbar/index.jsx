@@ -28,7 +28,7 @@ export function Statusbar({ status, entries, busy, turnStart, turnEnd, sseState,
   const live = deriveLive({ entries, busy, turnStart, turnEnd });
   const items = [
     ["WORKSPACE", status?.workspace_root || "--"],
-    ["MODEL", `${status?.provider || "codex"}/${status?.model || "default"}`],
+    ["MODEL", `${status?.provider || status?.session_config?.agent_id || "codex"}/${status?.model || status?.session_config?.model || "default"}`],
     ["SESSION", `${status?.session_status || "idle"} ${(status?.session_id || "").slice(0, 8)}`],
     ["PHASE", live.phase],
     ["RUNNING", String(live.running)],

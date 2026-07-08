@@ -37,3 +37,9 @@ Project-local Atomic Design catalog for the Vite React frontend.
 - Props: `{ source }`
 - Use when: Rendering agent markdown with code/table/mermaid blocks.
 - Don't use when: Rendering trusted arbitrary HTML.
+
+### AgentPicker
+- Path: `src/components/organisms/AgentPicker/`
+- Props: `{ agents, config, onChange, error? }`
+- Use when: Rendering editable or locked session agent configuration state.
+- Don't use when: Loading agents or persisting config changes; the container owns API calls.

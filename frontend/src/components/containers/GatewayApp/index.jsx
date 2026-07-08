@@ -17,6 +17,22 @@ function appendOrReconcileCommand(entries, entry) {
   return next;
 }
 
+function withSessionConfigStatus(nextStatus, nextConfig) {
+  if (!nextConfig) return nextStatus;
+  if (nextConfig.source !== "explicit") {
+    return {
+      ...(nextStatus || {}),
+      session_config: nextConfig
+    };
+  }
+  return {
+    ...(nextStatus || {}),
+    provider: nextConfig.agent_id ?? nextStatus?.provider,
+    model: nextConfig.model ?? nextStatus?.model,
+    session_config: nextConfig
+  };
+}
+
 function useForceTick(active) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -36,6 +52,9 @@ export function GatewayApp() {
   const [screen, setScreen] = useState("chat");
   const [status, setStatus] = useState(null);
   const [sessions, setSessions] = useState([]);
+  const [agents, setAgents] = useState([]);
+  const [sessionConfig, setSessionConfig] = useState(null);
+  const [sessionConfigError, setSessionConfigError] = useState("");
   const [entries, setEntries] = useState([]);
   const [pendingApproval, setPendingApproval] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -51,13 +70,17 @@ export function GatewayApp() {
   useForceTick(screen === "chat" && busy);
 
   const loadApp = useCallback(async () => {
-    const [nextStatus, nextSessions, history] = await Promise.all([
+    const [nextStatus, nextSessions, history, nextAgents, nextConfig] = await Promise.all([
       api.getStatus(),
       api.sessions(),
-      api.history()
+      api.history(),
+      api.agents(),
+      api.activeSessionConfig()
     ]);
-    setStatus(nextStatus);
+    setStatus(withSessionConfigStatus(nextStatus, nextConfig));
     setSessions(nextSessions);
+    setAgents(nextAgents);
+    setSessionConfig(nextConfig || nextStatus?.session_config || null);
     setEntries(timelineFromHistory(history));
     setAuthenticated(true);
     setBooting(false);
@@ -141,10 +164,36 @@ export function GatewayApp() {
   }
 
   async function refreshStatusAndSessions() {
-    const [nextStatus, nextSessions] = await Promise.all([api.getStatus(), api.sessions()]);
-    setStatus(nextStatus);
+    const [nextStatus, nextSessions, nextConfig] = await Promise.all([
+      api.getStatus(),
+      api.sessions(),
+      api.activeSessionConfig()
+    ]);
+    setStatus(withSessionConfigStatus(nextStatus, nextConfig));
     setSessions(nextSessions);
+    setSessionConfig(nextConfig || nextStatus?.session_config || null);
     return nextStatus;
+  }
+
+  async function handleSessionConfigChange(nextConfig) {
+    setSessionConfigError("");
+    let saved;
+    try {
+      saved = await api.updateActiveSessionConfig({
+        agent_id: nextConfig.agent_id,
+        model: nextConfig.model,
+        options: nextConfig.options || {}
+      });
+    } catch (_error) {
+      setSessionConfigError("Config update failed");
+      return;
+    }
+    if (!saved) {
+      setSessionConfigError("Config update failed");
+      return;
+    }
+    setSessionConfig(saved);
+    await refreshStatusAndSessions();
   }
 
   async function maybeAppendArtifact(nextStatus) {
@@ -221,6 +270,7 @@ export function GatewayApp() {
     turnHadAgentRef.current = false;
     turnStreamedRef.current = false;
     setTurnStreamed(false);
+    setSessionConfigError("");
     await refreshStatusAndSessions();
   }
 
@@ -231,6 +281,7 @@ export function GatewayApp() {
     setTurnStart(null);
     setTurnEnd(null);
     turnStartRef.current = null;
+    setSessionConfigError("");
     await refreshStatusAndSessions();
   }
 
@@ -292,13 +343,17 @@ export function GatewayApp() {
     >
       {screen === "chat" ? (
         <ChatView
+          agents={agents}
           sessions={sessions}
+          sessionConfig={sessionConfig}
+          sessionConfigError={sessionConfigError}
           entries={entries}
           busy={busy}
           turnStart={turnStart}
           turnEnd={turnEnd}
           pendingApproval={pendingApproval}
           turnStreamed={turnStreamed}
+          onSessionConfigChange={handleSessionConfigChange}
           onSend={handleSend}
           onSearch={handleSearch}
           onActivate={handleActivate}
