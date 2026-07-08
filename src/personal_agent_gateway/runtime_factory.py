@@ -26,7 +26,15 @@ class AgentRuntimeFactory:
         return self._create_runtime_for_app_config()
 
     def create_runtime_for_active_session(self) -> AgentRuntime:
-        session_config = SessionAgentConfigService(self._transcript).effective_config()
+        session_id = self._transcript.active_id()
+        if session_id is None:
+            return self._create_runtime_for_app_config()
+
+        events = self._transcript.load(session_id)
+        if not any(event.kind == "session_config_set" for event in events):
+            return self._create_runtime_for_app_config()
+
+        session_config = SessionAgentConfigService(self._transcript).effective_config(session_id)
         if session_config.agent_id == "codex":
             options = session_config.options
 

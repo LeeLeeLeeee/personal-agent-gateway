@@ -453,6 +453,37 @@ def test_chat_uses_active_session_config_runtime_factory(tmp_path: Path, monkeyp
     assert created_for[-1] == ("claude", "sonnet")
 
 
+def test_chat_without_explicit_session_config_falls_back_to_app_config(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    config.model_provider = "openai"
+    config.model = "legacy-model"
+    used_models: list[str] = []
+
+    class FakeOpenAIModelClient:
+        def __init__(self, api_key: str, model: str) -> None:
+            assert api_key == "test-key"
+            used_models.append(model)
+
+        async def complete(self, _messages: list[dict[str, object]]) -> ModelResponse:
+            return ModelResponse(content="legacy", tool_calls=[])
+
+    def fail_if_called(**_kwargs):
+        raise AssertionError("session runtime should not construct Codex without an explicit session override")
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.OpenAIModelClient", FakeOpenAIModelClient)
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", fail_if_called)
+    client = auth_client(config, runtime=None)
+
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [{"role": "assistant", "content": "legacy"}],
+        "pending_approval": None,
+    }
+    assert used_models == ["legacy-model"]
+
+
 def test_history_returns_restored_transcript_after_app_recreation(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     first_runtime = AgentRuntime(
