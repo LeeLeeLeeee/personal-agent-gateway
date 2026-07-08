@@ -126,10 +126,14 @@ h1,h2,h3,p{margin:0}
 .summary-v{display:block;font-family:var(--font-mono);font-size:14px;letter-spacing:.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .stream{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+/* flex items must not grow to their content's intrinsic width (wide SVG/code) — keep them in-bounds so inner blocks scroll */
+.stream>*{min-width:0;max-width:100%}
 
 .msg-user{align-self:flex-end;max-width:82%;display:flex;flex-direction:column;align-items:flex-end}
 .msg-user .bubble{background:var(--c-panel);padding:12px 14px;font-size:14px;line-height:1.55;text-align:right;overflow-wrap:anywhere}
-.msg-agent{align-self:flex-start;max-width:88%;display:flex;flex-direction:column;align-items:flex-start}
+.msg-agent{align-self:flex-start;max-width:88%;min-width:0;display:flex;flex-direction:column;align-items:flex-start}
+.msg-user .bubble,.msg-agent .bubble{min-width:0;max-width:100%}
+.md{min-width:0}
 .msg-agent .bubble{font-size:14px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
 .msg-meta{font-family:var(--font-mono);font-size:10px;letter-spacing:1px;color:var(--c-grey);margin-bottom:6px}
 .agent-cursor{display:inline-block;width:8px;height:15px;background:var(--c-black);margin-left:3px;vertical-align:-2px;animation:blink-hard 1s step-end infinite}
@@ -161,7 +165,7 @@ h1,h2,h3,p{margin:0}
 .mermaid-wrap .code-wrap{margin:0;border:none}
 .mermaid-wrap .md-pre{margin:0;border:none}
 .mermaid-holder{position:relative}
-.mermaid-svg{background:var(--c-white);padding:16px;overflow:auto;max-height:520px;text-align:center;min-height:90px}
+.mermaid-svg{background:var(--c-white);padding:16px;overflow:auto;max-width:100%;max-height:520px;text-align:center;min-height:90px}
 .mermaid-svg svg{height:auto;display:inline-block;vertical-align:top}
 .zoom-btn{position:absolute;top:8px;right:8px;z-index:2;font-family:var(--font-body);font-weight:600;font-size:13px;background:var(--c-white);border:var(--bd-sm);cursor:pointer;padding:1px 8px;line-height:1.4}
 .zoom-btn:hover{background:var(--c-black);color:var(--c-white)}
