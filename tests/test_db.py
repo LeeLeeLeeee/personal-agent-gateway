@@ -29,3 +29,21 @@ def test_database_uses_row_factory_and_foreign_keys(tmp_path: Path) -> None:
 
     assert row is not None
     assert row["foreign_keys"] == 1
+
+
+def test_database_initializes_agent_team_tables(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+
+    rows = db.fetchall(
+        "select name from sqlite_master where type = 'table' and name in (?, ?, ?, ?, ?)",
+        ("personas", "team_runs", "team_agents", "team_tasks", "team_messages"),
+    )
+
+    assert {row["name"] for row in rows} == {
+        "personas",
+        "team_runs",
+        "team_agents",
+        "team_tasks",
+        "team_messages",
+    }

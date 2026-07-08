@@ -74,6 +74,86 @@ create table if not exists schedules (
     updated_at text not null,
     foreign key (last_run_job_id) references jobs(id) on delete set null
 );
+
+create table if not exists personas (
+    id text primary key,
+    name text not null,
+    role text not null,
+    description text not null,
+    responsibilities_json text not null,
+    constraints_json text not null,
+    default_backend text not null,
+    default_model text not null,
+    created_at text not null,
+    updated_at text not null
+);
+
+create table if not exists team_runs (
+    id text primary key,
+    goal text not null,
+    status text not null,
+    run_mode text not null,
+    leader_agent_id text,
+    max_workers integer not null,
+    workspace_root text not null,
+    summary text,
+    error_message text,
+    created_at text not null,
+    started_at text,
+    finished_at text,
+    updated_at text not null
+);
+
+create table if not exists team_agents (
+    id text primary key,
+    team_run_id text not null,
+    name text not null,
+    role text not null,
+    persona_id text not null,
+    persona_snapshot_json text not null,
+    backend text not null,
+    model text not null,
+    status text not null,
+    workspace_path text,
+    current_task_id text,
+    started_at text,
+    finished_at text,
+    created_at text not null,
+    updated_at text not null,
+    foreign key (team_run_id) references team_runs(id) on delete cascade,
+    foreign key (persona_id) references personas(id) on delete restrict
+);
+
+create table if not exists team_tasks (
+    id text primary key,
+    team_run_id text not null,
+    title text not null,
+    description text not null,
+    owner_agent_id text,
+    status text not null,
+    result text,
+    error_message text,
+    created_at text not null,
+    updated_at text not null,
+    started_at text,
+    finished_at text,
+    foreign key (team_run_id) references team_runs(id) on delete cascade,
+    foreign key (owner_agent_id) references team_agents(id) on delete set null
+);
+
+create table if not exists team_messages (
+    id text primary key,
+    team_run_id text not null,
+    sender_agent_id text,
+    recipient_agent_id text,
+    kind text not null,
+    content text not null,
+    metadata_json text not null,
+    created_at text not null,
+    foreign key (team_run_id) references team_runs(id) on delete cascade,
+    foreign key (sender_agent_id) references team_agents(id) on delete set null,
+    foreign key (recipient_agent_id) references team_agents(id) on delete set null
+);
 """
 
 
