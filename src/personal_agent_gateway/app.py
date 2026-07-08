@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from pydantic import BaseModel
 
 from personal_agent_gateway.api import (
+    agents_router,
     artifacts_router,
     auth_router,
     capabilities_router,
@@ -68,6 +69,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(jobs_router)
     app.include_router(artifacts_router)
     app.include_router(schedules_router)
+    app.include_router(agents_router)
     app.include_router(settings_router)
 
     @app.exception_handler(Exception)
