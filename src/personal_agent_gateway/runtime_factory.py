@@ -2,8 +2,9 @@ from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.config import AppConfig, ConfigError
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
-from personal_agent_gateway.model_client import CodexModelClient, OpenAIModelClient
+from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelClient, OpenAIModelClient
 from personal_agent_gateway.runtime import AgentRuntime
+from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
 
@@ -23,6 +24,42 @@ class AgentRuntimeFactory:
 
     def create_default_runtime(self) -> AgentRuntime:
         return self._create_runtime_for_app_config()
+
+    def create_runtime_for_active_session(self) -> AgentRuntime:
+        session_config = SessionAgentConfigService(self._transcript).effective_config()
+        if session_config.agent_id == "codex":
+            options = session_config.options
+
+            async def publish_codex_event(event: dict[str, object]) -> None:
+                if self._event_bus is not None:
+                    await self._event_bus.publish({"type": "codex.event", **event})
+
+            return self._runtime(
+                CodexModelClient(
+                    binary=self._config.codex_binary,
+                    model=session_config.model,
+                    workspace_root=self._config.workspace_root,
+                    sandbox=str(options.get("sandbox") or self._config.codex_sandbox),
+                    approval_policy=str(options.get("approval_policy") or self._config.codex_approval_policy),
+                    timeout_seconds=self._config.codex_timeout_seconds,
+                    on_event=publish_codex_event,
+                )
+            )
+
+        if session_config.agent_id == "claude":
+            options = session_config.options
+            return self._runtime(
+                ClaudeModelClient(
+                    binary=self._config.claude_binary,
+                    model=session_config.model,
+                    workspace_root=self._config.workspace_root,
+                    effort=str(options.get("effort") or "medium"),
+                    permission_mode=str(options.get("permission_mode") or "manual"),
+                    timeout_seconds=self._config.codex_timeout_seconds,
+                )
+            )
+
+        raise ConfigError(f"Unsupported session agent: {session_config.agent_id}")
 
     def _create_runtime_for_app_config(self) -> AgentRuntime:
         config = self._config

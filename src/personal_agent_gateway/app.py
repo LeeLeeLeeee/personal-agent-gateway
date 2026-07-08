@@ -64,9 +64,15 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         app.state.job_service,
         event_bus,
     )
-    shared_runtime = runtime or runtime_factory.create_default_runtime()
-    if hasattr(shared_runtime, "attach_event_bus"):
-        shared_runtime.attach_event_bus(event_bus)
+    injected_runtime = runtime
+    if injected_runtime is not None and hasattr(injected_runtime, "attach_event_bus"):
+        injected_runtime.attach_event_bus(event_bus)
+
+    def active_runtime() -> AgentRuntime:
+        if injected_runtime is not None:
+            return injected_runtime
+        return runtime_factory.create_runtime_for_active_session()
+
     app.include_router(auth_router)
     app.include_router(capabilities_router)
     app.include_router(jobs_router)
@@ -194,7 +200,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         nonlocal running_session_id
         running_session_id = transcript.active_id()
         try:
-            return _runtime_response(await shared_runtime.handle_user_message(request.message))
+            return _runtime_response(await active_runtime().handle_user_message(request.message))
         finally:
             running_session_id = None
 
@@ -203,7 +209,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         nonlocal running_session_id
         running_session_id = transcript.active_id()
         try:
-            return _runtime_response(await shared_runtime.approve(approval_id))
+            return _runtime_response(await active_runtime().approve(approval_id))
         finally:
             running_session_id = None
 
@@ -212,16 +218,13 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         nonlocal running_session_id
         running_session_id = transcript.active_id()
         try:
-            return _runtime_response(await shared_runtime.deny(approval_id))
+            return _runtime_response(await active_runtime().deny(approval_id))
         finally:
             running_session_id = None
 
     @app.post("/api/reset")
     def reset(_session: None = session_dependency) -> dict[str, object]:
-        nonlocal shared_runtime
         session_id = transcript.reset()
-        if runtime is None:
-            shared_runtime = runtime_factory.create_default_runtime()
         return {"events": [], "session_id": session_id}
 
     app.mount("/static/vendor", StaticFiles(directory=static_dir / "vendor"), name="vendor")

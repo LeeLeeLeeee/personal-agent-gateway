@@ -408,6 +408,9 @@ def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Pat
         def create_default_runtime(self) -> FakeRuntime:
             return FakeRuntime()
 
+        def create_runtime_for_active_session(self) -> FakeRuntime:
+            return FakeRuntime()
+
     monkeypatch.setattr(app_module, "AgentRuntimeFactory", StubFactory)
     client = auth_client(config, runtime=None)
 
@@ -417,6 +420,37 @@ def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Pat
     assert response.json()["messages"][0]["content"] == "reply: factory"
     assert len(created) == 1
     assert created[0]["config"] is config
+
+
+def test_chat_uses_active_session_config_runtime_factory(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    created_for: list[tuple[str, str]] = []
+
+    class StubFactory:
+        def __init__(self, app_config, transcript, job_service, event_bus) -> None:
+            self.transcript = transcript
+
+        def create_default_runtime(self) -> FakeRuntime:
+            return FakeRuntime()
+
+        def create_runtime_for_active_session(self) -> FakeRuntime:
+            from personal_agent_gateway.session_config import SessionAgentConfigService
+
+            session_config = SessionAgentConfigService(self.transcript).effective_config()
+            created_for.append((session_config.agent_id, session_config.model))
+            return FakeRuntime()
+
+    monkeypatch.setattr(app_module, "AgentRuntimeFactory", StubFactory)
+    client = auth_client(config, runtime=None)
+    assert client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "claude", "model": "sonnet", "options": {}},
+    ).status_code == 200
+
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert created_for[-1] == ("claude", "sonnet")
 
 
 def test_history_returns_restored_transcript_after_app_recreation(tmp_path: Path) -> None:
