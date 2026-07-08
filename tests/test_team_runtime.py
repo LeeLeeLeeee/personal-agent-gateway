@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.team_runtime import TeamRuntime
@@ -92,3 +93,28 @@ async def test_plan_and_execute_assigns_tasks_to_workers(tmp_path):
     assert tasks[0].status == "completed"
     assert "Verified API behavior" in tasks[0].result
     assert any(message.kind == "agent_output" for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_team_runtime_publishes_team_events(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, workspace)
+    leader = personas.create_persona("Tech Lead", "Planning", "Plans work.", ["Plan"], [])
+    run = teams.create_team_run("Build teams", leader.id, [], "planning_only", 1)
+    bus = EventBus()
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=lambda _agent: FakeModel('[{"title":"Define schema","description":"Add tables"}]'),
+        event_bus=bus,
+    )
+
+    await runtime.start(run.id)
+
+    event_types = [event["type"] for event in bus.recent()]
+    assert "team.run.started" in event_types
+    assert "team.task.created" in event_types
+    assert "team.run.completed" in event_types
