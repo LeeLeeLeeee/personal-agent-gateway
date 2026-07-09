@@ -14,6 +14,7 @@ import { TeamRunForm } from "../../organisms/TeamRunForm/index.jsx";
 import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
 import { SettingsView } from "../../organisms/SettingsView/index.jsx";
 import { ArtifactsView } from "../../organisms/ArtifactsView/index.jsx";
+import { JobsView } from "../../organisms/JobsView/index.jsx";
 import { useConfirm, useToast } from "../../providers/UiProvider/index.jsx";
 
 function appendOrReconcileCommand(entries, entry) {
@@ -81,6 +82,7 @@ export function GatewayApp() {
   const [teamRunDetail, setTeamRunDetail] = useState(null);
   const [settings, setSettings] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
+  const [jobs, setJobs] = useState([]);
   const turnHadAgentRef = useRef(false);
   const turnStreamedRef = useRef(false);
   const turnStartRef = useRef(null);
@@ -175,6 +177,8 @@ export function GatewayApp() {
       api.settings().then(setSettings);
     } else if (screen === "artifacts") {
       api.artifacts().then(setArtifacts);
+    } else if (screen === "jobs") {
+      api.jobs().then(setJobs);
     }
   }, [screen, authenticated]);
 
@@ -605,6 +609,10 @@ export function GatewayApp() {
       ) : screen === "artifacts" ? (
         <div className="screen">
           <ArtifactsView artifacts={artifacts} />
+        </div>
+      ) : screen === "jobs" ? (
+        <div className="screen">
+          <JobsView jobs={jobs} onLoadEvents={api.jobEvents} />
         </div>
       ) : (
         <div className="screen">

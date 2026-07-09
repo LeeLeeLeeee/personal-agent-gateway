@@ -100,6 +100,12 @@ export const api = {
     const body = await jsonOrNull(await fetch("/api/settings"));
     return body?.settings || null;
   },
+  async jobs() {
+    return jsonList(await fetch("/api/jobs"), "jobs");
+  },
+  async jobEvents(id) {
+    return jsonList(await fetch(`/api/jobs/${encodeURIComponent(id)}/events`), "events");
+  },
   async renameSession(id, title) {
     return jsonOrNull(await fetch(`/api/sessions/${encodeURIComponent(id)}/title`, {
       method: "POST",
