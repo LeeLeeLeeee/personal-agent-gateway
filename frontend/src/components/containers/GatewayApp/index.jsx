@@ -13,6 +13,7 @@ import { PersonaLibrary } from "../../organisms/PersonaLibrary/index.jsx";
 import { TeamRunForm } from "../../organisms/TeamRunForm/index.jsx";
 import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
 import { SettingsView } from "../../organisms/SettingsView/index.jsx";
+import { ArtifactsView } from "../../organisms/ArtifactsView/index.jsx";
 import { useConfirm, useToast } from "../../providers/UiProvider/index.jsx";
 
 function appendOrReconcileCommand(entries, entry) {
@@ -79,6 +80,7 @@ export function GatewayApp() {
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [artifacts, setArtifacts] = useState([]);
   const turnHadAgentRef = useRef(false);
   const turnStreamedRef = useRef(false);
   const turnStartRef = useRef(null);
@@ -171,6 +173,8 @@ export function GatewayApp() {
       api.teamRuns().then(setTeamRuns);
     } else if (screen === "settings") {
       api.settings().then(setSettings);
+    } else if (screen === "artifacts") {
+      api.artifacts().then(setArtifacts);
     }
   }, [screen, authenticated]);
 
@@ -598,6 +602,10 @@ export function GatewayApp() {
         )
       ) : screen === "settings" ? (
         settings ? <SettingsView settings={settings} /> : null
+      ) : screen === "artifacts" ? (
+        <div className="screen">
+          <ArtifactsView artifacts={artifacts} />
+        </div>
       ) : (
         <div className="screen">
           <div className="planned">{(activeNav?.label || screen).toUpperCase()} - PLANNED</div>

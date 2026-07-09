@@ -86,6 +86,16 @@ export const api = {
   async artifacts() {
     return jsonList(await fetch("/api/artifacts"), "artifacts");
   },
+  artifactContentUrl(id) {
+    return `/api/artifacts/${encodeURIComponent(id)}/content`;
+  },
+  artifactThumbnailUrl(id) {
+    return `/api/artifacts/${encodeURIComponent(id)}/thumbnail`;
+  },
+  async artifactText(id) {
+    const response = await fetch(this.artifactContentUrl(id));
+    return response.ok ? response.text() : "";
+  },
   async settings() {
     const body = await jsonOrNull(await fetch("/api/settings"));
     return body?.settings || null;
