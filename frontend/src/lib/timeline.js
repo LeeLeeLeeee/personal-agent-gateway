@@ -1,5 +1,15 @@
 import { fmtElapsed, fmtTime, nowHM, nowHMS } from "./time.js";
 
+function legacyAgentKeySuffix(text) {
+  const source = typeof text === "string" && text ? text : "empty";
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 export function normalizeApproval(value) {
   if (!value || typeof value !== "object") return null;
   if (typeof value.id !== "string" || typeof value.command !== "string") return null;
@@ -74,9 +84,10 @@ export function entryFromSse(event) {
       };
     }
     if (item.type === "agent_message") {
+      const agentId = item.id || event.event_seq || (event.session_id ? "" : legacyAgentKeySuffix(item.text));
       return {
         type: "agent",
-        key: `agent:${event.session_id || "legacy"}:${item.id || event.event_seq || ""}`,
+        key: `agent:${event.session_id || "legacy"}:${agentId}`,
         text: item.text || "",
         time: fmtTime(event.created_at, false) || nowHM(),
         streaming: false,

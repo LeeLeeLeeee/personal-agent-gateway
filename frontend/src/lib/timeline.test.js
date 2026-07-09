@@ -110,8 +110,14 @@ describe("timeline model", () => {
       text: "done"
     }));
 
-    expect(entryFromSse({ item: { type: "agent_message", text: "legacy" } }))
-      .toEqual(expect.objectContaining({ type: "agent", key: "agent:legacy:", text: "legacy" }));
+    const firstLegacy = entryFromSse({ item: { type: "agent_message", text: "legacy one" } });
+    const secondLegacy = entryFromSse({ item: { type: "agent_message", text: "legacy two" } });
+
+    expect(firstLegacy).toEqual(expect.objectContaining({ type: "agent", text: "legacy one" }));
+    expect(secondLegacy).toEqual(expect.objectContaining({ type: "agent", text: "legacy two" }));
+    expect(firstLegacy.key).toMatch(/^agent:legacy:[a-z0-9]+$/);
+    expect(secondLegacy.key).toMatch(/^agent:legacy:[a-z0-9]+$/);
+    expect(firstLegacy.key).not.toBe(secondLegacy.key);
   });
 
   it("maps normalized runtime error and completed events with stable keys and server time", () => {

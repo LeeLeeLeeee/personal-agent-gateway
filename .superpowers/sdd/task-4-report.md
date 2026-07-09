@@ -107,3 +107,31 @@ After implementing the client methods and timeline changes, and updating that st
   - PASS
   - `2` test files passed
   - `12` tests passed
+
+## Re-review fix
+
+- Fixed the remaining legacy raw agent-message collision in `frontend/src/lib/timeline.js`.
+- Preserved the session-scoped normalized key shape for durable events:
+  - `agent:<session_id>:<item.id or event_seq>`
+- Changed the id-less legacy fallback so messages without `session_id`, `item.id`, or `event_seq` no longer collapse to `agent:legacy:`:
+  - fallback now uses a deterministic compact hash of `item.text`
+  - resulting shape is `agent:legacy:<hash>`
+- Updated `frontend/src/lib/timeline.test.js` so it no longer codifies `agent:legacy:`.
+- Added an assertion that two different id-less legacy agent messages produce different keys.
+
+## Re-review test output
+
+- Command:
+  - `cd frontend`
+  - `npm test -- --run src/lib/timeline.test.js`
+- Result:
+  - PASS
+  - `1` test file passed
+  - `7` tests passed
+- Command:
+  - `cd frontend`
+  - `npm test -- --run src/api/client.test.js src/lib/timeline.test.js`
+- Result:
+  - PASS
+  - `2` test files passed
+  - `12` tests passed
