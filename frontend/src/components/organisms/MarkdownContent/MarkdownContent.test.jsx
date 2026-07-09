@@ -1,6 +1,7 @@
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { MarkdownContent } from "./index.jsx";
+import { api } from "../../../api/client.js";
 
 describe("MarkdownContent", () => {
   it("renders the structured markdown blocks used by agent messages", () => {
@@ -29,10 +30,6 @@ describe("MarkdownContent", () => {
     expect(screen.getByRole("link", { name: "docs" })).toHaveAttribute("href", "https://example.com");
   });
 });
-
-import { fireEvent, waitFor } from "@testing-library/react";
-import { vi } from "vitest";
-import { api } from "../../../api/client.js";
 
 describe("MarkdownContent path registration", () => {
   it("renders a +등록 button for a registrable path and registers on click", async () => {

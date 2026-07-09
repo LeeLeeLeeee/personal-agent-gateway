@@ -28,7 +28,7 @@ function PathChip({ path }) {
 
   return (
     <span className="path-chip">
-      <code className="md-code path-chip-text">{path}</code>
+      <code className="md-code">{path}</code>
       <button
         type="button"
         className="path-chip-add"

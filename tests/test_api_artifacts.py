@@ -137,6 +137,29 @@ def test_register_artifact_rejects_path_outside_workspace(tmp_path: Path) -> Non
     assert response.status_code == 400
 
 
+def test_register_artifact_rejects_absolute_path_outside_workspace(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    outside = tmp_path / "secret.png"
+    outside.write_bytes(b"nope")
+
+    response = client.post(
+        "/api/artifacts/register",
+        json={"path": str(outside)},
+    )
+
+    assert response.status_code == 400
+
+
+def test_register_artifact_rejects_directory_path(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    workspace = client.app.state.app_config.workspace_root
+    (workspace / "sub").mkdir()
+
+    response = client.post("/api/artifacts/register", json={"path": "sub"})
+
+    assert response.status_code == 404
+
+
 def test_register_artifact_rejects_unknown_extension(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     workspace = client.app.state.app_config.workspace_root
