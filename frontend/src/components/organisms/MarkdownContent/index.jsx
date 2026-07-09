@@ -49,7 +49,8 @@ function splitPaths(text, keyPrefix) {
   let match;
   while ((match = re.exec(text))) {
     if (match.index > last) out.push(text.slice(last, match.index));
-    out.push(<PathChip key={`${keyPrefix}-path-${match.index}`} path={match[0]} />);
+    if (match[0].includes("://")) out.push(match[0]); // URL, not a local path
+    else out.push(<PathChip key={`${keyPrefix}-path-${match.index}`} path={match[0]} />);
     last = re.lastIndex;
   }
   if (last < text.length) out.push(text.slice(last));

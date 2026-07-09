@@ -48,4 +48,14 @@ describe("MarkdownContent path registration", () => {
     render(<MarkdownContent source={"실행했습니다: `scripts/run.py`"} />);
     expect(screen.queryByRole("button", { name: "+등록" })).not.toBeInTheDocument();
   });
+
+  it("does not render a +등록 button for a bare URL in plain text", () => {
+    render(<MarkdownContent source={"참고: https://example.com/report.pdf 확인"} />);
+    expect(screen.queryByRole("button", { name: "+등록" })).not.toBeInTheDocument();
+  });
+
+  it("does not render a +등록 button for a URL inside a code span", () => {
+    render(<MarkdownContent source={"링크: `https://example.com/report.pdf`"} />);
+    expect(screen.queryByRole("button", { name: "+등록" })).not.toBeInTheDocument();
+  });
 });

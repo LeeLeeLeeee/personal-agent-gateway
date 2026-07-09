@@ -14,5 +14,7 @@ export function makePathRe() {
 }
 
 export function isRegistrablePath(text) {
-  return new RegExp(`^[\\w./\\\\:-]+\\.(?:${EXT_ALT})$`, "i").test(String(text || "").trim());
+  const trimmed = String(text || "").trim();
+  if (trimmed.includes("://")) return false; // URLs are not local workspace paths
+  return new RegExp(`^[\\w./\\\\:-]+\\.(?:${EXT_ALT})$`, "i").test(trimmed);
 }
