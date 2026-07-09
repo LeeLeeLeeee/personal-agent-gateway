@@ -23,18 +23,23 @@ function PathChip({ path }) {
   async function register() {
     if (saving) return;
     setSaving(true);
-    const res = await api.registerArtifact({ path, session_id: sessionId });
-    setSaving(false);
-    if (res.status === 200 && res.data?.artifact) {
-      setLocalArtifact(res.data.artifact);
-      toast("아티팩트로 등록되었습니다", "success");
-      onRegistered?.();
-    } else if (res.status === 409 && res.data?.detail?.artifact) {
-      setLocalArtifact(res.data.detail.artifact);
-      toast("이미 등록되어 있습니다", "info");
-      onRegistered?.();
-    } else {
+    try {
+      const res = await api.registerArtifact({ path, session_id: sessionId });
+      if (res.status === 200 && res.data?.artifact) {
+        setLocalArtifact(res.data.artifact);
+        toast("아티팩트로 등록되었습니다", "success");
+        onRegistered?.();
+      } else if (res.status === 409 && res.data?.detail?.artifact) {
+        setLocalArtifact(res.data.detail.artifact);
+        toast("이미 등록되어 있습니다", "info");
+        onRegistered?.();
+      } else {
+        toast("등록에 실패했습니다", "error");
+      }
+    } catch {
       toast("등록에 실패했습니다", "error");
+    } finally {
+      setSaving(false);
     }
   }
 

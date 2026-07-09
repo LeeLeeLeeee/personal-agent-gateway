@@ -33,7 +33,11 @@ describe("MarkdownContent", () => {
 
 describe("MarkdownContent path registration", () => {
   it("renders a +등록 button for a registrable path and registers on click", async () => {
-    const spy = vi.spyOn(api, "registerArtifact").mockResolvedValue({ artifact: { id: "a1" } });
+    const spy = vi.spyOn(api, "registerArtifact").mockResolvedValue({
+      status: 200,
+      ok: true,
+      data: { artifact: { id: "a1", type: "image", title: "cat.png", relative_path: "files/x/cat.png", mime_type: "image/png", size_bytes: 10, created_at: "2026-07-10T00:00:00Z" } },
+    });
     render(<MarkdownContent source={"저장했습니다: `out/cat.png`"} sessionId="sess-9" />);
 
     const button = screen.getByRole("button", { name: "+등록" });
@@ -41,6 +45,21 @@ describe("MarkdownContent path registration", () => {
 
     fireEvent.click(button);
     await waitFor(() => expect(spy).toHaveBeenCalledWith({ path: "out/cat.png", session_id: "sess-9" }));
+    await screen.findByRole("button", { name: "보기" });
+    spy.mockRestore();
+  });
+
+  it("flips to 보기 on a 409 duplicate response", async () => {
+    const spy = vi.spyOn(api, "registerArtifact").mockResolvedValue({
+      status: 409,
+      ok: false,
+      data: { detail: { artifact: { id: "dup1", type: "image", title: "cat.png", relative_path: "files/y/cat.png", mime_type: "image/png", size_bytes: 10, created_at: "2026-07-10T00:00:00Z" } } },
+    });
+    render(<MarkdownContent source={"저장했습니다: `out/cat.png`"} sessionId="sess-9" />);
+
+    const button = screen.getByRole("button", { name: "+등록" });
+    fireEvent.click(button);
+    await screen.findByRole("button", { name: "보기" });
     spy.mockRestore();
   });
 
