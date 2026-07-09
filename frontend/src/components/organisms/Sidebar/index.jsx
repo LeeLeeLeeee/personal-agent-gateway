@@ -17,8 +17,10 @@ export function Sidebar({ screen, teamRunBadge = 0, onScreenChange }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <Logo className="sidebar-brand-logo" />
-        <div className="sidebar-brand-title" aria-label="Agent Gateway">Agent<br />Gateway</div>
+        <div className="sidebar-brand-lockup">
+          <Logo className="sidebar-brand-logo" />
+          <div className="sidebar-brand-title" aria-label="Agent Gateway">Agent<br />Gateway</div>
+        </div>
         <div className="sidebar-brand-sub">LOCAL CONSOLE</div>
       </div>
       <nav className="sidebar-nav">

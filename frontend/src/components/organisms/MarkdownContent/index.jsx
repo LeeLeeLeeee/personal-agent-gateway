@@ -1,4 +1,59 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useToast } from "../../providers/UiProvider/index.jsx";
+
+let mermaidPromise = null;
+let mermaidSeq = 0;
+
+function ensureMermaid() {
+  if (typeof window !== "undefined" && window.mermaid) return Promise.resolve(window.mermaid);
+  if (mermaidPromise) return mermaidPromise;
+  mermaidPromise = new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    el.src = "/static/vendor/mermaid.min.js";
+    el.onload = () => {
+      window.mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "loose" });
+      resolve(window.mermaid);
+    };
+    el.onerror = () => reject(new Error("mermaid load failed"));
+    document.head.appendChild(el);
+  });
+  return mermaidPromise;
+}
+
+function highlightHtml(code, lang) {
+  const hljs = typeof window !== "undefined" ? window.hljs : null;
+  if (!hljs) return null;
+  try {
+    if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+    return hljs.highlightAuto(code).value;
+  } catch {
+    return null;
+  }
+}
+
+function useCopy() {
+  const toast = useToast();
+  return (code) => {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(code)
+        .then(() => toast("복사되었습니다", "success"))
+        .catch(() => toast("복사에 실패했습니다", "error"));
+    } else {
+      toast("복사에 실패했습니다", "error");
+    }
+  };
+}
+
+function CodeBody({ lang, code }) {
+  const html = highlightHtml(code, lang);
+  return (
+    <pre className="md-pre">
+      {html
+        ? <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
+        : <code className="hljs">{code}</code>}
+    </pre>
+  );
+}
 
 function hashStr(value) {
   let hash = 0;
@@ -28,29 +83,56 @@ function splitRow(line) {
 }
 
 function CodeBlock({ lang, code }) {
+  const copy = useCopy();
   return (
     <div className="code-wrap">
       <div className="code-bar">
         <span className="code-lang">{lang || "text"}</span>
-        <button className="code-copy" type="button" onClick={() => navigator.clipboard?.writeText(code)}>COPY</button>
+        <button className="code-copy" type="button" onClick={() => copy(code)}>COPY</button>
       </div>
-      <pre className="md-pre"><code className="hljs">{code}</code></pre>
+      <CodeBody lang={lang} code={code} />
     </div>
   );
 }
 
 function MermaidBlock({ code }) {
+  const copy = useCopy();
   const [shown, setShown] = useState(false);
+  const [svg, setSvg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!shown) return undefined;
+    let cancelled = false;
+    setError("");
+    ensureMermaid()
+      .then((mermaid) => {
+        mermaidSeq += 1;
+        return mermaid.render(`mmd-${mermaidSeq}`, code);
+      })
+      .then((result) => { if (!cancelled) setSvg(result.svg); })
+      .catch((err) => { if (!cancelled) setError(String(err?.message || err)); });
+    return () => { cancelled = true; };
+  }, [shown, code]);
+
   return (
     <div className="mermaid-wrap">
       <div className="code-bar">
         <span className="code-lang">mermaid</span>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button className="code-copy" type="button" onClick={() => navigator.clipboard?.writeText(code)}>COPY</button>
+        <div className="code-actions">
+          <button className="code-copy" type="button" onClick={() => copy(code)}>COPY</button>
           <button className="code-copy" type="button" onClick={() => setShown((value) => !value)}>{shown ? "▾ 코드 보기" : "▸ 그래프 보기"}</button>
         </div>
       </div>
-      <CodeBlock lang="mermaid" code={code} />
+      {shown ? (
+        error
+          ? <pre className="md-pre mermaid-error"><code>{error}</code></pre>
+          : svg
+            ? <div className="mermaid-render" dangerouslySetInnerHTML={{ __html: svg }} />
+            : <div className="mermaid-render mermaid-loading">그래프 렌더링 중…</div>
+      ) : (
+        <CodeBody lang="mermaid" code={code} />
+      )}
     </div>
   );
 }
