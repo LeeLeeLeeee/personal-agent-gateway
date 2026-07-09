@@ -328,6 +328,34 @@ def test_codex_client_includes_profile_flag_when_configured(tmp_path: Path) -> N
     ]
 
 
+def test_codex_client_preserves_profile_positional_argument(tmp_path: Path) -> None:
+    client = CodexModelClient(
+        "codex",
+        "default",
+        tmp_path,
+        "workspace-write",
+        "never",
+        "local-dev",
+    )
+
+    assert client._command() == [
+        "codex",
+        "exec",
+        "--json",
+        "-c",
+        'approval_policy="never"',
+        "--sandbox",
+        "workspace-write",
+        "-C",
+        str(tmp_path),
+        "--skip-git-repo-check",
+        "--profile",
+        "local-dev",
+        "-",
+    ]
+    assert "model_reasoning_effort" not in " ".join(client._command())
+
+
 def test_codex_client_builds_resume_command_when_upstream_session_exists(tmp_path: Path) -> None:
     client = CodexModelClient(
         binary="codex",

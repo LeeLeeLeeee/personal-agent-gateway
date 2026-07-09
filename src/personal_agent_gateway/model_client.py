@@ -87,11 +87,12 @@ class CodexModelClient:
         workspace_root: Path,
         sandbox: str = "workspace-write",
         approval_policy: str = "never",
-        effort: str | None = None,
         profile: str | None = None,
-        upstream_session_id: str | None = None,
         timeout_seconds: int = 600,
         on_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
+        *,
+        effort: str | None = None,
+        upstream_session_id: str | None = None,
     ) -> None:
         self._binary = binary
         self._model = model
