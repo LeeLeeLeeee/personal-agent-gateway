@@ -10,6 +10,8 @@ from personal_agent_gateway.model_client import (
     CodexModelClient,
     ModelResponse,
     OpenAIModelClient,
+    _parse_claude_session_id,
+    _parse_codex_session_id,
     ToolCall,
 )
 
@@ -212,7 +214,11 @@ async def test_codex_client_publishes_json_events_while_collecting_final_message
 
     response = await client.complete([{"role": "user", "content": "hello"}])
 
-    assert response == ModelResponse(content="streamed answer", tool_calls=[])
+    assert response == ModelResponse(
+        content="streamed answer",
+        tool_calls=[],
+        upstream_session_id="thread-1",
+    )
     assert events == [
         {"type": "thread.started", "thread_id": "thread-1"},
         {
@@ -346,3 +352,26 @@ def test_claude_client_includes_agent_flag_when_configured(tmp_path: Path) -> No
         "--agent",
         "reviewer",
     ]
+
+
+def test_parse_codex_output_includes_upstream_thread_id() -> None:
+    output = "\n".join(
+        [
+            '{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53"}',
+            '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}',
+        ]
+    )
+
+    assert _parse_codex_session_id(output) == "0199a213-81c0-7800-8aa1-bbab2a035a53"
+
+
+def test_parse_claude_output_includes_upstream_session_id() -> None:
+    output = json.dumps(
+        {
+            "type": "result",
+            "result": "done",
+            "session_id": "f7c44fcb-e059-4799-94e3-f64d39305050",
+        }
+    )
+
+    assert _parse_claude_session_id(output) == "f7c44fcb-e059-4799-94e3-f64d39305050"

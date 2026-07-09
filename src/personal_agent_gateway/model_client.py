@@ -27,6 +27,7 @@ class ToolCall:
 class ModelResponse:
     content: str
     tool_calls: list[ToolCall]
+    upstream_session_id: str | None = None
 
 
 class ModelClient(Protocol):
@@ -125,7 +126,11 @@ class CodexModelClient:
             raise RuntimeError(f"Codex exited with status {process.returncode}: {detail}")
 
         content = _parse_codex_output(stdout_text).strip()
-        return ModelResponse(content=content, tool_calls=[])
+        return ModelResponse(
+            content=content,
+            tool_calls=[],
+            upstream_session_id=_parse_codex_session_id(stdout_text),
+        )
 
     async def _communicate_stream(
         self,
@@ -219,7 +224,11 @@ class ClaudeModelClient:
         if process.returncode != 0:
             detail = _summarize_process_output(stderr_text, stdout_text)
             raise RuntimeError(f"Claude exited with status {process.returncode}: {detail}")
-        return ModelResponse(content=_parse_claude_output(stdout_text), tool_calls=[])
+        return ModelResponse(
+            content=_parse_claude_output(stdout_text),
+            tool_calls=[],
+            upstream_session_id=_parse_claude_session_id(stdout_text),
+        )
 
     def _command(self) -> list[str]:
         command = [self._binary, "-p", "--output-format", "json"]
@@ -264,6 +273,31 @@ def _parse_claude_output(output: str) -> str:
         if isinstance(result, str):
             return result.strip()
     return output.strip()
+
+
+def _parse_codex_session_id(output: str) -> str | None:
+    for line in output.splitlines():
+        event = _parse_json_line(line)
+        if event is None:
+            continue
+        if event.get("type") == "thread.started":
+            thread_id = event.get("thread_id")
+            if isinstance(thread_id, str) and thread_id:
+                return thread_id
+    return None
+
+
+def _parse_claude_session_id(output: str) -> str | None:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    session_id = payload.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    return None
 
 
 def _parse_codex_output(output: str) -> str:
