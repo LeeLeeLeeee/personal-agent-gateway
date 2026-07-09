@@ -72,6 +72,15 @@ def cancel_team_run(request: Request, team_run_id: str, _session: None = session
     return {"team_run": _team_run_payload(run)}
 
 
+@router.delete("/{team_run_id}")
+def delete_team_run(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, object]:
+    try:
+        request.app.state.team_run_service.delete_team_run(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    return {"deleted": True}
+
+
 @router.get("/{team_run_id}/agents")
 def list_team_agents(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
     try:

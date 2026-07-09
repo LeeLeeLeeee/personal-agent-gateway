@@ -147,6 +147,11 @@ class TeamRunService:
             raise KeyError(f"Team run not found: {team_run_id}")
         return _team_run_from_row(row)
 
+    def delete_team_run(self, team_run_id: str) -> None:
+        self.get_team_run(team_run_id)
+        # team_agents / team_tasks / team_messages cascade via foreign keys
+        self._db.execute("delete from team_runs where id = ?", (team_run_id,))
+
     def list_team_runs(self) -> list[TeamRun]:
         return [
             _team_run_from_row(row)

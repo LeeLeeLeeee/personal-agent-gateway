@@ -62,6 +62,28 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
     assert [agent["name"] for agent in agents] == ["Tech Lead", "QA Tester"]
 
 
+def test_delete_team_run_removes_it(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+
+    run = client.post(
+        "/api/team-runs",
+        json={"goal": "Ship it", "leader_persona_id": leader_id},
+    ).json()["team_run"]
+
+    deleted = client.delete(f"/api/team-runs/{run['id']}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+
+    assert client.get(f"/api/team-runs/{run['id']}").status_code == 404
+    assert client.get("/api/team-runs").json()["team_runs"] == []
+
+
+def test_delete_missing_team_run_returns_404(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    assert client.delete("/api/team-runs/does-not-exist").status_code == 404
+
+
 def test_team_run_api_requires_auth(tmp_path: Path) -> None:
     client = TestClient(create_app(make_config(tmp_path)))
 
