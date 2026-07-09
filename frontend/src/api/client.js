@@ -96,6 +96,13 @@ export const api = {
     const response = await fetch(this.artifactContentUrl(id));
     return response.ok ? response.text() : "";
   },
+  async registerArtifact(body) {
+    return jsonOrNull(await fetch("/api/artifacts/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }));
+  },
   async settings() {
     const body = await jsonOrNull(await fetch("/api/settings"));
     return body?.settings || null;

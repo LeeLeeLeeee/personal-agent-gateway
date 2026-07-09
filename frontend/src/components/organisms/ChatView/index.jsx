@@ -124,7 +124,7 @@ export function ChatView({
         />
         <LiveStatusSummary entries={entries} busy={busy} turnStart={turnStart} turnEnd={turnEnd} />
         <div className="transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
-          <Timeline entries={entries} busy={busy} />
+          <Timeline entries={entries} busy={busy} sessionId={activeSessionId} />
           {busy && !turnStreamed ? <LoaderCube label="AGENT WORKING" /> : null}
           <Proposal approval={pendingApproval} onResolve={onResolveApproval} />
         </div>

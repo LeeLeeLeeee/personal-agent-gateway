@@ -11,7 +11,7 @@ function UserMessage({ entry }) {
   );
 }
 
-function AgentMessage({ entry }) {
+function AgentMessage({ entry, sessionId }) {
   const label = entry.streaming ? "AGENT RESPONSE" : "FINAL ANSWER";
   return (
     <div className={`msg-agent${entry.streaming ? " msg-agent-streaming" : " msg-agent-final"}`}>
@@ -20,7 +20,7 @@ function AgentMessage({ entry }) {
         {entry.time ? <span>{entry.time}</span> : null}
       </div>
       <div className="bubble">
-        <MarkdownContent source={entry.text || ""} />
+        <MarkdownContent source={entry.text || ""} sessionId={sessionId} />
         {entry.streaming ? <span className="agent-cursor" /> : null}
       </div>
     </div>
@@ -124,7 +124,7 @@ function orderedEntries(entries) {
     .map(({ entry }) => entry);
 }
 
-export function Timeline({ entries, busy }) {
+export function Timeline({ entries, busy, sessionId = null }) {
   if (!entries.length && !busy) return <div className="stream"><IdleEmpty /></div>;
 
   const nodes = [];
@@ -151,7 +151,7 @@ export function Timeline({ entries, busy }) {
     }
     flush();
     if (entry.type === "user") nodes.push(<UserMessage key={`u-${nodes.length}`} entry={entry} />);
-    if (entry.type === "agent") nodes.push(<AgentMessage key={`a-${nodes.length}`} entry={entry} />);
+    if (entry.type === "agent") nodes.push(<AgentMessage key={`a-${nodes.length}`} entry={entry} sessionId={sessionId} />);
     if (entry.type === "artifact") nodes.push(<ArtifactCard key={`ar-${nodes.length}`} entry={entry} />);
     if (entry.type === "runtime_error") nodes.push(<RuntimeError key={`e-${nodes.length}`} entry={entry} />);
   }

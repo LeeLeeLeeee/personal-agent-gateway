@@ -1,8 +1,60 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
+import { api } from "../../../api/client.js";
 import { useToast } from "../../providers/UiProvider/index.jsx";
+import { isRegistrablePath, makePathRe } from "../../../lib/artifactTypes.js";
 
 let mermaidPromise = null;
 let mermaidSeq = 0;
+
+const SessionIdContext = createContext(null);
+
+function PathChip({ path }) {
+  const sessionId = useContext(SessionIdContext);
+  const toast = useToast();
+  const [state, setState] = useState("idle"); // idle | saving | done
+
+  async function register() {
+    if (state !== "idle") return;
+    setState("saving");
+    const result = await api.registerArtifact({ path, session_id: sessionId });
+    if (result) {
+      setState("done");
+      toast("아티팩트로 등록되었습니다", "success");
+    } else {
+      setState("idle");
+      toast("등록에 실패했습니다", "error");
+    }
+  }
+
+  return (
+    <span className="path-chip">
+      <code className="md-code path-chip-text">{path}</code>
+      <button
+        type="button"
+        className="path-chip-add"
+        onClick={register}
+        disabled={state !== "idle"}
+      >
+        {state === "done" ? "등록됨" : state === "saving" ? "등록 중…" : "+등록"}
+      </button>
+    </span>
+  );
+}
+
+// Split a plain-text segment into strings and <PathChip> nodes for registrable paths.
+function splitPaths(text, keyPrefix) {
+  const re = makePathRe();
+  const out = [];
+  let last = 0;
+  let match;
+  while ((match = re.exec(text))) {
+    if (match.index > last) out.push(text.slice(last, match.index));
+    out.push(<PathChip key={`${keyPrefix}-path-${match.index}`} path={match[0]} />);
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 
 function ensureMermaid() {
   if (typeof window !== "undefined" && window.mermaid) return Promise.resolve(window.mermaid);
@@ -67,14 +119,19 @@ function inlineNodes(text) {
   let last = 0;
   let match;
   while ((match = re.exec(text))) {
-    if (match.index > last) out.push(text.slice(last, match.index));
-    if (match[1] !== undefined) out.push(<code className="md-code" key={`${match.index}-code`}>{match[1]}</code>);
-    else if (match[2] !== undefined) out.push(<strong key={`${match.index}-strong`}>{match[2]}</strong>);
+    if (match.index > last) out.push(...splitPaths(text.slice(last, match.index), `${match.index}-pre`));
+    if (match[1] !== undefined) {
+      out.push(
+        isRegistrablePath(match[1])
+          ? <PathChip key={`${match.index}-path`} path={match[1].trim()} />
+          : <code className="md-code" key={`${match.index}-code`}>{match[1]}</code>
+      );
+    } else if (match[2] !== undefined) out.push(<strong key={`${match.index}-strong`}>{match[2]}</strong>);
     else if (match[3] !== undefined) out.push(<em key={`${match.index}-em`}>{match[3]}</em>);
     else out.push(<a key={`${match.index}-link`} href={match[5]} target="_blank" rel="noopener noreferrer">{match[4]}</a>);
     last = re.lastIndex;
   }
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length) out.push(...splitPaths(text.slice(last), "tail"));
   return out;
 }
 
@@ -165,7 +222,7 @@ function paragraphNodes(lines, key) {
   );
 }
 
-export function MarkdownContent({ source }) {
+export function MarkdownContent({ source, sessionId = null }) {
   const lines = String(source || "").replace(/\r\n/g, "\n").split("\n");
   const nodes = [];
   const isUl = (line) => /^\s*[-*]\s+/.test(line);
@@ -239,5 +296,9 @@ export function MarkdownContent({ source }) {
     nodes.push(paragraphNodes(paragraph, `${nodes.length}-${hashStr(paragraph.join("\n"))}`));
   }
 
-  return <div className="md">{nodes}</div>;
+  return (
+    <SessionIdContext.Provider value={sessionId}>
+      <div className="md">{nodes}</div>
+    </SessionIdContext.Provider>
+  );
 }
