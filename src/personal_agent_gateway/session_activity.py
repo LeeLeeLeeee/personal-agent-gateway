@@ -37,7 +37,9 @@ class SessionActivityService:
     ) -> SessionActivityEvent:
         created_at = datetime.now(UTC)
         payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        with self._db.connect() as connection:
+        connection = self._db.connect()
+        try:
+            connection.execute("begin immediate")
             row = connection.execute(
                 "select coalesce(max(event_seq), 0) + 1 as next_seq "
                 "from session_activity_events where session_id = ?",
@@ -61,6 +63,12 @@ class SessionActivityService:
                 ),
             )
             event_id = int(cursor.lastrowid)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
         return SessionActivityEvent(
             id=event_id,
             session_id=session_id,

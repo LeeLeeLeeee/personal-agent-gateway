@@ -1,4 +1,5 @@
 from pathlib import Path
+import threading
 
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.session_activity import SessionActivityService
@@ -65,3 +66,94 @@ def test_session_activity_payload_is_api_ready_and_deletable(
     service.delete_session("session-a")
 
     assert service.list("session-a") == []
+
+
+def test_session_activity_record_serializes_same_session_sequence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    service = SessionActivityService(db)
+
+    original_connect = db.connect
+    lock = threading.Lock()
+    select_started = threading.Event()
+    select_count = 0
+
+    class ConnectionProxy:
+        def __init__(self, connection) -> None:
+            self._connection = connection
+
+        def __enter__(self):
+            self._connection.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self._connection.__exit__(exc_type, exc, tb)
+
+        def execute(self, sql: str, parameters=()):
+            nonlocal select_count
+            cursor = self._connection.execute(sql, parameters)
+            if "select coalesce(max(event_seq), 0) + 1 as next_seq" in sql:
+                with lock:
+                    select_count += 1
+                    if select_count == 1:
+                        select_started.wait(timeout=0.2)
+                    else:
+                        select_started.set()
+            return cursor
+
+        def __getattr__(self, name: str):
+            return getattr(self._connection, name)
+
+    def connect_with_proxy():
+        return ConnectionProxy(original_connect())
+
+    monkeypatch.setattr(db, "connect", connect_with_proxy)
+
+    errors: list[Exception] = []
+    recorded = []
+
+    def worker(index: int) -> None:
+        try:
+            event = service.record(
+                session_id="session-a",
+                event_type="runtime.user_message.started",
+                source="runtime",
+                payload={"index": index},
+            )
+            recorded.append(event)
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=worker, args=(index,))
+        for index in range(1, 3)
+    ]
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert [event.event_seq for event in sorted(recorded, key=lambda event: event.event_seq)] == [1, 2]
+    assert [event.event_seq for event in service.list("session-a")] == [1, 2]
+
+
+def test_session_activity_persists_across_service_instances(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+
+    SessionActivityService(db).record(
+        session_id="session-a",
+        event_type="runtime.user_message.started",
+        source="runtime",
+        payload={"message": "hello"},
+    )
+
+    second_service = SessionActivityService(db)
+    events = second_service.list("session-a")
+
+    assert [event.event_seq for event in events] == [1]

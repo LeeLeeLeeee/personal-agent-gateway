@@ -81,3 +81,32 @@ Post-commit verification:
 ## Concerns
 
 - None for Task 1 scope.
+
+## Review follow-up fix
+
+- Reviewer finding addressed: `SessionActivityService.record()` was not concurrency-safe for same-session writers because it read `max(event_seq)` and inserted on separate implicit transaction boundaries.
+- Fix applied in `src/personal_agent_gateway/session_activity.py`:
+  - open a connection,
+  - execute `begin immediate` before reading the next sequence,
+  - insert the event in the same transaction,
+  - `commit()` on success,
+  - `rollback()` on exception,
+  - always close the connection.
+- Added focused regression coverage in `tests/test_session_activity.py`:
+  - a same-session concurrent write test that widens the pre-insert race window and asserts both writes succeed with contiguous `event_seq` values,
+  - a cheap persistence check across two `SessionActivityService` instances backed by the same database file.
+
+### Follow-up verification
+
+Command:
+
+```bash
+python -m pytest tests/test_session_activity.py -q
+```
+
+Result:
+
+```text
+....                                                                     [100%]
+4 passed in 0.71s
+```
