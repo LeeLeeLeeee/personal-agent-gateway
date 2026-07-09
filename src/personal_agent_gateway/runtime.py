@@ -222,7 +222,7 @@ def _events_to_messages(
 ) -> list[dict[str, object]]:
     selected_events = events
     if latest_user_only:
-        selected_events = _latest_user_event(events)
+        selected_events = _latest_user_slice(events)
 
     messages: list[dict[str, object]] = []
     for event in selected_events:
@@ -266,10 +266,10 @@ def _events_to_messages(
     return messages
 
 
-def _latest_user_event(events: list[TranscriptEvent]) -> list[TranscriptEvent]:
-    for event in reversed(events):
-        if event.kind == "user":
-            return [event]
+def _latest_user_slice(events: list[TranscriptEvent]) -> list[TranscriptEvent]:
+    for index in range(len(events) - 1, -1, -1):
+        if events[index].kind == "user":
+            return events[index:]
     return []
 
 

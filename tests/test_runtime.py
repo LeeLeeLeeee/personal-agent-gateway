@@ -551,19 +551,51 @@ async def test_runtime_records_upstream_session_id_after_model_response(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_runtime_latest_user_history_mode_sends_only_latest_user_message(tmp_path: Path) -> None:
+async def test_runtime_latest_user_history_mode_preserves_local_tool_loop_context(tmp_path: Path) -> None:
     transcript = TranscriptStore(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     transcript.start_new()
     transcript.append("user", {"content": "first"})
     transcript.append("assistant", {"content": "first answer"})
-    model = CapturingModel(ModelResponse("second answer", [], upstream_session_id="native-1"))
+    transcript.append("agent_session_link", {"upstream_session_id": "native-old"})
+    transcript.append("runtime_error", {"message": "old error"})
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCall(id="list-call", name="fs.list", arguments={"path": "."})],
+                upstream_session_id="native-1",
+            ),
+            ModelResponse(content="second answer", tool_calls=[], upstream_session_id="native-1"),
+        ]
+    )
     runtime = AgentRuntime(
         transcript=transcript,
-        tools=WorkspaceTools(tmp_path, ApprovalStore()),
+        tools=WorkspaceTools(workspace, ApprovalStore()),
         model=model,
         history_mode="latest_user",
     )
 
     await runtime.handle_user_message("second")
 
-    assert model.calls == [[{"role": "user", "content": "second"}]]
+    assert model.calls[0] == [{"role": "user", "content": "second"}]
+    assert model.calls[1] == [
+        {"role": "user", "content": "second"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "list-call",
+                    "type": "function",
+                    "function": {"name": "fs.list", "arguments": '{"path": "."}'},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "list-call",
+            "content": "[]",
+        },
+    ]
