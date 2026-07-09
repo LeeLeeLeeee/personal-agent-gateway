@@ -1,3 +1,5 @@
+import { Logo } from "../../atoms/Logo/index.jsx";
+
 export const NAV = [
   { key: "chat", label: "Chat" },
   { key: "jobs", label: "Jobs" },
@@ -15,6 +17,7 @@ export function Sidebar({ screen, teamRunBadge = 0, onScreenChange }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
+        <Logo className="sidebar-brand-logo" />
         <div className="sidebar-brand-title" aria-label="Agent Gateway">Agent<br />Gateway</div>
         <div className="sidebar-brand-sub">LOCAL CONSOLE</div>
       </div>
