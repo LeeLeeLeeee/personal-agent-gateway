@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { Button } from "../../atoms/Button/index.jsx";
 
+const TOAST_GLYPH = { success: "✓", error: "✕", warning: "!", info: "i" };
+
 const UiContext = createContext({
   // Defaults keep components working (and unit-testable) without a provider mounted.
   confirm: (opts) => Promise.resolve(window.confirm(opts?.message || "Are you sure?")),
@@ -74,6 +76,7 @@ export function UiProvider({ children }) {
         <div className="toast-host" aria-live="polite">
           {toasts.map((item) => (
             <div key={item.id} className={`toast toast-${item.kind}`} role="status">
+              <span className="toast-icon" aria-hidden="true">{TOAST_GLYPH[item.kind] || TOAST_GLYPH.info}</span>
               <span className="toast-msg">{item.message}</span>
             </div>
           ))}
