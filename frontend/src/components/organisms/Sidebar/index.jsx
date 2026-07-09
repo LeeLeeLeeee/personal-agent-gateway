@@ -2,7 +2,6 @@ export const NAV = [
   { key: "chat", label: "Chat" },
   { key: "jobs", label: "Jobs" },
   { key: "schedules", label: "Schedules" },
-  { key: "capabilities", label: "Capabilities" },
   { key: "artifacts", label: "Artifacts" },
   { key: "settings", label: "Settings" }
 ];
