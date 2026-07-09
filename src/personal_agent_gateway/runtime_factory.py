@@ -1,4 +1,5 @@
 from personal_agent_gateway.approval import ApprovalStore
+from personal_agent_gateway.agent_session_link import AgentSessionLinkService
 from personal_agent_gateway.config import AppConfig, ConfigError
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
@@ -31,12 +32,31 @@ class AgentRuntimeFactory:
             return self._create_runtime_for_app_config()
 
         events = self._transcript.load(session_id)
-        if not any(event.kind == "session_config_set" for event in events):
+        has_explicit_session_config = any(event.kind == "session_config_set" for event in events)
+        if not has_explicit_session_config and self._config.model_provider != "codex":
             return self._create_runtime_for_app_config()
 
         session_config = SessionAgentConfigService(self._transcript).effective_config(session_id)
-        if session_config.agent_id == "codex":
-            options = session_config.options
+        agent_id, model, options = self._effective_session_runtime_config(session_config)
+        link_service = AgentSessionLinkService(self._transcript)
+        link = link_service.latest(
+            session_id=session_id,
+            agent_id=agent_id,
+            model=model,
+            options=options,
+        )
+        history_mode = "latest_user" if link is not None else "full"
+
+        def record_upstream_session(upstream_session_id: str) -> None:
+            link_service.record(
+                session_id=session_id,
+                agent_id=agent_id,
+                model=model,
+                options=options,
+                upstream_session_id=upstream_session_id,
+            )
+
+        if agent_id == "codex":
 
             async def publish_codex_event(event: dict[str, object]) -> None:
                 if self._event_bus is not None:
@@ -45,31 +65,37 @@ class AgentRuntimeFactory:
             return self._runtime(
                 CodexModelClient(
                     binary=self._config.codex_binary,
-                    model=session_config.model,
+                    model=model,
                     workspace_root=self._config.workspace_root,
-                    sandbox=str(options.get("sandbox") or self._config.codex_sandbox),
-                    approval_policy=str(options.get("approval_policy") or self._config.codex_approval_policy),
+                    sandbox=str(options["sandbox"]),
+                    approval_policy=str(options["approval_policy"]),
                     profile=str(options["profile"]) if options.get("profile") else None,
+                    effort=str(options["effort"]) if options.get("effort") else None,
+                    upstream_session_id=link.upstream_session_id if link is not None else None,
                     timeout_seconds=self._config.codex_timeout_seconds,
                     on_event=publish_codex_event,
-                )
+                ),
+                history_mode=history_mode,
+                on_upstream_session_id=record_upstream_session,
             )
 
-        if session_config.agent_id == "claude":
-            options = session_config.options
+        if agent_id == "claude":
             return self._runtime(
                 ClaudeModelClient(
                     binary=self._config.claude_binary,
-                    model=session_config.model,
+                    model=model,
                     workspace_root=self._config.workspace_root,
-                    effort=str(options.get("effort") or "medium"),
-                    permission_mode=str(options.get("permission_mode") or "manual"),
+                    effort=str(options["effort"]),
+                    permission_mode=str(options["permission_mode"]),
                     agent=str(options["agent"]) if options.get("agent") else None,
+                    upstream_session_id=link.upstream_session_id if link is not None else None,
                     timeout_seconds=self._config.codex_timeout_seconds,
-                )
+                ),
+                history_mode=history_mode,
+                on_upstream_session_id=record_upstream_session,
             )
 
-        raise ConfigError(f"Unsupported session agent: {session_config.agent_id}")
+        raise ConfigError(f"Unsupported session agent: {agent_id}")
 
     def _create_runtime_for_app_config(self) -> AgentRuntime:
         config = self._config
@@ -98,11 +124,56 @@ class AgentRuntimeFactory:
 
         return self._runtime(OpenAIModelClient(api_key=config.openai_api_key or "", model=config.model))
 
-    def _runtime(self, model) -> AgentRuntime:
+    def _runtime(
+        self,
+        model,
+        history_mode: str = "full",
+        on_upstream_session_id=None,
+    ) -> AgentRuntime:
         return AgentRuntime(
             transcript=self._transcript,
             tools=WorkspaceTools(self._config.workspace_root, ApprovalStore()),
             model=model,
             job_service=self._job_service,
             event_bus=self._event_bus,
+            history_mode=history_mode,
+            on_upstream_session_id=on_upstream_session_id,
         )
+
+    def _effective_session_runtime_config(self, session_config) -> tuple[str, str, dict[str, object]]:
+        if session_config.agent_id == "codex":
+            return self._effective_codex_session_runtime_config(session_config)
+        if session_config.agent_id == "claude":
+            return self._effective_claude_session_runtime_config(session_config)
+        raise ConfigError(f"Unsupported session agent: {session_config.agent_id}")
+
+    def _effective_codex_session_runtime_config(self, session_config) -> tuple[str, str, dict[str, object]]:
+        if session_config.source == "default":
+            return (
+                "codex",
+                self._config.model,
+                {
+                    "sandbox": self._config.codex_sandbox,
+                    "approval_policy": self._config.codex_approval_policy,
+                },
+            )
+        options = dict(session_config.options)
+        effective_options: dict[str, object] = {
+            "sandbox": str(options.get("sandbox") or self._config.codex_sandbox),
+            "approval_policy": str(options.get("approval_policy") or self._config.codex_approval_policy),
+        }
+        if options.get("profile"):
+            effective_options["profile"] = str(options["profile"])
+        if options.get("effort"):
+            effective_options["effort"] = str(options["effort"])
+        return ("codex", session_config.model, effective_options)
+
+    def _effective_claude_session_runtime_config(self, session_config) -> tuple[str, str, dict[str, object]]:
+        options = dict(session_config.options)
+        effective_options: dict[str, object] = {
+            "effort": str(options.get("effort") or "medium"),
+            "permission_mode": str(options.get("permission_mode") or "manual"),
+        }
+        if options.get("agent"):
+            effective_options["agent"] = str(options["agent"])
+        return ("claude", session_config.model, effective_options)

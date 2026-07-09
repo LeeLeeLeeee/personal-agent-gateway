@@ -1,6 +1,8 @@
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
@@ -30,12 +32,16 @@ class AgentRuntime:
         model: ModelClient,
         job_service: JobService | None = None,
         event_bus: EventBus | None = None,
+        history_mode: Literal["full", "latest_user"] = "full",
+        on_upstream_session_id: Callable[[str], None] | None = None,
     ) -> None:
         self._transcript = transcript
         self._tools = tools
         self._model = model
         self._job_service = job_service
         self._event_bus = event_bus
+        self._history_mode = history_mode
+        self._on_upstream_session_id = on_upstream_session_id
 
     def attach_event_bus(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
@@ -117,7 +123,14 @@ class AgentRuntime:
 
     async def _run_model_loop(self) -> RuntimeResult:
         for _iteration in range(8):
-            response = await self._model.complete(_events_to_messages(self._transcript.load_active()))
+            response = await self._model.complete(
+                _events_to_messages(
+                    self._transcript.load_active(),
+                    latest_user_only=self._history_mode == "latest_user",
+                )
+            )
+            if response.upstream_session_id and self._on_upstream_session_id is not None:
+                self._on_upstream_session_id(response.upstream_session_id)
 
             if not response.tool_calls:
                 if response.content:
@@ -203,9 +216,16 @@ class AgentRuntime:
         await self._event_bus.publish({"type": event_type, **_redact_payload(payload)})
 
 
-def _events_to_messages(events: list[TranscriptEvent]) -> list[dict[str, object]]:
+def _events_to_messages(
+    events: list[TranscriptEvent],
+    latest_user_only: bool = False,
+) -> list[dict[str, object]]:
+    selected_events = events
+    if latest_user_only:
+        selected_events = _latest_user_slice(events)
+
     messages: list[dict[str, object]] = []
-    for event in events:
+    for event in selected_events:
         if event.kind in {"user", "assistant"}:
             messages.append(
                 {
@@ -231,7 +251,7 @@ def _events_to_messages(events: list[TranscriptEvent]) -> list[dict[str, object]
                     "content": "denied",
                 }
             )
-        elif event.kind in {"approval", "runtime_error"}:
+        elif event.kind in {"approval", "runtime_error", "agent_session_link"}:
             continue
         else:
             messages.append(
@@ -244,6 +264,13 @@ def _events_to_messages(events: list[TranscriptEvent]) -> list[dict[str, object]
                 }
             )
     return messages
+
+
+def _latest_user_slice(events: list[TranscriptEvent]) -> list[TranscriptEvent]:
+    for index in range(len(events) - 1, -1, -1):
+        if events[index].kind == "user":
+            return events[index:]
+    return []
 
 
 def _tool_request_message(payload: dict[str, object]) -> dict[str, object]:

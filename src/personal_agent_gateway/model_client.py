@@ -27,6 +27,7 @@ class ToolCall:
 class ModelResponse:
     content: str
     tool_calls: list[ToolCall]
+    upstream_session_id: str | None = None
 
 
 class ModelClient(Protocol):
@@ -89,13 +90,18 @@ class CodexModelClient:
         profile: str | None = None,
         timeout_seconds: int = 600,
         on_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
+        *,
+        effort: str | None = None,
+        upstream_session_id: str | None = None,
     ) -> None:
         self._binary = binary
         self._model = model
         self._workspace_root = workspace_root
         self._sandbox = sandbox
         self._approval_policy = approval_policy
+        self._effort = effort
         self._profile = profile
+        self._upstream_session_id = upstream_session_id
         self._timeout_seconds = timeout_seconds
         self._on_event = on_event
 
@@ -106,6 +112,7 @@ class CodexModelClient:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=str(self._workspace_root),
             )
         except FileNotFoundError as exc:
             raise RuntimeError(f"Codex binary not found: {self._binary}") from exc
@@ -125,7 +132,11 @@ class CodexModelClient:
             raise RuntimeError(f"Codex exited with status {process.returncode}: {detail}")
 
         content = _parse_codex_output(stdout_text).strip()
-        return ModelResponse(content=content, tool_calls=[])
+        return ModelResponse(
+            content=content,
+            tool_calls=[],
+            upstream_session_id=_parse_codex_session_id(stdout_text),
+        )
 
     async def _communicate_stream(
         self,
@@ -156,12 +167,25 @@ class CodexModelClient:
         return "".join(stdout_parts), stderr.decode(errors="replace")
 
     def _command(self) -> list[str]:
+        if self._upstream_session_id:
+            return self._resume_command()
+        return self._start_command()
+
+    def _base_config_args(self) -> list[str]:
+        command = [
+            "-c",
+            f'approval_policy={json.dumps(self._approval_policy)}',
+        ]
+        if self._effort:
+            command.extend(["-c", f'model_reasoning_effort={json.dumps(self._effort)}'])
+        return command
+
+    def _start_command(self) -> list[str]:
         command = [
             self._binary,
             "exec",
             "--json",
-            "-c",
-            f"approval_policy={json.dumps(self._approval_policy)}",
+            *self._base_config_args(),
             "--sandbox",
             self._sandbox,
             "-C",
@@ -175,6 +199,20 @@ class CodexModelClient:
         command.append("-")
         return command
 
+    def _resume_command(self) -> list[str]:
+        command = [
+            self._binary,
+            "exec",
+            "resume",
+            "--json",
+            *self._base_config_args(),
+            "--skip-git-repo-check",
+        ]
+        if self._model and self._model != "default":
+            command.extend(["-m", self._model])
+        command.extend([str(self._upstream_session_id), "-"])
+        return command
+
 
 class ClaudeModelClient:
     def __init__(
@@ -186,6 +224,8 @@ class ClaudeModelClient:
         permission_mode: str = "manual",
         agent: str | None = None,
         timeout_seconds: int = 600,
+        *,
+        upstream_session_id: str | None = None,
     ) -> None:
         self._binary = binary
         self._model = model
@@ -193,6 +233,7 @@ class ClaudeModelClient:
         self._effort = effort
         self._permission_mode = permission_mode
         self._agent = agent
+        self._upstream_session_id = upstream_session_id
         self._timeout_seconds = timeout_seconds
 
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
@@ -219,10 +260,17 @@ class ClaudeModelClient:
         if process.returncode != 0:
             detail = _summarize_process_output(stderr_text, stdout_text)
             raise RuntimeError(f"Claude exited with status {process.returncode}: {detail}")
-        return ModelResponse(content=_parse_claude_output(stdout_text), tool_calls=[])
+        return ModelResponse(
+            content=_parse_claude_output(stdout_text),
+            tool_calls=[],
+            upstream_session_id=_parse_claude_session_id(stdout_text),
+        )
 
     def _command(self) -> list[str]:
-        command = [self._binary, "-p", "--output-format", "json"]
+        command = [self._binary, "-p"]
+        if self._upstream_session_id:
+            command.extend(["--resume", self._upstream_session_id])
+        command.extend(["--output-format", "json"])
         if self._model and self._model != "default":
             command.extend(["--model", self._model])
         if self._effort:
@@ -264,6 +312,31 @@ def _parse_claude_output(output: str) -> str:
         if isinstance(result, str):
             return result.strip()
     return output.strip()
+
+
+def _parse_codex_session_id(output: str) -> str | None:
+    for line in output.splitlines():
+        event = _parse_json_line(line)
+        if event is None:
+            continue
+        if event.get("type") == "thread.started":
+            thread_id = event.get("thread_id")
+            if isinstance(thread_id, str) and thread_id:
+                return thread_id
+    return None
+
+
+def _parse_claude_session_id(output: str) -> str | None:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    session_id = payload.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    return None
 
 
 def _parse_codex_output(output: str) -> str:

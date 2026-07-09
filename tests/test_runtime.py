@@ -27,6 +27,16 @@ class FakeModelClient:
         return self.responses.pop(0)
 
 
+class CapturingModel:
+    def __init__(self, response: ModelResponse) -> None:
+        self.response = response
+        self.calls: list[list[dict[str, object]]] = []
+
+    async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
+        self.calls.append(messages)
+        return self.response
+
+
 def write_file_command(filename: str, content: str) -> str:
     code = (
         "from pathlib import Path; "
@@ -521,3 +531,71 @@ async def test_runtime_errors_append_runtime_error_and_return_message(tmp_path: 
         "runtime_error",
         {"message": "model unavailable"},
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_records_upstream_session_id_after_model_response(tmp_path: Path) -> None:
+    transcript = TranscriptStore(tmp_path / "sessions")
+    recorded: list[str] = []
+    model = CapturingModel(ModelResponse("hello", [], upstream_session_id="native-1"))
+    runtime = AgentRuntime(
+        transcript=transcript,
+        tools=WorkspaceTools(tmp_path, ApprovalStore()),
+        model=model,
+        on_upstream_session_id=recorded.append,
+    )
+
+    await runtime.handle_user_message("hello")
+
+    assert recorded == ["native-1"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_latest_user_history_mode_preserves_local_tool_loop_context(tmp_path: Path) -> None:
+    transcript = TranscriptStore(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    transcript.start_new()
+    transcript.append("user", {"content": "first"})
+    transcript.append("assistant", {"content": "first answer"})
+    transcript.append("agent_session_link", {"upstream_session_id": "native-old"})
+    transcript.append("runtime_error", {"message": "old error"})
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[ToolCall(id="list-call", name="fs.list", arguments={"path": "."})],
+                upstream_session_id="native-1",
+            ),
+            ModelResponse(content="second answer", tool_calls=[], upstream_session_id="native-1"),
+        ]
+    )
+    runtime = AgentRuntime(
+        transcript=transcript,
+        tools=WorkspaceTools(workspace, ApprovalStore()),
+        model=model,
+        history_mode="latest_user",
+    )
+
+    await runtime.handle_user_message("second")
+
+    assert model.calls[0] == [{"role": "user", "content": "second"}]
+    assert model.calls[1] == [
+        {"role": "user", "content": "second"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "list-call",
+                    "type": "function",
+                    "function": {"name": "fs.list", "arguments": '{"path": "."}'},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "list-call",
+            "content": "[]",
+        },
+    ]

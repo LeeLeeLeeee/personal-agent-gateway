@@ -82,4 +82,7 @@ def _latest_config_event(events: list[TranscriptEvent]) -> TranscriptEvent | Non
 
 
 def _is_editable(events: list[TranscriptEvent]) -> bool:
-    return all(event.kind in {"session_config_set", "session_rename"} for event in events)
+    return all(
+        event.kind in {"session_config_set", "session_rename", "agent_session_link"}
+        for event in events
+    )
