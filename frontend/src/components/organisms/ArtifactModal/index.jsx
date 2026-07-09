@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../api/client.js";
 import { useConfirm, useToast } from "../../providers/UiProvider/index.jsx";
 
@@ -14,14 +14,23 @@ function ImageViewer({ src, alt }) {
   const [scale, setScale] = useState(1);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const drag = useRef(null);
+  const stageRef = useRef(null);
 
   function reset() { setScale(1); setPos({ x: 0, y: 0 }); }
   function zoom(delta) { setScale((s) => Math.min(8, Math.max(1, +(s + delta).toFixed(2)))); }
 
-  function onWheel(e) {
+  const onWheel = useCallback((e) => {
     e.preventDefault();
     zoom(e.deltaY < 0 ? 0.2 : -0.2);
-  }
+  }, []);
+
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel, { passive: false });
+  }, [onWheel]);
+
   function onDown(e) { drag.current = { x: e.clientX - pos.x, y: e.clientY - pos.y }; }
   function onMove(e) {
     if (!drag.current) return;
@@ -33,7 +42,7 @@ function ImageViewer({ src, alt }) {
     <div className="viewer">
       <div
         className="viewer-stage"
-        onWheel={onWheel}
+        ref={stageRef}
         onMouseDown={onDown}
         onMouseMove={onMove}
         onMouseUp={onUp}
