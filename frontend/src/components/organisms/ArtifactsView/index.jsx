@@ -44,7 +44,17 @@ function ArtifactPreview({ artifact }) {
   }, [artifact.id, artifact.type]);
 
   if (artifact.type === "image") {
-    return <img className="artifact-preview-img" src={contentUrl} alt={artifact.title} />;
+    return (
+      <img
+        className="artifact-preview-img"
+        src={contentUrl}
+        alt={artifact.title}
+        onError={(event) => {
+          event.currentTarget.onerror = null;
+          event.currentTarget.src = api.artifactThumbnailUrl(artifact.id);
+        }}
+      />
+    );
   }
   if (artifact.type === "video") {
     return <video className="artifact-preview-media" controls src={contentUrl} />;

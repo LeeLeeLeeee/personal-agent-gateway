@@ -497,6 +497,11 @@ h1,h2,h3,p{margin:0}
 @media (max-width:1100px){
   .team-task-board{grid-template-columns:repeat(2,1fr)}
   .team-activity-results{grid-template-columns:1fr}
+  .team-run-new{grid-template-columns:1fr}
+  .team-run-settings{grid-template-columns:1fr}
+  .team-run-preview{position:static}
+  .persona-master{grid-template-columns:1fr}
+}
 
 /* ---- settings ---- */
 .settings-view{max-width:680px}
@@ -509,11 +514,6 @@ h1,h2,h3,p{margin:0}
 .settings-k{padding:9px 13px;border-right:var(--bd-in);font-size:10px;letter-spacing:1px;color:var(--c-grey)}
 .settings-v{padding:9px 13px;font-size:12px}
 @media (max-width:900px){.settings-row{grid-template-columns:1fr}.settings-k{border-right:none;border-bottom:var(--bd-in)}}
-  .team-run-new{grid-template-columns:1fr}
-  .team-run-settings{grid-template-columns:1fr}
-  .team-run-preview{position:static}
-  .persona-master{grid-template-columns:1fr}
-}
 
 /* ---- responsive ---- */
 .nav-toggle{display:none}
