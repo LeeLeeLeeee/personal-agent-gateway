@@ -586,6 +586,35 @@ def test_chat_reuses_codex_upstream_session_after_first_response(tmp_path: Path,
     assert captured_messages[1] == [{"role": "user", "content": "second"}]
 
 
+def test_chat_uses_app_config_model_for_default_codex_sessions_and_reuses_upstream_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured_models: list[str] = []
+    captured_upstream_ids: list[str | None] = []
+
+    class FakeCodexModelClient:
+        def __init__(self, *args, model: str, upstream_session_id=None, **kwargs) -> None:
+            captured_models.append(model)
+            captured_upstream_ids.append(upstream_session_id)
+
+        async def complete(self, _messages):
+            return ModelResponse(content="ok", tool_calls=[], upstream_session_id="codex-thread-1")
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    config = make_config(tmp_path)
+    config.model = "gpt-5.5"
+    client = auth_client(config, runtime=None)
+
+    first = client.post("/api/chat", json={"message": "first"})
+    second = client.post("/api/chat", json={"message": "second"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert captured_models == ["gpt-5.5", "gpt-5.5"]
+    assert captured_upstream_ids == [None, "codex-thread-1"]
+
+
 def test_chat_reuses_claude_upstream_session_after_first_response(tmp_path: Path, monkeypatch) -> None:
     captured_upstream_ids: list[str | None] = []
     captured_messages: list[list[dict[str, object]]] = []
