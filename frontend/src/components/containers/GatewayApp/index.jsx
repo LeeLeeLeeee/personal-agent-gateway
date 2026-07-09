@@ -734,7 +734,7 @@ export function GatewayApp() {
         settings ? <SettingsView settings={settings} /> : null
       ) : screen === "artifacts" ? (
         <div className="screen">
-          <ArtifactsView artifacts={artifacts} />
+          <ArtifactsView artifacts={artifacts} onChange={() => api.artifacts().then(setArtifacts)} />
         </div>
       ) : screen === "jobs" ? (
         <div className="screen">

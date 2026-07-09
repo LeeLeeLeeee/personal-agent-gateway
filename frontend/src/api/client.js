@@ -97,11 +97,17 @@ export const api = {
     return response.ok ? response.text() : "";
   },
   async registerArtifact(body) {
-    return jsonOrNull(await fetch("/api/artifacts/register", {
+    const res = await fetch("/api/artifacts/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
-    }));
+    });
+    const data = (res.ok || res.status === 409) ? await res.json().catch(() => null) : null;
+    return { status: res.status, ok: res.ok, data };
+  },
+  async deleteArtifact(id) {
+    const res = await fetch(`/api/artifacts/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return res.ok;
   },
   async settings() {
     const body = await jsonOrNull(await fetch("/api/settings"));

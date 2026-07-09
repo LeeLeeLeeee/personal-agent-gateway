@@ -40,4 +40,20 @@ describe("ArtifactsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Documents" }));
     expect(screen.getByRole("button", { name: "Open spec.pdf" })).toBeInTheDocument();
   });
+
+  it("renders an image thumbnail in the grid card", () => {
+    render(<ArtifactsView artifacts={[
+      { id: "i1", type: "image", title: "cat.png", relative_path: "files/x/cat.png", mime_type: "image/png", size_bytes: 2048, created_at: "2026-07-10T00:00:00Z" }
+    ]} />);
+    const img = screen.getByAltText("cat.png");
+    expect(img).toHaveAttribute("src", "/api/artifacts/i1/content");
+  });
+
+  it("opens a centered modal (dialog) when a card is clicked", () => {
+    render(<ArtifactsView artifacts={[
+      { id: "i1", type: "image", title: "cat.png", relative_path: "files/x/cat.png", mime_type: "image/png", size_bytes: 2048, created_at: "2026-07-10T00:00:00Z" }
+    ]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open cat.png" }));
+    expect(screen.getByRole("dialog", { name: "cat.png" })).toBeInTheDocument();
+  });
 });
