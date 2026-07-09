@@ -635,11 +635,7 @@ def test_chat_reuses_codex_upstream_session_after_first_response(tmp_path: Path,
     )
     assert captured_upstream_ids == [None, "codex-thread-1"]
     assert captured_messages[0] == [{"role": "user", "content": "first"}]
-    assert captured_messages[1] == [
-        {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "ok"},
-        {"role": "user", "content": "second"},
-    ]
+    assert captured_messages[1] == [{"role": "user", "content": "second"}]
 
 
 def test_chat_uses_app_config_model_for_default_codex_sessions_and_reuses_upstream_id(
@@ -705,11 +701,7 @@ def test_chat_reuses_claude_upstream_session_after_first_response(tmp_path: Path
     )
     assert captured_upstream_ids == [None, "claude-session-1"]
     assert captured_messages[0] == [{"role": "user", "content": "first"}]
-    assert captured_messages[1] == [
-        {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "ok"},
-        {"role": "user", "content": "second"},
-    ]
+    assert captured_messages[1] == [{"role": "user", "content": "second"}]
 
 
 def test_history_returns_restored_transcript_after_app_recreation(tmp_path: Path) -> None:
