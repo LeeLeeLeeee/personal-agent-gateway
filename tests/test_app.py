@@ -394,6 +394,58 @@ def test_sessions_api_lists_activate_delete_and_searches_sessions(tmp_path: Path
     assert client.get("/api/sessions").json()["sessions"][0]["id"] == second_id
 
 
+def test_session_explicit_history_status_and_activity_do_not_activate_session(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    first_id = store.start_new()
+    store.append_to(first_id, "user", {"content": "first"})
+    second_id = store.start_new()
+    store.append_to(second_id, "user", {"content": "second"})
+    client = auth_client(config, FakeRuntime())
+
+    history = client.get(f"/api/sessions/{first_id}/history")
+    status = client.get(f"/api/sessions/{first_id}/status")
+    activity = client.get(f"/api/sessions/{first_id}/activity")
+
+    assert history.status_code == 200
+    assert history.json()["session_id"] == first_id
+    assert history.json()["events"][0]["payload"] == {"content": "first"}
+    assert status.status_code == 200
+    assert status.json()["session_id"] == first_id
+    assert status.json()["status"] == "idle"
+    assert activity.status_code == 200
+    assert activity.json() == {"session_id": first_id, "events": []}
+    assert store.active_id() == second_id
+
+
+def test_session_explicit_chat_writes_only_target_session(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    first_id = store.start_new()
+    second_id = store.start_new()
+
+    class FakeCodexModelClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def complete(self, messages):
+            return ModelResponse(content=f"reply to {messages[-1]['content']}", tool_calls=[])
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    client = auth_client(config, runtime=None)
+
+    response = client.post(f"/api/sessions/{first_id}/chat", json={"message": "targeted"})
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == first_id
+    assert store.active_id() == second_id
+    assert [(event.kind, event.payload) for event in store.load(first_id)] == [
+        ("user", {"content": "targeted"}),
+        ("assistant", {"content": "reply to targeted"}),
+    ]
+    assert store.load(second_id) == []
+
+
 def test_activate_missing_session_returns_404(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     client = auth_client(config, FakeRuntime())
@@ -463,6 +515,9 @@ def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Pat
         def create_runtime_for_active_session(self) -> FakeRuntime:
             return FakeRuntime()
 
+        def create_runtime_for_session(self, _session_id: str) -> FakeRuntime:
+            return FakeRuntime()
+
     monkeypatch.setattr(app_module, "AgentRuntimeFactory", StubFactory)
     client = auth_client(config, runtime=None)
 
@@ -489,6 +544,13 @@ def test_chat_uses_active_session_config_runtime_factory(tmp_path: Path, monkeyp
             from personal_agent_gateway.session_config import SessionAgentConfigService
 
             session_config = SessionAgentConfigService(self.transcript).effective_config()
+            created_for.append((session_config.agent_id, session_config.model))
+            return FakeRuntime()
+
+        def create_runtime_for_session(self, session_id: str) -> FakeRuntime:
+            from personal_agent_gateway.session_config import SessionAgentConfigService
+
+            session_config = SessionAgentConfigService(self.transcript).effective_config(session_id)
             created_for.append((session_config.agent_id, session_config.model))
             return FakeRuntime()
 

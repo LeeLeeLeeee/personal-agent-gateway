@@ -3,6 +3,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 import uvicorn
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
@@ -34,15 +35,16 @@ from personal_agent_gateway.model_client import CodexModelClient
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
+from personal_agent_gateway.run_state import SessionRunRegistry
 from personal_agent_gateway.runners.agent import AgentRunner
 from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
 from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
+from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
-from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.transcript import TranscriptStore
 
 
@@ -57,7 +59,6 @@ class RenameRequest(BaseModel):
 def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = None) -> FastAPI:
     app_config = config or load_config()
     transcript = TranscriptStore(app_config.session_dir)
-    running_session_id: str | None = None
     app = FastAPI()
     app.state.transcript_store = transcript
     session_dependency = Depends(_require_agent_session)
@@ -65,7 +66,9 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     static_dir = package_dir / "static"
     frontend_assets_dir = package_dir / "frontend_dist" / "assets"
     event_bus = EventBus()
+    run_registry = SessionRunRegistry()
     app.state.event_bus = event_bus
+    app.state.run_registry = run_registry
     runtime_factory = _attach_local_services(app, app_config, transcript, event_bus)
     app.state.team_runtime = TeamRuntime(
         app.state.team_run_service,
@@ -80,6 +83,29 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         if injected_runtime is not None:
             return injected_runtime
         return runtime_factory.create_runtime_for_active_session()
+
+    def require_session_id(session_id: str) -> str:
+        if not transcript.exists(session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        return session_id
+
+    def runtime_for_session(session_id: str) -> AgentRuntime:
+        if injected_runtime is not None:
+            return injected_runtime
+        return runtime_factory.create_runtime_for_session(session_id)
+
+    async def chat_for_session(session_id: str, message: str) -> dict[str, object]:
+        request_id = uuid4().hex
+        run_registry.start(session_id, request_id)
+        try:
+            result = await runtime_for_session(session_id).handle_user_message(message)
+            return {
+                **_runtime_response(result),
+                "session_id": session_id,
+                "request_id": request_id,
+            }
+        finally:
+            run_registry.finish(session_id)
 
     app.include_router(auth_router)
     app.include_router(capabilities_router)
@@ -148,7 +174,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             "session_id": session_id,
             "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
             "pending_approval": _has_pending_shell_approval(events),
-            "session_status": _session_status(events, session_id, running_session_id),
+            "session_status": _session_status(events, session_id, run_registry),
             "cookie_secure": app_config.cookie_secure,
             "session_config": session_config,
         }
@@ -170,7 +196,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     def sessions(_session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
         return {
             "sessions": [
-                _session_payload(session, running_session_id)
+                _session_payload(session, run_registry)
                 for session in transcript.list_sessions()
             ]
         }
@@ -179,10 +205,53 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     def search_sessions(q: str = "", _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
         return {
             "sessions": [
-                _session_payload(session, running_session_id)
+                _session_payload(session, run_registry)
                 for session in transcript.search_sessions(q)
             ]
         }
+
+    @app.get("/api/sessions/{session_id}/history")
+    def session_history(session_id: str, _session: None = session_dependency) -> dict[str, object]:
+        require_session_id(session_id)
+        return {
+            "session_id": session_id,
+            "events": [_event_payload(event) for event in transcript.load(session_id)],
+        }
+
+    @app.get("/api/sessions/{session_id}/activity")
+    def session_activity(session_id: str, _session: None = session_dependency) -> dict[str, object]:
+        require_session_id(session_id)
+        return {
+            "session_id": session_id,
+            "events": [
+                event.to_event_payload()
+                for event in app.state.session_activity_service.list(session_id)
+            ],
+        }
+
+    @app.get("/api/sessions/{session_id}/status")
+    def session_status(session_id: str, _session: None = session_dependency) -> dict[str, object]:
+        require_session_id(session_id)
+        events = transcript.load(session_id)
+        activity_events = app.state.session_activity_service.list(session_id)
+        effective_config = SessionAgentConfigService(transcript).effective_config(session_id)
+        return {
+            "session_id": session_id,
+            "status": _session_status(events, session_id, run_registry),
+            "pending_approval": _has_pending_shell_approval(events),
+            "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
+            "last_event_id": _last_activity_event_id(activity_events),
+            "session_config": effective_config.model_dump(mode="json"),
+        }
+
+    @app.post("/api/sessions/{session_id}/chat")
+    async def session_chat(
+        session_id: str,
+        request: ChatRequest,
+        _session: None = session_dependency,
+    ) -> dict[str, object]:
+        require_session_id(session_id)
+        return await chat_for_session(session_id, request.message)
 
     @app.post("/api/sessions/{session_id}/activate")
     def activate_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:
@@ -205,6 +274,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     def delete_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:
         if not transcript.delete(session_id):
             raise HTTPException(status_code=404, detail="Session not found")
+        app.state.session_activity_service.delete_session(session_id)
         return {"deleted": True, "active_session_id": transcript.active_id()}
 
     @app.post("/api/chat")
@@ -212,30 +282,33 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         request: ChatRequest,
         _session: None = session_dependency,
     ) -> dict[str, object]:
-        nonlocal running_session_id
-        running_session_id = transcript.active_id() or transcript.start_new()
-        try:
-            return _runtime_response(await active_runtime().handle_user_message(request.message))
-        finally:
-            running_session_id = None
+        session_id = transcript.active_id() or transcript.start_new()
+        response = await chat_for_session(session_id, request.message)
+        return _compat_chat_response(response)
 
     @app.post("/api/approvals/{approval_id}/approve")
     async def approve(approval_id: str, _session: None = session_dependency) -> dict[str, object]:
-        nonlocal running_session_id
-        running_session_id = transcript.active_id()
+        session_id = transcript.active_id()
+        request_id = uuid4().hex
+        if session_id is not None:
+            run_registry.start(session_id, request_id)
         try:
             return _runtime_response(await active_runtime().approve(approval_id))
         finally:
-            running_session_id = None
+            if session_id is not None:
+                run_registry.finish(session_id)
 
     @app.post("/api/approvals/{approval_id}/deny")
     async def deny(approval_id: str, _session: None = session_dependency) -> dict[str, object]:
-        nonlocal running_session_id
-        running_session_id = transcript.active_id()
+        session_id = transcript.active_id()
+        request_id = uuid4().hex
+        if session_id is not None:
+            run_registry.start(session_id, request_id)
         try:
             return _runtime_response(await active_runtime().deny(approval_id))
         finally:
-            running_session_id = None
+            if session_id is not None:
+                run_registry.finish(session_id)
 
     @app.post("/api/reset")
     def reset(_session: None = session_dependency) -> dict[str, object]:
@@ -351,21 +424,39 @@ def _runtime_response(result: RuntimeResult) -> dict[str, object]:
     }
 
 
-def _session_payload(session: BaseModel, running_session_id: str | None) -> dict[str, object]:
+def _compat_chat_response(payload: dict[str, object]) -> dict[str, object]:
+    return {
+        "messages": payload["messages"],
+        "pending_approval": payload["pending_approval"],
+    }
+
+
+def _session_payload(session: BaseModel, run_registry: SessionRunRegistry) -> dict[str, object]:
     payload = session.model_dump(mode="json")
-    if payload["id"] == running_session_id:
-        payload["status"] = "running"
+    payload["status"] = run_registry.status(
+        str(payload["id"]),
+        payload.get("status") == "waiting_approval",
+        payload.get("status") == "failed",
+    )
     return {str(key): value for key, value in payload.items()}
 
 
-def _session_status(events: list[object], session_id: str | None, running_session_id: str | None) -> str:
-    if session_id is not None and session_id == running_session_id:
-        return "running"
-    if events and getattr(events[-1], "kind", "") == "runtime_error":
-        return "failed"
-    if _has_pending_shell_approval(events):
-        return "waiting_approval"
-    return "idle"
+def _session_status(
+    events: list[object],
+    session_id: str | None,
+    run_registry: SessionRunRegistry,
+) -> str:
+    return run_registry.status(
+        session_id,
+        _has_pending_shell_approval(events),
+        bool(events and getattr(events[-1], "kind", "") == "runtime_error"),
+    )
+
+
+def _last_activity_event_id(events: list[object]) -> int | None:
+    if not events:
+        return None
+    return int(getattr(events[-1], "id"))
 
 
 def _has_pending_shell_approval(events: list[object]) -> bool:
