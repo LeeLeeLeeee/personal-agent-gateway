@@ -124,30 +124,26 @@ def test_register_artifact_copies_workspace_file(tmp_path: Path) -> None:
     assert content.content == b"img-bytes"
 
 
-def test_register_artifact_rejects_path_outside_workspace(tmp_path: Path) -> None:
+def test_register_artifact_allows_absolute_path_outside_workspace(tmp_path: Path) -> None:
+    # Localhost personal tool: registration is allowed from any readable path the
+    # agent reports, not only the workspace (workspace containment intentionally dropped).
     client = authenticated_client(tmp_path)
-    outside = tmp_path / "secret.png"
-    outside.write_bytes(b"nope")
-
-    response = client.post(
-        "/api/artifacts/register",
-        json={"path": "../secret.png"},
-    )
-
-    assert response.status_code == 400
-
-
-def test_register_artifact_rejects_absolute_path_outside_workspace(tmp_path: Path) -> None:
-    client = authenticated_client(tmp_path)
-    outside = tmp_path / "secret.png"
-    outside.write_bytes(b"nope")
+    outside = tmp_path / "capture.png"
+    outside.write_bytes(b"img")
 
     response = client.post(
         "/api/artifacts/register",
         json={"path": str(outside)},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 200
+    artifact = response.json()["artifact"]
+    assert artifact["type"] == "image"
+    assert artifact["title"] == "capture.png"
+    # copied into the store, original left in place
+    assert outside.exists()
+    content = client.get(f"/api/artifacts/{artifact['id']}/content")
+    assert content.content == b"img"
 
 
 def test_register_artifact_rejects_directory_path(tmp_path: Path) -> None:

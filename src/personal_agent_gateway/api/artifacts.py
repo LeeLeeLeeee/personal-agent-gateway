@@ -37,12 +37,10 @@ def register_artifact(
     payload: RegisterArtifactRequest,
     _session: None = session_dependency,
 ) -> dict[str, object]:
+    # Localhost personal tool: any readable path the agent reports may be registered.
+    # Relative paths resolve against the workspace; absolute paths resolve as-is.
     workspace_root = request.app.state.app_config.workspace_root.resolve()
     candidate = (workspace_root / payload.path).resolve()
-    try:
-        candidate.relative_to(workspace_root)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Path is outside workspace") from exc
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     if not is_registrable(candidate.name):
