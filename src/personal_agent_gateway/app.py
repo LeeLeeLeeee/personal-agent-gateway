@@ -103,6 +103,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
                 **_runtime_response(result),
                 "session_id": session_id,
                 "request_id": request_id,
+                "last_event_id": _last_session_event_id(event_bus.recent(), session_id),
             }
         finally:
             run_registry.finish(session_id)
@@ -457,6 +458,13 @@ def _last_activity_event_id(events: list[object]) -> int | None:
     if not events:
         return None
     return int(getattr(events[-1], "id"))
+
+
+def _last_session_event_id(events: list[dict[str, object]], session_id: str) -> int | None:
+    for event in reversed(events):
+        if event.get("session_id") == session_id:
+            return int(event["id"])
+    return None
 
 
 def _has_pending_shell_approval(events: list[object]) -> bool:

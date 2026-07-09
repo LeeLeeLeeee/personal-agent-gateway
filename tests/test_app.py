@@ -438,12 +438,33 @@ def test_session_explicit_chat_writes_only_target_session(tmp_path: Path, monkey
 
     assert response.status_code == 200
     assert response.json()["session_id"] == first_id
+    assert response.json()["request_id"]
+    assert response.json()["pending_approval"] is None
+    assert response.json()["last_event_id"] == 2
     assert store.active_id() == second_id
     assert [(event.kind, event.payload) for event in store.load(first_id)] == [
         ("user", {"content": "targeted"}),
         ("assistant", {"content": "reply to targeted"}),
     ]
     assert store.load(second_id) == []
+
+
+def test_delete_session_removes_only_target_session_activity_rows(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    first_id = store.start_new()
+    second_id = store.start_new()
+    client = auth_client(config, FakeRuntime())
+    activity_service = client.app.state.session_activity_service
+
+    activity_service.record(first_id, "runtime.completed", "runtime", {"pending_approval": None})
+    activity_service.record(second_id, "runtime.completed", "runtime", {"pending_approval": None})
+
+    response = client.delete(f"/api/sessions/{first_id}")
+
+    assert response.status_code == 200
+    assert activity_service.list(first_id) == []
+    assert len(activity_service.list(second_id)) == 1
 
 
 def test_activate_missing_session_returns_404(tmp_path: Path) -> None:
