@@ -409,6 +409,35 @@ def test_claude_client_includes_agent_flag_when_configured(tmp_path: Path) -> No
     ]
 
 
+def test_claude_client_preserves_timeout_positional_argument(tmp_path: Path) -> None:
+    client = ClaudeModelClient(
+        "claude",
+        "sonnet",
+        tmp_path,
+        "high",
+        "manual",
+        "reviewer",
+        30,
+    )
+
+    assert client._command() == [
+        "claude",
+        "-p",
+        "--output-format",
+        "json",
+        "--model",
+        "sonnet",
+        "--effort",
+        "high",
+        "--permission-mode",
+        "manual",
+        "--agent",
+        "reviewer",
+    ]
+    assert "--resume" not in client._command()
+    assert "30" not in client._command()
+
+
 def test_claude_client_builds_resume_command_when_upstream_session_exists(tmp_path: Path) -> None:
     client = ClaudeModelClient(
         binary="claude",

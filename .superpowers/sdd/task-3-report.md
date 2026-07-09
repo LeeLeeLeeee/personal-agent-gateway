@@ -26,3 +26,8 @@ Implemented native resume command selection for `CodexModelClient` and `ClaudeMo
 
 ## Commit
 - `c8f9e81` - `feat(model): resume native cli sessions`
+
+## Fix 2
+- Restored `ClaudeModelClient` positional compatibility by moving `upstream_session_id` behind `*`, so existing positional arguments still map through `agent` and `timeout_seconds`.
+- Added a regression test that constructs `ClaudeModelClient` with the old positional shape and confirms `--agent reviewer` is preserved without turning `30` into `--resume`.
+- Exact verification result: `python -m pytest tests/test_model_client.py -q` -> `16 passed in 0.65s`

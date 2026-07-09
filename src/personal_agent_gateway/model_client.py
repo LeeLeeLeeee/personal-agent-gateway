@@ -223,8 +223,9 @@ class ClaudeModelClient:
         effort: str = "medium",
         permission_mode: str = "manual",
         agent: str | None = None,
-        upstream_session_id: str | None = None,
         timeout_seconds: int = 600,
+        *,
+        upstream_session_id: str | None = None,
     ) -> None:
         self._binary = binary
         self._model = model
