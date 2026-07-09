@@ -590,3 +590,6 @@ h1,h2,h3,p{margin:0}
 .jobs-drawer-actions{display:flex;gap:10px;margin-top:14px}
 @media (max-width:1100px){.jobs-view{flex-direction:column}.jobs-drawer{width:100%}}
 @media (max-width:900px){.jobs-row{grid-template-columns:1fr 120px 70px}.jobs-cell-capability,.jobs-cell-source{display:none}.jobs-row-head span:nth-child(2),.jobs-row-head span:nth-child(3){display:none}}
+
+.badge-succeeded{color:var(--c-ok);border-color:var(--c-ok)}
+.badge-queued,.badge-waiting_approval{color:var(--c-warn);border-color:var(--c-warn)}

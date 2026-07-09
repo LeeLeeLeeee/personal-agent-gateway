@@ -2,6 +2,7 @@ const LABELS = {
   running: "RUNNING",
   working: "WORKING",
   completed: "COMPLETED",
+  succeeded: "SUCCEEDED",
   failed: "FAILED",
   error: "ERROR",
   idle: "IDLE",
@@ -11,6 +12,8 @@ const LABELS = {
   canceled: "CANCELED",
   pending: "PENDING",
   waiting: "WAITING",
+  waiting_approval: "WAITING",
+  queued: "QUEUED",
   in_progress: "IN PROGRESS",
   blocked: "BLOCKED"
 };
@@ -21,6 +24,8 @@ const ACTIVE = new Set([
   "planning",
   "summarizing",
   "waiting",
+  "waiting_approval",
+  "queued",
   "pending",
   "in_progress"
 ]);

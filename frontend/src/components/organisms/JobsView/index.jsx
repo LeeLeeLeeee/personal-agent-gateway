@@ -5,6 +5,7 @@ import { useToast } from "../../providers/UiProvider/index.jsx";
 const STATUS = [
   ["all", "All"],
   ["waiting_approval", "Waiting"],
+  ["queued", "Queued"],
   ["running", "Running"],
   ["succeeded", "Succeeded"],
   ["failed", "Failed"],
@@ -16,7 +17,8 @@ const SOURCE = [
   ["all", "All"],
   ["chat", "Chat"],
   ["manual", "Manual"],
-  ["schedule", "Schedule"]
+  ["schedule", "Schedule"],
+  ["api", "API"]
 ];
 
 function fmtWhen(iso) {

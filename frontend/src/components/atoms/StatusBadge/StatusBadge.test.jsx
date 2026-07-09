@@ -26,6 +26,22 @@ describe("StatusBadge", () => {
     expect(container.querySelector(".dot")).not.toBeNull();
   });
 
+  it("renders job statuses (succeeded/queued/waiting_approval) instead of IDLE", () => {
+    const succeeded = render(<StatusBadge kind="succeeded" />);
+    expect(screen.getByText("SUCCEEDED")).toBeInTheDocument();
+    expect(succeeded.container.querySelector(".badge-succeeded")).not.toBeNull();
+    expect(succeeded.container.querySelector(".dot")).toBeNull();
+    succeeded.unmount();
+
+    const queued = render(<StatusBadge kind="queued" />);
+    expect(screen.getByText("QUEUED")).toBeInTheDocument();
+    expect(queued.container.querySelector(".dot")).not.toBeNull();
+    queued.unmount();
+
+    render(<StatusBadge kind="waiting_approval" />);
+    expect(screen.getByText("WAITING")).toBeInTheDocument();
+  });
+
   it("falls back to IDLE for an unknown status", () => {
     render(<StatusBadge kind="totally-unknown" />);
     expect(screen.getByText("IDLE")).toBeInTheDocument();
