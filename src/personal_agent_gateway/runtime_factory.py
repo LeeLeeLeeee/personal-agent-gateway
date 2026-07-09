@@ -60,7 +60,7 @@ class AgentRuntimeFactory:
 
             async def publish_codex_event(event: dict[str, object]) -> None:
                 if self._event_bus is not None:
-                    await self._event_bus.publish({"type": "codex.event", **event})
+                    await self._event_bus.publish({"type": "codex.event", **event, "session_id": session_id})
 
             return self._runtime(
                 CodexModelClient(
@@ -77,6 +77,7 @@ class AgentRuntimeFactory:
                 ),
                 history_mode=history_mode,
                 on_upstream_session_id=record_upstream_session,
+                session_id=session_id,
             )
 
         if agent_id == "claude":
@@ -93,17 +94,19 @@ class AgentRuntimeFactory:
                 ),
                 history_mode=history_mode,
                 on_upstream_session_id=record_upstream_session,
+                session_id=session_id,
             )
 
         raise ConfigError(f"Unsupported session agent: {agent_id}")
 
     def _create_runtime_for_app_config(self) -> AgentRuntime:
         config = self._config
+        session_id = self._transcript.active_id()
         if config.model_provider == "codex":
 
             async def publish_codex_event(event: dict[str, object]) -> None:
                 if self._event_bus is not None:
-                    await self._event_bus.publish({"type": "codex.event", **event})
+                    await self._event_bus.publish({"type": "codex.event", **event, "session_id": session_id})
 
             return self._runtime(
                 CodexModelClient(
@@ -115,7 +118,8 @@ class AgentRuntimeFactory:
                     effort="high",
                     timeout_seconds=config.codex_timeout_seconds,
                     on_event=publish_codex_event,
-                )
+                ),
+                session_id=session_id,
             )
 
         if config.model_provider != "openai":
@@ -130,6 +134,7 @@ class AgentRuntimeFactory:
         model,
         history_mode: str = "full",
         on_upstream_session_id=None,
+        session_id: str | None = None,
     ) -> AgentRuntime:
         return AgentRuntime(
             transcript=self._transcript,
@@ -139,6 +144,7 @@ class AgentRuntimeFactory:
             event_bus=self._event_bus,
             history_mode=history_mode,
             on_upstream_session_id=on_upstream_session_id,
+            session_id=session_id,
         )
 
     def _effective_session_runtime_config(self, session_config) -> tuple[str, str, dict[str, object]]:

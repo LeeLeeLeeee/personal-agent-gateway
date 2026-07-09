@@ -37,6 +37,16 @@ class CapturingModel:
         return self.response
 
 
+class SwitchingActiveSessionModel:
+    def __init__(self, transcript: TranscriptStore, response: ModelResponse) -> None:
+        self.transcript = transcript
+        self.response = response
+
+    async def complete(self, _messages: list[dict[str, object]]) -> ModelResponse:
+        self.transcript.reset()
+        return self.response
+
+
 def write_file_command(filename: str, content: str) -> str:
     code = (
         "from pathlib import Path; "
@@ -86,6 +96,30 @@ async def test_plain_assistant_output_is_appended_as_assistant_event(tmp_path: P
 
     assert result.messages == [{"role": "assistant", "content": "plain answer"}]
     assert event_payloads(transcript)[-1] == ("assistant", {"content": "plain answer"})
+
+
+@pytest.mark.asyncio
+async def test_runtime_writes_entire_turn_to_starting_session_when_active_changes(tmp_path: Path) -> None:
+    transcript = TranscriptStore(tmp_path / "sessions")
+    session_id = transcript.start_new()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime = AgentRuntime(
+        transcript,
+        WorkspaceTools(root=workspace, approvals=ApprovalStore()),
+        SwitchingActiveSessionModel(transcript, ModelResponse(content="answer for original", tool_calls=[])),
+        session_id=session_id,
+    )
+
+    await runtime.handle_user_message("question")
+
+    assert [(event.kind, event.payload) for event in transcript.load(session_id)] == [
+        ("user", {"content": "question"}),
+        ("assistant", {"content": "answer for original"}),
+    ]
+    active_id = transcript.active_id()
+    assert active_id != session_id
+    assert transcript.load(active_id or "") == []
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,7 @@ class AgentRuntime:
         event_bus: EventBus | None = None,
         history_mode: Literal["full", "latest_user"] = "full",
         on_upstream_session_id: Callable[[str], None] | None = None,
+        session_id: str | None = None,
     ) -> None:
         self._transcript = transcript
         self._tools = tools
@@ -42,39 +43,44 @@ class AgentRuntime:
         self._event_bus = event_bus
         self._history_mode = history_mode
         self._on_upstream_session_id = on_upstream_session_id
+        self._session_id = session_id
 
     def attach_event_bus(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
 
     async def handle_user_message(self, content: str) -> RuntimeResult:
+        session_id: str | None = None
         try:
-            pending = _unresolved_shell_request(self._transcript.load_active())
+            session_id = self._resolve_session_id(create=True)
+            pending = _unresolved_shell_request(self._transcript.load(session_id))
             if pending is not None:
                 self._restore_pending_shell(pending)
                 return RuntimeResult(messages=[], pending_approval=_pending_response(pending))
 
             await self._publish(
                 "runtime.user_message.started",
-                {"message": content, "session_id": self._transcript.active_id()},
+                {"message": content, "session_id": session_id},
             )
-            self._append("user", {"content": content})
-            result = await self._run_model_loop()
+            self._append("user", {"content": content}, session_id)
+            result = await self._run_model_loop(session_id)
             await self._publish(
                 "runtime.completed",
                 {
-                    "session_id": self._transcript.active_id(),
+                    "session_id": session_id,
                     "pending_approval": result.pending_approval,
                 },
             )
             return result
         except Exception as exc:
-            await self._publish("runtime.error", {"message": _redact_text(str(exc))})
-            return self._handle_runtime_error(exc)
+            await self._publish("runtime.error", {"message": _redact_text(str(exc)), "session_id": session_id})
+            return self._handle_runtime_error(exc, session_id)
 
     async def approve(self, approval_id: str) -> RuntimeResult:
+        session_id: str | None = None
         try:
+            session_id = self._resolve_session_id(create=False)
             pending = _unresolved_shell_request_for_approval(
-                self._transcript.load_active(),
+                self._transcript.load(session_id) if session_id is not None else [],
                 approval_id,
             )
             if pending is None:
@@ -89,16 +95,19 @@ class AgentRuntime:
                     "command": result.command,
                     "status": "approved",
                 },
+                session_id,
             )
-            self._append("tool_result", _shell_result_payload(result, pending.tool_call_id))
-            return await self._run_model_loop()
+            self._append("tool_result", _shell_result_payload(result, pending.tool_call_id), session_id)
+            return await self._run_model_loop(session_id)
         except Exception as exc:
-            return self._handle_runtime_error(exc)
+            return self._handle_runtime_error(exc, session_id)
 
     async def deny(self, approval_id: str) -> RuntimeResult:
+        session_id: str | None = None
         try:
+            session_id = self._resolve_session_id(create=False)
             pending = _unresolved_shell_request_for_approval(
-                self._transcript.load_active(),
+                self._transcript.load(session_id) if session_id is not None else [],
                 approval_id,
             )
             if pending is None:
@@ -113,19 +122,20 @@ class AgentRuntime:
                     "command": denied.command,
                     "status": denied.status,
                 },
+                session_id,
             )
             return RuntimeResult(
                 messages=[{"role": "assistant", "content": "Command denied."}],
                 pending_approval=None,
             )
         except Exception as exc:
-            return self._handle_runtime_error(exc)
+            return self._handle_runtime_error(exc, session_id)
 
-    async def _run_model_loop(self) -> RuntimeResult:
+    async def _run_model_loop(self, session_id: str) -> RuntimeResult:
         for _iteration in range(8):
             response = await self._model.complete(
                 _events_to_messages(
-                    self._transcript.load_active(),
+                    self._transcript.load(session_id),
                     latest_user_only=self._history_mode == "latest_user",
                 )
             )
@@ -134,24 +144,24 @@ class AgentRuntime:
 
             if not response.tool_calls:
                 if response.content:
-                    self._append("assistant", {"content": response.content})
+                    self._append("assistant", {"content": response.content}, session_id)
                 return RuntimeResult(
                     messages=[{"role": "assistant", "content": response.content}],
                     pending_approval=None,
                 )
 
             for tool_call in response.tool_calls:
-                pending = self._handle_tool_call(tool_call)
+                pending = self._handle_tool_call(tool_call, session_id)
                 if pending is not None:
                     return RuntimeResult(messages=[], pending_approval=pending)
 
         raise RuntimeError("Tool loop exceeded 8 iterations")
 
-    def _handle_tool_call(self, tool_call: ToolCall) -> dict[str, object] | None:
+    def _handle_tool_call(self, tool_call: ToolCall, session_id: str) -> dict[str, object] | None:
         if tool_call.name == "shell.run":
             command = _required_string(tool_call.arguments, "command", "shell.run")
             pending = self._tools.shell_request(command)
-            self._create_shell_job(command)
+            self._create_shell_job(command, session_id)
             self._append(
                 "tool_request",
                 {
@@ -160,6 +170,7 @@ class AgentRuntime:
                     "arguments": tool_call.arguments,
                     "approval_id": pending.id,
                 },
+                session_id,
             )
             return {"id": pending.id, "command": pending.command}
 
@@ -170,6 +181,7 @@ class AgentRuntime:
                 "name": tool_call.name,
                 "arguments": tool_call.arguments,
             },
+            session_id,
         )
         if tool_call.name == "fs.list":
             result: object = self._tools.fs_list(_optional_path(tool_call.arguments))
@@ -181,10 +193,11 @@ class AgentRuntime:
         self._append(
             "tool_result",
             {"id": tool_call.id, "name": tool_call.name, "result": result},
+            session_id,
         )
         return None
 
-    def _create_shell_job(self, command: str) -> None:
+    def _create_shell_job(self, command: str, session_id: str) -> None:
         if self._job_service is None:
             return
         self._job_service.create_job(
@@ -192,23 +205,33 @@ class AgentRuntime:
             source="chat",
             title="Shell command",
             input_json={"command": command},
-            source_session_id=self._transcript.active_id(),
+            source_session_id=session_id,
             command_preview=command,
         )
 
-    def _append(self, kind: str, payload: dict[str, object]) -> TranscriptEvent:
-        return self._transcript.append(kind, _redact_payload(payload))
+    def _append(self, kind: str, payload: dict[str, object], session_id: str | None) -> TranscriptEvent:
+        if session_id is None:
+            return self._transcript.append(kind, _redact_payload(payload))
+        return self._transcript.append_to(session_id, kind, _redact_payload(payload))
 
     def _restore_pending_shell(self, pending: PendingShellRequest) -> None:
         self._tools.approvals.restore_pending(pending.approval_id, pending.command)
 
-    def _handle_runtime_error(self, exc: Exception) -> RuntimeResult:
+    def _handle_runtime_error(self, exc: Exception, session_id: str | None = None) -> RuntimeResult:
         message = _redact_text(str(exc))
-        self._append("runtime_error", {"message": message})
+        self._append("runtime_error", {"message": message}, session_id)
         return RuntimeResult(
             messages=[{"role": "assistant", "content": f"Error: {message}"}],
             pending_approval=None,
         )
+
+    def _resolve_session_id(self, create: bool) -> str | None:
+        if self._session_id is not None:
+            return self._session_id
+        session_id = self._transcript.active_id()
+        if session_id is None and create:
+            session_id = self._transcript.start_new()
+        return session_id
 
     async def _publish(self, event_type: str, payload: dict[str, object]) -> None:
         if self._event_bus is None:

@@ -322,6 +322,32 @@ def test_chat_records_runtime_events_for_sse_subscribers(tmp_path: Path) -> None
     ]
     assert recent[0]["message"] == "remember this"
     assert recent[1]["pending_approval"] is None
+    assert recent[0]["session_id"] == recent[1]["session_id"]
+
+
+def test_codex_stream_events_include_active_session_id(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+
+    class FakeCodexModelClient:
+        def __init__(self, *args, on_event=None, **kwargs) -> None:
+            self.on_event = on_event
+
+        async def complete(self, _messages):
+            if self.on_event is not None:
+                await self.on_event({"item": {"type": "agent_message", "text": "streamed"}})
+            return ModelResponse(content="done", tool_calls=[])
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    client = auth_client(config, runtime=None)
+
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    session_id = client.app.state.transcript_store.active_id()
+    recent = client.app.state.event_bus.recent()
+    streamed = [event for event in recent if event.get("item") == {"type": "agent_message", "text": "streamed"}]
+    assert streamed
+    assert streamed[-1]["session_id"] == session_id
 
 
 def test_sessions_api_lists_activate_delete_and_searches_sessions(tmp_path: Path) -> None:
