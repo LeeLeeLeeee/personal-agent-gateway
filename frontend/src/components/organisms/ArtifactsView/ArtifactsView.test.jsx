@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ArtifactsView } from "./index.jsx";
@@ -31,5 +31,13 @@ describe("ArtifactsView", () => {
     expect(screen.getByText("captures/snap.png")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /copy path/i }));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("captures/snap.png");
+  });
+
+  it("shows documents under the Documents filter", () => {
+    render(<ArtifactsView artifacts={[
+      { id: "d1", type: "document", title: "spec.pdf", relative_path: "files/x/spec.pdf", mime_type: "application/pdf", size_bytes: 2048, created_at: "2026-07-09T00:00:00Z" }
+    ]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+    expect(screen.getByRole("button", { name: "Open spec.pdf" })).toBeInTheDocument();
   });
 });

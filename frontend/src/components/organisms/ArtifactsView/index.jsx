@@ -7,12 +7,13 @@ const TYPE_FILTERS = [
   ["image", "Images"],
   ["video", "Videos"],
   ["audio", "Audio"],
+  ["document", "Documents"],
   ["log", "Logs"],
   ["report", "Reports"],
   ["archive", "Archives"]
 ];
 
-const GLYPH = { image: "▦", video: "▶", audio: "♪", log: "≣", report: "¶", archive: "◫" };
+const GLYPH = { image: "▦", video: "▶", audio: "♪", document: "▤", log: "≣", report: "¶", archive: "◫" };
 
 function fmtSize(bytes) {
   if (!bytes) return "0 KB";
@@ -64,6 +65,17 @@ function ArtifactPreview({ artifact }) {
   }
   if (artifact.type === "log" || artifact.type === "report") {
     return <pre className="mono artifact-preview-text">{text}</pre>;
+  }
+  if (artifact.type === "document") {
+    if (artifact.mime_type === "application/pdf") {
+      return <iframe className="artifact-preview-doc" src={contentUrl} title={artifact.title} />;
+    }
+    return (
+      <div className="artifact-preview-archive">
+        <span className="artifact-preview-archive-glyph" aria-hidden="true">{GLYPH.document}</span>
+        <span className="mono">{fmtSize(artifact.size_bytes)}</span>
+      </div>
+    );
   }
   return (
     <div className="artifact-preview-archive">

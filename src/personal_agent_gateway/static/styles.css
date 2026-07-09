@@ -2954,6 +2954,7 @@ p {
     white-space: pre-wrap;
     width: 100%;
 }
+.artifact-preview-doc{width:100%;height:420px;border:var(--bd);background:var(--c-white)}
 .artifact-preview-archive {
     display: flex;
     flex-direction: column;
