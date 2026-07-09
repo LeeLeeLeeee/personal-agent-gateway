@@ -47,6 +47,34 @@ export const api = {
       body: JSON.stringify({ message })
     }));
   },
+  async sessionHistory(id) {
+    return jsonList(await fetch(`/api/sessions/${encodeURIComponent(id)}/history`), "events");
+  },
+  async sessionActivity(id) {
+    return jsonList(await fetch(`/api/sessions/${encodeURIComponent(id)}/activity`), "events");
+  },
+  async sessionStatus(id) {
+    return jsonOrNull(await fetch(`/api/sessions/${encodeURIComponent(id)}/status`));
+  },
+  async sendSessionChat(id, message) {
+    return jsonOrNull(await fetch(`/api/sessions/${encodeURIComponent(id)}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message })
+    }));
+  },
+  async approveSession(id, approvalId) {
+    return jsonOrNull(await fetch(
+      `/api/sessions/${encodeURIComponent(id)}/approvals/${encodeURIComponent(approvalId)}/approve`,
+      { method: "POST" }
+    ));
+  },
+  async denySession(id, approvalId) {
+    return jsonOrNull(await fetch(
+      `/api/sessions/${encodeURIComponent(id)}/approvals/${encodeURIComponent(approvalId)}/deny`,
+      { method: "POST" }
+    ));
+  },
   async sessions() {
     return jsonList(await fetch("/api/sessions"), "sessions");
   },

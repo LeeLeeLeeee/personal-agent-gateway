@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveLive, entryFromSse, timelineFromHistory } from "./timeline.js";
+import { deriveLive, entryFromSse, timelineFromHistory, timelineFromSession } from "./timeline.js";
 
 describe("timeline model", () => {
   it("maps persisted transcript events to renderable timeline entries", () => {
@@ -46,7 +46,7 @@ describe("timeline model", () => {
       }
     })).toEqual(expect.objectContaining({
       type: "command",
-      key: "ccmd-1",
+      key: "command::cmd-1",
       command: "npm test",
       status: "failed",
       exit: 1
@@ -54,6 +54,50 @@ describe("timeline model", () => {
 
     expect(entryFromSse({ item: { type: "agent_message", text: "done" } }))
       .toEqual(expect.objectContaining({ type: "agent", text: "done" }));
+  });
+
+  it("merges transcript and durable activity in deterministic order", () => {
+    const timeline = timelineFromSession(
+      [{ kind: "user", created_at: "2026-07-09T01:00:00Z", payload: { content: "hello" } }],
+      [
+        {
+          id: 10,
+          event_seq: 1,
+          type: "runtime.user_message.started",
+          created_at: "2026-07-09T01:00:01Z",
+          payload: { message: "hello" }
+        },
+        {
+          id: 11,
+          event_seq: 2,
+          type: "codex.event",
+          created_at: "2026-07-09T01:00:02Z",
+          payload: { item: { type: "agent_message", id: "agent-1", text: "done" } }
+        }
+      ]
+    );
+
+    expect(timeline.map((entry) => entry.type)).toEqual(["user", "event_row", "agent"]);
+    expect(timeline.map((entry) => entry.order)).toEqual([0, 1, 2]);
+    expect(timeline[1].key).toBe("event:1");
+    expect(timeline[2].key).toBe("agent:agent-1");
+  });
+
+  it("maps normalized SSE envelopes and keeps legacy raw Codex events working", () => {
+    expect(entryFromSse({
+      session_id: "session-1",
+      event_seq: 3,
+      type: "codex.event",
+      created_at: "2026-07-09T01:00:02Z",
+      payload: { item: { type: "agent_message", id: "agent-1", text: "done" } }
+    })).toEqual(expect.objectContaining({
+      type: "agent",
+      key: "agent:agent-1",
+      text: "done"
+    }));
+
+    expect(entryFromSse({ item: { type: "agent_message", text: "legacy" } }))
+      .toEqual(expect.objectContaining({ type: "agent", text: "legacy" }));
   });
 
   it("derives live status from busy state and command outcomes", () => {

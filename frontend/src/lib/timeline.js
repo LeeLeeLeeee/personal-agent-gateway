@@ -54,7 +54,8 @@ export function timelineFromHistory(events) {
 }
 
 export function entryFromSse(event) {
-  const item = event.item;
+  const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
+  const item = payload.item;
   if (item && typeof item === "object") {
     if (item.type === "command_execution") {
       let status = item.status === "in_progress" ? "running" : (item.status || "running");
@@ -62,22 +63,38 @@ export function entryFromSse(event) {
       const done = status === "completed" || status === "failed";
       return {
         type: "command",
-        key: `c${item.id || item.command || ""}`,
+        key: `command:${event.session_id || ""}:${item.id || item.command || ""}`,
         command: item.command || "command",
         status,
         exit: item.exit_code,
         lines: linesFrom(item.aggregated_output || ""),
         time: nowHMS(),
-        duration: done ? "" : "live"
+        duration: done ? "" : "live",
+        serverOrder: event.event_seq
       };
     }
     if (item.type === "agent_message") {
-      return { type: "agent", text: item.text || "", time: nowHM(), streaming: false };
+      return {
+        type: "agent",
+        key: `agent:${item.id || event.event_seq || ""}`,
+        text: item.text || "",
+        time: fmtTime(event.created_at, false) || nowHM(),
+        streaming: false,
+        serverOrder: event.event_seq
+      };
     }
     return null;
   }
   if (event.type === "runtime.user_message.started") {
-    return { type: "event_row", label: "runtime.user_message.started", detail: "message accepted", dotColor: "#000", time: nowHMS() };
+    return {
+      type: "event_row",
+      key: `event:${event.event_seq || event.id || event.type}`,
+      label: "runtime.user_message.started",
+      detail: "message accepted",
+      dotColor: "#000",
+      time: fmtTime(event.created_at, true) || nowHMS(),
+      serverOrder: event.event_seq
+    };
   }
   if (event.type === "runtime.completed") {
     return { type: "event_row", label: "runtime.completed", detail: "session finished", dotColor: "#008000", time: nowHMS() };
@@ -86,6 +103,16 @@ export function entryFromSse(event) {
     return { type: "runtime_error", message: typeof event.message === "string" ? event.message : "runtime error", time: nowHMS() };
   }
   return null;
+}
+
+export function timelineFromSession(historyEvents, activityEvents) {
+  const historyEntries = timelineFromHistory(historyEvents);
+  const activityEntries = activityEvents
+    .map((event) => entryFromSse(event))
+    .filter(Boolean);
+  return [...historyEntries, ...activityEntries]
+    .sort((left, right) => (left.serverOrder ?? left.order ?? 0) - (right.serverOrder ?? right.order ?? 0))
+    .map((entry, index) => ({ ...entry, order: index }));
 }
 
 export function deriveLive({ entries, busy, turnStart, turnEnd }) {

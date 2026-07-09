@@ -75,4 +75,25 @@ describe("api client", () => {
     expect(fetch).toHaveBeenNthCalledWith(4, "/api/team-runs", expect.objectContaining({ method: "POST" }));
     expect(fetch).toHaveBeenNthCalledWith(5, "/api/team-runs/r2/start", expect.objectContaining({ method: "POST" }));
   });
+
+  it("calls session-explicit chat APIs", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ events: [{ kind: "user" }] }))
+      .mockResolvedValueOnce(jsonResponse({ events: [{ type: "runtime.completed" }] }))
+      .mockResolvedValueOnce(jsonResponse({ status: "idle" }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [] }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [] }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [] }));
+
+    expect(await api.sessionHistory("session-1")).toEqual([{ kind: "user" }]);
+    expect(await api.sessionActivity("session-1")).toEqual([{ type: "runtime.completed" }]);
+    expect(await api.sessionStatus("session-1")).toEqual({ status: "idle" });
+    await api.sendSessionChat("session-1", "hello");
+    await api.approveSession("session-1", "approval-1");
+    await api.denySession("session-1", "approval-1");
+
+    expect(fetch).toHaveBeenCalledWith("/api/sessions/session-1/chat", expect.objectContaining({ method: "POST" }));
+    expect(fetch).toHaveBeenCalledWith("/api/sessions/session-1/approvals/approval-1/approve", expect.objectContaining({ method: "POST" }));
+    expect(fetch).toHaveBeenCalledWith("/api/sessions/session-1/approvals/approval-1/deny", expect.objectContaining({ method: "POST" }));
+  });
 });
