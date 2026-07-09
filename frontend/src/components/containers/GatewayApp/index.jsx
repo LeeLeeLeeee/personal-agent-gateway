@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../api/client.js";
 import { entryFromSse, normalizeApproval, timelineFromHistory } from "../../../lib/timeline.js";
 import { nowHM } from "../../../lib/time.js";
@@ -96,6 +96,15 @@ export function GatewayApp() {
   const seenSseEventIdsRef = useRef(new Set());
 
   useForceTick(screen === "chat" && busy);
+
+  const registeredByPath = useMemo(() => {
+    const map = new Map();
+    for (const a of artifacts) {
+      const key = a.metadata?.original_path;
+      if (key) map.set(key, a);
+    }
+    return map;
+  }, [artifacts]);
 
   const loadApp = useCallback(async () => {
     const [nextStatus, nextSessions, history, nextAgents, nextConfig] = await Promise.all([
@@ -218,6 +227,8 @@ export function GatewayApp() {
     } else if (screen === "settings") {
       api.settings().then(setSettings);
     } else if (screen === "artifacts") {
+      api.artifacts().then(setArtifacts);
+    } else if (screen === "chat") {
       api.artifacts().then(setArtifacts);
     } else if (screen === "jobs") {
       api.jobs().then(setJobs);
@@ -651,6 +662,8 @@ export function GatewayApp() {
           onRename={handleRename}
           onDelete={handleDelete}
           onResolveApproval={handleResolveApproval}
+          registeredByPath={registeredByPath}
+          onArtifactChange={() => api.artifacts().then(setArtifacts)}
         />
       ) : screen === "personas" ? (
         <div className="screen">

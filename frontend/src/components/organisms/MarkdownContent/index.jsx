@@ -2,26 +2,38 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { api } from "../../../api/client.js";
 import { useToast } from "../../providers/UiProvider/index.jsx";
 import { isRegistrablePath, makePathRe } from "../../../lib/artifactTypes.js";
+import { ArtifactModal } from "../ArtifactModal/index.jsx";
 
 let mermaidPromise = null;
 let mermaidSeq = 0;
 
 const SessionIdContext = createContext(null);
+const RegistryContext = createContext({ registeredByPath: null, onRegistered: null });
 
 function PathChip({ path }) {
   const sessionId = useContext(SessionIdContext);
+  const { registeredByPath, onRegistered } = useContext(RegistryContext);
   const toast = useToast();
-  const [state, setState] = useState("idle"); // idle | saving | done
+  const [saving, setSaving] = useState(false);
+  const [localArtifact, setLocalArtifact] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  const artifact = localArtifact || registeredByPath?.get(path) || null;
 
   async function register() {
-    if (state !== "idle") return;
-    setState("saving");
-    const result = await api.registerArtifact({ path, session_id: sessionId });
-    if (result) {
-      setState("done");
+    if (saving) return;
+    setSaving(true);
+    const res = await api.registerArtifact({ path, session_id: sessionId });
+    setSaving(false);
+    if (res.status === 200 && res.data?.artifact) {
+      setLocalArtifact(res.data.artifact);
       toast("아티팩트로 등록되었습니다", "success");
+      onRegistered?.();
+    } else if (res.status === 409 && res.data?.detail?.artifact) {
+      setLocalArtifact(res.data.detail.artifact);
+      toast("이미 등록되어 있습니다", "info");
+      onRegistered?.();
     } else {
-      setState("idle");
       toast("등록에 실패했습니다", "error");
     }
   }
@@ -29,14 +41,14 @@ function PathChip({ path }) {
   return (
     <span className="path-chip">
       <code className="md-code">{path}</code>
-      <button
-        type="button"
-        className="path-chip-add"
-        onClick={register}
-        disabled={state !== "idle"}
-      >
-        {state === "done" ? "등록됨" : state === "saving" ? "등록 중…" : "+등록"}
-      </button>
+      {artifact ? (
+        <button type="button" className="path-chip-add" onClick={() => setOpen(true)}>보기</button>
+      ) : (
+        <button type="button" className="path-chip-add" onClick={register} disabled={saving}>
+          {saving ? "등록 중…" : "+등록"}
+        </button>
+      )}
+      {open && artifact ? <ArtifactModal artifact={artifact} onClose={() => setOpen(false)} onDeleted={() => { setLocalArtifact(null); onRegistered?.(); }} /> : null}
     </span>
   );
 }
@@ -223,7 +235,7 @@ function paragraphNodes(lines, key) {
   );
 }
 
-export function MarkdownContent({ source, sessionId = null }) {
+export function MarkdownContent({ source, sessionId = null, registeredByPath = null, onRegistered = null }) {
   const lines = String(source || "").replace(/\r\n/g, "\n").split("\n");
   const nodes = [];
   const isUl = (line) => /^\s*[-*]\s+/.test(line);
@@ -299,7 +311,9 @@ export function MarkdownContent({ source, sessionId = null }) {
 
   return (
     <SessionIdContext.Provider value={sessionId}>
-      <div className="md">{nodes}</div>
+      <RegistryContext.Provider value={{ registeredByPath, onRegistered }}>
+        <div className="md">{nodes}</div>
+      </RegistryContext.Provider>
     </SessionIdContext.Provider>
   );
 }

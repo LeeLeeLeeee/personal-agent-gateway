@@ -85,7 +85,9 @@ export function ChatView({
   onReset,
   onRename,
   onDelete,
-  onResolveApproval
+  onResolveApproval,
+  registeredByPath,
+  onArtifactChange
 }) {
   const locked = sessionConfig ? sessionConfig.editable === false : false;
   const transcriptRef = useRef(null);
@@ -124,7 +126,7 @@ export function ChatView({
         />
         <LiveStatusSummary entries={entries} busy={busy} turnStart={turnStart} turnEnd={turnEnd} />
         <div className="transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
-          <Timeline entries={entries} busy={busy} sessionId={activeSessionId} />
+          <Timeline entries={entries} busy={busy} sessionId={activeSessionId} registeredByPath={registeredByPath} onRegistered={onArtifactChange} />
           {busy && !turnStreamed ? <LoaderCube label="AGENT WORKING" /> : null}
           <Proposal approval={pendingApproval} onResolve={onResolveApproval} />
         </div>

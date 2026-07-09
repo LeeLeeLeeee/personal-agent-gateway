@@ -58,4 +58,11 @@ describe("MarkdownContent path registration", () => {
     render(<MarkdownContent source={"링크: `https://example.com/report.pdf`"} />);
     expect(screen.queryByRole("button", { name: "+등록" })).not.toBeInTheDocument();
   });
+
+  it("shows 보기 (not +등록) when the path is already registered", () => {
+    const registered = new Map([["out/cat.png", { id: "a1", type: "image", title: "cat.png", relative_path: "files/x/cat.png", mime_type: "image/png", size_bytes: 10, created_at: "2026-07-10T00:00:00Z" }]]);
+    render(<MarkdownContent source={"저장: `out/cat.png`"} sessionId="s1" registeredByPath={registered} />);
+    expect(screen.getByRole("button", { name: "보기" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+등록" })).not.toBeInTheDocument();
+  });
 });
