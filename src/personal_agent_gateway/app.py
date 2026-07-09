@@ -39,6 +39,7 @@ from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
+from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
 from personal_agent_gateway.session_config import SessionAgentConfigService
@@ -73,7 +74,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     )
     injected_runtime = runtime
     if injected_runtime is not None and hasattr(injected_runtime, "attach_event_bus"):
-        injected_runtime.attach_event_bus(event_bus)
+        injected_runtime.attach_event_bus(app.state.session_activity_publisher)
 
     def active_runtime() -> AgentRuntime:
         if injected_runtime is not None:
@@ -258,13 +259,15 @@ def _attach_local_services(
     assert config.auth_dir is not None
     db = Database(config.app_db_path)
     db.initialize()
+    session_activity_service = SessionActivityService(db)
+    session_activity_publisher = SessionActivityPublisher(session_activity_service, event_bus)
     persona_service = PersonaService(db)
     team_run_service = TeamRunService(db, persona_service, config.workspace_root)
     registry = CapabilityRegistry.default()
     job_service = JobService(db, registry)
     schedule_service = ScheduleService(db, registry)
     artifact_store = ArtifactStore(db, config.artifact_root)
-    runtime_factory = AgentRuntimeFactory(config, transcript, job_service, event_bus)
+    runtime_factory = AgentRuntimeFactory(config, transcript, job_service, session_activity_publisher)
     job_worker = JobWorker(
         job_service,
         artifact_store,
@@ -291,6 +294,8 @@ def _attach_local_services(
     app.state.artifact_store = artifact_store
     app.state.job_worker = job_worker
     app.state.persona_service = persona_service
+    app.state.session_activity_publisher = session_activity_publisher
+    app.state.session_activity_service = session_activity_service
     app.state.team_run_service = team_run_service
     return runtime_factory
 

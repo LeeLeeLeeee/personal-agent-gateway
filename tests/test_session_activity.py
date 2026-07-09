@@ -1,8 +1,10 @@
 from pathlib import Path
 import threading
+import asyncio
 
 from personal_agent_gateway.db import Database
-from personal_agent_gateway.session_activity import SessionActivityService
+from personal_agent_gateway.events import EventBus
+from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
 
 
 def test_session_activity_records_monotonic_sequence_per_session(
@@ -157,3 +159,49 @@ def test_session_activity_persists_across_service_instances(tmp_path: Path) -> N
     events = second_service.list("session-a")
 
     assert [event.event_seq for event in events] == [1]
+
+
+def test_session_activity_publisher_persists_before_fanout(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    service = SessionActivityService(db)
+    bus = EventBus()
+    publisher = SessionActivityPublisher(service, bus)
+
+    published = asyncio.run(
+        publisher.publish(
+            {
+                "type": "runtime.user_message.started",
+                "session_id": "session-a",
+                "message": "hello",
+            }
+        )
+    )
+
+    assert published["id"] == 1
+    assert published["event_seq"] == 1
+    assert published["source"] == "runtime"
+    assert published["payload"] == {"message": "hello"}
+    assert published["message"] == "hello"
+    assert bus.recent() == [published]
+    assert service.list("session-a")[0].to_event_payload()["payload"] == {"message": "hello"}
+
+
+def test_session_activity_publisher_keeps_team_events_out_of_chat_activity(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    service = SessionActivityService(db)
+    bus = EventBus()
+    publisher = SessionActivityPublisher(service, bus)
+
+    published = asyncio.run(
+        publisher.publish(
+            {
+                "type": "team.run.started",
+                "team_run_id": "run-1",
+            }
+        )
+    )
+
+    assert published == {"id": 1, "type": "team.run.started", "team_run_id": "run-1"}
+    assert service.list("run-1") == []

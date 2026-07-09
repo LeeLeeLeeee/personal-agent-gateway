@@ -320,9 +320,13 @@ def test_chat_records_runtime_events_for_sse_subscribers(tmp_path: Path) -> None
         "runtime.user_message.started",
         "runtime.completed",
     ]
-    assert recent[0]["message"] == "remember this"
-    assert recent[1]["pending_approval"] is None
     assert recent[0]["session_id"] == recent[1]["session_id"]
+    assert recent[0]["source"] == "runtime"
+    assert recent[0]["event_seq"] == 1
+    assert recent[0]["payload"] == {"message": "remember this"}
+    assert recent[0]["message"] == "remember this"
+    assert recent[1]["event_seq"] == 2
+    assert recent[1]["payload"] == {"pending_approval": None}
 
 
 def test_codex_stream_events_include_active_session_id(tmp_path: Path, monkeypatch) -> None:

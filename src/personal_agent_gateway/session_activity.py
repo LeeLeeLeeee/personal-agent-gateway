@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.events import EventBus
 
 
 class SessionActivityEvent(BaseModel):
@@ -100,6 +101,34 @@ class SessionActivityService:
         )
 
 
+class SessionActivityPublisher:
+    def __init__(self, service: SessionActivityService, event_bus: EventBus) -> None:
+        self._service = service
+        self._event_bus = event_bus
+
+    async def publish(self, event: dict[str, object]) -> dict[str, object]:
+        event_type = str(event.get("type", ""))
+        session_id = event.get("session_id")
+        if not isinstance(session_id, str) or event_type.startswith("team."):
+            return await self._event_bus.publish(event)
+
+        payload = {
+            key: value
+            for key, value in event.items()
+            if key not in {"id", "type", "session_id", "event_seq", "created_at", "source"}
+        }
+        source = _source_for_event_type(event_type)
+        activity = self._service.record(
+            session_id=session_id,
+            event_type=event_type,
+            source=source,
+            payload=payload,
+        )
+        normalized = activity.to_event_payload()
+        legacy = {key: value for key, value in payload.items() if key not in {"payload"}}
+        return await self._event_bus.publish({**normalized, **legacy})
+
+
 def _event_from_row(row: Any) -> SessionActivityEvent:
     return SessionActivityEvent(
         id=int(row["id"]),
@@ -111,3 +140,15 @@ def _event_from_row(row: Any) -> SessionActivityEvent:
         transcript_event_id=row["transcript_event_id"],
         created_at=datetime.fromisoformat(str(row["created_at"])),
     )
+
+
+def _source_for_event_type(event_type: str) -> str:
+    if event_type.startswith("codex."):
+        return "codex"
+    if event_type.startswith("claude."):
+        return "claude"
+    if event_type.startswith("artifact."):
+        return "system"
+    if event_type.startswith("approval."):
+        return "runtime"
+    return "runtime"
