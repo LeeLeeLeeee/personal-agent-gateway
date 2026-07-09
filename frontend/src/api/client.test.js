@@ -92,6 +92,9 @@ describe("api client", () => {
     await api.approveSession("session-1", "approval-1");
     await api.denySession("session-1", "approval-1");
 
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/sessions/session-1/history");
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/sessions/session-1/activity");
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/sessions/session-1/status");
     expect(fetch).toHaveBeenCalledWith("/api/sessions/session-1/chat", expect.objectContaining({ method: "POST" }));
     expect(fetch).toHaveBeenCalledWith("/api/sessions/session-1/approvals/approval-1/approve", expect.objectContaining({ method: "POST" }));
     expect(fetch).toHaveBeenCalledWith("/api/sessions/session-1/approvals/approval-1/deny", expect.objectContaining({ method: "POST" }));

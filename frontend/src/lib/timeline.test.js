@@ -70,17 +70,31 @@ describe("timeline model", () => {
         {
           id: 11,
           event_seq: 2,
+          session_id: "session-1",
           type: "codex.event",
           created_at: "2026-07-09T01:00:02Z",
           payload: { item: { type: "agent_message", id: "agent-1", text: "done" } }
+        },
+        {
+          id: 12,
+          event_seq: 3,
+          type: "runtime.completed",
+          created_at: "2026-07-09T01:00:03Z",
+          payload: {}
         }
       ]
     );
 
-    expect(timeline.map((entry) => entry.type)).toEqual(["user", "event_row", "agent"]);
-    expect(timeline.map((entry) => entry.order)).toEqual([0, 1, 2]);
+    expect(timeline.map((entry) => entry.type)).toEqual(["user", "event_row", "agent", "event_row"]);
+    expect(timeline.map((entry) => entry.order)).toEqual([0, 1, 2, 3]);
     expect(timeline[1].key).toBe("event:1");
-    expect(timeline[2].key).toBe("agent:agent-1");
+    expect(timeline[2].key).toBe("agent:session-1:agent-1");
+    expect(timeline[3]).toEqual(expect.objectContaining({
+      key: "event:3",
+      serverOrder: 3,
+      label: "runtime.completed",
+      time: "10:00:03"
+    }));
   });
 
   it("maps normalized SSE envelopes and keeps legacy raw Codex events working", () => {
@@ -92,12 +106,41 @@ describe("timeline model", () => {
       payload: { item: { type: "agent_message", id: "agent-1", text: "done" } }
     })).toEqual(expect.objectContaining({
       type: "agent",
-      key: "agent:agent-1",
+      key: "agent:session-1:agent-1",
       text: "done"
     }));
 
     expect(entryFromSse({ item: { type: "agent_message", text: "legacy" } }))
-      .toEqual(expect.objectContaining({ type: "agent", text: "legacy" }));
+      .toEqual(expect.objectContaining({ type: "agent", key: "agent:legacy:", text: "legacy" }));
+  });
+
+  it("maps normalized runtime error and completed events with stable keys and server time", () => {
+    expect(entryFromSse({
+      event_seq: 7,
+      type: "runtime.completed",
+      created_at: "2026-07-09T01:05:06Z",
+      payload: {}
+    })).toEqual(expect.objectContaining({
+      type: "event_row",
+      key: "event:7",
+      serverOrder: 7,
+      label: "runtime.completed",
+      time: "10:05:06"
+    }));
+
+    expect(entryFromSse({
+      event_seq: 8,
+      type: "runtime.error",
+      created_at: "2026-07-09T01:05:07Z",
+      payload: { message: "normalized failure" },
+      message: "raw failure"
+    })).toEqual(expect.objectContaining({
+      type: "runtime_error",
+      key: "event:8",
+      serverOrder: 8,
+      message: "normalized failure",
+      time: "10:05:07"
+    }));
   });
 
   it("derives live status from busy state and command outcomes", () => {

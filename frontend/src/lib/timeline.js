@@ -76,7 +76,7 @@ export function entryFromSse(event) {
     if (item.type === "agent_message") {
       return {
         type: "agent",
-        key: `agent:${item.id || event.event_seq || ""}`,
+        key: `agent:${event.session_id || "legacy"}:${item.id || event.event_seq || ""}`,
         text: item.text || "",
         time: fmtTime(event.created_at, false) || nowHM(),
         streaming: false,
@@ -97,10 +97,24 @@ export function entryFromSse(event) {
     };
   }
   if (event.type === "runtime.completed") {
-    return { type: "event_row", label: "runtime.completed", detail: "session finished", dotColor: "#008000", time: nowHMS() };
+    return {
+      type: "event_row",
+      key: `event:${event.event_seq || event.id || event.type}`,
+      label: "runtime.completed",
+      detail: "session finished",
+      dotColor: "#008000",
+      time: fmtTime(event.created_at, true) || nowHMS(),
+      serverOrder: event.event_seq
+    };
   }
   if (event.type === "runtime.error") {
-    return { type: "runtime_error", message: typeof event.message === "string" ? event.message : "runtime error", time: nowHMS() };
+    return {
+      type: "runtime_error",
+      key: `event:${event.event_seq || event.id || event.type}`,
+      message: typeof payload.message === "string" ? payload.message : (typeof event.message === "string" ? event.message : "runtime error"),
+      time: fmtTime(event.created_at, true) || nowHMS(),
+      serverOrder: event.event_seq
+    };
   }
   return null;
 }
