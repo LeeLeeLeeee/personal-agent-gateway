@@ -27,6 +27,16 @@ class FakeModelClient:
         return self.responses.pop(0)
 
 
+class CapturingModel:
+    def __init__(self, response: ModelResponse) -> None:
+        self.response = response
+        self.calls: list[list[dict[str, object]]] = []
+
+    async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
+        self.calls.append(messages)
+        return self.response
+
+
 def write_file_command(filename: str, content: str) -> str:
     code = (
         "from pathlib import Path; "
@@ -521,3 +531,39 @@ async def test_runtime_errors_append_runtime_error_and_return_message(tmp_path: 
         "runtime_error",
         {"message": "model unavailable"},
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_records_upstream_session_id_after_model_response(tmp_path: Path) -> None:
+    transcript = TranscriptStore(tmp_path / "sessions")
+    recorded: list[str] = []
+    model = CapturingModel(ModelResponse("hello", [], upstream_session_id="native-1"))
+    runtime = AgentRuntime(
+        transcript=transcript,
+        tools=WorkspaceTools(tmp_path, ApprovalStore()),
+        model=model,
+        on_upstream_session_id=recorded.append,
+    )
+
+    await runtime.handle_user_message("hello")
+
+    assert recorded == ["native-1"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_latest_user_history_mode_sends_only_latest_user_message(tmp_path: Path) -> None:
+    transcript = TranscriptStore(tmp_path / "sessions")
+    transcript.start_new()
+    transcript.append("user", {"content": "first"})
+    transcript.append("assistant", {"content": "first answer"})
+    model = CapturingModel(ModelResponse("second answer", [], upstream_session_id="native-1"))
+    runtime = AgentRuntime(
+        transcript=transcript,
+        tools=WorkspaceTools(tmp_path, ApprovalStore()),
+        model=model,
+        history_mode="latest_user",
+    )
+
+    await runtime.handle_user_message("second")
+
+    assert model.calls == [[{"role": "user", "content": "second"}]]
