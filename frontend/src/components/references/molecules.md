@@ -20,18 +20,6 @@ Project-local Atomic Design catalog for the Vite React frontend.
 - Use when: Showing the existing inline 3D loading indicator.
 - Don't use when: Full-page loading is needed.
 
-### AgentAvailabilityBadge
-- Path: `src/components/molecules/AgentAvailabilityBadge/`
-- Props: `{ available, reason? }`
-- Use when: Rendering compact local agent availability state.
-- Don't use when: Command/runtime execution status is needed; use `StatusBadge`.
-
-### AgentOptionField
-- Path: `src/components/molecules/AgentOptionField/`
-- Props: `{ option, value, disabled?, onChange }`
-- Use when: Rendering registry-defined agent option controls from schema.
-- Don't use when: A standalone raw field is enough without schema-driven behavior.
-
 ### TeamTaskCard
 - Path: `src/components/molecules/TeamTaskCard/`
 - Props: `{ task, owner? }`

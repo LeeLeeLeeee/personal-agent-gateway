@@ -308,6 +308,7 @@ def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], CodexModelCl
             workspace_root=config.workspace_root,
             sandbox=config.codex_sandbox,
             approval_policy=config.codex_approval_policy,
+            effort="high",
             timeout_seconds=config.codex_timeout_seconds,
         )
 

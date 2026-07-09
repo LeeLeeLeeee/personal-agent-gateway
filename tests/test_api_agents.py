@@ -72,6 +72,12 @@ def test_agents_returns_safe_catalog(tmp_path: Path, monkeypatch) -> None:
     assert claude["availability_error"] == "not found"
     assert "openai_api_key" not in response.text
     assert "web_token" not in response.text
+    assert "allow_custom_model" not in codex
+    assert codex["models"] == ["default", "gpt-5.5", "gpt-5.4"]
+    assert any(option["name"] == "effort" and option["choices"] == ["low", "medium", "high", "xhigh"] for option in codex["options_schema"])
+    assert codex["defaults"]["effort"] == "high"
+    assert claude["models"] == ["default", "best", "sonnet", "opus", "haiku", "sonnet[1m]", "opus[1m]", "opusplan"]
+    assert "fable" not in claude["models"]
 
 
 def test_active_session_config_defaults_and_can_be_updated_while_empty(tmp_path: Path, monkeypatch) -> None:
@@ -95,6 +101,20 @@ def test_active_session_config_defaults_and_can_be_updated_while_empty(tmp_path:
     assert update_response.status_code == 200
     assert update_response.json()["config"]["agent_id"] == "claude"
     assert update_response.json()["config"]["options"] == {"effort": "high"}
+
+    codex_response = client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "codex", "model": "gpt-5.5", "options": {"effort": "xhigh"}},
+    )
+    unsupported_response = client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "codex", "model": "codex-5.5", "options": {"effort": "xhigh"}},
+    )
+
+    assert codex_response.status_code == 200
+    assert codex_response.json()["config"]["model"] == "gpt-5.5"
+    assert codex_response.json()["config"]["options"] == {"effort": "xhigh"}
+    assert unsupported_response.status_code == 400
 
 
 def test_active_session_config_rejects_invalid_and_locked_updates(tmp_path: Path, monkeypatch) -> None:

@@ -12,6 +12,7 @@ import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { PersonaLibrary } from "../../organisms/PersonaLibrary/index.jsx";
 import { TeamRunForm } from "../../organisms/TeamRunForm/index.jsx";
 import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
+import { useConfirm, useToast } from "../../providers/UiProvider/index.jsx";
 
 function appendOrReconcileCommand(entries, entry) {
   if (entry.type !== "command") return [...entries, entry];
@@ -48,6 +49,8 @@ function useForceTick(active) {
 }
 
 export function GatewayApp() {
+  const confirm = useConfirm();
+  const toast = useToast();
   const [booting, setBooting] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [authStage, setAuthStage] = useState("login");
@@ -74,11 +77,11 @@ export function GatewayApp() {
   const [creatingTeamRun, setCreatingTeamRun] = useState(false);
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
-  const [teamActionError, setTeamActionError] = useState("");
   const turnHadAgentRef = useRef(false);
   const turnStreamedRef = useRef(false);
   const turnStartRef = useRef(null);
   const selectedTeamRunIdRef = useRef(null);
+  const lastConfigAttemptRef = useRef(null);
 
   useForceTick(screen === "chat" && busy);
 
@@ -221,6 +224,7 @@ export function GatewayApp() {
   }
 
   async function handleSessionConfigChange(nextConfig) {
+    lastConfigAttemptRef.current = nextConfig;
     setSessionConfigError("");
     let saved;
     try {
@@ -239,6 +243,10 @@ export function GatewayApp() {
     }
     setSessionConfig(saved);
     await refreshStatusAndSessions();
+  }
+
+  function handleSessionConfigRetry() {
+    if (lastConfigAttemptRef.current) handleSessionConfigChange(lastConfigAttemptRef.current);
   }
 
   async function maybeAppendArtifact(nextStatus) {
@@ -338,6 +346,7 @@ export function GatewayApp() {
   async function handleDelete(id) {
     await api.deleteSession(id);
     setSessions(await api.sessions());
+    toast("Session deleted", "success");
   }
 
   // Logout moved off the sidebar to match the design; to be surfaced from the Settings screen.
@@ -350,13 +359,13 @@ export function GatewayApp() {
     try {
       const created = await api.createPersona(payload);
       if (!created) {
-        setTeamActionError("Failed to create persona");
+        toast("Failed to create persona", "error");
         return;
       }
-      setTeamActionError("");
       setPersonas(await api.personas());
+      toast("Persona created", "success");
     } catch (_error) {
-      setTeamActionError("Failed to create persona");
+      toast("Failed to create persona", "error");
     }
   }
 
@@ -364,13 +373,13 @@ export function GatewayApp() {
     try {
       const updated = await api.updatePersona(id, payload);
       if (!updated) {
-        setTeamActionError("Failed to save persona");
+        toast("Failed to save persona", "error");
         return;
       }
-      setTeamActionError("");
       setPersonas(await api.personas());
+      toast("Persona saved", "success");
     } catch (_error) {
-      setTeamActionError("Failed to save persona");
+      toast("Failed to save persona", "error");
     }
   }
 
@@ -378,13 +387,13 @@ export function GatewayApp() {
     try {
       const ok = await api.deletePersona(id);
       if (!ok) {
-        setTeamActionError("Failed to delete persona (it may be in use by a team run)");
+        toast("Failed to delete persona (it may be in use by a team run)", "error");
         return;
       }
-      setTeamActionError("");
       setPersonas(await api.personas());
+      toast("Persona deleted", "success");
     } catch (_error) {
-      setTeamActionError("Failed to delete persona");
+      toast("Failed to delete persona", "error");
     }
   }
 
@@ -392,17 +401,17 @@ export function GatewayApp() {
     try {
       const ok = await api.deleteTeamRun(id);
       if (!ok) {
-        setTeamActionError("Failed to delete team run");
+        toast("Failed to delete team run", "error");
         return;
       }
-      setTeamActionError("");
       if (selectedTeamRunId === id) {
         setSelectedTeamRunId(null);
         setTeamRunDetail(null);
       }
       setTeamRuns(await api.teamRuns());
+      toast("Team run deleted", "success");
     } catch (_error) {
-      setTeamActionError("Failed to delete team run");
+      toast("Failed to delete team run", "error");
     }
   }
 
@@ -410,20 +419,20 @@ export function GatewayApp() {
     try {
       const created = await api.createTeamRun(payload);
       if (!created) {
-        setTeamActionError("Failed to create team run");
+        toast("Failed to create team run", "error");
         return;
       }
       const started = await api.startTeamRun(created.id);
       if (!started) {
-        setTeamActionError("Failed to start team run");
+        toast("Failed to start team run", "error");
         return;
       }
-      setTeamActionError("");
       setCreatingTeamRun(false);
       setTeamRuns(await api.teamRuns());
       setSelectedTeamRunId(started.id);
+      toast("Team run started", "success");
     } catch (_error) {
-      setTeamActionError("Failed to create team run");
+      toast("Failed to create team run", "error");
     }
   }
 
@@ -496,6 +505,7 @@ export function GatewayApp() {
           pendingApproval={pendingApproval}
           turnStreamed={turnStreamed}
           onSessionConfigChange={handleSessionConfigChange}
+          onSessionConfigRetry={handleSessionConfigRetry}
           onSend={handleSend}
           onSearch={handleSearch}
           onActivate={handleActivate}
@@ -506,7 +516,6 @@ export function GatewayApp() {
         />
       ) : screen === "personas" ? (
         <div className="screen">
-          {teamActionError ? <div className="agent-picker-error mono team-run-form-error">{teamActionError}</div> : null}
           <PersonaLibrary
             personas={personas}
             avatars={avatarChoices}
@@ -544,7 +553,6 @@ export function GatewayApp() {
             </a>
             <h1 className="headline" style={{ fontSize: 34, marginTop: 10 }}>New Team Run</h1>
             <div className="team-run-new-sub">Personas are snapshotted when the run starts and stay locked for its lifetime.</div>
-            {teamActionError ? <div className="agent-picker-error mono team-run-form-error" style={{ marginTop: 16 }}>{teamActionError}</div> : null}
             <TeamRunForm personas={personas} onSubmit={handleCreateTeamRun} />
           </div>
         ) : (
@@ -554,9 +562,8 @@ export function GatewayApp() {
                 <h1 className="headline" style={{ fontSize: 34 }}>Team Runs</h1>
                 <div className="team-runs-home-sub">Multiple agent sessions, one goal · each agent starts from a persona snapshot</div>
               </div>
-              <Button variant="primary" onClick={() => { setTeamActionError(""); setCreatingTeamRun(true); }}>New team run</Button>
+              <Button variant="primary" onClick={() => setCreatingTeamRun(true)}>New team run</Button>
             </div>
-            {teamActionError ? <div className="agent-picker-error mono team-run-form-error">{teamActionError}</div> : null}
             <div className="team-run-list">
               {teamRuns.map((run) => (
                 <div key={run.id} className="team-run-list-item">
@@ -573,10 +580,9 @@ export function GatewayApp() {
                     variant="destructive"
                     size="btn-sm"
                     aria-label={`Delete team run ${run.goal}`}
-                    onClick={() => {
-                      if (window.confirm(`Delete team run "${run.goal}"? This cannot be undone.`)) {
-                        handleDeleteTeamRun(run.id);
-                      }
+                    onClick={async () => {
+                      const ok = await confirm({ title: "DELETE TEAM RUN", message: `Delete team run "${run.goal}"? This cannot be undone.`, confirmLabel: "Delete", danger: true });
+                      if (ok) handleDeleteTeamRun(run.id);
                     }}
                   >
                     Delete

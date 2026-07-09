@@ -8,10 +8,11 @@ const agents = [
     id: "codex",
     label: "Codex CLI",
     available: true,
-    models: ["default"],
+    models: ["default", "gpt-5.5", "gpt-5.4"],
     default_model: "default",
-    defaults: { sandbox: "workspace-write", approval_policy: "never" },
+    defaults: { effort: "high", sandbox: "workspace-write", approval_policy: "never" },
     options_schema: [
+      { name: "effort", kind: "select", choices: ["low", "medium", "high", "xhigh"] },
       { name: "sandbox", kind: "select", choices: ["read-only", "workspace-write"] },
       { name: "approval_policy", kind: "select", choices: ["never", "on-request"] }
     ]
@@ -24,75 +25,76 @@ const agents = [
     models: ["sonnet"],
     default_model: "sonnet",
     defaults: { effort: "medium" },
-    options_schema: [{ name: "effort", kind: "select", choices: ["medium", "high"] }]
+    options_schema: [{ name: "effort", kind: "select", choices: ["low", "medium", "high"] }]
   }
 ];
 
-describe("AgentPicker", () => {
-  it("shows editable available agents and disables unavailable agents", async () => {
+function editable(overrides = {}) {
+  return { agent_id: "codex", model: "default", options: {}, editable: true, ...overrides };
+}
+
+describe("AgentPicker (session config bar)", () => {
+  it("selects a curated model from the model menu (no free-form input)", async () => {
     const onChange = vi.fn();
-    const user = userEvent.setup();
+    render(<AgentPicker agents={agents} config={editable()} onChange={onChange} />);
 
-    render(
-      <AgentPicker
-        agents={agents}
-        config={{ agent_id: "codex", model: "default", options: {}, editable: true }}
-        onChange={onChange}
-      />
-    );
+    // model is a curated menu, never a text input
+    expect(screen.queryByRole("textbox", { name: "Model" })).not.toBeInTheDocument();
 
-    expect(screen.getByText("Codex CLI")).toBeInTheDocument();
-    expect(screen.getByText("Claude Code")).toBeInTheDocument();
-    expect(screen.getByText("not found on PATH")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Claude Code/i })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Model" }));
+    await userEvent.click(screen.getByRole("button", { name: "gpt-5.5" }));
 
-    await user.click(screen.getByRole("button", { name: /Claude Code/i }));
-    expect(onChange).not.toHaveBeenCalled();
-
-    await user.selectOptions(screen.getByLabelText("Model"), "default");
-
-    expect(onChange).toHaveBeenCalled();
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ agent_id: "codex", model: "gpt-5.5" }));
   });
 
-  it("keeps editable agent choices visible when the current config is unavailable", async () => {
+  it("sets effort through the segmented control", async () => {
     const onChange = vi.fn();
-    const user = userEvent.setup();
+    render(<AgentPicker agents={agents} config={editable()} onChange={onChange} />);
 
-    render(
-      <AgentPicker
-        agents={agents}
-        config={{ agent_id: "claude", model: "sonnet", options: { effort: "medium" }, editable: true }}
-        onChange={onChange}
-      />
-    );
+    await userEvent.click(screen.getByRole("button", { name: "effort xhigh" }));
 
-    expect(screen.getByText("Claude Code")).toBeInTheDocument();
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ options: { effort: "xhigh" } }));
+  });
+
+  it("shows unavailable agents disabled with a reason and switches to an available one", async () => {
+    const onChange = vi.fn();
+    render(<AgentPicker agents={agents} config={editable({ agent_id: "claude", model: "sonnet" })} onChange={onChange} />);
+
+    // current agent (claude) is unavailable -> no model control
+    expect(screen.queryByRole("button", { name: "Model" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Agent" }));
     expect(screen.getByText("not found on PATH")).toBeInTheDocument();
-    expect(screen.getByText("UNAVAILABLE")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/effort/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Claude Code/i })).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: /Codex CLI/i }));
-
-    expect(onChange).toHaveBeenCalledWith({
+    await userEvent.click(screen.getByRole("button", { name: /Codex CLI/i }));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
       agent_id: "codex",
       model: "default",
-      options: { sandbox: "workspace-write", approval_policy: "never" },
-      editable: true
-    });
+      options: { effort: "high", sandbox: "workspace-write", approval_policy: "never" }
+    }));
   });
 
-  it("renders locked config as read-only summary", () => {
+  it("renders a locked config as a read-only summary", () => {
     render(
       <AgentPicker
         agents={agents}
-        config={{ agent_id: "codex", model: "default", options: { sandbox: "workspace-write" }, editable: false }}
+        config={{ agent_id: "codex", model: "default", options: { effort: "high", sandbox: "workspace-write" }, editable: false }}
         onChange={vi.fn()}
       />
     );
 
-    expect(screen.getByText(/Locked/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+    expect(screen.getByText(/LOCKED/)).toBeInTheDocument();
+    expect(screen.getByText("workspace-write")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Model" })).not.toBeInTheDocument();
+  });
+
+  it("shows a config error with a working retry", async () => {
+    const onRetry = vi.fn();
+    render(<AgentPicker agents={agents} config={editable()} error="agent daemon busy" onChange={vi.fn()} onRetry={onRetry} />);
+
+    expect(screen.getByText("agent daemon busy")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "RETRY" }));
+    expect(onRetry).toHaveBeenCalled();
   });
 });

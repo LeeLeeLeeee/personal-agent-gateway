@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../atoms/Button/index.jsx";
 import { AvatarPicker } from "../AvatarPicker/index.jsx";
+import { useConfirm } from "../../providers/UiProvider/index.jsx";
 
 const EMPTY_FORM = {
   name: "",
@@ -45,6 +46,7 @@ function formFromPersona(persona) {
 }
 
 export function PersonaLibrary({ personas = [], avatars = [], onCreate, onSave, onDelete }) {
+  const confirm = useConfirm();
   // editingId: undefined = not yet decided, null = new persona, string = existing persona id
   const [editingId, setEditingId] = useState(undefined);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -97,9 +99,15 @@ export function PersonaLibrary({ personas = [], avatars = [], onCreate, onSave, 
     }
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (isNew || !editingId) return;
-    if (!window.confirm(`Delete persona "${selected?.name || ""}"? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: "DELETE PERSONA",
+      message: `Delete persona "${selected?.name || ""}"? This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true
+    });
+    if (!ok) return;
     const remaining = personas.filter((persona) => persona.id !== editingId);
     onDelete?.(editingId);
     setEditingId(remaining.length ? remaining[0].id : null);

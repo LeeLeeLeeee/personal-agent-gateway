@@ -112,6 +112,7 @@ class AgentRuntimeFactory:
                     workspace_root=config.workspace_root,
                     sandbox=config.codex_sandbox,
                     approval_policy=config.codex_approval_policy,
+                    effort="high",
                     timeout_seconds=config.codex_timeout_seconds,
                     on_event=publish_codex_event,
                 )
@@ -153,19 +154,19 @@ class AgentRuntimeFactory:
                 "codex",
                 self._config.model,
                 {
+                    "effort": "high",
                     "sandbox": self._config.codex_sandbox,
                     "approval_policy": self._config.codex_approval_policy,
                 },
             )
         options = dict(session_config.options)
         effective_options: dict[str, object] = {
+            "effort": str(options.get("effort") or "high"),
             "sandbox": str(options.get("sandbox") or self._config.codex_sandbox),
             "approval_policy": str(options.get("approval_policy") or self._config.codex_approval_policy),
         }
         if options.get("profile"):
             effective_options["profile"] = str(options["profile"])
-        if options.get("effort"):
-            effective_options["effort"] = str(options["effort"])
         return ("codex", session_config.model, effective_options)
 
     def _effective_claude_session_runtime_config(self, session_config) -> tuple[str, str, dict[str, object]]:

@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayApp } from "./index.jsx";
+import { UiProvider } from "../../providers/UiProvider/index.jsx";
 
 function response(body, ok = true) {
   return Promise.resolve({ ok, json: () => Promise.resolve(body) });
@@ -73,7 +74,8 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
 
-    expect(await screen.findByText("claude/sonnet")).toBeInTheDocument();
+    expect(await screen.findByText("claude")).toBeInTheDocument();
+    expect(screen.getAllByText("sonnet").length).toBeGreaterThan(0);
   });
 
   it("preserves legacy app status metadata when no explicit session config exists", async () => {
@@ -95,7 +97,8 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
 
-    expect(await screen.findByText("openai/legacy-model")).toBeInTheDocument();
+    expect(await screen.findByText("openai")).toBeInTheDocument();
+    expect(screen.getByText("legacy-model")).toBeInTheDocument();
   });
 
   it("supports OTP login before loading protected API data", async () => {
@@ -180,6 +183,7 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
 
+    await userEvent.click(await screen.findByRole("button", { name: "Agent" }));
     await userEvent.click(await screen.findByRole("button", { name: /Claude Code/ }));
 
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(
@@ -211,6 +215,7 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
 
+    await userEvent.click(await screen.findByRole("button", { name: "Agent" }));
     await userEvent.click(await screen.findByRole("button", { name: /Claude Code/ }));
     expect(await screen.findByText("Config update failed")).toBeInTheDocument();
 
@@ -231,7 +236,7 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
 
-    expect(await screen.findByText(/Locked/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/LOCKED/)).length).toBeGreaterThan(0);
     expect(screen.getByText(/Claude Code/)).toBeInTheDocument();
   });
 
@@ -335,7 +340,7 @@ describe("GatewayApp", () => {
       "POST /api/team-runs": response({}, false)
     });
 
-    render(<GatewayApp />);
+    render(<UiProvider><GatewayApp /></UiProvider>);
 
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));

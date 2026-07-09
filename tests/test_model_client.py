@@ -303,11 +303,12 @@ def test_claude_client_builds_expected_command(tmp_path: Path) -> None:
     ]
 
 
-def test_codex_client_includes_profile_flag_when_configured(tmp_path: Path) -> None:
+def test_codex_client_includes_effort_and_profile_flags_when_configured(tmp_path: Path) -> None:
     client = CodexModelClient(
         binary="codex",
         model="default",
         workspace_root=tmp_path,
+        effort="xhigh",
         profile="local-dev",
     )
 
@@ -317,6 +318,8 @@ def test_codex_client_includes_profile_flag_when_configured(tmp_path: Path) -> N
         "--json",
         "-c",
         'approval_policy="never"',
+        "-c",
+        'model_reasoning_effort="xhigh"',
         "--sandbox",
         "workspace-write",
         "-C",

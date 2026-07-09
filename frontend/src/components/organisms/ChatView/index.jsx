@@ -8,7 +8,7 @@ import { AgentPicker } from "../AgentPicker/index.jsx";
 import { SessionRail } from "../SessionRail/index.jsx";
 import { Timeline } from "../Timeline/index.jsx";
 
-function ChatHeader({ sessions }) {
+function ChatHeader({ sessions, locked }) {
   const active = (sessions || []).find((session) => session.is_active);
   const title = active?.title || "New session";
   const started = active?.created_at ? fmtTime(active.created_at, false) : "";
@@ -16,6 +16,7 @@ function ChatHeader({ sessions }) {
     <div className="chat-header">
       <span className="title">{title}</span>
       <span className="meta">SESSION · {title.slice(0, 28)}{started ? ` · started ${started}` : ""}</span>
+      {locked ? <span className="status-chip sc-default mono chat-header-lock">LOCKED</span> : null}
     </div>
   );
 }
@@ -76,6 +77,7 @@ export function ChatView({
   pendingApproval,
   turnStreamed,
   onSessionConfigChange,
+  onSessionConfigRetry,
   onSend,
   onSearch,
   onActivate,
@@ -84,16 +86,18 @@ export function ChatView({
   onDelete,
   onResolveApproval
 }) {
+  const locked = sessionConfig ? sessionConfig.editable === false : false;
   return (
     <div className="chat">
-      <SessionRail sessions={sessions} onSearch={onSearch} onActivate={onActivate} onReset={onReset} onRename={onRename} onDelete={onDelete} />
+      <SessionRail sessions={sessions} activeConfig={sessionConfig} onSearch={onSearch} onActivate={onActivate} onReset={onReset} onRename={onRename} onDelete={onDelete} />
       <div className="chat-col">
-        <ChatHeader sessions={sessions} />
+        <ChatHeader sessions={sessions} locked={locked} />
         <AgentPicker
           agents={agents}
           config={sessionConfig}
           error={sessionConfigError}
           onChange={onSessionConfigChange}
+          onRetry={onSessionConfigRetry}
         />
         <LiveStatusSummary entries={entries} busy={busy} turnStart={turnStart} turnEnd={turnEnd} />
         <div className="transcript">

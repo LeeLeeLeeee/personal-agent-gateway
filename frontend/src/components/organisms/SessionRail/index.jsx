@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Button } from "../../atoms/Button/index.jsx";
 import { InputField } from "../../atoms/Field/index.jsx";
+import { useConfirm } from "../../providers/UiProvider/index.jsx";
 
-export function SessionRail({ sessions, onSearch, onActivate, onReset, onRename, onDelete }) {
+export function SessionRail({ sessions, activeConfig, onSearch, onActivate, onReset, onRename, onDelete }) {
+  const confirm = useConfirm();
   const [editingSession, setEditingSession] = useState(null);
   const [editTitle, setEditTitle] = useState("");
 
@@ -46,10 +48,19 @@ export function SessionRail({ sessions, onSearch, onActivate, onReset, onRename,
             );
           }
 
+          const agentId = session.is_active ? (activeConfig?.agent_id || session.agent_id) : session.agent_id;
+          const model = session.is_active ? (activeConfig?.model || session.model) : session.model;
           return (
             <div key={session.id} className={`sess-item${session.is_active ? " sess-item-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => onActivate(session.id)}>
               <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{session.title || "Untitled"}</div>
-              <div className="mono" style={{ fontSize: 10, color: "var(--c-grey)", marginTop: 3 }}>{session.status} · {session.message_count} msg</div>
+              {agentId ? (
+                <div className="sess-meta">
+                  <span className="sess-meta-agent mono">{String(agentId).toUpperCase()}</span>
+                  <span className="sess-meta-model mono">{model}</span>
+                </div>
+              ) : (
+                <div className="mono" style={{ fontSize: 10, color: "var(--c-grey)", marginTop: 3 }}>{session.status} · {session.message_count} msg</div>
+              )}
               <div className="sess-actions">
                 <Button
                   size="btn-sm"
@@ -64,9 +75,11 @@ export function SessionRail({ sessions, onSearch, onActivate, onReset, onRename,
                 <Button
                   size="btn-sm"
                   variant="destructive"
-                  onClick={(event) => {
+                  onClick={async (event) => {
                     event.stopPropagation();
-                    if (window.confirm("Delete session?")) onDelete(session.id);
+                    if (await confirm({ title: "DELETE SESSION", message: "Delete this session? This cannot be undone.", confirmLabel: "Delete", danger: true })) {
+                      onDelete(session.id);
+                    }
                   }}
                 >
                   Delete

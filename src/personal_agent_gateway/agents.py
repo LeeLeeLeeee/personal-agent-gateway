@@ -104,9 +104,14 @@ class AgentRegistry:
             binary=self._config.codex_binary,
             available=probe.available,
             availability_error=probe.error,
-            models=["default"],
+            models=["default", "gpt-5.5", "gpt-5.4"],
             default_model="default",
             options_schema=[
+                AgentOption(
+                    name="effort",
+                    kind="select",
+                    choices=["low", "medium", "high", "xhigh"],
+                ),
                 AgentOption(
                     name="sandbox",
                     kind="select",
@@ -120,6 +125,7 @@ class AgentRegistry:
                 AgentOption(name="profile", kind="text"),
             ],
             defaults={
+                "effort": "high",
                 "sandbox": self._config.codex_sandbox,
                 "approval_policy": self._config.codex_approval_policy,
             },
@@ -133,7 +139,7 @@ class AgentRegistry:
             binary=self._config.claude_binary,
             available=probe.available,
             availability_error=probe.error,
-            models=["sonnet", "opus"],
+            models=["default", "best", "sonnet", "opus", "haiku", "sonnet[1m]", "opus[1m]", "opusplan"],
             default_model="sonnet",
             options_schema=[
                 AgentOption(

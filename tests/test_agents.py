@@ -40,6 +40,27 @@ def test_registry_lists_codex_and_claude_with_safe_defaults(tmp_path: Path) -> N
     assert claude.available is False
     assert claude.availability_error == "not found"
     assert claude.defaults["effort"] == "medium"
+    assert codex.models == ["default", "gpt-5.5", "gpt-5.4"]
+    assert any(option.name == "effort" and option.choices == ["low", "medium", "high", "xhigh"] for option in codex.options_schema)
+    assert codex.defaults["effort"] == "high"
+    assert claude.models == ["default", "best", "sonnet", "opus", "haiku", "sonnet[1m]", "opus[1m]", "opusplan"]
+    assert "fable" not in claude.models
+
+
+def test_registry_accepts_curated_model_presets_only(tmp_path: Path) -> None:
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        probe=lambda _binary: CliProbeResult(True, None),
+    )
+
+    assert registry.validate_config("codex", "gpt-5.5", {})["model"] == "gpt-5.5"
+    assert registry.validate_config("claude", "opusplan", {})["model"] == "opusplan"
+
+    with pytest.raises(ValueError, match="Unsupported model"):
+        registry.validate_config("codex", "codex-5.5", {})
+
+    with pytest.raises(ValueError, match="Unsupported model"):
+        registry.validate_config("claude", "fable", {})
 
 
 def test_registry_rejects_unknown_agent_model_and_option(tmp_path: Path) -> None:

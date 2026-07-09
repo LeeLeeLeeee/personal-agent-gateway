@@ -529,6 +529,32 @@ def test_chat_passes_codex_profile_from_session_config(tmp_path: Path, monkeypat
     assert captured[-1]["profile"] == "local-dev"
 
 
+def test_chat_passes_codex_effort_from_session_config(tmp_path: Path, monkeypatch) -> None:
+    captured: list[dict[str, object]] = []
+
+    class FakeCodexModelClient:
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+        async def complete(self, _messages):
+            from personal_agent_gateway.model_client import ModelResponse
+
+            return ModelResponse(content="ok", tool_calls=[])
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    client = TestClient(create_app(make_config(tmp_path)))
+    client.cookies.set("agent_session", "test-session")
+
+    client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "codex", "model": "gpt-5.5", "options": {"effort": "xhigh"}},
+    )
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert captured[-1]["effort"] == "xhigh"
+
+
 def test_chat_passes_claude_agent_from_session_config(tmp_path: Path, monkeypatch) -> None:
     config = make_config(tmp_path)
     captured: list[dict[str, object]] = []
