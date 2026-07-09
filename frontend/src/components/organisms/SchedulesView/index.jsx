@@ -33,8 +33,11 @@ function ScheduleForm({ onCreate }) {
   const cron = buildCron(spec);
   const description = describeCron(spec);
 
+  const canSubmit = name.trim() !== "" && instruction.trim() !== "";
+
   function submit(event) {
     event.preventDefault();
+    if (!canSubmit) return;
     onCreate({
       name: name.trim(),
       capability_id: "agent.instruct",
@@ -132,7 +135,7 @@ function ScheduleForm({ onCreate }) {
 
         <div className="schedule-policy mono">Auto-approve · runs the local agent</div>
 
-        <button type="submit" className="btn btn-primary btn-lg schedule-submit">Create schedule</button>
+        <button type="submit" className="btn btn-primary btn-lg schedule-submit" disabled={!canSubmit}>Create schedule</button>
       </div>
     </form>
   );
