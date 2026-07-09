@@ -1,5 +1,29 @@
 import { fmtElapsed, fmtTime, nowHM, nowHMS } from "./time.js";
 
+function legacyAgentKeySuffix(text) {
+  const source = typeof text === "string" && text ? text : "empty";
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function parseCreatedAtMs(createdAt) {
+  const parsed = Date.parse(createdAt || "");
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function timelineRank(entry) {
+  if (entry.type === "user") return 0;
+  if (entry.type === "event_row" && entry.label === "runtime.user_message.started") return 1;
+  if (entry.type === "command" || entry.type === "runtime_error") return 2;
+  if (entry.type === "agent") return 3;
+  if (entry.type === "event_row" && entry.label === "runtime.completed") return 4;
+  return 5;
+}
+
 export function normalizeApproval(value) {
   if (!value || typeof value !== "object") return null;
   if (typeof value.id !== "string" || typeof value.command !== "string") return null;
@@ -21,10 +45,11 @@ export function timelineFromHistory(events) {
   sortedEvents.forEach((event, index) => {
     const payload = event.payload || {};
     const time = fmtTime(event.created_at, false);
+    const createdAtMs = parseCreatedAtMs(event.created_at);
     if (event.kind === "user" && typeof payload.content === "string") {
-      out.push({ type: "user", text: payload.content, time, order: index });
+      out.push({ type: "user", text: payload.content, time, order: index, createdAtMs, historyOrder: index, source: "history" });
     } else if (event.kind === "assistant" && typeof payload.content === "string") {
-      out.push({ type: "agent", text: payload.content, time, order: index });
+      out.push({ type: "agent", text: payload.content, time, order: index, createdAtMs, historyOrder: index, source: "history" });
     } else if (event.kind === "tool_result" && typeof payload.command === "string") {
       out.push({
         type: "command",
@@ -35,7 +60,10 @@ export function timelineFromHistory(events) {
         lines: linesFrom(`${payload.stdout || ""}${payload.stderr || ""}`),
         time: fmtTime(event.created_at, true),
         duration: "",
-        order: index
+        order: index,
+        createdAtMs,
+        historyOrder: index,
+        source: "history"
       });
     } else if (event.kind === "tool_denial" && typeof payload.command === "string") {
       out.push({
@@ -44,17 +72,30 @@ export function timelineFromHistory(events) {
         detail: payload.command,
         dotColor: "#FF0000",
         time: fmtTime(event.created_at, true),
-        order: index
+        order: index,
+        createdAtMs,
+        historyOrder: index,
+        source: "history"
       });
     } else if (event.kind === "runtime_error" && typeof payload.message === "string") {
-      out.push({ type: "runtime_error", message: payload.message, time: fmtTime(event.created_at, true), order: index });
+      out.push({
+        type: "runtime_error",
+        message: payload.message,
+        time: fmtTime(event.created_at, true),
+        order: index,
+        createdAtMs,
+        historyOrder: index,
+        source: "history"
+      });
     }
   });
   return out;
 }
 
 export function entryFromSse(event) {
-  const item = event.item;
+  const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
+  const item = payload.item;
+  const createdAtMs = parseCreatedAtMs(event.created_at);
   if (item && typeof item === "object") {
     if (item.type === "command_execution") {
       let status = item.status === "in_progress" ? "running" : (item.status || "running");
@@ -62,30 +103,104 @@ export function entryFromSse(event) {
       const done = status === "completed" || status === "failed";
       return {
         type: "command",
-        key: `c${item.id || item.command || ""}`,
+        key: `command:${event.session_id || ""}:${item.id || item.command || ""}`,
         command: item.command || "command",
         status,
         exit: item.exit_code,
         lines: linesFrom(item.aggregated_output || ""),
         time: nowHMS(),
-        duration: done ? "" : "live"
+        duration: done ? "" : "live",
+        serverOrder: event.event_seq,
+        createdAtMs
       };
     }
     if (item.type === "agent_message") {
-      return { type: "agent", text: item.text || "", time: nowHM(), streaming: false };
+      const agentId = item.id || event.event_seq || (event.session_id ? "" : legacyAgentKeySuffix(item.text));
+      return {
+        type: "agent",
+        key: `agent:${event.session_id || "legacy"}:${agentId}`,
+        text: item.text || "",
+        time: fmtTime(event.created_at, false) || nowHM(),
+        streaming: false,
+        serverOrder: event.event_seq,
+        createdAtMs
+      };
     }
     return null;
   }
   if (event.type === "runtime.user_message.started") {
-    return { type: "event_row", label: "runtime.user_message.started", detail: "message accepted", dotColor: "#000", time: nowHMS() };
+    return {
+      type: "event_row",
+      key: `event:${event.event_seq || event.id || event.type}`,
+      label: "runtime.user_message.started",
+      detail: "message accepted",
+      dotColor: "#000",
+      time: fmtTime(event.created_at, true) || nowHMS(),
+      serverOrder: event.event_seq,
+      createdAtMs
+    };
   }
   if (event.type === "runtime.completed") {
-    return { type: "event_row", label: "runtime.completed", detail: "session finished", dotColor: "#008000", time: nowHMS() };
+    return {
+      type: "event_row",
+      key: `event:${event.event_seq || event.id || event.type}`,
+      label: "runtime.completed",
+      detail: "session finished",
+      dotColor: "#008000",
+      time: fmtTime(event.created_at, true) || nowHMS(),
+      serverOrder: event.event_seq,
+      createdAtMs
+    };
   }
   if (event.type === "runtime.error") {
-    return { type: "runtime_error", message: typeof event.message === "string" ? event.message : "runtime error", time: nowHMS() };
+    return {
+      type: "runtime_error",
+      key: `event:${event.event_seq || event.id || event.type}`,
+      message: typeof payload.message === "string" ? payload.message : (typeof event.message === "string" ? event.message : "runtime error"),
+      time: fmtTime(event.created_at, true) || nowHMS(),
+      serverOrder: event.event_seq,
+      createdAtMs
+    };
   }
   return null;
+}
+
+export function timelineFromSession(historyEvents, activityEvents) {
+  const historyEntries = timelineFromHistory(historyEvents);
+  const activityEntries = activityEvents
+    .map((event) => entryFromSse(event))
+    .filter(Boolean)
+    .map((entry, index) => ({ ...entry, activityOrder: index, source: "activity" }));
+  const sortedEntries = [...historyEntries, ...activityEntries]
+    .sort((left, right) => (
+      (left.createdAtMs ?? 0) - (right.createdAtMs ?? 0)
+      || timelineRank(left) - timelineRank(right)
+      || (left.serverOrder ?? left.historyOrder ?? left.activityOrder ?? 0) - (right.serverOrder ?? right.historyOrder ?? right.activityOrder ?? 0)
+      || String(left.key || left.type).localeCompare(String(right.key || right.type))
+    ))
+    .filter((entry, _index, entries) => {
+      if (entry.type !== "agent" || entry.source !== "activity" || typeof entry.text !== "string") return true;
+      return !entries.some((candidate) => (
+        candidate !== entry
+        && candidate.type === "agent"
+        && candidate.source === "history"
+        && candidate.text === entry.text
+        && Math.abs((candidate.createdAtMs ?? 0) - (entry.createdAtMs ?? 0)) <= 1000
+      ));
+    });
+  const reconciled = [];
+  for (const entry of sortedEntries) {
+    if (entry.type === "command" && entry.key) {
+      const index = reconciled.findIndex((candidate) => candidate.type === "command" && candidate.key === entry.key);
+      if (index >= 0) {
+        reconciled[index] = { ...entry, order: reconciled[index].order ?? entry.order };
+        continue;
+      }
+    }
+    reconciled.push(entry);
+  }
+  return reconciled
+    .map((entry, index) => ({ ...entry, order: index }));
 }
 
 export function deriveLive({ entries, busy, turnStart, turnEnd }) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveLive, entryFromSse, timelineFromHistory } from "./timeline.js";
+import { deriveLive, entryFromSse, timelineFromHistory, timelineFromSession } from "./timeline.js";
 
 describe("timeline model", () => {
   it("maps persisted transcript events to renderable timeline entries", () => {
@@ -46,7 +46,7 @@ describe("timeline model", () => {
       }
     })).toEqual(expect.objectContaining({
       type: "command",
-      key: "ccmd-1",
+      key: "command::cmd-1",
       command: "npm test",
       status: "failed",
       exit: 1
@@ -54,6 +54,140 @@ describe("timeline model", () => {
 
     expect(entryFromSse({ item: { type: "agent_message", text: "done" } }))
       .toEqual(expect.objectContaining({ type: "agent", text: "done" }));
+  });
+
+  it("merges transcript and durable activity in deterministic order", () => {
+    const timeline = timelineFromSession(
+      [
+        { kind: "user", created_at: "2026-07-09T01:00:00Z", payload: { content: "hello" } },
+        { kind: "assistant", created_at: "2026-07-09T01:00:02Z", payload: { content: "done" } }
+      ],
+      [
+        {
+          id: 10,
+          event_seq: 1,
+          type: "runtime.user_message.started",
+          created_at: "2026-07-09T01:00:01Z",
+          payload: { message: "hello" }
+        },
+        {
+          id: 11,
+          event_seq: 2,
+          type: "runtime.completed",
+          created_at: "2026-07-09T01:00:03Z",
+          payload: {}
+        }
+      ]
+    );
+
+    expect(timeline.map((entry) => entry.type)).toEqual(["user", "event_row", "agent", "event_row"]);
+    expect(timeline.map((entry) => entry.order)).toEqual([0, 1, 2, 3]);
+    expect(timeline[1].key).toBe("event:1");
+    expect(timeline[2].text).toBe("done");
+    expect(timeline[3]).toEqual(expect.objectContaining({
+      key: "event:2",
+      serverOrder: 2,
+      label: "runtime.completed",
+      time: "10:00:03"
+    }));
+  });
+
+  it("dedupes streamed agent activity already persisted as assistant transcript", () => {
+    const timeline = timelineFromSession(
+      [
+        { kind: "user", created_at: "2026-07-09T01:00:00Z", payload: { content: "hello" } },
+        { kind: "assistant", created_at: "2026-07-09T01:00:02Z", payload: { content: "same answer" } }
+      ],
+      [{
+        id: 11,
+        event_seq: 2,
+        session_id: "session-1",
+        type: "codex.event",
+        created_at: "2026-07-09T01:00:02Z",
+        payload: { item: { type: "agent_message", id: "agent-1", text: "same answer" } }
+      }]
+    );
+
+    expect(timeline.filter((entry) => entry.type === "agent").map((entry) => entry.text))
+      .toEqual(["same answer"]);
+  });
+
+  it("reconciles persisted command updates by stable command key", () => {
+    const timeline = timelineFromSession(
+      [],
+      [
+        {
+          event_seq: 1,
+          session_id: "session-1",
+          type: "codex.event",
+          created_at: "2026-07-09T01:00:01Z",
+          payload: { item: { type: "command_execution", id: "cmd-1", command: "npm test", status: "in_progress" } }
+        },
+        {
+          event_seq: 2,
+          session_id: "session-1",
+          type: "codex.event",
+          created_at: "2026-07-09T01:00:02Z",
+          payload: { item: { type: "command_execution", id: "cmd-1", command: "npm test", status: "completed", exit_code: 0, aggregated_output: "ok" } }
+        }
+      ]
+    );
+
+    const commands = timeline.filter((entry) => entry.type === "command");
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toEqual(expect.objectContaining({ command: "npm test", status: "completed", exit: 0 }));
+  });
+
+  it("maps normalized SSE envelopes and keeps legacy raw Codex events working", () => {
+    expect(entryFromSse({
+      session_id: "session-1",
+      event_seq: 3,
+      type: "codex.event",
+      created_at: "2026-07-09T01:00:02Z",
+      payload: { item: { type: "agent_message", id: "agent-1", text: "done" } }
+    })).toEqual(expect.objectContaining({
+      type: "agent",
+      key: "agent:session-1:agent-1",
+      text: "done"
+    }));
+
+    const firstLegacy = entryFromSse({ item: { type: "agent_message", text: "legacy one" } });
+    const secondLegacy = entryFromSse({ item: { type: "agent_message", text: "legacy two" } });
+
+    expect(firstLegacy).toEqual(expect.objectContaining({ type: "agent", text: "legacy one" }));
+    expect(secondLegacy).toEqual(expect.objectContaining({ type: "agent", text: "legacy two" }));
+    expect(firstLegacy.key).toMatch(/^agent:legacy:[a-z0-9]+$/);
+    expect(secondLegacy.key).toMatch(/^agent:legacy:[a-z0-9]+$/);
+    expect(firstLegacy.key).not.toBe(secondLegacy.key);
+  });
+
+  it("maps normalized runtime error and completed events with stable keys and server time", () => {
+    expect(entryFromSse({
+      event_seq: 7,
+      type: "runtime.completed",
+      created_at: "2026-07-09T01:05:06Z",
+      payload: {}
+    })).toEqual(expect.objectContaining({
+      type: "event_row",
+      key: "event:7",
+      serverOrder: 7,
+      label: "runtime.completed",
+      time: "10:05:06"
+    }));
+
+    expect(entryFromSse({
+      event_seq: 8,
+      type: "runtime.error",
+      created_at: "2026-07-09T01:05:07Z",
+      payload: { message: "normalized failure" },
+      message: "raw failure"
+    })).toEqual(expect.objectContaining({
+      type: "runtime_error",
+      key: "event:8",
+      serverOrder: 8,
+      message: "normalized failure",
+      time: "10:05:07"
+    }));
   });
 
   it("derives live status from busy state and command outcomes", () => {

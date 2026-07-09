@@ -320,9 +320,15 @@ def test_chat_records_runtime_events_for_sse_subscribers(tmp_path: Path) -> None
         "runtime.user_message.started",
         "runtime.completed",
     ]
-    assert recent[0]["message"] == "remember this"
-    assert recent[1]["pending_approval"] is None
     assert recent[0]["session_id"] == recent[1]["session_id"]
+    assert recent[0]["source"] == "runtime"
+    assert recent[0]["activity_id"] == 1
+    assert recent[0]["event_seq"] == 1
+    assert recent[0]["payload"] == {"message": "remember this"}
+    assert recent[0]["message"] == "remember this"
+    assert recent[1]["activity_id"] == 2
+    assert recent[1]["event_seq"] == 2
+    assert recent[1]["payload"] == {"pending_approval": None}
 
 
 def test_codex_stream_events_include_active_session_id(tmp_path: Path, monkeypatch) -> None:
@@ -386,6 +392,150 @@ def test_sessions_api_lists_activate_delete_and_searches_sessions(tmp_path: Path
     assert delete_response.status_code == 200
     assert delete_response.json() == {"deleted": True, "active_session_id": None}
     assert client.get("/api/sessions").json()["sessions"][0]["id"] == second_id
+
+
+def test_session_explicit_history_status_and_activity_do_not_activate_session(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    first_id = store.start_new()
+    store.append_to(first_id, "user", {"content": "first"})
+    second_id = store.start_new()
+    store.append_to(second_id, "user", {"content": "second"})
+    client = auth_client(config, FakeRuntime())
+
+    history = client.get(f"/api/sessions/{first_id}/history")
+    status = client.get(f"/api/sessions/{first_id}/status")
+    activity = client.get(f"/api/sessions/{first_id}/activity")
+
+    assert history.status_code == 200
+    assert history.json()["session_id"] == first_id
+    assert history.json()["events"][0]["payload"] == {"content": "first"}
+    assert status.status_code == 200
+    assert status.json()["session_id"] == first_id
+    assert status.json()["status"] == "idle"
+    assert activity.status_code == 200
+    assert activity.json() == {"session_id": first_id, "events": []}
+    assert store.active_id() == second_id
+
+
+def test_session_explicit_chat_writes_only_target_session(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    first_id = store.start_new()
+    second_id = store.start_new()
+
+    class FakeCodexModelClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def complete(self, messages):
+            return ModelResponse(content=f"reply to {messages[-1]['content']}", tool_calls=[])
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    client = auth_client(config, runtime=None)
+
+    response = client.post(f"/api/sessions/{first_id}/chat", json={"message": "targeted"})
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == first_id
+    assert response.json()["request_id"]
+    assert response.json()["pending_approval"] is None
+    assert response.json()["last_event_id"] == 2
+    assert store.active_id() == second_id
+    assert [(event.kind, event.payload) for event in store.load(first_id)] == [
+        ("user", {"content": "targeted"}),
+        ("assistant", {"content": "reply to targeted"}),
+    ]
+    assert store.load(second_id) == []
+
+
+def test_delete_session_removes_only_target_session_activity_rows(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    first_id = store.start_new()
+    second_id = store.start_new()
+    client = auth_client(config, FakeRuntime())
+    activity_service = client.app.state.session_activity_service
+
+    activity_service.record(first_id, "runtime.completed", "runtime", {"pending_approval": None})
+    activity_service.record(second_id, "runtime.completed", "runtime", {"pending_approval": None})
+
+    response = client.delete(f"/api/sessions/{first_id}")
+
+    assert response.status_code == 200
+    assert activity_service.list(first_id) == []
+    assert len(activity_service.list(second_id)) == 1
+
+
+def test_delete_running_session_returns_409_and_preserves_session(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    client = auth_client(config, FakeRuntime())
+    activity_service = client.app.state.session_activity_service
+    activity_service.record(session_id, "runtime.completed", "runtime", {"pending_approval": None})
+    client.app.state.run_registry.start(session_id, "request-1")
+
+    response = client.delete(f"/api/sessions/{session_id}")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Session is running"}
+    assert store.exists(session_id) is True
+    assert len(activity_service.list(session_id)) == 1
+
+
+def test_session_chat_rejects_second_active_run_for_same_session(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    client = auth_client(config, FakeRuntime())
+    client.app.state.run_registry.start(session_id, "request-1")
+
+    response = client.post(f"/api/sessions/{session_id}/chat", json={"message": "overlap"})
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Session is already running"}
+    assert store.load(session_id) == []
+
+
+def test_session_status_separates_sse_event_id_from_activity_id(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    client = auth_client(config, FakeRuntime())
+    activity_service = client.app.state.session_activity_service
+    activity_service.record(session_id, "runtime.completed", "runtime", {"pending_approval": None})
+
+    response = client.get(f"/api/sessions/{session_id}/status")
+
+    assert response.status_code == 200
+    assert response.json()["last_event_id"] is None
+    assert response.json()["last_activity_id"] == 1
+
+
+def test_session_status_restores_pending_shell_approval_object(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    store.append_to(
+        session_id,
+        "tool_request",
+        {
+            "id": "tool-1",
+            "name": "shell.run",
+            "arguments": {"command": "printf ok"},
+            "approval_id": "approval-1",
+        },
+    )
+    client = auth_client(config, FakeRuntime())
+
+    response = client.get(f"/api/sessions/{session_id}/status")
+
+    assert response.status_code == 200
+    assert response.json()["pending_approval"] == {
+        "id": "approval-1",
+        "command": "printf ok",
+    }
 
 
 def test_activate_missing_session_returns_404(tmp_path: Path) -> None:
@@ -457,6 +607,9 @@ def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Pat
         def create_runtime_for_active_session(self) -> FakeRuntime:
             return FakeRuntime()
 
+        def create_runtime_for_session(self, _session_id: str) -> FakeRuntime:
+            return FakeRuntime()
+
     monkeypatch.setattr(app_module, "AgentRuntimeFactory", StubFactory)
     client = auth_client(config, runtime=None)
 
@@ -483,6 +636,13 @@ def test_chat_uses_active_session_config_runtime_factory(tmp_path: Path, monkeyp
             from personal_agent_gateway.session_config import SessionAgentConfigService
 
             session_config = SessionAgentConfigService(self.transcript).effective_config()
+            created_for.append((session_config.agent_id, session_config.model))
+            return FakeRuntime()
+
+        def create_runtime_for_session(self, session_id: str) -> FakeRuntime:
+            from personal_agent_gateway.session_config import SessionAgentConfigService
+
+            session_config = SessionAgentConfigService(self.transcript).effective_config(session_id)
             created_for.append((session_config.agent_id, session_config.model))
             return FakeRuntime()
 
@@ -784,6 +944,92 @@ def test_reset_invalidates_real_runtime_pending_approval(tmp_path: Path) -> None
         "pending_approval": None,
     }
     assert not (config.workspace_root / "stale.txt").exists()
+
+
+def test_session_scoped_approval_endpoints_use_path_session_in_injected_runtime_mode(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    command = write_file_command("ran.txt", "ran")
+    runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient(
+            [
+                ModelResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="shell-call",
+                            name="shell.run",
+                            arguments={"command": command},
+                        )
+                    ],
+                ),
+                ModelResponse(content="done", tool_calls=[]),
+            ]
+        ),
+    )
+    client = auth_client(config, runtime)
+    transcript = TranscriptStore(config.session_dir)
+    session_a = transcript.active_id() or transcript.start_new()
+    pending = client.post(f"/api/sessions/{session_a}/chat", json={"message": "run it"}).json()["pending_approval"]
+    session_b = transcript.start_new()
+
+    wrong_session_response = client.post(f"/api/sessions/{session_b}/approvals/{pending['id']}/approve")
+
+    assert wrong_session_response.status_code == 200
+    assert wrong_session_response.json()["messages"][0]["content"].startswith("Error: No pending approval")
+    assert not (config.workspace_root / "ran.txt").exists()
+
+    response = client.post(f"/api/sessions/{session_a}/approvals/{pending['id']}/approve")
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == session_a
+    assert response.json()["messages"] == [{"role": "assistant", "content": "done"}]
+    assert response.json()["pending_approval"] is None
+    assert transcript.active_id() == session_b
+    assert (config.workspace_root / "ran.txt").read_text(encoding="utf-8") == "ran"
+
+
+def test_session_scoped_deny_endpoints_use_path_session_in_injected_runtime_mode(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    command = write_file_command("denied.txt", "denied")
+    runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient(
+            [
+                ModelResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="shell-call",
+                            name="shell.run",
+                            arguments={"command": command},
+                        )
+                    ],
+                )
+            ]
+        ),
+    )
+    client = auth_client(config, runtime)
+    transcript = TranscriptStore(config.session_dir)
+    session_a = transcript.active_id() or transcript.start_new()
+    pending = client.post(f"/api/sessions/{session_a}/chat", json={"message": "run it"}).json()["pending_approval"]
+    session_b = transcript.start_new()
+
+    wrong_session_response = client.post(f"/api/sessions/{session_b}/approvals/{pending['id']}/deny")
+
+    assert wrong_session_response.status_code == 200
+    assert wrong_session_response.json()["messages"][0]["content"].startswith("Error: No pending approval")
+
+    response = client.post(f"/api/sessions/{session_a}/approvals/{pending['id']}/deny")
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == session_a
+    assert response.json()["messages"] == [{"role": "assistant", "content": "Command denied."}]
+    assert response.json()["pending_approval"] is None
+    assert transcript.active_id() == session_b
+    assert not (config.workspace_root / "denied.txt").exists()
 
 
 def test_approve_resumes_execution(tmp_path: Path) -> None:
