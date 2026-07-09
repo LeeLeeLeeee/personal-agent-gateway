@@ -35,6 +35,7 @@ function emptyChatSessionState() {
     turnStart: null,
     turnEnd: null,
     turnStreamed: false,
+    turnHadAgent: false,
     nextLocalOrder: 0,
     lastServerEventId: null,
     lastLoadedAt: null
@@ -49,10 +50,29 @@ function updateOneSession(current, sessionId, updater) {
 function appendOrReconcileEntry(entries, entry) {
   if (!entry.key) return appendOrReconcileCommand(entries, entry);
   const index = entries.findIndex((candidate) => candidate.key === entry.key);
+  if (index < 0 && entry.type === "agent" && !String(entry.key).startsWith("fallback:")) {
+    for (let candidateIndex = entries.length - 1; candidateIndex >= 0; candidateIndex -= 1) {
+      const candidate = entries[candidateIndex];
+      if (candidate.type === "user") break;
+      if (
+        candidate.type === "agent"
+        && String(candidate.key || "").startsWith("fallback:")
+        && candidate.text === entry.text
+      ) {
+        const next = entries.slice();
+        next[candidateIndex] = { ...candidate, ...entry, order: candidate.order ?? entry.order };
+        return next;
+      }
+    }
+  }
   if (index < 0) return appendOrReconcileCommand(entries, entry);
   const next = entries.slice();
   next[index] = { ...entries[index], ...entry, order: entries[index].order ?? entry.order };
   return next;
+}
+
+function removeEntryByKey(entries, key) {
+  return entries.filter((entry) => entry.key !== key);
 }
 
 function withSessionConfigStatus(nextStatus, nextConfig) {
@@ -260,6 +280,7 @@ export function GatewayApp() {
             turnStart: started,
             turnEnd: ended,
             turnStreamed: true,
+            turnHadAgent: state.turnHadAgent || entry.type === "agent",
             nextLocalOrder: stamped.nextLocalOrder,
             lastServerEventId: parsed.id ?? state.lastServerEventId
           };
@@ -276,6 +297,7 @@ export function GatewayApp() {
           ...state,
           entries: appendOrReconcileEntry(state.entries, stamped.entry),
           turnStreamed: true,
+          turnHadAgent: state.turnHadAgent || entry.type === "agent",
           nextLocalOrder: stamped.nextLocalOrder,
           lastServerEventId: parsed.id ?? state.lastServerEventId
         };
@@ -433,7 +455,7 @@ export function GatewayApp() {
   async function postTurn(sessionId, data) {
     setSessionStateById((current) => updateOneSession(current, sessionId, (state) => {
       const pending = data ? normalizeApproval(data.pending_approval) : null;
-      const agentEntries = !state.turnStreamed && data && Array.isArray(data.messages)
+      const agentEntries = !state.turnHadAgent && data && Array.isArray(data.messages)
         ? data.messages
           .filter((message) => typeof message.content === "string")
           .map((message, index) => ({
@@ -449,13 +471,14 @@ export function GatewayApp() {
         nextState = {
           ...nextState,
           entries: appendOrReconcileEntry(nextState.entries, stamped.entry),
-          nextLocalOrder: stamped.nextLocalOrder
+          nextLocalOrder: stamped.nextLocalOrder,
+          turnHadAgent: true
         };
       }
       return nextState;
     }));
-    const nextStatus = await refreshStatusAndSessions();
-    await maybeAppendArtifact(nextStatus?.session_id || sessionId);
+    await refreshStatusAndSessions();
+    await maybeAppendArtifact(sessionId);
   }
 
   async function handleSend(message) {
@@ -468,6 +491,7 @@ export function GatewayApp() {
     }
     if (!sessionId) return;
     const started = Date.now();
+    const userEntryKey = `local:user:${started}`;
     turnStartRef.current = started;
     busyRef.current = true;
     setSessionStateById((current) => updateOneSession(current, sessionId, (state) => {
@@ -475,7 +499,7 @@ export function GatewayApp() {
         type: "user",
         text: message,
         time: nowHM(),
-        key: `local:user:${started}`
+        key: userEntryKey
       });
       return {
         ...state,
@@ -484,11 +508,21 @@ export function GatewayApp() {
         turnStart: started,
         turnEnd: null,
         turnStreamed: false,
+        turnHadAgent: false,
         nextLocalOrder: stamped.nextLocalOrder
       };
     }));
     try {
-      await postTurn(sessionId, await api.sendSessionChat(sessionId, message));
+      const data = await api.sendSessionChat(sessionId, message);
+      if (!data) {
+        setSessionStateById((current) => updateOneSession(current, sessionId, (state) => ({
+          ...state,
+          entries: removeEntryByKey(state.entries, userEntryKey)
+        })));
+        toast("Failed to send message", "error");
+        return;
+      }
+      await postTurn(sessionId, data);
     } finally {
       setSessionStateById((current) => updateOneSession(current, sessionId, (state) => ({
         ...state,
@@ -510,12 +544,17 @@ export function GatewayApp() {
       busy: true,
       turnStart: started,
       turnEnd: null,
-      turnStreamed: true
+      turnStreamed: true,
+      turnHadAgent: false
     })));
     try {
       const data = action === "approve"
         ? await api.approveSession(sessionId, pendingApproval.id)
         : await api.denySession(sessionId, pendingApproval.id);
+      if (!data) {
+        toast("Failed to resolve approval", "error");
+        return;
+      }
       await postTurn(sessionId, data);
     } finally {
       setSessionStateById((current) => updateOneSession(current, sessionId, (state) => ({
@@ -587,6 +626,10 @@ export function GatewayApp() {
 
   async function handleDelete(id) {
     const deleted = await api.deleteSession(id);
+    if (!deleted) {
+      toast("Failed to delete session", "error");
+      return;
+    }
     if (deleted?.active_session_id == null && status?.session_id === id) {
       clearActiveConversationState();
       await refreshStatusAndSessions();

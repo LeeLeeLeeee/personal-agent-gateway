@@ -35,7 +35,7 @@ from personal_agent_gateway.model_client import CodexModelClient
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
-from personal_agent_gateway.run_state import SessionRunRegistry
+from personal_agent_gateway.run_state import SessionAlreadyRunningError, SessionRunRegistry
 from personal_agent_gateway.runners.agent import AgentRunner
 from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
@@ -98,7 +98,12 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
 
     async def chat_for_session(session_id: str, message: str) -> dict[str, object]:
         request_id = uuid4().hex
-        run_registry.start(session_id, request_id)
+        try:
+            started = run_registry.start_if_exists(session_id, request_id, lambda: transcript.exists(session_id))
+        except SessionAlreadyRunningError as exc:
+            raise HTTPException(status_code=409, detail="Session is already running") from exc
+        if not started:
+            raise HTTPException(status_code=404, detail="Session not found")
         try:
             result = await runtime_for_session(session_id).handle_user_message(message)
             return {
@@ -108,7 +113,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
                 "last_event_id": _last_session_event_id(event_bus.recent(), session_id),
             }
         finally:
-            run_registry.finish(session_id)
+            run_registry.finish(session_id, request_id)
 
     app.include_router(auth_router)
     app.include_router(capabilities_router)
@@ -176,7 +181,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             "workspace_root": str(app_config.workspace_root),
             "session_id": session_id,
             "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
-            "pending_approval": _has_pending_shell_approval(events),
+            "pending_approval": _pending_shell_approval(events) or False,
             "session_status": _session_status(events, session_id, run_registry),
             "cookie_secure": app_config.cookie_secure,
             "session_config": session_config,
@@ -241,9 +246,10 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         return {
             "session_id": session_id,
             "status": _session_status(events, session_id, run_registry),
-            "pending_approval": _has_pending_shell_approval(events),
+            "pending_approval": _pending_shell_approval(events) or False,
             "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
-            "last_event_id": _last_activity_event_id(activity_events),
+            "last_event_id": _last_session_event_id(event_bus.recent(), session_id),
+            "last_activity_id": _last_activity_event_id(activity_events),
             "session_config": effective_config.model_dump(mode="json"),
         }
 
@@ -275,7 +281,11 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
 
     @app.delete("/api/sessions/{session_id}")
     def delete_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:
-        if not transcript.delete(session_id):
+        try:
+            deleted = run_registry.delete_if_idle(session_id, lambda: transcript.delete(session_id))
+        except SessionAlreadyRunningError as exc:
+            raise HTTPException(status_code=409, detail="Session is running")
+        if not deleted:
             raise HTTPException(status_code=404, detail="Session not found")
         app.state.session_activity_service.delete_session(session_id)
         return {"deleted": True, "active_session_id": transcript.active_id()}
@@ -297,12 +307,17 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     ) -> dict[str, object]:
         require_session_id(session_id)
         request_id = uuid4().hex
-        run_registry.start(session_id, request_id)
+        try:
+            started = run_registry.start_if_exists(session_id, request_id, lambda: transcript.exists(session_id))
+        except SessionAlreadyRunningError as exc:
+            raise HTTPException(status_code=409, detail="Session is already running") from exc
+        if not started:
+            raise HTTPException(status_code=404, detail="Session not found")
         try:
             result = await runtime_for_session(session_id).approve(approval_id)
             return {**_runtime_response(result), "session_id": session_id, "request_id": request_id}
         finally:
-            run_registry.finish(session_id)
+            run_registry.finish(session_id, request_id)
 
     @app.post("/api/sessions/{session_id}/approvals/{approval_id}/deny")
     async def session_deny(
@@ -312,12 +327,17 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     ) -> dict[str, object]:
         require_session_id(session_id)
         request_id = uuid4().hex
-        run_registry.start(session_id, request_id)
+        try:
+            started = run_registry.start_if_exists(session_id, request_id, lambda: transcript.exists(session_id))
+        except SessionAlreadyRunningError as exc:
+            raise HTTPException(status_code=409, detail="Session is already running") from exc
+        if not started:
+            raise HTTPException(status_code=404, detail="Session not found")
         try:
             result = await runtime_for_session(session_id).deny(approval_id)
             return {**_runtime_response(result), "session_id": session_id, "request_id": request_id}
         finally:
-            run_registry.finish(session_id)
+            run_registry.finish(session_id, request_id)
 
     @app.post("/api/approvals/{approval_id}/approve")
     async def approve(approval_id: str, _session: None = session_dependency) -> dict[str, object]:
@@ -490,15 +510,33 @@ def _last_session_event_id(events: list[dict[str, object]], session_id: str) -> 
 
 
 def _has_pending_shell_approval(events: list[object]) -> bool:
+    return _pending_shell_approval(events) is not None
+
+
+def _pending_shell_approval(events: list[object]) -> dict[str, object] | None:
     pending_by_tool_id: set[str] = set()
+    pending_by_tool_id_payload: dict[str, dict[str, object]] = {}
     for event in events:
         kind = getattr(event, "kind", "")
         payload = getattr(event, "payload", {})
         if kind == "tool_request" and payload.get("name") == "shell.run":
-            pending_by_tool_id.add(str(payload.get("id", "")))
+            tool_id = str(payload.get("id", ""))
+            pending_by_tool_id.add(tool_id)
+            pending_by_tool_id_payload[tool_id] = payload
         elif kind in {"tool_result", "tool_denial"}:
-            pending_by_tool_id.discard(str(payload.get("id", "")))
-    return bool(pending_by_tool_id)
+            tool_id = str(payload.get("id", ""))
+            pending_by_tool_id.discard(tool_id)
+            pending_by_tool_id_payload.pop(tool_id, None)
+    if not pending_by_tool_id:
+        return None
+    tool_id = next(reversed(tuple(pending_by_tool_id)))
+    payload = pending_by_tool_id_payload.get(tool_id, {})
+    arguments = payload.get("arguments")
+    command = arguments.get("command") if isinstance(arguments, dict) else None
+    approval_id = payload.get("approval_id")
+    if not isinstance(approval_id, str) or not isinstance(command, str):
+        return None
+    return {"id": approval_id, "command": command}
 
 
 def _select_frontend_index(package_dir: Path) -> Path:

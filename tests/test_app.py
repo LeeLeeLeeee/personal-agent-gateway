@@ -467,6 +467,77 @@ def test_delete_session_removes_only_target_session_activity_rows(tmp_path: Path
     assert len(activity_service.list(second_id)) == 1
 
 
+def test_delete_running_session_returns_409_and_preserves_session(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    client = auth_client(config, FakeRuntime())
+    activity_service = client.app.state.session_activity_service
+    activity_service.record(session_id, "runtime.completed", "runtime", {"pending_approval": None})
+    client.app.state.run_registry.start(session_id, "request-1")
+
+    response = client.delete(f"/api/sessions/{session_id}")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Session is running"}
+    assert store.exists(session_id) is True
+    assert len(activity_service.list(session_id)) == 1
+
+
+def test_session_chat_rejects_second_active_run_for_same_session(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    client = auth_client(config, FakeRuntime())
+    client.app.state.run_registry.start(session_id, "request-1")
+
+    response = client.post(f"/api/sessions/{session_id}/chat", json={"message": "overlap"})
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Session is already running"}
+    assert store.load(session_id) == []
+
+
+def test_session_status_separates_sse_event_id_from_activity_id(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    client = auth_client(config, FakeRuntime())
+    activity_service = client.app.state.session_activity_service
+    activity_service.record(session_id, "runtime.completed", "runtime", {"pending_approval": None})
+
+    response = client.get(f"/api/sessions/{session_id}/status")
+
+    assert response.status_code == 200
+    assert response.json()["last_event_id"] is None
+    assert response.json()["last_activity_id"] == 1
+
+
+def test_session_status_restores_pending_shell_approval_object(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    store.append_to(
+        session_id,
+        "tool_request",
+        {
+            "id": "tool-1",
+            "name": "shell.run",
+            "arguments": {"command": "printf ok"},
+            "approval_id": "approval-1",
+        },
+    )
+    client = auth_client(config, FakeRuntime())
+
+    response = client.get(f"/api/sessions/{session_id}/status")
+
+    assert response.status_code == 200
+    assert response.json()["pending_approval"] == {
+        "id": "approval-1",
+        "command": "printf ok",
+    }
+
+
 def test_activate_missing_session_returns_404(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     client = auth_client(config, FakeRuntime())

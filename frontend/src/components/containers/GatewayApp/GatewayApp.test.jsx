@@ -186,7 +186,37 @@ describe("GatewayApp", () => {
       "/api/approvals/approval-1/approve",
       expect.anything()
     );
+    expect(await screen.findByText("Approved via session endpoint")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("WAITING APPROVAL")).not.toBeInTheDocument());
+  });
+
+  it("keeps pending approval visible when approval request is rejected", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/session-1/chat": {
+        messages: [],
+        pending_approval: { id: "approval-1", command: "dir" }
+      },
+      "POST /api/sessions/session-1/approvals/approval-1/approve": () => response({ detail: "Session is already running" }, false),
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await userEvent.type(input, "run it");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("WAITING APPROVAL");
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(await screen.findByText("Failed to resolve approval")).toBeInTheDocument();
+    expect(screen.getByText("WAITING APPROVAL")).toBeInTheDocument();
   });
 
   it("searches and activates sessions from the session rail", async () => {
@@ -350,6 +380,7 @@ describe("GatewayApp", () => {
     render(<GatewayApp />);
 
     await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
     const source = MockEventSource.instances[0];
     act(() => {
       source.emit({
@@ -386,6 +417,7 @@ describe("GatewayApp", () => {
     render(<GatewayApp />);
 
     await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
     const source = MockEventSource.instances[0];
     act(() => {
       source.emit({
@@ -399,6 +431,36 @@ describe("GatewayApp", () => {
 
     expect(screen.getByPlaceholderText("Message the agent, or describe a local action...")).not.toBeDisabled();
     expect(screen.getByText("AGENT IDLE")).toBeInTheDocument();
+  });
+
+  it("keeps active session state when deleting a running session fails", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [
+        { kind: "user", created_at: "2026-07-09T01:00:00Z", payload: { content: "hello" } }
+      ] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/sessions/session-1/history": { events: [
+        { kind: "user", created_at: "2026-07-09T01:00:00Z", payload: { content: "hello" } }
+      ] },
+      "GET /api/sessions/session-1/activity": { events: [] },
+      "GET /api/sessions/session-1/status": { status: "idle", session_id: "session-1" },
+      "DELETE /api/sessions/session-1": () => response({ detail: "Session is running" }, false)
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+
+    expect(await screen.findByText("hello")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "DELETE SESSION" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByText("Failed to delete session")).toBeInTheDocument();
+    expect(screen.getByText("hello")).toBeInTheDocument();
+    expect(screen.queryByText("Session deleted")).not.toBeInTheDocument();
   });
 
   it("does not recreate the SSE connection when chat busy state changes", async () => {
@@ -422,6 +484,102 @@ describe("GatewayApp", () => {
 
     expect(await screen.findByText("Fallback answer")).toBeInTheDocument();
     expect(MockEventSource.instances.length).toBe(1);
+  });
+
+  it("removes unsent local user row when chat request is rejected", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/session-1/chat": () => response({ detail: "Session is already running" }, false)
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await userEvent.type(input, "lost message");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Failed to send message")).toBeInTheDocument();
+    expect(screen.queryByText("lost message")).not.toBeInTheDocument();
+  });
+
+  it("renders HTTP fallback answer when only runtime activity streamed", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/session-1/chat": { messages: [{ content: "HTTP answer" }], pending_approval: null },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<GatewayApp />);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    const source = MockEventSource.instances[0];
+    await userEvent.type(input, "hello");
+    const send = screen.getByRole("button", { name: "Send" });
+    await userEvent.click(send);
+    act(() => {
+      source.emit({
+        id: 101,
+        session_id: "session-1",
+        event_seq: 1,
+        type: "runtime.user_message.started",
+        payload: { message: "hello" }
+      });
+      source.emit({
+        id: 102,
+        session_id: "session-1",
+        event_seq: 2,
+        type: "runtime.completed",
+        payload: { pending_approval: null }
+      });
+    });
+
+    expect(await screen.findByText("HTTP answer")).toBeInTheDocument();
+  });
+
+  it("reconciles a late streamed agent answer with the HTTP fallback answer", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/session-1/chat": { messages: [{ content: "Same final answer" }], pending_approval: null },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<GatewayApp />);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    const source = MockEventSource.instances[0];
+    await userEvent.type(input, "hello");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Same final answer")).toBeInTheDocument();
+
+    act(() => {
+      source.emit({
+        id: 103,
+        session_id: "session-1",
+        event_seq: 3,
+        type: "codex.event",
+        payload: { item: { type: "agent_message", id: "agent-1", text: "Same final answer" } }
+      });
+    });
+
+    expect(screen.getAllByText("Same final answer")).toHaveLength(1);
   });
 
   it("ignores duplicate SSE event ids", async () => {

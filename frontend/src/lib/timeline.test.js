@@ -58,7 +58,10 @@ describe("timeline model", () => {
 
   it("merges transcript and durable activity in deterministic order", () => {
     const timeline = timelineFromSession(
-      [{ kind: "user", created_at: "2026-07-09T01:00:00Z", payload: { content: "hello" } }],
+      [
+        { kind: "user", created_at: "2026-07-09T01:00:00Z", payload: { content: "hello" } },
+        { kind: "assistant", created_at: "2026-07-09T01:00:02Z", payload: { content: "done" } }
+      ],
       [
         {
           id: 10,
@@ -70,14 +73,6 @@ describe("timeline model", () => {
         {
           id: 11,
           event_seq: 2,
-          session_id: "session-1",
-          type: "codex.event",
-          created_at: "2026-07-09T01:00:02Z",
-          payload: { item: { type: "agent_message", id: "agent-1", text: "done" } }
-        },
-        {
-          id: 12,
-          event_seq: 3,
           type: "runtime.completed",
           created_at: "2026-07-09T01:00:03Z",
           payload: {}
@@ -88,13 +83,59 @@ describe("timeline model", () => {
     expect(timeline.map((entry) => entry.type)).toEqual(["user", "event_row", "agent", "event_row"]);
     expect(timeline.map((entry) => entry.order)).toEqual([0, 1, 2, 3]);
     expect(timeline[1].key).toBe("event:1");
-    expect(timeline[2].key).toBe("agent:session-1:agent-1");
+    expect(timeline[2].text).toBe("done");
     expect(timeline[3]).toEqual(expect.objectContaining({
-      key: "event:3",
-      serverOrder: 3,
+      key: "event:2",
+      serverOrder: 2,
       label: "runtime.completed",
       time: "10:00:03"
     }));
+  });
+
+  it("dedupes streamed agent activity already persisted as assistant transcript", () => {
+    const timeline = timelineFromSession(
+      [
+        { kind: "user", created_at: "2026-07-09T01:00:00Z", payload: { content: "hello" } },
+        { kind: "assistant", created_at: "2026-07-09T01:00:02Z", payload: { content: "same answer" } }
+      ],
+      [{
+        id: 11,
+        event_seq: 2,
+        session_id: "session-1",
+        type: "codex.event",
+        created_at: "2026-07-09T01:00:02Z",
+        payload: { item: { type: "agent_message", id: "agent-1", text: "same answer" } }
+      }]
+    );
+
+    expect(timeline.filter((entry) => entry.type === "agent").map((entry) => entry.text))
+      .toEqual(["same answer"]);
+  });
+
+  it("reconciles persisted command updates by stable command key", () => {
+    const timeline = timelineFromSession(
+      [],
+      [
+        {
+          event_seq: 1,
+          session_id: "session-1",
+          type: "codex.event",
+          created_at: "2026-07-09T01:00:01Z",
+          payload: { item: { type: "command_execution", id: "cmd-1", command: "npm test", status: "in_progress" } }
+        },
+        {
+          event_seq: 2,
+          session_id: "session-1",
+          type: "codex.event",
+          created_at: "2026-07-09T01:00:02Z",
+          payload: { item: { type: "command_execution", id: "cmd-1", command: "npm test", status: "completed", exit_code: 0, aggregated_output: "ok" } }
+        }
+      ]
+    );
+
+    const commands = timeline.filter((entry) => entry.type === "command");
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toEqual(expect.objectContaining({ command: "npm test", status: "completed", exit: 0 }));
   });
 
   it("maps normalized SSE envelopes and keeps legacy raw Codex events working", () => {
