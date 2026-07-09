@@ -60,3 +60,34 @@ def test_artifact_store_registers_existing_file(tmp_path: Path) -> None:
     assert artifact.relative_path == "images/capture.png"
     assert store.content_path(artifact.id) == root / "images" / "capture.png"
     assert (root / "images" / "capture.png").read_bytes() == b"png"
+
+
+def test_find_by_source_path_and_delete(tmp_path: Path) -> None:
+    from personal_agent_gateway.artifacts import ArtifactStore
+    from personal_agent_gateway.db import Database
+
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+    src = tmp_path / "cat.png"
+    src.write_bytes(b"img")
+
+    created = store.register_existing_file(
+        artifact_type="image",
+        title="cat.png",
+        source_path=src,
+        relative_path="files/aa/cat.png",
+        mime_type="image/png",
+        metadata={"source_path": str(src.resolve()), "original_path": "cat.png"},
+    )
+
+    assert store.find_by_source_path(str(src.resolve())).id == created.id
+    assert store.find_by_source_path(str(tmp_path / "other.png")) is None
+
+    stored = store.content_path(created.id)
+    assert stored.exists()
+    store.delete(created.id)
+    assert not stored.exists()
+    import pytest
+    with pytest.raises(KeyError):
+        store.get(created.id)

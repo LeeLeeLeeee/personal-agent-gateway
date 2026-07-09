@@ -45,6 +45,13 @@ def register_artifact(
         raise HTTPException(status_code=404, detail="File not found")
     if not is_registrable(candidate.name):
         raise HTTPException(status_code=415, detail="Unsupported file type")
+    source_path = str(candidate)
+    existing = request.app.state.artifact_store.find_by_source_path(source_path)
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Already registered", "artifact": _artifact_payload(existing)},
+        )
     artifact = request.app.state.artifact_store.register_existing_file(
         artifact_type=artifact_type_for(candidate.name),
         title=payload.title or candidate.name,
@@ -52,6 +59,7 @@ def register_artifact(
         relative_path=f"files/{uuid4().hex[:8]}/{candidate.name}",
         mime_type=mime_type_for(candidate.name),
         source_session_id=payload.session_id,
+        metadata={"source_path": source_path, "original_path": payload.path},
     )
     return {"artifact": _artifact_payload(artifact)}
 
@@ -62,7 +70,23 @@ def get_artifact(
     artifact_id: str,
     _session: None = session_dependency,
 ) -> dict[str, object]:
-    return {"artifact": _artifact_payload(request.app.state.artifact_store.get(artifact_id))}
+    try:
+        return {"artifact": _artifact_payload(request.app.state.artifact_store.get(artifact_id))}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Artifact not found") from exc
+
+
+@router.delete("/{artifact_id}")
+def delete_artifact(
+    request: Request,
+    artifact_id: str,
+    _session: None = session_dependency,
+) -> dict[str, object]:
+    try:
+        request.app.state.artifact_store.delete(artifact_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Artifact not found") from exc
+    return {"deleted": True}
 
 
 @router.get("/{artifact_id}/content")

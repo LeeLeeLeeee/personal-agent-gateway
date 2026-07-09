@@ -102,6 +102,24 @@ class ArtifactStore:
             for row in self._db.fetchall("select * from artifacts order by created_at desc")
         ]
 
+    def find_by_source_path(self, source_path: str) -> Artifact | None:
+        for artifact in self.list():
+            if artifact.metadata.get("source_path") == source_path:
+                return artifact
+        return None
+
+    def delete(self, artifact_id: str) -> None:
+        artifact = self.get(artifact_id)  # raises KeyError if unknown
+        for path in (artifact.file_path, artifact.thumbnail_path):
+            if path is None:
+                continue
+            try:
+                stored = self._stored_path(path)
+            except ArtifactPathError:
+                continue
+            stored.unlink(missing_ok=True)
+        self._db.execute("delete from artifacts where id = ?", (artifact_id,))
+
     def content_path(self, artifact_id: str) -> Path:
         artifact = self.get(artifact_id)
         return self._stored_path(artifact.file_path)

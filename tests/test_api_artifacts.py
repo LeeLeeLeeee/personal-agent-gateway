@@ -180,3 +180,39 @@ def test_register_artifact_requires_session(tmp_path: Path) -> None:
     response = client.post("/api/artifacts/register", json={"path": "x.png"})
 
     assert response.status_code == 401
+
+
+def test_register_artifact_rejects_duplicate_source_path(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    workspace = client.app.state.app_config.workspace_root
+    (workspace / "dup.png").write_bytes(b"img")
+
+    first = client.post("/api/artifacts/register", json={"path": "dup.png"})
+    assert first.status_code == 200
+    first_id = first.json()["artifact"]["id"]
+
+    second = client.post("/api/artifacts/register", json={"path": "dup.png"})
+    assert second.status_code == 409
+    assert second.json()["detail"]["artifact"]["id"] == first_id
+
+
+def test_delete_artifact_removes_it_and_frees_reregistration(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    workspace = client.app.state.app_config.workspace_root
+    (workspace / "dup.png").write_bytes(b"img")
+
+    created = client.post("/api/artifacts/register", json={"path": "dup.png"}).json()["artifact"]
+
+    deleted = client.delete(f"/api/artifacts/{created['id']}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+    assert client.get(f"/api/artifacts/{created['id']}").status_code == 404
+
+    # source path is free again
+    again = client.post("/api/artifacts/register", json={"path": "dup.png"})
+    assert again.status_code == 200
+
+
+def test_delete_artifact_returns_404_for_unknown_id(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    assert client.delete("/api/artifacts/missing").status_code == 404
