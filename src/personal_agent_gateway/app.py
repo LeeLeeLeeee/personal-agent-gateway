@@ -91,6 +91,8 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
 
     def runtime_for_session(session_id: str) -> AgentRuntime:
         if injected_runtime is not None:
+            if hasattr(injected_runtime, "for_session"):
+                return injected_runtime.for_session(session_id)
             return injected_runtime
         return runtime_factory.create_runtime_for_session(session_id)
 

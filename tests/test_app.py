@@ -875,7 +875,7 @@ def test_reset_invalidates_real_runtime_pending_approval(tmp_path: Path) -> None
     assert not (config.workspace_root / "stale.txt").exists()
 
 
-def test_session_scoped_approval_cannot_resolve_other_session_pending_request(tmp_path: Path) -> None:
+def test_session_scoped_approval_endpoints_use_path_session_in_injected_runtime_mode(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     command = write_file_command("ran.txt", "ran")
     runtime = AgentRuntime(
@@ -903,11 +903,62 @@ def test_session_scoped_approval_cannot_resolve_other_session_pending_request(tm
     pending = client.post(f"/api/sessions/{session_a}/chat", json={"message": "run it"}).json()["pending_approval"]
     session_b = transcript.start_new()
 
-    response = client.post(f"/api/sessions/{session_b}/approvals/{pending['id']}/approve")
+    wrong_session_response = client.post(f"/api/sessions/{session_b}/approvals/{pending['id']}/approve")
+
+    assert wrong_session_response.status_code == 200
+    assert wrong_session_response.json()["messages"][0]["content"].startswith("Error: No pending approval")
+    assert not (config.workspace_root / "ran.txt").exists()
+
+    response = client.post(f"/api/sessions/{session_a}/approvals/{pending['id']}/approve")
 
     assert response.status_code == 200
-    assert response.json()["messages"][0]["content"].startswith("Error: No pending approval")
-    assert not (config.workspace_root / "ran.txt").exists()
+    assert response.json()["session_id"] == session_a
+    assert response.json()["messages"] == [{"role": "assistant", "content": "done"}]
+    assert response.json()["pending_approval"] is None
+    assert transcript.active_id() == session_b
+    assert (config.workspace_root / "ran.txt").read_text(encoding="utf-8") == "ran"
+
+
+def test_session_scoped_deny_endpoints_use_path_session_in_injected_runtime_mode(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    command = write_file_command("denied.txt", "denied")
+    runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient(
+            [
+                ModelResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="shell-call",
+                            name="shell.run",
+                            arguments={"command": command},
+                        )
+                    ],
+                )
+            ]
+        ),
+    )
+    client = auth_client(config, runtime)
+    transcript = TranscriptStore(config.session_dir)
+    session_a = transcript.active_id() or transcript.start_new()
+    pending = client.post(f"/api/sessions/{session_a}/chat", json={"message": "run it"}).json()["pending_approval"]
+    session_b = transcript.start_new()
+
+    wrong_session_response = client.post(f"/api/sessions/{session_b}/approvals/{pending['id']}/deny")
+
+    assert wrong_session_response.status_code == 200
+    assert wrong_session_response.json()["messages"][0]["content"].startswith("Error: No pending approval")
+
+    response = client.post(f"/api/sessions/{session_a}/approvals/{pending['id']}/deny")
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == session_a
+    assert response.json()["messages"] == [{"role": "assistant", "content": "Command denied."}]
+    assert response.json()["pending_approval"] is None
+    assert transcript.active_id() == session_b
+    assert not (config.workspace_root / "denied.txt").exists()
 
 
 def test_approve_resumes_execution(tmp_path: Path) -> None:

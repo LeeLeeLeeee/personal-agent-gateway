@@ -48,6 +48,18 @@ class AgentRuntime:
     def attach_event_bus(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
 
+    def for_session(self, session_id: str) -> "AgentRuntime":
+        return AgentRuntime(
+            self._transcript,
+            self._tools,
+            self._model,
+            job_service=self._job_service,
+            event_bus=self._event_bus,
+            history_mode=self._history_mode,
+            on_upstream_session_id=self._on_upstream_session_id,
+            session_id=session_id,
+        )
+
     async def handle_user_message(self, content: str) -> RuntimeResult:
         session_id: str | None = None
         try:
