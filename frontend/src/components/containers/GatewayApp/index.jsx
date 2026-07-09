@@ -12,6 +12,7 @@ import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { PersonaLibrary } from "../../organisms/PersonaLibrary/index.jsx";
 import { TeamRunForm } from "../../organisms/TeamRunForm/index.jsx";
 import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
+import { SettingsView } from "../../organisms/SettingsView/index.jsx";
 import { useConfirm, useToast } from "../../providers/UiProvider/index.jsx";
 
 function appendOrReconcileCommand(entries, entry) {
@@ -77,6 +78,7 @@ export function GatewayApp() {
   const [creatingTeamRun, setCreatingTeamRun] = useState(false);
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
+  const [settings, setSettings] = useState(null);
   const turnHadAgentRef = useRef(false);
   const turnStreamedRef = useRef(false);
   const turnStartRef = useRef(null);
@@ -167,6 +169,8 @@ export function GatewayApp() {
     } else if (screen === "teams") {
       api.personas().then(setPersonas);
       api.teamRuns().then(setTeamRuns);
+    } else if (screen === "settings") {
+      api.settings().then(setSettings);
     }
   }, [screen, authenticated]);
 
@@ -592,6 +596,8 @@ export function GatewayApp() {
             </div>
           </div>
         )
+      ) : screen === "settings" ? (
+        settings ? <SettingsView settings={settings} /> : null
       ) : (
         <div className="screen">
           <div className="planned">{(activeNav?.label || screen).toUpperCase()} - PLANNED</div>

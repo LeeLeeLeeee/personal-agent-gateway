@@ -86,6 +86,10 @@ export const api = {
   async artifacts() {
     return jsonList(await fetch("/api/artifacts"), "artifacts");
   },
+  async settings() {
+    const body = await jsonOrNull(await fetch("/api/settings"));
+    return body?.settings || null;
+  },
   async renameSession(id, title) {
     return jsonOrNull(await fetch(`/api/sessions/${encodeURIComponent(id)}/title`, {
       method: "POST",
