@@ -593,8 +593,8 @@ h1,h2,h3,p{margin:0}
 
 .badge-succeeded{color:var(--c-ok);border-color:var(--c-ok)}
 .badge-queued,.badge-waiting_approval{color:var(--c-warn);border-color:var(--c-warn)}
-.badge-active{color:var(--c-ok);border-color:var(--c-ok)}
-.badge-default{color:var(--c-grey);border-color:var(--c-grey)}
+.badge-enabled{color:var(--c-ok);border-color:var(--c-ok)}
+.badge-paused{color:var(--c-grey);border-color:var(--c-grey)}
 
 /* ---- schedules ---- */
 .schedules-view{display:grid;grid-template-columns:1fr 356px;gap:24px;align-items:start}

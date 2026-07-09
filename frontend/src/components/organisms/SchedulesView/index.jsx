@@ -159,7 +159,7 @@ function ScheduleRow({ schedule, onPause, onResume, onDelete, onRunNow }) {
         <div className="schedule-row-prompt mono">{schedule.input_template?.prompt}</div>
         <div className="schedule-row-meta">
           <span className="schedule-cron mono">{schedule.cron_expression}</span>
-          <StatusBadge kind={schedule.enabled ? "active" : "default"} />
+          <StatusBadge kind={schedule.enabled ? "enabled" : "paused"} />
           <span className="mono schedule-row-when">NEXT · {fmtWhen(schedule.next_run_at) || "—"}</span>
           <span className="mono schedule-row-when">LAST · {fmtWhen(schedule.last_run_at) || "never"}</span>
         </div>

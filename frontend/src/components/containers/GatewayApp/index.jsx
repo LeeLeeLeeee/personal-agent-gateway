@@ -467,13 +467,21 @@ export function GatewayApp() {
   }
 
   async function handlePauseSchedule(id) {
-    await api.pauseSchedule(id);
-    setSchedules(await api.schedules());
+    try {
+      await api.pauseSchedule(id);
+      setSchedules(await api.schedules());
+    } catch (_error) {
+      toast("Failed to pause schedule", "error");
+    }
   }
 
   async function handleResumeSchedule(id) {
-    await api.resumeSchedule(id);
-    setSchedules(await api.schedules());
+    try {
+      await api.resumeSchedule(id);
+      setSchedules(await api.schedules());
+    } catch (_error) {
+      toast("Failed to resume schedule", "error");
+    }
   }
 
   async function handleDeleteSchedule(id) {
@@ -491,8 +499,12 @@ export function GatewayApp() {
   }
 
   async function handleRunScheduleNow(id) {
-    await api.runScheduleNow(id);
-    toast("실행을 시작했습니다", "success");
+    try {
+      await api.runScheduleNow(id);
+      toast("실행을 시작했습니다", "success");
+    } catch (_error) {
+      toast("Failed to run schedule", "error");
+    }
   }
 
   function handleSelectTeamRun(id) {
