@@ -50,7 +50,8 @@ describe("GatewayApp", () => {
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
-      "GET /api/jobs": { jobs: [] }
+      "GET /api/jobs": { jobs: [] },
+      "GET /api/schedules": { schedules: [] }
     });
 
     render(<GatewayApp />);
@@ -63,7 +64,7 @@ describe("GatewayApp", () => {
     expect(await screen.findByRole("heading", { name: "Jobs" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Schedules" }));
-    expect(screen.getByText("SCHEDULES - PLANNED")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Schedules" })).toBeInTheDocument();
   });
 
   it("shows the active session config in the statusbar even when /api/status is stale", async () => {

@@ -593,3 +593,31 @@ h1,h2,h3,p{margin:0}
 
 .badge-succeeded{color:var(--c-ok);border-color:var(--c-ok)}
 .badge-queued,.badge-waiting_approval{color:var(--c-warn);border-color:var(--c-warn)}
+.badge-active{color:var(--c-ok);border-color:var(--c-ok)}
+.badge-default{color:var(--c-grey);border-color:var(--c-grey)}
+
+/* ---- schedules ---- */
+.schedules-view{display:grid;grid-template-columns:1fr 356px;gap:24px;align-items:start}
+.schedules-sub{font-size:12px;color:var(--c-grey);margin-top:6px;margin-bottom:16px}
+.schedule-list{border:var(--bd)}
+.schedule-row{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:14px 16px;border-bottom:3px solid var(--c-black)}
+.schedule-list .schedule-row:last-child{border-bottom:none}
+.schedule-row-main{flex:1;min-width:0}
+.schedule-row-name{font-size:14px;font-weight:700}
+.schedule-row-prompt{font-size:12px;color:#555;margin-top:4px;overflow-wrap:anywhere}
+.schedule-row-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.schedule-cron{border:var(--bd-sm);background:var(--c-panel);padding:2px 8px;font-size:11px}
+.schedule-row-when{font-size:10px;letter-spacing:.5px;color:var(--c-grey)}
+.schedule-row-actions{display:flex;gap:8px;flex:none}
+.schedule-form{border:5px solid var(--c-black)}
+.schedule-form-head{background:var(--c-black);color:var(--c-white);padding:9px 14px;font-size:11px;letter-spacing:1px;text-transform:uppercase}
+.schedule-form-body{padding:16px;display:flex;flex-direction:column;gap:14px}
+.schedule-field{display:flex;flex-direction:column;gap:6px}
+.schedule-field-label{font-family:var(--font-mono);font-size:10px;letter-spacing:1px;color:var(--c-grey);text-transform:uppercase}
+.schedule-input,.schedule-textarea{border:var(--bd-in);padding:8px 10px;font-family:var(--font-body);font-size:13px;background:var(--c-white)}
+.schedule-textarea{min-height:80px;resize:vertical}
+.schedule-cron-preview{margin:0}
+.schedule-cron-desc{color:#aaa}
+.schedule-policy{font-size:10px;letter-spacing:.5px;color:var(--c-grey)}
+.schedule-submit{width:100%;justify-content:center}
+@media (max-width:1100px){.schedules-view{grid-template-columns:1fr}}

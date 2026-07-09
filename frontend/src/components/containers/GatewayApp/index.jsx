@@ -15,6 +15,7 @@ import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
 import { SettingsView } from "../../organisms/SettingsView/index.jsx";
 import { ArtifactsView } from "../../organisms/ArtifactsView/index.jsx";
 import { JobsView } from "../../organisms/JobsView/index.jsx";
+import { SchedulesView } from "../../organisms/SchedulesView/index.jsx";
 import { useConfirm, useToast } from "../../providers/UiProvider/index.jsx";
 
 function appendOrReconcileCommand(entries, entry) {
@@ -83,6 +84,7 @@ export function GatewayApp() {
   const [settings, setSettings] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
   const [jobs, setJobs] = useState([]);
+  const [schedules, setSchedules] = useState([]);
   const turnHadAgentRef = useRef(false);
   const turnStreamedRef = useRef(false);
   const turnStartRef = useRef(null);
@@ -179,6 +181,8 @@ export function GatewayApp() {
       api.artifacts().then(setArtifacts);
     } else if (screen === "jobs") {
       api.jobs().then(setJobs);
+    } else if (screen === "schedules") {
+      api.schedules().then(setSchedules);
     }
   }, [screen, authenticated]);
 
@@ -448,6 +452,49 @@ export function GatewayApp() {
     }
   }
 
+  async function handleCreateSchedule(payload) {
+    try {
+      const created = await api.createSchedule(payload);
+      if (!created) {
+        toast("Failed to create schedule", "error");
+        return;
+      }
+      setSchedules(await api.schedules());
+      toast("Schedule created", "success");
+    } catch (_error) {
+      toast("Failed to create schedule", "error");
+    }
+  }
+
+  async function handlePauseSchedule(id) {
+    await api.pauseSchedule(id);
+    setSchedules(await api.schedules());
+  }
+
+  async function handleResumeSchedule(id) {
+    await api.resumeSchedule(id);
+    setSchedules(await api.schedules());
+  }
+
+  async function handleDeleteSchedule(id) {
+    try {
+      const ok = await api.deleteSchedule(id);
+      if (!ok) {
+        toast("Failed to delete schedule", "error");
+        return;
+      }
+      setSchedules(await api.schedules());
+      toast("Schedule deleted", "success");
+    } catch (_error) {
+      toast("Failed to delete schedule", "error");
+    }
+  }
+
+  async function handleRunScheduleNow(id) {
+    await api.runScheduleNow(id);
+    toast("실행을 시작했습니다", "success");
+  }
+
   function handleSelectTeamRun(id) {
     setSelectedTeamRunId(id);
   }
@@ -613,6 +660,17 @@ export function GatewayApp() {
       ) : screen === "jobs" ? (
         <div className="screen">
           <JobsView jobs={jobs} onLoadEvents={api.jobEvents} />
+        </div>
+      ) : screen === "schedules" ? (
+        <div className="screen">
+          <SchedulesView
+            schedules={schedules}
+            onCreate={handleCreateSchedule}
+            onPause={handlePauseSchedule}
+            onResume={handleResumeSchedule}
+            onDelete={handleDeleteSchedule}
+            onRunNow={handleRunScheduleNow}
+          />
         </div>
       ) : (
         <div className="screen">

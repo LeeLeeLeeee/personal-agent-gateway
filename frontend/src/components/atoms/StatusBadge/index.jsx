@@ -15,7 +15,9 @@ const LABELS = {
   waiting_approval: "WAITING",
   queued: "QUEUED",
   in_progress: "IN PROGRESS",
-  blocked: "BLOCKED"
+  blocked: "BLOCKED",
+  active: "ENABLED",
+  default: "PAUSED"
 };
 
 const ACTIVE = new Set([

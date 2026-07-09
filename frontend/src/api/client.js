@@ -106,6 +106,30 @@ export const api = {
   async jobEvents(id) {
     return jsonList(await fetch(`/api/jobs/${encodeURIComponent(id)}/events`), "events");
   },
+  async schedules() {
+    return jsonList(await fetch("/api/schedules"), "schedules");
+  },
+  async createSchedule(payload) {
+    const body = await jsonOrNull(await fetch("/api/schedules", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+    return body?.schedule || null;
+  },
+  async pauseSchedule(id) {
+    const body = await jsonOrNull(await fetch(`/api/schedules/${encodeURIComponent(id)}/pause`, { method: "POST" }));
+    return body?.schedule || null;
+  },
+  async resumeSchedule(id) {
+    const body = await jsonOrNull(await fetch(`/api/schedules/${encodeURIComponent(id)}/resume`, { method: "POST" }));
+    return body?.schedule || null;
+  },
+  async runScheduleNow(id) {
+    return jsonOrNull(await fetch(`/api/schedules/${encodeURIComponent(id)}/run-now`, { method: "POST" }));
+  },
+  async deleteSchedule(id) {
+    const response = await fetch(`/api/schedules/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return response.ok;
+  },
   async renameSession(id, title) {
     return jsonOrNull(await fetch(`/api/sessions/${encodeURIComponent(id)}/title`, {
       method: "POST",
