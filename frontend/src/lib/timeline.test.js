@@ -24,6 +24,16 @@ describe("timeline model", () => {
     ]);
   });
 
+  it("orders persisted transcript events by created_at", () => {
+    const timeline = timelineFromHistory([
+      { kind: "assistant", created_at: "2026-07-08T01:03:03Z", payload: { content: "second" } },
+      { kind: "user", created_at: "2026-07-08T01:02:03Z", payload: { content: "first" } }
+    ]);
+
+    expect(timeline.map((entry) => entry.text)).toEqual(["first", "second"]);
+    expect(timeline.map((entry) => entry.order)).toEqual([0, 1]);
+  });
+
   it("maps Codex SSE command and agent events without changing API contracts", () => {
     expect(entryFromSse({
       item: {
