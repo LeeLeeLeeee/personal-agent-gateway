@@ -271,7 +271,10 @@ def _session_agent_config(events: list[TranscriptEvent]) -> tuple[str, str, dict
 
 
 def _is_session_editable(events: list[TranscriptEvent]) -> bool:
-    return all(event.kind in {"session_config_set", "session_rename"} for event in events)
+    return all(
+        event.kind in {"session_config_set", "session_rename", "agent_session_link"}
+        for event in events
+    )
 
 
 def _has_pending_shell_approval(events: list[TranscriptEvent]) -> bool:

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from personal_agent_gateway.agent_session_link import AgentSessionLinkService
+from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.transcript import TranscriptStore
 
 
@@ -45,3 +46,23 @@ def test_session_link_ignores_different_agent_model_or_options(tmp_path: Path) -
     assert service.latest(session_id, "codex", "sonnet", {"effort": "medium"}) is None
     assert service.latest(session_id, "claude", "opus", {"effort": "medium"}) is None
     assert service.latest(session_id, "claude", "sonnet", {"effort": "high"}) is None
+
+
+def test_session_link_keeps_session_and_config_editable(tmp_path: Path) -> None:
+    transcript = TranscriptStore(tmp_path)
+    session_id = transcript.start_new()
+    transcript.append(
+        "agent_session_link",
+        {
+            "agent_id": "codex",
+            "model": "gpt-5.5",
+            "options_fingerprint": "fingerprint",
+            "upstream_session_id": "codex-thread-1",
+        },
+    )
+
+    session = transcript.list_sessions()[0]
+    config = SessionAgentConfigService(transcript).effective_config(session_id)
+
+    assert session.editable is True
+    assert config.editable is True
