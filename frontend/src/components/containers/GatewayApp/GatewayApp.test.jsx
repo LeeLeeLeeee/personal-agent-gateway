@@ -148,6 +148,45 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("Fallback answer")).toBeInTheDocument();
   });
 
+  it("uses the legacy approval endpoint for pending approvals in Task 5", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/session-1/chat": {
+        messages: [],
+        pending_approval: { id: "approval-1", command: "dir" }
+      },
+      "POST /api/approvals/approval-1/approve": {
+        messages: [{ content: "Approved via legacy endpoint" }],
+        pending_approval: null
+      },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<GatewayApp />);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await userEvent.type(input, "run it");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("WAITING APPROVAL");
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/approvals/approval-1/approve",
+      expect.objectContaining({ method: "POST" })
+    ));
+    expect(fetch).not.toHaveBeenCalledWith(
+      "/api/sessions/session-1/approvals/approval-1/approve",
+      expect.anything()
+    );
+    await waitFor(() => expect(screen.queryByText("WAITING APPROVAL")).not.toBeInTheDocument());
+  });
+
   it("searches and activates sessions from the session rail", async () => {
     let activeSessionId = "session-1";
     installFetch({
@@ -209,6 +248,48 @@ describe("GatewayApp", () => {
 
     await waitFor(() => expect(screen.queryByText("deleted session text")).not.toBeInTheDocument());
     expect(screen.getByText("AGENT IDLE")).toBeInTheDocument();
+  });
+
+  it("rebinds frontend active session to the reset session before the next send", async () => {
+    let resetCount = 0;
+    let activeSessionId = "session-1";
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": () => response({ ...status, session_id: activeSessionId }),
+      "GET /api/sessions": () => response({
+        sessions: activeSessionId === "session-2"
+          ? [{ ...sessions[0], id: "session-2", title: "Fresh session", is_active: true }]
+          : sessions
+      }),
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/reset": () => {
+        resetCount += 1;
+        activeSessionId = "session-2";
+        return response({ session_id: "session-2" });
+      },
+      "POST /api/sessions/session-2/chat": { messages: [{ content: "After reset reply" }], pending_approval: null },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<GatewayApp />);
+
+    await screen.findByLabelText("Agent Gateway");
+    await userEvent.click(screen.getByRole("button", { name: "+" }));
+
+    await waitFor(() => expect(screen.getAllByText("Fresh session").length).toBeGreaterThan(0));
+
+    const input = screen.getByPlaceholderText("Message the agent, or describe a local action...");
+    await userEvent.type(input, "hello after reset");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/session-2/chat",
+      expect.objectContaining({ method: "POST" })
+    ));
+    expect(resetCount).toBe(1);
+    expect(await screen.findByText("After reset reply")).toBeInTheDocument();
   });
 
   it("ignores live chat events from non-active sessions", async () => {

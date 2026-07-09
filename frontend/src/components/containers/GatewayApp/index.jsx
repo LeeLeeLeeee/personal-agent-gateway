@@ -511,8 +511,8 @@ export function GatewayApp() {
     })));
     try {
       const data = action === "approve"
-        ? await api.approveSession(sessionId, pendingApproval.id)
-        : await api.denySession(sessionId, pendingApproval.id);
+        ? await api.approve(pendingApproval.id)
+        : await api.deny(pendingApproval.id);
       await postTurn(sessionId, data);
     } finally {
       setSessionStateById((current) => updateOneSession(current, sessionId, (state) => ({
@@ -557,8 +557,23 @@ export function GatewayApp() {
   }
 
   async function handleReset() {
-    await api.reset();
-    clearActiveConversationState();
+    const reset = await api.reset();
+    const sessionId = reset?.session_id || null;
+    if (sessionId) {
+      setActiveSessionId(sessionId);
+      activeSessionIdRef.current = sessionId;
+      setSessionStateById((current) => updateOneSession(current, sessionId, (state) => ({
+        ...emptyChatSessionState(),
+        entries: state.entries,
+        nextLocalOrder: state.entries.length,
+        lastLoadedAt: Date.now()
+      })));
+      turnStartRef.current = null;
+      busyRef.current = false;
+      setSessionConfigError("");
+    } else {
+      clearActiveConversationState();
+    }
     await refreshStatusAndSessions();
   }
 
