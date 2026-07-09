@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../../../api/client.js";
 import { ArtifactModal } from "../ArtifactModal/index.jsx";
+import { GLYPH, fmtSize } from "../../../lib/artifactFormat.js";
 
 const TYPE_FILTERS = [
   ["all", "All"],
@@ -12,14 +13,6 @@ const TYPE_FILTERS = [
   ["report", "Reports"],
   ["archive", "Archives"]
 ];
-
-const GLYPH = { image: "▦", video: "▶", audio: "♪", document: "▤", log: "≣", report: "¶", archive: "◫" };
-
-function fmtSize(bytes) {
-  if (!bytes) return "0 KB";
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
 
 function fmtWhen(iso) {
   if (!iso) return "";

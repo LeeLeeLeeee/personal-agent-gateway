@@ -1,14 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../api/client.js";
 import { useConfirm, useToast } from "../../providers/UiProvider/index.jsx";
-
-const GLYPH = { image: "▦", video: "▶", audio: "♪", document: "▤", log: "≣", report: "¶", archive: "◫" };
-
-function fmtSize(bytes) {
-  if (!bytes) return "0 KB";
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
+import { GLYPH, fmtSize } from "../../../lib/artifactFormat.js";
 
 function ImageViewer({ src, alt }) {
   const [scale, setScale] = useState(1);
@@ -31,7 +24,7 @@ function ImageViewer({ src, alt }) {
     return () => el.removeEventListener("wheel", onWheel, { passive: false });
   }, [onWheel]);
 
-  function onDown(e) { drag.current = { x: e.clientX - pos.x, y: e.clientY - pos.y }; }
+  function onDown(e) { if (scale <= 1) return; drag.current = { x: e.clientX - pos.x, y: e.clientY - pos.y }; }
   function onMove(e) {
     if (!drag.current) return;
     setPos({ x: e.clientX - drag.current.x, y: e.clientY - drag.current.y });

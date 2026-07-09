@@ -46,6 +46,7 @@ def register_artifact(
     if not is_registrable(candidate.name):
         raise HTTPException(status_code=415, detail="Unsupported file type")
     source_path = str(candidate)
+    # Dedup is find-then-register (not atomic); acceptable for this single-user localhost tool.
     existing = request.app.state.artifact_store.find_by_source_path(source_path)
     if existing is not None:
         raise HTTPException(
