@@ -287,29 +287,49 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         response = await chat_for_session(session_id, request.message)
         return _compat_chat_response(response)
 
+    @app.post("/api/sessions/{session_id}/approvals/{approval_id}/approve")
+    async def session_approve(
+        session_id: str,
+        approval_id: str,
+        _session: None = session_dependency,
+    ) -> dict[str, object]:
+        require_session_id(session_id)
+        request_id = uuid4().hex
+        run_registry.start(session_id, request_id)
+        try:
+            result = await runtime_for_session(session_id).approve(approval_id)
+            return {**_runtime_response(result), "session_id": session_id, "request_id": request_id}
+        finally:
+            run_registry.finish(session_id)
+
+    @app.post("/api/sessions/{session_id}/approvals/{approval_id}/deny")
+    async def session_deny(
+        session_id: str,
+        approval_id: str,
+        _session: None = session_dependency,
+    ) -> dict[str, object]:
+        require_session_id(session_id)
+        request_id = uuid4().hex
+        run_registry.start(session_id, request_id)
+        try:
+            result = await runtime_for_session(session_id).deny(approval_id)
+            return {**_runtime_response(result), "session_id": session_id, "request_id": request_id}
+        finally:
+            run_registry.finish(session_id)
+
     @app.post("/api/approvals/{approval_id}/approve")
     async def approve(approval_id: str, _session: None = session_dependency) -> dict[str, object]:
         session_id = transcript.active_id()
-        request_id = uuid4().hex
         if session_id is not None:
-            run_registry.start(session_id, request_id)
-        try:
-            return _runtime_response(await active_runtime().approve(approval_id))
-        finally:
-            if session_id is not None:
-                run_registry.finish(session_id)
+            return _compat_chat_response(await session_approve(session_id, approval_id, _session))
+        return _runtime_response(await active_runtime().approve(approval_id))
 
     @app.post("/api/approvals/{approval_id}/deny")
     async def deny(approval_id: str, _session: None = session_dependency) -> dict[str, object]:
         session_id = transcript.active_id()
-        request_id = uuid4().hex
         if session_id is not None:
-            run_registry.start(session_id, request_id)
-        try:
-            return _runtime_response(await active_runtime().deny(approval_id))
-        finally:
-            if session_id is not None:
-                run_registry.finish(session_id)
+            return _compat_chat_response(await session_deny(session_id, approval_id, _session))
+        return _runtime_response(await active_runtime().deny(approval_id))
 
     @app.post("/api/reset")
     def reset(_session: None = session_dependency) -> dict[str, object]:

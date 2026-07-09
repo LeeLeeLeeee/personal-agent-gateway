@@ -148,7 +148,7 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("Fallback answer")).toBeInTheDocument();
   });
 
-  it("uses the legacy approval endpoint for pending approvals in Task 5", async () => {
+  it("uses the session approval endpoint for pending approvals", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
       "GET /api/status": status,
@@ -160,8 +160,10 @@ describe("GatewayApp", () => {
         messages: [],
         pending_approval: { id: "approval-1", command: "dir" }
       },
-      "POST /api/approvals/approval-1/approve": {
-        messages: [{ content: "Approved via legacy endpoint" }],
+      "POST /api/sessions/session-1/approvals/approval-1/approve": {
+        session_id: "session-1",
+        request_id: "request-1",
+        messages: [{ content: "Approved via session endpoint" }],
         pending_approval: null
       },
       "GET /api/artifacts": { artifacts: [] }
@@ -177,11 +179,11 @@ describe("GatewayApp", () => {
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(
-      "/api/approvals/approval-1/approve",
+      "/api/sessions/session-1/approvals/approval-1/approve",
       expect.objectContaining({ method: "POST" })
     ));
     expect(fetch).not.toHaveBeenCalledWith(
-      "/api/sessions/session-1/approvals/approval-1/approve",
+      "/api/approvals/approval-1/approve",
       expect.anything()
     );
     await waitFor(() => expect(screen.queryByText("WAITING APPROVAL")).not.toBeInTheDocument());

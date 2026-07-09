@@ -875,6 +875,41 @@ def test_reset_invalidates_real_runtime_pending_approval(tmp_path: Path) -> None
     assert not (config.workspace_root / "stale.txt").exists()
 
 
+def test_session_scoped_approval_cannot_resolve_other_session_pending_request(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    command = write_file_command("ran.txt", "ran")
+    runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        FakeModelClient(
+            [
+                ModelResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="shell-call",
+                            name="shell.run",
+                            arguments={"command": command},
+                        )
+                    ],
+                ),
+                ModelResponse(content="done", tool_calls=[]),
+            ]
+        ),
+    )
+    client = auth_client(config, runtime)
+    transcript = TranscriptStore(config.session_dir)
+    session_a = transcript.active_id() or transcript.start_new()
+    pending = client.post(f"/api/sessions/{session_a}/chat", json={"message": "run it"}).json()["pending_approval"]
+    session_b = transcript.start_new()
+
+    response = client.post(f"/api/sessions/{session_b}/approvals/{pending['id']}/approve")
+
+    assert response.status_code == 200
+    assert response.json()["messages"][0]["content"].startswith("Error: No pending approval")
+    assert not (config.workspace_root / "ran.txt").exists()
+
+
 def test_approve_resumes_execution(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     runtime = FakeRuntime()

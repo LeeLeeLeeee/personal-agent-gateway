@@ -500,8 +500,8 @@ export function GatewayApp() {
   }
 
   async function handleResolveApproval(action) {
-    const sessionId = activeSessionIdRef.current || activeSessionId;
-    if (!pendingApproval || busy || !sessionId) return;
+    const sessionId = activeSessionId;
+    if (!sessionId || !pendingApproval || busy) return;
     const started = turnStartRef.current || Date.now();
     turnStartRef.current = started;
     busyRef.current = true;
@@ -514,8 +514,8 @@ export function GatewayApp() {
     })));
     try {
       const data = action === "approve"
-        ? await api.approve(pendingApproval.id)
-        : await api.deny(pendingApproval.id);
+        ? await api.approveSession(sessionId, pendingApproval.id)
+        : await api.denySession(sessionId, pendingApproval.id);
       await postTurn(sessionId, data);
     } finally {
       setSessionStateById((current) => updateOneSession(current, sessionId, (state) => ({
