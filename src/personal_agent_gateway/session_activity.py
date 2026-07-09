@@ -125,6 +125,8 @@ class SessionActivityPublisher:
             payload=payload,
         )
         normalized = activity.to_event_payload()
+        activity_id = normalized.pop("id")
+        normalized["activity_id"] = activity_id
         legacy = {key: value for key, value in payload.items() if key not in {"payload"}}
         return await self._event_bus.publish({**normalized, **legacy})
 

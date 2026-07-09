@@ -179,12 +179,52 @@ def test_session_activity_publisher_persists_before_fanout(tmp_path: Path) -> No
     )
 
     assert published["id"] == 1
+    assert published["activity_id"] == 1
     assert published["event_seq"] == 1
     assert published["source"] == "runtime"
     assert published["payload"] == {"message": "hello"}
     assert published["message"] == "hello"
     assert bus.recent() == [published]
     assert service.list("session-a")[0].to_event_payload()["payload"] == {"message": "hello"}
+
+
+def test_session_activity_publisher_keeps_sse_ids_monotonic_when_team_events_interleave(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    service = SessionActivityService(db)
+    bus = EventBus()
+    publisher = SessionActivityPublisher(service, bus)
+
+    team_event = asyncio.run(
+        publisher.publish(
+            {
+                "type": "team.run.started",
+                "team_run_id": "run-1",
+            }
+        )
+    )
+    chat_event = asyncio.run(
+        publisher.publish(
+            {
+                "type": "runtime.user_message.started",
+                "session_id": "session-a",
+                "message": "hello",
+            }
+        )
+    )
+
+    assert team_event == {"id": 1, "type": "team.run.started", "team_run_id": "run-1"}
+    assert chat_event["id"] == 2
+    assert chat_event["activity_id"] == 1
+    assert chat_event["event_seq"] == 1
+    assert chat_event["session_id"] == "session-a"
+    assert chat_event["created_at"]
+    assert chat_event["type"] == "runtime.user_message.started"
+    assert chat_event["source"] == "runtime"
+    assert chat_event["payload"] == {"message": "hello"}
+    assert bus.recent() == [team_event, chat_event]
 
 
 def test_session_activity_publisher_keeps_team_events_out_of_chat_activity(tmp_path: Path) -> None:
