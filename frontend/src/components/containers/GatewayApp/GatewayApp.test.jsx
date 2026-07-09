@@ -228,6 +228,54 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("active session answer")).toBeInTheDocument();
   });
 
+  it("does not recreate the SSE connection when chat busy state changes", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/chat": { messages: [{ content: "Fallback answer" }], pending_approval: null },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<GatewayApp />);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    await userEvent.type(input, "hello");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Fallback answer")).toBeInTheDocument();
+    expect(MockEventSource.instances.length).toBe(1);
+  });
+
+  it("ignores duplicate SSE event ids", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null }
+    });
+
+    render(<GatewayApp />);
+
+    await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit({ id: 10, session_id: "session-1", item: { type: "agent_message", text: "streamed once" } });
+      source.emit({ id: 10, session_id: "session-1", item: { type: "agent_message", text: "streamed once" } });
+    });
+
+    expect(await screen.findByText("streamed once")).toBeInTheDocument();
+    expect(screen.getAllByText("streamed once")).toHaveLength(1);
+  });
+
   it("loads editable agent config for an empty session and saves changes", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },

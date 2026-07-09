@@ -45,7 +45,7 @@ class AgentRuntimeFactory:
             model=model,
             options=options,
         )
-        history_mode = "latest_user" if link is not None else "full"
+        history_mode = "full"
 
         def record_upstream_session(upstream_session_id: str) -> None:
             link_service.record(

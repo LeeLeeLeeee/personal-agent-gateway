@@ -93,6 +93,7 @@ export function GatewayApp() {
   const entryOrderRef = useRef(0);
   const activeSessionIdRef = useRef(null);
   const busyRef = useRef(false);
+  const seenSseEventIdsRef = useRef(new Set());
 
   useForceTick(screen === "chat" && busy);
 
@@ -163,7 +164,7 @@ export function GatewayApp() {
     if (!authenticated || typeof EventSource === "undefined") return undefined;
     const source = new EventSource("/api/events");
     source.onopen = () => {
-      if (!busy) setSseState("connected");
+      if (!busyRef.current) setSseState("connected");
     };
     source.onerror = () => setSseState("error");
     source.onmessage = (event) => {
@@ -172,6 +173,11 @@ export function GatewayApp() {
         parsed = JSON.parse(event.data);
       } catch (_error) {
         return;
+      }
+      if (parsed.id != null) {
+        const eventId = String(parsed.id);
+        if (seenSseEventIdsRef.current.has(eventId)) return;
+        seenSseEventIdsRef.current.add(eventId);
       }
       if (shouldIgnoreScopedEvent(parsed)) return;
       if (parsed.type === "runtime.user_message.started") {
@@ -191,7 +197,7 @@ export function GatewayApp() {
       setEntries((current) => appendOrReconcileCommand(current, stampEntry(entry)));
     };
     return () => source.close();
-  }, [authenticated, busy]);
+  }, [authenticated]);
 
   useEffect(() => {
     busyRef.current = busy;

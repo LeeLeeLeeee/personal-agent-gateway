@@ -274,7 +274,7 @@ def _events_to_messages(
                     "content": "denied",
                 }
             )
-        elif event.kind in {"approval", "runtime_error", "agent_session_link"}:
+        elif event.kind in {"approval", "runtime_error", "agent_session_link", "session_config_set"}:
             continue
         else:
             messages.append(
