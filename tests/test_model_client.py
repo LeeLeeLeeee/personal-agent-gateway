@@ -328,6 +328,33 @@ def test_codex_client_includes_profile_flag_when_configured(tmp_path: Path) -> N
     ]
 
 
+def test_codex_client_builds_resume_command_when_upstream_session_exists(tmp_path: Path) -> None:
+    client = CodexModelClient(
+        binary="codex",
+        model="gpt-5.5",
+        workspace_root=tmp_path,
+        effort="xhigh",
+        approval_policy="never",
+        upstream_session_id="0199a213-81c0-7800-8aa1-bbab2a035a53",
+    )
+
+    assert client._command() == [
+        "codex",
+        "exec",
+        "resume",
+        "--json",
+        "-c",
+        'approval_policy="never"',
+        "-c",
+        'model_reasoning_effort="xhigh"',
+        "--skip-git-repo-check",
+        "-m",
+        "gpt-5.5",
+        "0199a213-81c0-7800-8aa1-bbab2a035a53",
+        "-",
+    ]
+
+
 def test_claude_client_includes_agent_flag_when_configured(tmp_path: Path) -> None:
     client = ClaudeModelClient(
         binary="claude",
@@ -351,6 +378,32 @@ def test_claude_client_includes_agent_flag_when_configured(tmp_path: Path) -> No
         "manual",
         "--agent",
         "reviewer",
+    ]
+
+
+def test_claude_client_builds_resume_command_when_upstream_session_exists(tmp_path: Path) -> None:
+    client = ClaudeModelClient(
+        binary="claude",
+        model="sonnet",
+        workspace_root=tmp_path,
+        effort="high",
+        permission_mode="manual",
+        upstream_session_id="f7c44fcb-e059-4799-94e3-f64d39305050",
+    )
+
+    assert client._command() == [
+        "claude",
+        "-p",
+        "--resume",
+        "f7c44fcb-e059-4799-94e3-f64d39305050",
+        "--output-format",
+        "json",
+        "--model",
+        "sonnet",
+        "--effort",
+        "high",
+        "--permission-mode",
+        "manual",
     ]
 
 
