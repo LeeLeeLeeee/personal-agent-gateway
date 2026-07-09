@@ -541,7 +541,7 @@ describe("GatewayApp", () => {
     expect(screen.getByDisplayValue("Owns the plan")).toBeInTheDocument();
   });
 
-  it("creates and starts a team run, shows its detail, and refreshes on team SSE events", async () => {
+  it("creates and starts a team run, shows its detail, and refreshes on mixed team SSE events without adding chat entries", async () => {
     let taskCalls = 0;
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
@@ -599,12 +599,20 @@ describe("GatewayApp", () => {
     expect(screen.queryByText("Define schema")).not.toBeInTheDocument();
 
     const source = MockEventSource.instances[0];
-    source.emit({ type: "team.task.updated", team_run_id: "run-1", task_id: "t1" });
+    source.emit({
+      type: "team.task.updated",
+      team_run_id: "run-1",
+      session_id: "session-1",
+      task_id: "t1",
+      payload: { item: { type: "agent_message", text: "should not enter chat" } }
+    });
 
     expect(await screen.findByText("Define schema")).toBeInTheDocument();
 
     await userEvent.click(screen.getByText("← TEAM RUNS"));
     expect(screen.queryByText("Ship it")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(screen.queryByText("should not enter chat")).not.toBeInTheDocument();
   });
 
   it("shows an error and keeps the app usable when creating a team run fails", async () => {

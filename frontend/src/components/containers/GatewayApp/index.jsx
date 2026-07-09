@@ -218,6 +218,12 @@ export function GatewayApp() {
         if (seenSseEventIdsRef.current.has(eventId)) return;
         seenSseEventIdsRef.current.add(eventId);
       }
+      if (parsed.type?.startsWith("team.") && parsed.team_run_id) {
+        if (parsed.team_run_id === selectedTeamRunIdRef.current) {
+          api.teamRunDetail(parsed.team_run_id).then(setTeamRunDetail);
+        }
+        return;
+      }
       if (parsed.session_id) {
         const sessionId = parsed.session_id;
         if (sessionId === activeSessionIdRef.current) {
@@ -259,9 +265,6 @@ export function GatewayApp() {
           };
         }));
         return;
-      }
-      if (parsed.type?.startsWith("team.") && parsed.team_run_id === selectedTeamRunIdRef.current) {
-        api.teamRunDetail(selectedTeamRunIdRef.current).then(setTeamRunDetail);
       }
       const entry = entryFromSse(parsed);
       if (!entry) return;
