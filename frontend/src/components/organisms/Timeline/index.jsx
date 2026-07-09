@@ -12,9 +12,13 @@ function UserMessage({ entry }) {
 }
 
 function AgentMessage({ entry }) {
+  const label = entry.streaming ? "AGENT RESPONSE" : "FINAL ANSWER";
   return (
-    <div className="msg-agent">
-      <div className="msg-meta">AGENT · {entry.time || ""}</div>
+    <div className={`msg-agent${entry.streaming ? " msg-agent-streaming" : " msg-agent-final"}`}>
+      <div className="msg-agent-head">
+        <span>{label}</span>
+        {entry.time ? <span>{entry.time}</span> : null}
+      </div>
       <div className="bubble">
         <MarkdownContent source={entry.text || ""} />
         {entry.streaming ? <span className="agent-cursor" /> : null}
@@ -108,6 +112,18 @@ function IdleEmpty() {
   );
 }
 
+function orderedEntries(entries) {
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => {
+      const leftOrder = left.entry.order ?? left.index;
+      const rightOrder = right.entry.order ?? right.index;
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      return left.index - right.index;
+    })
+    .map(({ entry }) => entry);
+}
+
 export function Timeline({ entries, busy }) {
   if (!entries.length && !busy) return <div className="stream"><IdleEmpty /></div>;
 
@@ -128,7 +144,7 @@ export function Timeline({ entries, busy }) {
     cluster = [];
   };
 
-  for (const entry of entries) {
+  for (const entry of orderedEntries(entries)) {
     if (entry.type === "event_row" || entry.type === "command") {
       cluster.push(entry);
       continue;

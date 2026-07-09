@@ -2,7 +2,7 @@
 
 - 작성일: 2026-07-08
 - 출처: `feat/persona-agent-teams` 백엔드 구현(→ `main` `bcc96b5`로 머지)의 태스크별 리뷰 + 전체 브랜치 리뷰(opus)에서 도출한 **비차단(non-blocking) 후속 과제**.
-- 관련: `docs/superpowers/plans/2026-07-08-persona-agent-teams.md`(원 플랜), `docs/specs/2026-07-08-observability-audit-log-spec.md`
+- 관련: `docs/superpowers/plans/completed_2026-07-08-persona-agent-teams.md`(base 완료 기록), `docs/specs/2026-07-08-observability-audit-log-spec.md`
 - 상태: 아래 항목은 모두 **머지 시점에 의도적으로 연기**된 것. 단일 사용자·로컬 MVP 맥락에서 데이터 무결성/보안을 위협하지 않음이 확인됨.
 
 ## 범위 메모

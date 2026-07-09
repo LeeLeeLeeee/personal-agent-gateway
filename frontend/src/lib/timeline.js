@@ -13,13 +13,18 @@ export function linesFrom(text) {
 
 export function timelineFromHistory(events) {
   const out = [];
-  events.forEach((event, index) => {
+  const sortedEvents = [...events].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || "");
+    const rightTime = Date.parse(right.created_at || "");
+    return (Number.isNaN(leftTime) ? 0 : leftTime) - (Number.isNaN(rightTime) ? 0 : rightTime);
+  });
+  sortedEvents.forEach((event, index) => {
     const payload = event.payload || {};
     const time = fmtTime(event.created_at, false);
     if (event.kind === "user" && typeof payload.content === "string") {
-      out.push({ type: "user", text: payload.content, time });
+      out.push({ type: "user", text: payload.content, time, order: index });
     } else if (event.kind === "assistant" && typeof payload.content === "string") {
-      out.push({ type: "agent", text: payload.content, time });
+      out.push({ type: "agent", text: payload.content, time, order: index });
     } else if (event.kind === "tool_result" && typeof payload.command === "string") {
       out.push({
         type: "command",
@@ -29,7 +34,8 @@ export function timelineFromHistory(events) {
         exit: payload.exit_code,
         lines: linesFrom(`${payload.stdout || ""}${payload.stderr || ""}`),
         time: fmtTime(event.created_at, true),
-        duration: ""
+        duration: "",
+        order: index
       });
     } else if (event.kind === "tool_denial" && typeof payload.command === "string") {
       out.push({
@@ -37,10 +43,11 @@ export function timelineFromHistory(events) {
         label: "tool_denial",
         detail: payload.command,
         dotColor: "#FF0000",
-        time: fmtTime(event.created_at, true)
+        time: fmtTime(event.created_at, true),
+        order: index
       });
     } else if (event.kind === "runtime_error" && typeof payload.message === "string") {
-      out.push({ type: "runtime_error", message: payload.message, time: fmtTime(event.created_at, true) });
+      out.push({ type: "runtime_error", message: payload.message, time: fmtTime(event.created_at, true), order: index });
     }
   });
   return out;

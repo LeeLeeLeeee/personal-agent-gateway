@@ -355,7 +355,7 @@ function messagesFromEvents(events) {
 ```css
 .chat{display:flex;height:100%}
 .sess-rail{width:200px;flex:none;border-right:var(--bd);display:flex;flex-direction:column}
-.sess-head{padding:14px 16px;border-bottom:var(--bd);display:flex;justify-content:space-between;align-items:center}
+.sess-head{padding:9px 16px;border-bottom:var(--bd);display:flex;justify-content:space-between;align-items:center}
 .sess-item{padding:12px 16px;border-bottom:var(--bd-in);cursor:pointer}
 .sess-item-active{background:var(--c-black);color:var(--c-white)}
 .chat-col{flex:1;min-width:0;display:flex;flex-direction:column}

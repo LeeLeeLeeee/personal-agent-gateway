@@ -322,6 +322,32 @@ def test_chat_records_runtime_events_for_sse_subscribers(tmp_path: Path) -> None
     ]
     assert recent[0]["message"] == "remember this"
     assert recent[1]["pending_approval"] is None
+    assert recent[0]["session_id"] == recent[1]["session_id"]
+
+
+def test_codex_stream_events_include_active_session_id(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+
+    class FakeCodexModelClient:
+        def __init__(self, *args, on_event=None, **kwargs) -> None:
+            self.on_event = on_event
+
+        async def complete(self, _messages):
+            if self.on_event is not None:
+                await self.on_event({"item": {"type": "agent_message", "text": "streamed"}})
+            return ModelResponse(content="done", tool_calls=[])
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    client = auth_client(config, runtime=None)
+
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    session_id = client.app.state.transcript_store.active_id()
+    recent = client.app.state.event_bus.recent()
+    streamed = [event for event in recent if event.get("item") == {"type": "agent_message", "text": "streamed"}]
+    assert streamed
+    assert streamed[-1]["session_id"] == session_id
 
 
 def test_sessions_api_lists_activate_delete_and_searches_sessions(tmp_path: Path) -> None:
@@ -609,7 +635,11 @@ def test_chat_reuses_codex_upstream_session_after_first_response(tmp_path: Path,
     )
     assert captured_upstream_ids == [None, "codex-thread-1"]
     assert captured_messages[0] == [{"role": "user", "content": "first"}]
-    assert captured_messages[1] == [{"role": "user", "content": "second"}]
+    assert captured_messages[1] == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "second"},
+    ]
 
 
 def test_chat_uses_app_config_model_for_default_codex_sessions_and_reuses_upstream_id(
@@ -674,14 +704,12 @@ def test_chat_reuses_claude_upstream_session_after_first_response(tmp_path: Path
         for event in events
     )
     assert captured_upstream_ids == [None, "claude-session-1"]
-    assert captured_messages[0] == [
-        {
-            "role": "system",
-            "content": '{"kind": "session_config_set", "payload": {"agent_id": "claude", "model": "sonnet", "options": {}}}',
-        },
+    assert captured_messages[0] == [{"role": "user", "content": "first"}]
+    assert captured_messages[1] == [
         {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "second"},
     ]
-    assert captured_messages[1] == [{"role": "user", "content": "second"}]
 
 
 def test_history_returns_restored_transcript_after_app_recreation(tmp_path: Path) -> None:

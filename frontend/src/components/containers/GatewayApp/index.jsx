@@ -23,7 +23,7 @@ function appendOrReconcileCommand(entries, entry) {
   const index = entries.findIndex((candidate) => candidate.type === "command" && candidate.key === entry.key);
   if (index < 0) return [...entries, entry];
   const next = entries.slice();
-  next[index] = entry;
+  next[index] = { ...entry, order: entries[index].order ?? entry.order };
   return next;
 }
 
@@ -90,6 +90,10 @@ export function GatewayApp() {
   const turnStartRef = useRef(null);
   const selectedTeamRunIdRef = useRef(null);
   const lastConfigAttemptRef = useRef(null);
+  const entryOrderRef = useRef(0);
+  const activeSessionIdRef = useRef(null);
+  const busyRef = useRef(false);
+  const seenSseEventIdsRef = useRef(new Set());
 
   useForceTick(screen === "chat" && busy);
 
@@ -101,14 +105,40 @@ export function GatewayApp() {
       api.agents(),
       api.activeSessionConfig()
     ]);
+    activeSessionIdRef.current = nextStatus?.session_id || null;
     setStatus(withSessionConfigStatus(nextStatus, nextConfig));
     setSessions(nextSessions);
     setAgents(nextAgents);
     setSessionConfig(nextConfig || nextStatus?.session_config || null);
-    setEntries(timelineFromHistory(history));
+    const nextEntries = timelineFromHistory(history);
+    entryOrderRef.current = nextEntries.length;
+    setEntries(nextEntries);
     setAuthenticated(true);
     setBooting(false);
   }, []);
+
+  function stampEntry(entry) {
+    if (entry.order != null) return entry;
+    const order = entryOrderRef.current;
+    entryOrderRef.current += 1;
+    return { ...entry, order };
+  }
+
+  function stampEntries(nextEntries) {
+    return nextEntries.map((entry) => stampEntry(entry));
+  }
+
+  function shouldIgnoreScopedEvent(event) {
+    if (event.type?.startsWith("team.")) return false;
+    if (!event.session_id) return false;
+    const activeSessionId = activeSessionIdRef.current;
+    if (activeSessionId) return event.session_id !== activeSessionId;
+    if (busyRef.current && event.type === "runtime.user_message.started") {
+      activeSessionIdRef.current = event.session_id;
+      return false;
+    }
+    return true;
+  }
 
   useEffect(() => {
     let alive = true;
@@ -134,7 +164,7 @@ export function GatewayApp() {
     if (!authenticated || typeof EventSource === "undefined") return undefined;
     const source = new EventSource("/api/events");
     source.onopen = () => {
-      if (!busy) setSseState("connected");
+      if (!busyRef.current) setSseState("connected");
     };
     source.onerror = () => setSseState("error");
     source.onmessage = (event) => {
@@ -144,6 +174,12 @@ export function GatewayApp() {
       } catch (_error) {
         return;
       }
+      if (parsed.id != null) {
+        const eventId = String(parsed.id);
+        if (seenSseEventIdsRef.current.has(eventId)) return;
+        seenSseEventIdsRef.current.add(eventId);
+      }
+      if (shouldIgnoreScopedEvent(parsed)) return;
       if (parsed.type === "runtime.user_message.started") {
         const started = Date.now();
         turnStartRef.current = started;
@@ -158,10 +194,14 @@ export function GatewayApp() {
       turnStreamedRef.current = true;
       setTurnStreamed(true);
       if (entry.type === "agent") turnHadAgentRef.current = true;
-      setEntries((current) => appendOrReconcileCommand(current, entry));
+      setEntries((current) => appendOrReconcileCommand(current, stampEntry(entry)));
     };
     return () => source.close();
-  }, [authenticated, busy]);
+  }, [authenticated]);
+
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
 
   useEffect(() => {
     selectedTeamRunIdRef.current = selectedTeamRunId;
@@ -233,6 +273,7 @@ export function GatewayApp() {
       api.sessions(),
       api.activeSessionConfig()
     ]);
+    activeSessionIdRef.current = nextStatus?.session_id || null;
     setStatus(withSessionConfigStatus(nextStatus, nextConfig));
     setSessions(nextSessions);
     setSessionConfig(nextConfig || nextStatus?.session_config || null);
@@ -265,6 +306,20 @@ export function GatewayApp() {
     if (lastConfigAttemptRef.current) handleSessionConfigChange(lastConfigAttemptRef.current);
   }
 
+  function clearActiveConversationState() {
+    activeSessionIdRef.current = null;
+    entryOrderRef.current = 0;
+    setEntries([]);
+    setPendingApproval(null);
+    setTurnStart(null);
+    setTurnEnd(null);
+    turnStartRef.current = null;
+    turnHadAgentRef.current = false;
+    turnStreamedRef.current = false;
+    setTurnStreamed(false);
+    setSessionConfigError("");
+  }
+
   async function maybeAppendArtifact(nextStatus) {
     if (!turnStartRef.current) return;
     const artifacts = await api.artifacts();
@@ -272,7 +327,12 @@ export function GatewayApp() {
     const fresh = artifacts.filter((artifact) => (
       artifact.source_session_id === sessionId && Date.parse(artifact.created_at) >= turnStartRef.current - 2000
     ));
-    if (fresh.length) setEntries((current) => [...current, ...fresh.map((artifact) => ({ type: "artifact", artifact }))]);
+    if (fresh.length) {
+      setEntries((current) => [
+        ...current,
+        ...stampEntries(fresh.map((artifact) => ({ type: "artifact", artifact })))
+      ]);
+    }
   }
 
   async function postTurn(data) {
@@ -281,7 +341,7 @@ export function GatewayApp() {
       const agentEntries = data.messages
         .filter((message) => typeof message.content === "string")
         .map((message) => ({ type: "agent", text: message.content, time: nowHM() }));
-      if (agentEntries.length) setEntries((current) => [...current, ...agentEntries]);
+      if (agentEntries.length) setEntries((current) => [...current, ...stampEntries(agentEntries)]);
     }
     const nextStatus = await refreshStatusAndSessions();
     await maybeAppendArtifact(nextStatus);
@@ -292,8 +352,9 @@ export function GatewayApp() {
     turnStartRef.current = started;
     turnHadAgentRef.current = false;
     turnStreamedRef.current = false;
-    setEntries((current) => [...current, { type: "user", text: message, time: nowHM() }]);
+    setEntries((current) => [...current, stampEntry({ type: "user", text: message, time: nowHM() })]);
     setBusy(true);
+    busyRef.current = true;
     setTurnStart(started);
     setTurnEnd(null);
     setTurnStreamed(false);
@@ -301,6 +362,7 @@ export function GatewayApp() {
       await postTurn(await api.sendChat(message));
     } finally {
       setBusy(false);
+      busyRef.current = false;
       setTurnEnd(Date.now());
     }
   }
@@ -312,6 +374,7 @@ export function GatewayApp() {
     turnHadAgentRef.current = false;
     turnStreamedRef.current = true;
     setBusy(true);
+    busyRef.current = true;
     setTurnStart(started);
     setTurnEnd(null);
     setTurnStreamed(true);
@@ -320,6 +383,7 @@ export function GatewayApp() {
       await postTurn(data);
     } finally {
       setBusy(false);
+      busyRef.current = false;
       setTurnEnd(Date.now());
     }
   }
@@ -331,7 +395,10 @@ export function GatewayApp() {
   async function handleActivate(id) {
     const data = await api.activate(id);
     if (!data) return;
-    setEntries(timelineFromHistory(data.events || []));
+    activeSessionIdRef.current = data.session_id || id;
+    const nextEntries = timelineFromHistory(data.events || []);
+    entryOrderRef.current = nextEntries.length;
+    setEntries(nextEntries);
     setPendingApproval(null);
     setTurnStart(null);
     setTurnEnd(null);
@@ -345,12 +412,7 @@ export function GatewayApp() {
 
   async function handleReset() {
     await api.reset();
-    setEntries([]);
-    setPendingApproval(null);
-    setTurnStart(null);
-    setTurnEnd(null);
-    turnStartRef.current = null;
-    setSessionConfigError("");
+    clearActiveConversationState();
     await refreshStatusAndSessions();
   }
 
@@ -360,8 +422,13 @@ export function GatewayApp() {
   }
 
   async function handleDelete(id) {
-    await api.deleteSession(id);
-    setSessions(await api.sessions());
+    const deleted = await api.deleteSession(id);
+    if (deleted?.active_session_id == null && status?.session_id === id) {
+      clearActiveConversationState();
+      await refreshStatusAndSessions();
+    } else {
+      setSessions(await api.sessions());
+    }
     toast("Session deleted", "success");
   }
 

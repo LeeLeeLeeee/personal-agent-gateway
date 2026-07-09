@@ -284,7 +284,11 @@ class ClaudeModelClient:
 
 def _codex_prompt(messages: list[dict[str, object]]) -> str:
     lines = [
-        "You are the local Codex agent behind a personal web gateway.",
+        "You are the local agent behind a personal web gateway.",
+        "Treat the last USER message as the current request.",
+        "Previous USER and ASSISTANT messages are conversation context.",
+        "Answer casual greetings, identity questions, and language preferences directly.",
+        "Use the same language as the last USER message unless the user asks otherwise.",
         "Use the configured local workspace directly when the request requires code or file work.",
         "Keep the final answer concise and actionable.",
         "",

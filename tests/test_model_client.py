@@ -10,6 +10,7 @@ from personal_agent_gateway.model_client import (
     CodexModelClient,
     ModelResponse,
     OpenAIModelClient,
+    _codex_prompt,
     _parse_claude_session_id,
     _parse_codex_session_id,
     ToolCall,
@@ -38,6 +39,22 @@ def write_fake_claude(tmp_path: Path, body: str) -> Path:
     claude_bin.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
     claude_bin.chmod(0o755)
     return claude_bin
+
+
+def test_gateway_prompt_treats_latest_user_message_as_current_request() -> None:
+    prompt = _codex_prompt(
+        [
+            {"role": "user", "content": "안녕"},
+            {"role": "assistant", "content": "안녕하세요. 무엇을 도와드릴까요?"},
+            {"role": "user", "content": "넌 누구니?"},
+        ]
+    )
+
+    assert "Treat the last USER message as the current request." in prompt
+    assert "Previous USER and ASSISTANT messages are conversation context." in prompt
+    assert "Answer casual greetings, identity questions, and language preferences directly." in prompt
+    assert prompt.index("USER: 안녕") < prompt.index("ASSISTANT: 안녕하세요. 무엇을 도와드릴까요?")
+    assert prompt.index("ASSISTANT: 안녕하세요. 무엇을 도와드릴까요?") < prompt.index("USER: 넌 누구니?")
 
 
 @pytest.mark.asyncio

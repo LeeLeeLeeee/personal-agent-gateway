@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { deriveLive } from "../../../lib/timeline.js";
 import { fmtTime } from "../../../lib/time.js";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
@@ -87,6 +88,28 @@ export function ChatView({
   onResolveApproval
 }) {
   const locked = sessionConfig ? sessionConfig.editable === false : false;
+  const transcriptRef = useRef(null);
+  const followLatestRef = useRef(true);
+  const activeSessionId = (sessions || []).find((session) => session.is_active)?.id || "";
+
+  useEffect(() => {
+    followLatestRef.current = true;
+    const node = transcriptRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    const node = transcriptRef.current;
+    if (!node || !followLatestRef.current) return;
+    node.scrollTop = node.scrollHeight;
+  }, [entries, busy, turnStreamed, pendingApproval]);
+
+  function handleTranscriptScroll(event) {
+    const node = event.currentTarget;
+    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    followLatestRef.current = distanceFromBottom <= 56;
+  }
+
   return (
     <div className="chat">
       <SessionRail sessions={sessions} activeConfig={sessionConfig} onSearch={onSearch} onActivate={onActivate} onReset={onReset} onRename={onRename} onDelete={onDelete} />
@@ -100,7 +123,7 @@ export function ChatView({
           onRetry={onSessionConfigRetry}
         />
         <LiveStatusSummary entries={entries} busy={busy} turnStart={turnStart} turnEnd={turnEnd} />
-        <div className="transcript">
+        <div className="transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
           <Timeline entries={entries} busy={busy} />
           {busy && !turnStreamed ? <LoaderCube label="AGENT WORKING" /> : null}
           <Proposal approval={pendingApproval} onResolve={onResolveApproval} />

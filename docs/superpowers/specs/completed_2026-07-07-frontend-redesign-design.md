@@ -18,7 +18,7 @@ Bring the `Agent Gateway.dc.html` neo-brutalist design into the real app's vanil
 ## Ownership Boundary
 
 - This track owns `src/personal_agent_gateway/static/**`. Codex (backend) does not edit it.
-- Backend/API is Codex's, tracked separately in `docs/superpowers/plans/2026-07-07-backend-api-gaps-plan.md`.
+- Backend/API is Codex's, tracked separately in `docs/superpowers/plans/completed_2026-07-07-backend-api-gaps-plan.md`.
 - Slice 1 touches **only** the three already-served static files — `index.html`, `app.js`, `styles.css` — so `app.py` (a shared file) is **not** modified. If a later slice needs additional static files, request a one-line `/static` mount from the backend track rather than editing `app.py` ad hoc.
 
 ## Architecture
@@ -76,5 +76,5 @@ No JS test harness exists (Python-only repo); adding one is out of scope for Sli
 
 - Design mockup: `Agent Gateway.dc.html` (claude.ai/design `3f896375-…`)
 - UI/UX brief: `docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md`
-- Backend API gaps (Codex): `docs/superpowers/plans/2026-07-07-backend-api-gaps-plan.md`
-- Backend architecture (done): `docs/superpowers/plans/2026-07-06-local-backend-architecture-plan.md`
+- Backend API gaps (Codex): `docs/superpowers/plans/completed_2026-07-07-backend-api-gaps-plan.md`
+- Backend architecture (done): `docs/superpowers/plans/completed_2026-07-06-local-backend-architecture-plan.md`

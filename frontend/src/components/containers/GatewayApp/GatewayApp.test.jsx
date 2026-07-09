@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayApp } from "./index.jsx";
@@ -170,6 +170,110 @@ describe("GatewayApp", () => {
     await userEvent.click(await screen.findByText("Old chat"));
 
     expect(await screen.findByText("previous")).toBeInTheDocument();
+  });
+
+  it("clears active transcript state after deleting the active session", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let deleted = false;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": () => response(deleted ? { ...status, session_id: null, message_count: 0 } : status),
+      "GET /api/sessions": () => response({ sessions: deleted ? [] : sessions }),
+      "GET /api/history": {
+        events: [{ kind: "user", created_at: "2026-07-08T01:02:00Z", payload: { content: "deleted session text" } }]
+      },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "DELETE /api/sessions/session-1": () => {
+        deleted = true;
+        return response({ deleted: true, active_session_id: null });
+      }
+    });
+
+    render(<GatewayApp />);
+
+    expect(await screen.findByText("deleted session text")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(screen.queryByText("deleted session text")).not.toBeInTheDocument());
+    expect(screen.getByText("AGENT IDLE")).toBeInTheDocument();
+  });
+
+  it("ignores live chat events from non-active sessions", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null }
+    });
+
+    render(<GatewayApp />);
+
+    await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit({ session_id: "session-2", item: { type: "agent_message", text: "wrong session answer" } });
+    });
+
+    expect(screen.queryByText("wrong session answer")).not.toBeInTheDocument();
+
+    act(() => {
+      source.emit({ session_id: "session-1", item: { type: "agent_message", text: "active session answer" } });
+    });
+
+    expect(await screen.findByText("active session answer")).toBeInTheDocument();
+  });
+
+  it("does not recreate the SSE connection when chat busy state changes", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/chat": { messages: [{ content: "Fallback answer" }], pending_approval: null },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<GatewayApp />);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    await userEvent.type(input, "hello");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Fallback answer")).toBeInTheDocument();
+    expect(MockEventSource.instances.length).toBe(1);
+  });
+
+  it("ignores duplicate SSE event ids", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null }
+    });
+
+    render(<GatewayApp />);
+
+    await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit({ id: 10, session_id: "session-1", item: { type: "agent_message", text: "streamed once" } });
+      source.emit({ id: 10, session_id: "session-1", item: { type: "agent_message", text: "streamed once" } });
+    });
+
+    expect(await screen.findByText("streamed once")).toBeInTheDocument();
+    expect(screen.getAllByText("streamed once")).toHaveLength(1);
   });
 
   it("loads editable agent config for an empty session and saves changes", async () => {
