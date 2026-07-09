@@ -46,9 +46,9 @@ Project-local Atomic Design catalog for the Vite React frontend.
 
 ### PersonaLibrary
 - Path: `src/components/organisms/PersonaLibrary/`
-- Props: `{ personas, avatars, onCreate, onSeedDefaults? }`
-- Use when: Rendering the persona grid plus a create-persona form (name/role/description/responsibilities/constraints/backend/model/avatar picker).
-- Don't use when: Loading personas or the avatar manifest, or persisting persona changes; the container owns API calls. Note: this is a create-only form; the avatar field renders `AvatarPicker` plus a small preview of the selected avatar.
+- Props: `{ personas, avatars, onCreate, onSave? }`
+- Use when: Rendering the persona master-detail (left list → right EDIT PERSONA panel for the selected persona; a New persona button opens a blank editable panel). Save calls `onCreate` for a new persona or `onSave(id, payload)` for an existing one; the avatar block opens a modal that reuses `AvatarPicker`.
+- Don't use when: Loading personas or the avatar manifest; the container owns API calls.
 
 ### AvatarPicker
 - Path: `src/components/organisms/AvatarPicker/`

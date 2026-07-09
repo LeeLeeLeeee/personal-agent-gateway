@@ -235,8 +235,7 @@ describe("GatewayApp", () => {
     expect(screen.getByText(/Claude Code/)).toBeInTheDocument();
   });
 
-  it("loads the persona library and seeds default personas", async () => {
-    let personaCalls = 0;
+  it("loads the persona library and shows the selected persona detail", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
       "GET /api/status": status,
@@ -244,11 +243,7 @@ describe("GatewayApp", () => {
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
-      "GET /api/personas": () => {
-        personaCalls += 1;
-        return response({ personas: personaCalls > 1 ? [{ id: "p1", name: "Tech Lead", role: "Planning" }] : [] });
-      },
-      "POST /api/personas": { persona: { id: "p1", name: "Tech Lead", role: "Planning" } }
+      "GET /api/personas": { personas: [{ id: "p1", name: "Tech Lead", role: "Planning", description: "Owns the plan" }] }
     });
 
     render(<GatewayApp />);
@@ -256,9 +251,9 @@ describe("GatewayApp", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Personas" }));
     expect(await screen.findByRole("heading", { name: "Personas" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /seed defaults/i }));
-
-    expect(await screen.findByText("Tech Lead")).toBeInTheDocument();
+    // the first persona is auto-selected and its detail is shown
+    expect(await screen.findByDisplayValue("Tech Lead")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Owns the plan")).toBeInTheDocument();
   });
 
   it("creates and starts a team run, shows its detail, and refreshes on team SSE events", async () => {
@@ -308,10 +303,11 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Agent Teams" }));
-    await userEvent.type(await screen.findByLabelText(/goal/i), "Ship it");
-    await userEvent.selectOptions(screen.getByLabelText(/leader/i), "p1");
-    await userEvent.click(screen.getByRole("button", { name: /create team run/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
+    await userEvent.type(await screen.findByLabelText("Goal"), "Ship it");
+    await userEvent.click(screen.getByRole("button", { name: /select tech lead as leader/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
 
     expect((await screen.findAllByText("Tech Lead")).length).toBeGreaterThan(0);
     expect(screen.getByText("LEAD")).toBeInTheDocument();
@@ -341,13 +337,44 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Agent Teams" }));
-    await userEvent.type(await screen.findByLabelText(/goal/i), "Ship it");
-    await userEvent.selectOptions(screen.getByLabelText(/leader/i), "p1");
-    await userEvent.click(screen.getByRole("button", { name: /create team run/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
+    await userEvent.type(await screen.findByLabelText("Goal"), "Ship it");
+    await userEvent.click(screen.getByRole("button", { name: /select tech lead as leader/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
 
     expect(await screen.findByText("Failed to create team run")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /create team run/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start team run/i })).toBeInTheDocument();
+  });
+
+  it("deletes a team run from the home list after confirmation", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let listCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": () => {
+        listCalls += 1;
+        return response({ team_runs: listCalls > 1 ? [] : [{ id: "run-1", goal: "Ship it", status: "running" }] });
+      },
+      "DELETE /api/team-runs/run-1": { deleted: true }
+    });
+
+    render(<GatewayApp />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    expect(await screen.findByText("Ship it")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /delete team run ship it/i }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/team-runs/run-1", expect.objectContaining({ method: "DELETE" })));
+    await waitFor(() => expect(screen.queryByText("Ship it")).not.toBeInTheDocument());
+    window.confirm.mockRestore();
   });
 
   it("clears the selected team run detail when navigating away from the teams screen", async () => {
@@ -370,12 +397,12 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Agent Teams" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByText("Ship it"));
     expect(await screen.findByText("← TEAM RUNS")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Chat" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Agent Teams" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
 
     expect(await screen.findByRole("heading", { name: "Team Runs" })).toBeInTheDocument();
     expect(screen.queryByText("← TEAM RUNS")).not.toBeInTheDocument();

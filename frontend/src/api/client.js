@@ -104,6 +104,18 @@ export const api = {
     }));
     return body?.persona || null;
   },
+  async updatePersona(id, payload) {
+    const body = await jsonOrNull(await fetch(`/api/personas/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }));
+    return body?.persona || null;
+  },
+  async deletePersona(id) {
+    const response = await fetch(`/api/personas/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return response.ok;
+  },
   async teamRuns() {
     return jsonList(await fetch("/api/team-runs"), "team_runs");
   },
@@ -118,6 +130,10 @@ export const api = {
   async startTeamRun(id) {
     const body = await jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/start`, { method: "POST" }));
     return body?.team_run || null;
+  },
+  async deleteTeamRun(id) {
+    const response = await fetch(`/api/team-runs/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return response.ok;
   },
   async avatarManifest() {
     return jsonList(await fetch("/static/avatars/manifest.json"), "avatars");

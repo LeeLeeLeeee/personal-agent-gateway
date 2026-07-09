@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { TeamRunForm } from "./index.jsx";
 
 const personas = [
-  { id: "p1", name: "Tech Lead" },
-  { id: "p2", name: "QA Tester" }
+  { id: "p1", name: "Tech Lead", role: "Planning" },
+  { id: "p2", name: "QA Tester", role: "Verification" }
 ];
 
 describe("TeamRunForm", () => {
@@ -13,9 +13,9 @@ describe("TeamRunForm", () => {
     const onSubmit = vi.fn();
     render(<TeamRunForm personas={personas} onSubmit={onSubmit} />);
 
-    await userEvent.type(screen.getByLabelText(/goal/i), "Design Agent Teams");
-    await userEvent.selectOptions(screen.getByLabelText(/leader/i), "p1");
-    await userEvent.click(screen.getByRole("button", { name: /create team run/i }));
+    await userEvent.type(screen.getByLabelText("Goal"), "Design Agent Teams");
+    await userEvent.click(screen.getByRole("button", { name: /select tech lead as leader/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       goal: "Design Agent Teams",
@@ -24,20 +24,20 @@ describe("TeamRunForm", () => {
     }));
   });
 
-  it("includes checked member personas and run settings in the payload", async () => {
+  it("includes toggled member personas and run settings in the payload", async () => {
     const onSubmit = vi.fn();
     render(<TeamRunForm personas={personas} onSubmit={onSubmit} />);
 
-    await userEvent.type(screen.getByLabelText(/goal/i), "Ship it");
-    await userEvent.selectOptions(screen.getByLabelText(/leader/i), "p1");
-    await userEvent.click(screen.getByRole("checkbox", { name: /qa tester/i }));
-    await userEvent.selectOptions(screen.getByLabelText(/run mode/i), "plan_and_execute");
+    await userEvent.type(screen.getByLabelText("Goal"), "Ship it");
+    await userEvent.click(screen.getByRole("button", { name: /select tech lead as leader/i }));
+    await userEvent.click(screen.getByRole("button", { name: /toggle qa tester as member/i }));
+    await userEvent.click(screen.getByRole("button", { name: /plan \+ execute/i }));
 
-    const maxWorkers = screen.getByLabelText(/max workers/i);
-    await userEvent.clear(maxWorkers);
-    await userEvent.type(maxWorkers, "5");
+    // default max workers is 3; bump to 5
+    await userEvent.click(screen.getByRole("button", { name: /increase workers/i }));
+    await userEvent.click(screen.getByRole("button", { name: /increase workers/i }));
 
-    await userEvent.click(screen.getByRole("button", { name: /create team run/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
 
     expect(onSubmit).toHaveBeenCalledWith({
       goal: "Ship it",
@@ -46,5 +46,14 @@ describe("TeamRunForm", () => {
       run_mode: "plan_and_execute",
       max_workers: 5
     });
+  });
+
+  it("previews the selected leader, member count and workers", async () => {
+    render(<TeamRunForm personas={personas} onSubmit={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /toggle qa tester as member/i }));
+
+    expect(screen.getByText("1 agents")).toBeInTheDocument();
+    expect(screen.getByLabelText("Max workers")).toHaveTextContent("3");
   });
 });

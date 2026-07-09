@@ -4,6 +4,7 @@ import { Statusbar } from "../../organisms/Statusbar/index.jsx";
 export function AppShell({
   children,
   screen,
+  teamRunBadge,
   status,
   entries,
   busy,
@@ -13,12 +14,11 @@ export function AppShell({
   navOpen,
   onToggleNav,
   onCloseNav,
-  onScreenChange,
-  onLogout
+  onScreenChange
 }) {
   return (
     <div className={`shell${navOpen ? " nav-open" : ""}`}>
-      <Sidebar screen={screen} onScreenChange={onScreenChange} onLogout={onLogout} />
+      <Sidebar screen={screen} teamRunBadge={teamRunBadge} onScreenChange={onScreenChange} />
       <div className="main-col">
         <Statusbar
           status={status}

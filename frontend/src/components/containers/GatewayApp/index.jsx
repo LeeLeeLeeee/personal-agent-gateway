@@ -7,58 +7,11 @@ import { AuthTemplate } from "../../templates/AuthTemplate/index.jsx";
 import { AppShell } from "../../templates/AppShell/index.jsx";
 import { ChatView } from "../../organisms/ChatView/index.jsx";
 import { NAV } from "../../organisms/Sidebar/index.jsx";
+import { Button } from "../../atoms/Button/index.jsx";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { PersonaLibrary } from "../../organisms/PersonaLibrary/index.jsx";
 import { TeamRunForm } from "../../organisms/TeamRunForm/index.jsx";
 import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
-
-const DEFAULT_PERSONAS = [
-  {
-    name: "Tech Lead",
-    role: "Planning",
-    description: "Breaks a goal into a task plan and coordinates the team.",
-    responsibilities: ["Plan tasks", "Assign owners", "Review results"],
-    constraints: ["Do not write implementation code directly"],
-    default_backend: "codex",
-    default_model: "default"
-  },
-  {
-    name: "Backend Engineer",
-    role: "Implementation",
-    description: "Implements server-side logic and APIs.",
-    responsibilities: ["Write backend code", "Write tests"],
-    constraints: ["Follow existing API contracts"],
-    default_backend: "codex",
-    default_model: "default"
-  },
-  {
-    name: "Frontend Engineer",
-    role: "Implementation",
-    description: "Implements UI components and wiring.",
-    responsibilities: ["Write UI code", "Write component tests"],
-    constraints: ["Match the design system"],
-    default_backend: "codex",
-    default_model: "default"
-  },
-  {
-    name: "QA Engineer",
-    role: "Verification",
-    description: "Verifies changes and reports defects.",
-    responsibilities: ["Run tests", "Report issues"],
-    constraints: ["Do not merge without verification"],
-    default_backend: "codex",
-    default_model: "default"
-  },
-  {
-    name: "Technical Writer",
-    role: "Documentation",
-    description: "Writes release notes and documentation.",
-    responsibilities: ["Document changes", "Write release notes"],
-    constraints: ["Keep docs concise"],
-    default_backend: "codex",
-    default_model: "default"
-  }
-];
 
 function appendOrReconcileCommand(entries, entry) {
   if (entry.type !== "command") return [...entries, entry];
@@ -118,6 +71,7 @@ export function GatewayApp() {
   const [personas, setPersonas] = useState([]);
   const [avatarChoices, setAvatarChoices] = useState([]);
   const [teamRuns, setTeamRuns] = useState([]);
+  const [creatingTeamRun, setCreatingTeamRun] = useState(false);
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
   const [teamActionError, setTeamActionError] = useState("");
@@ -386,6 +340,7 @@ export function GatewayApp() {
     setSessions(await api.sessions());
   }
 
+  // Logout moved off the sidebar to match the design; to be surfaced from the Settings screen.
   async function handleLogout() {
     await api.logout();
     window.location.reload();
@@ -405,17 +360,49 @@ export function GatewayApp() {
     }
   }
 
-  async function handleSeedDefaults() {
+  async function handleUpdatePersona(id, payload) {
     try {
-      const created = await Promise.all(DEFAULT_PERSONAS.map((persona) => api.createPersona(persona)));
-      if (created.some((persona) => !persona)) {
-        setTeamActionError("Failed to seed default personas");
+      const updated = await api.updatePersona(id, payload);
+      if (!updated) {
+        setTeamActionError("Failed to save persona");
         return;
       }
       setTeamActionError("");
       setPersonas(await api.personas());
     } catch (_error) {
-      setTeamActionError("Failed to seed default personas");
+      setTeamActionError("Failed to save persona");
+    }
+  }
+
+  async function handleDeletePersona(id) {
+    try {
+      const ok = await api.deletePersona(id);
+      if (!ok) {
+        setTeamActionError("Failed to delete persona (it may be in use by a team run)");
+        return;
+      }
+      setTeamActionError("");
+      setPersonas(await api.personas());
+    } catch (_error) {
+      setTeamActionError("Failed to delete persona");
+    }
+  }
+
+  async function handleDeleteTeamRun(id) {
+    try {
+      const ok = await api.deleteTeamRun(id);
+      if (!ok) {
+        setTeamActionError("Failed to delete team run");
+        return;
+      }
+      setTeamActionError("");
+      if (selectedTeamRunId === id) {
+        setSelectedTeamRunId(null);
+        setTeamRunDetail(null);
+      }
+      setTeamRuns(await api.teamRuns());
+    } catch (_error) {
+      setTeamActionError("Failed to delete team run");
     }
   }
 
@@ -432,6 +419,7 @@ export function GatewayApp() {
         return;
       }
       setTeamActionError("");
+      setCreatingTeamRun(false);
       setTeamRuns(await api.teamRuns());
       setSelectedTeamRunId(started.id);
     } catch (_error) {
@@ -445,6 +433,7 @@ export function GatewayApp() {
 
   function handleBackToTeamRuns() {
     setSelectedTeamRunId(null);
+    setCreatingTeamRun(false);
   }
 
   if (booting) {
@@ -469,10 +458,12 @@ export function GatewayApp() {
   }
 
   const activeNav = NAV.find((item) => item.key === screen);
+  const teamRunBadge = teamRuns.filter((run) => run.status === "running" || run.status === "planning").length;
 
   return (
     <AppShell
       screen={screen}
+      teamRunBadge={teamRunBadge}
       status={status}
       entries={entries}
       busy={busy}
@@ -486,11 +477,11 @@ export function GatewayApp() {
         if (screen === "teams" && nextScreen !== "teams") {
           setSelectedTeamRunId(null);
           setTeamRunDetail(null);
+          setCreatingTeamRun(false);
         }
         setScreen(nextScreen);
         setNavOpen(false);
       }}
-      onLogout={handleLogout}
     >
       {screen === "chat" ? (
         <ChatView
@@ -514,18 +505,19 @@ export function GatewayApp() {
           onResolveApproval={handleResolveApproval}
         />
       ) : screen === "personas" ? (
-        <div>
-          {teamActionError ? <div className="agent-picker-error mono" style={{ marginBottom: 16 }}>{teamActionError}</div> : null}
+        <div className="screen">
+          {teamActionError ? <div className="agent-picker-error mono team-run-form-error">{teamActionError}</div> : null}
           <PersonaLibrary
             personas={personas}
             avatars={avatarChoices}
             onCreate={handleCreatePersona}
-            onSeedDefaults={handleSeedDefaults}
+            onSave={handleUpdatePersona}
+            onDelete={handleDeletePersona}
           />
         </div>
       ) : screen === "teams" ? (
         selectedTeamRunId ? (
-          <div>
+          <div className="screen">
             <a
               href="#"
               className="mono team-run-back"
@@ -538,31 +530,66 @@ export function GatewayApp() {
             </a>
             <TeamRunDetail detail={teamRunDetail} />
           </div>
+        ) : creatingTeamRun ? (
+          <div className="screen">
+            <a
+              href="#"
+              className="mono team-run-back"
+              onClick={(event) => {
+                event.preventDefault();
+                handleBackToTeamRuns();
+              }}
+            >
+              ← TEAM RUNS
+            </a>
+            <h1 className="headline" style={{ fontSize: 34, marginTop: 10 }}>New Team Run</h1>
+            <div className="team-run-new-sub">Personas are snapshotted when the run starts and stay locked for its lifetime.</div>
+            {teamActionError ? <div className="agent-picker-error mono team-run-form-error" style={{ marginTop: 16 }}>{teamActionError}</div> : null}
+            <TeamRunForm personas={personas} onSubmit={handleCreateTeamRun} />
+          </div>
         ) : (
-          <div className="team-runs-home">
+          <div className="screen team-runs-home">
             <div className="team-runs-home-head">
-              <h1 className="headline" style={{ fontSize: 28 }}>Team Runs</h1>
+              <div>
+                <h1 className="headline" style={{ fontSize: 34 }}>Team Runs</h1>
+                <div className="team-runs-home-sub">Multiple agent sessions, one goal · each agent starts from a persona snapshot</div>
+              </div>
+              <Button variant="primary" onClick={() => { setTeamActionError(""); setCreatingTeamRun(true); }}>New team run</Button>
             </div>
-            {teamActionError ? <div className="agent-picker-error mono" style={{ marginBottom: 16 }}>{teamActionError}</div> : null}
+            {teamActionError ? <div className="agent-picker-error mono team-run-form-error">{teamActionError}</div> : null}
             <div className="team-run-list">
               {teamRuns.map((run) => (
-                <button
-                  key={run.id}
-                  type="button"
-                  className="team-run-list-item"
-                  onClick={() => handleSelectTeamRun(run.id)}
-                >
-                  <span className="mono team-run-list-id">{run.id}</span>
-                  <StatusBadge kind={run.status} />
-                  <span className="headline team-run-list-goal">{run.goal}</span>
-                </button>
+                <div key={run.id} className="team-run-list-item">
+                  <button
+                    type="button"
+                    className="team-run-list-open"
+                    onClick={() => handleSelectTeamRun(run.id)}
+                  >
+                    <span className="mono team-run-list-id">{run.id}</span>
+                    <StatusBadge kind={run.status} />
+                    <span className="headline team-run-list-goal">{run.goal}</span>
+                  </button>
+                  <Button
+                    variant="destructive"
+                    size="btn-sm"
+                    aria-label={`Delete team run ${run.goal}`}
+                    onClick={() => {
+                      if (window.confirm(`Delete team run "${run.goal}"? This cannot be undone.`)) {
+                        handleDeleteTeamRun(run.id);
+                      }
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </div>
               ))}
             </div>
-            <TeamRunForm personas={personas} onSubmit={handleCreateTeamRun} />
           </div>
         )
       ) : (
-        <div className="planned">{(activeNav?.label || screen).toUpperCase()} - PLANNED</div>
+        <div className="screen">
+          <div className="planned">{(activeNav?.label || screen).toUpperCase()} - PLANNED</div>
+        </div>
       )}
     </AppShell>
   );
