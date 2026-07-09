@@ -70,21 +70,22 @@ def test_capture_command_uses_macos_screencapture(tmp_path: Path) -> None:
 
 
 class FakeAgentRuntime:
-    def __init__(self, response_text: str) -> None:
+    def __init__(self, response_text: str, pending_approval: dict | None = None) -> None:
         self._response_text = response_text
+        self._pending_approval = pending_approval
         self.received_prompt: str | None = None
 
     async def handle_user_message(self, content: str) -> RuntimeResult:
         self.received_prompt = content
         return RuntimeResult(
             messages=[{"role": "assistant", "content": self._response_text}],
-            pending_approval=None,
+            pending_approval=self._pending_approval,
         )
 
 
 class FakeAgentRuntimeFactory:
-    def __init__(self, response_text: str) -> None:
-        self.runtime = FakeAgentRuntime(response_text)
+    def __init__(self, response_text: str, pending_approval: dict | None = None) -> None:
+        self.runtime = FakeAgentRuntime(response_text, pending_approval)
 
     def create_default_runtime(self) -> FakeAgentRuntime:
         return self.runtime
@@ -107,3 +108,13 @@ async def test_agent_runner_requires_prompt() -> None:
 
     with pytest.raises(ValueError, match="prompt"):
         await runner.run("agent.instruct", {})
+
+
+async def test_agent_runner_reports_failure_when_turn_needs_approval() -> None:
+    factory = FakeAgentRuntimeFactory("partial", pending_approval={"id": "ap1"})
+    runner = AgentRunner(factory)
+
+    result = await runner.run("agent.instruct", {"prompt": "do a thing"})
+
+    assert result.exit_code == 1
+    assert "approval" in result.stderr.lower()

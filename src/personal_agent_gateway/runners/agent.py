@@ -23,6 +23,15 @@ class AgentRunner:
             for message in result.messages
             if message.get("content")
         )
+        if result.pending_approval is not None:
+            # Scheduled/headless runs cannot answer a mid-turn tool approval, so
+            # report failure instead of a misleading empty "succeeded".
+            return RunResult(
+                exit_code=1,
+                stdout=response_text,
+                stderr="Agent turn paused awaiting tool approval; scheduled runs cannot approve tool calls.",
+                artifact_paths=[],
+            )
         return RunResult(
             exit_code=0,
             stdout=response_text,
