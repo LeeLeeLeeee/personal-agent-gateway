@@ -99,3 +99,65 @@ def test_get_artifact_thumbnail_returns_thumbnail_when_present(tmp_path: Path) -
     assert response.status_code == 200
     assert response.content == b"thumb-content"
     assert response.headers["content-type"].startswith("image/png")
+
+
+def test_register_artifact_copies_workspace_file(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    workspace = client.app.state.app_config.workspace_root
+    (workspace / "out").mkdir()
+    (workspace / "out" / "cat.png").write_bytes(b"img-bytes")
+
+    response = client.post(
+        "/api/artifacts/register",
+        json={"path": "out/cat.png", "session_id": "sess-1"},
+    )
+
+    assert response.status_code == 200
+    artifact = response.json()["artifact"]
+    assert artifact["type"] == "image"
+    assert artifact["title"] == "cat.png"
+    assert artifact["source_session_id"] == "sess-1"
+    # original stays in the workspace (copy, not move)
+    assert (workspace / "out" / "cat.png").exists()
+    # content is retrievable through the existing content endpoint
+    content = client.get(f"/api/artifacts/{artifact['id']}/content")
+    assert content.content == b"img-bytes"
+
+
+def test_register_artifact_rejects_path_outside_workspace(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    outside = tmp_path / "secret.png"
+    outside.write_bytes(b"nope")
+
+    response = client.post(
+        "/api/artifacts/register",
+        json={"path": "../secret.png"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_register_artifact_rejects_unknown_extension(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    workspace = client.app.state.app_config.workspace_root
+    (workspace / "script.py").write_text("print('x')")
+
+    response = client.post("/api/artifacts/register", json={"path": "script.py"})
+
+    assert response.status_code == 415
+
+
+def test_register_artifact_returns_404_for_missing_file(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+
+    response = client.post("/api/artifacts/register", json={"path": "gone.png"})
+
+    assert response.status_code == 404
+
+
+def test_register_artifact_requires_session(tmp_path: Path) -> None:
+    client = TestClient(create_app(make_config(tmp_path)))
+
+    response = client.post("/api/artifacts/register", json={"path": "x.png"})
+
+    assert response.status_code == 401
