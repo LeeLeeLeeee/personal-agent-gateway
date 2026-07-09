@@ -1,4 +1,5 @@
 from personal_agent_gateway.approval import ApprovalStore
+from personal_agent_gateway.agent_session_link import AgentSessionLinkService
 from personal_agent_gateway.config import AppConfig, ConfigError
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
@@ -31,10 +32,29 @@ class AgentRuntimeFactory:
             return self._create_runtime_for_app_config()
 
         events = self._transcript.load(session_id)
-        if not any(event.kind == "session_config_set" for event in events):
+        has_explicit_session_config = any(event.kind == "session_config_set" for event in events)
+        if not has_explicit_session_config and self._config.model_provider != "codex":
             return self._create_runtime_for_app_config()
 
         session_config = SessionAgentConfigService(self._transcript).effective_config(session_id)
+        link_service = AgentSessionLinkService(self._transcript)
+        link = link_service.latest(
+            session_id=session_id,
+            agent_id=session_config.agent_id,
+            model=session_config.model,
+            options=session_config.options,
+        )
+        history_mode = "latest_user" if link is not None else "full"
+
+        def record_upstream_session(upstream_session_id: str) -> None:
+            link_service.record(
+                session_id=session_id,
+                agent_id=session_config.agent_id,
+                model=session_config.model,
+                options=session_config.options,
+                upstream_session_id=upstream_session_id,
+            )
+
         if session_config.agent_id == "codex":
             options = session_config.options
 
@@ -50,9 +70,12 @@ class AgentRuntimeFactory:
                     sandbox=str(options.get("sandbox") or self._config.codex_sandbox),
                     approval_policy=str(options.get("approval_policy") or self._config.codex_approval_policy),
                     profile=str(options["profile"]) if options.get("profile") else None,
+                    upstream_session_id=link.upstream_session_id if link is not None else None,
                     timeout_seconds=self._config.codex_timeout_seconds,
                     on_event=publish_codex_event,
-                )
+                ),
+                history_mode=history_mode,
+                on_upstream_session_id=record_upstream_session,
             )
 
         if session_config.agent_id == "claude":
@@ -65,8 +88,11 @@ class AgentRuntimeFactory:
                     effort=str(options.get("effort") or "medium"),
                     permission_mode=str(options.get("permission_mode") or "manual"),
                     agent=str(options["agent"]) if options.get("agent") else None,
+                    upstream_session_id=link.upstream_session_id if link is not None else None,
                     timeout_seconds=self._config.codex_timeout_seconds,
-                )
+                ),
+                history_mode=history_mode,
+                on_upstream_session_id=record_upstream_session,
             )
 
         raise ConfigError(f"Unsupported session agent: {session_config.agent_id}")
@@ -98,11 +124,18 @@ class AgentRuntimeFactory:
 
         return self._runtime(OpenAIModelClient(api_key=config.openai_api_key or "", model=config.model))
 
-    def _runtime(self, model) -> AgentRuntime:
+    def _runtime(
+        self,
+        model,
+        history_mode: str = "full",
+        on_upstream_session_id=None,
+    ) -> AgentRuntime:
         return AgentRuntime(
             transcript=self._transcript,
             tools=WorkspaceTools(self._config.workspace_root, ApprovalStore()),
             model=model,
             job_service=self._job_service,
             event_bus=self._event_bus,
+            history_mode=history_mode,
+            on_upstream_session_id=on_upstream_session_id,
         )

@@ -554,6 +554,81 @@ def test_chat_passes_claude_agent_from_session_config(tmp_path: Path, monkeypatc
     assert captured[-1]["agent"] == "reviewer"
 
 
+def test_chat_reuses_codex_upstream_session_after_first_response(tmp_path: Path, monkeypatch) -> None:
+    captured_upstream_ids: list[str | None] = []
+    captured_messages: list[list[dict[str, object]]] = []
+
+    class FakeCodexModelClient:
+        def __init__(self, *args, upstream_session_id=None, **kwargs) -> None:
+            captured_upstream_ids.append(upstream_session_id)
+
+        async def complete(self, messages):
+            captured_messages.append(messages)
+            return ModelResponse(content="ok", tool_calls=[], upstream_session_id="codex-thread-1")
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    config = make_config(tmp_path)
+    client = auth_client(config, runtime=None)
+
+    first = client.post("/api/chat", json={"message": "first"})
+    second = client.post("/api/chat", json={"message": "second"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    store = TranscriptStore(config.session_dir)
+    events = store.load(store.active_id() or "")
+    assert any(
+        event.kind == "agent_session_link" and event.payload["upstream_session_id"] == "codex-thread-1"
+        for event in events
+    )
+    assert captured_upstream_ids == [None, "codex-thread-1"]
+    assert captured_messages[0] == [{"role": "user", "content": "first"}]
+    assert captured_messages[1] == [{"role": "user", "content": "second"}]
+
+
+def test_chat_reuses_claude_upstream_session_after_first_response(tmp_path: Path, monkeypatch) -> None:
+    captured_upstream_ids: list[str | None] = []
+    captured_messages: list[list[dict[str, object]]] = []
+
+    class FakeClaudeModelClient:
+        def __init__(self, *args, upstream_session_id=None, **kwargs) -> None:
+            captured_upstream_ids.append(upstream_session_id)
+
+        async def complete(self, messages):
+            captured_messages.append(messages)
+            return ModelResponse(content="ok", tool_calls=[], upstream_session_id="claude-session-1")
+
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.ClaudeModelClient", FakeClaudeModelClient)
+    config = make_config(tmp_path)
+    client = auth_client(config, runtime=None)
+
+    assert client.put(
+        "/api/sessions/active/config",
+        json={"agent_id": "claude", "model": "sonnet", "options": {}},
+    ).status_code == 200
+
+    first = client.post("/api/chat", json={"message": "first"})
+    second = client.post("/api/chat", json={"message": "second"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    store = TranscriptStore(config.session_dir)
+    events = store.load(store.active_id() or "")
+    assert any(
+        event.kind == "agent_session_link" and event.payload["upstream_session_id"] == "claude-session-1"
+        for event in events
+    )
+    assert captured_upstream_ids == [None, "claude-session-1"]
+    assert captured_messages[0] == [
+        {
+            "role": "system",
+            "content": '{"kind": "session_config_set", "payload": {"agent_id": "claude", "model": "sonnet", "options": {}}}',
+        },
+        {"role": "user", "content": "first"},
+    ]
+    assert captured_messages[1] == [{"role": "user", "content": "second"}]
+
+
 def test_history_returns_restored_transcript_after_app_recreation(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     first_runtime = AgentRuntime(

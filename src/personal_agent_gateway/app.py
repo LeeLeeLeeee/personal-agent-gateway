@@ -217,7 +217,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         _session: None = session_dependency,
     ) -> dict[str, object]:
         nonlocal running_session_id
-        running_session_id = transcript.active_id()
+        running_session_id = transcript.active_id() or transcript.start_new()
         try:
             return _runtime_response(await active_runtime().handle_user_message(request.message))
         finally:
