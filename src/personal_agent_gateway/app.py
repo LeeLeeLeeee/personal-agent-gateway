@@ -34,6 +34,7 @@ from personal_agent_gateway.model_client import CodexModelClient
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
+from personal_agent_gateway.runners.agent import AgentRunner
 from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
@@ -64,16 +65,10 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     frontend_assets_dir = package_dir / "frontend_dist" / "assets"
     event_bus = EventBus()
     app.state.event_bus = event_bus
-    _attach_local_services(app, app_config)
+    runtime_factory = _attach_local_services(app, app_config, transcript, event_bus)
     app.state.team_runtime = TeamRuntime(
         app.state.team_run_service,
         _team_model_factory(app_config),
-        event_bus,
-    )
-    runtime_factory = AgentRuntimeFactory(
-        app_config,
-        transcript,
-        app.state.job_service,
         event_bus,
     )
     injected_runtime = runtime
@@ -254,7 +249,9 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     return app
 
 
-def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
+def _attach_local_services(
+    app: FastAPI, config: AppConfig, transcript: TranscriptStore, event_bus: EventBus
+) -> AgentRuntimeFactory:
     assert config.app_db_path is not None
     assert config.artifact_root is not None
     assert config.temp_dir is not None
@@ -267,6 +264,7 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
     job_service = JobService(db, registry)
     schedule_service = ScheduleService(db, registry)
     artifact_store = ArtifactStore(db, config.artifact_root)
+    runtime_factory = AgentRuntimeFactory(config, transcript, job_service, event_bus)
     job_worker = JobWorker(
         job_service,
         artifact_store,
@@ -282,6 +280,7 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
                 temp_dir=config.temp_dir,
             ),
             "shell": ShellRunner(config.workspace_root),
+            "agent": AgentRunner(runtime_factory),
         },
     )
     app.state.app_config = config
@@ -293,6 +292,7 @@ def _attach_local_services(app: FastAPI, config: AppConfig) -> None:
     app.state.job_worker = job_worker
     app.state.persona_service = persona_service
     app.state.team_run_service = team_run_service
+    return runtime_factory
 
 
 def main() -> None:

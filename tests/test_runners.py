@@ -2,8 +2,10 @@ from pathlib import Path
 
 import pytest
 
+from personal_agent_gateway.runners.agent import AgentRunner
 from personal_agent_gateway.runners.capture import CaptureRunner, _capture_command
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
+from personal_agent_gateway.runtime import RuntimeResult
 
 
 def test_ffmpeg_extract_audio_builds_safe_command(tmp_path: Path) -> None:
@@ -65,3 +67,43 @@ def test_capture_command_uses_macos_screencapture(tmp_path: Path) -> None:
     command = _capture_command("screencapture", output, "darwin")
 
     assert command == ["screencapture", "-x", str(output)]
+
+
+class FakeAgentRuntime:
+    def __init__(self, response_text: str) -> None:
+        self._response_text = response_text
+        self.received_prompt: str | None = None
+
+    async def handle_user_message(self, content: str) -> RuntimeResult:
+        self.received_prompt = content
+        return RuntimeResult(
+            messages=[{"role": "assistant", "content": self._response_text}],
+            pending_approval=None,
+        )
+
+
+class FakeAgentRuntimeFactory:
+    def __init__(self, response_text: str) -> None:
+        self.runtime = FakeAgentRuntime(response_text)
+
+    def create_default_runtime(self) -> FakeAgentRuntime:
+        return self.runtime
+
+
+async def test_agent_runner_runs_one_turn_and_returns_response_as_log() -> None:
+    factory = FakeAgentRuntimeFactory("known agent response")
+    runner = AgentRunner(factory)
+
+    result = await runner.run("agent.instruct", {"prompt": "hi there"})
+
+    assert factory.runtime.received_prompt == "hi there"
+    assert result.exit_code == 0
+    assert "known agent response" in result.stdout
+    assert result.artifact_paths == []
+
+
+async def test_agent_runner_requires_prompt() -> None:
+    runner = AgentRunner(FakeAgentRuntimeFactory("unused"))
+
+    with pytest.raises(ValueError, match="prompt"):
+        await runner.run("agent.instruct", {})

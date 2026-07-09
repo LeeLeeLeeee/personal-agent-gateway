@@ -86,6 +86,17 @@ class CapabilityRegistry:
                     requires_approval=True,
                     runner_type="capture",
                 ),
+                Capability(
+                    id="agent.instruct",
+                    title="Instruct Agent",
+                    description="Send a saved instruction to the local agent on a schedule.",
+                    category="Agent",
+                    risk_level="medium",
+                    required_inputs=("prompt",),
+                    output_types=("log",),
+                    requires_approval=False,
+                    runner_type="agent",
+                ),
             ]
         )
 
