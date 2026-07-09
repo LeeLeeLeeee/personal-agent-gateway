@@ -134,7 +134,7 @@ describe("GatewayApp", () => {
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
-      "POST /api/chat": { messages: [{ content: "Fallback answer" }], pending_approval: null },
+      "POST /api/sessions/session-1/chat": { messages: [{ content: "Fallback answer" }], pending_approval: null },
       "GET /api/artifacts": { artifacts: [] }
     });
 
@@ -149,17 +149,25 @@ describe("GatewayApp", () => {
   });
 
   it("searches and activates sessions from the session rail", async () => {
+    let activeSessionId = "session-1";
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
-      "GET /api/status": status,
+      "GET /api/status": () => response({ ...status, session_id: activeSessionId }),
       "GET /api/sessions": { sessions },
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
       "GET /api/sessions/search?q=old": { sessions: [{ ...sessions[0], id: "session-2", title: "Old chat", is_active: false }] },
       "POST /api/sessions/session-2/activate": {
-        session_id: "session-2",
+        session_id: "session-2"
+      },
+      "GET /api/sessions/session-2/history": {
         events: [{ kind: "user", created_at: "2026-07-08T01:02:00Z", payload: { content: "previous" } }]
+      },
+      "GET /api/sessions/session-2/activity": { events: [] },
+      "GET /api/sessions/session-2/status": () => {
+        activeSessionId = "session-2";
+        return response({ status: "idle", session_id: "session-2" });
       }
     });
 
@@ -182,6 +190,10 @@ describe("GatewayApp", () => {
       "GET /api/history": {
         events: [{ kind: "user", created_at: "2026-07-08T01:02:00Z", payload: { content: "deleted session text" } }]
       },
+      "GET /api/sessions/session-1/history": {
+        events: [{ kind: "user", created_at: "2026-07-08T01:02:00Z", payload: { content: "deleted session text" } }]
+      },
+      "GET /api/sessions/session-1/activity": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
       "DELETE /api/sessions/session-1": () => {
@@ -228,6 +240,84 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("active session answer")).toBeInTheDocument();
   });
 
+  it("keeps non-active session SSE entries in that session cache and shows them after activation", async () => {
+    let activeSessionId = "session-1";
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": () => response({ ...status, session_id: activeSessionId }),
+      "GET /api/sessions": { sessions: [
+        sessions[0],
+        { ...sessions[0], id: "session-2", title: "Background chat", is_active: false }
+      ] },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/sessions/session-1/history": { events: [] },
+      "GET /api/sessions/session-1/activity": { events: [] },
+      "GET /api/sessions/session-1/status": { status: "idle", session_id: "session-1" },
+      "GET /api/sessions/session-2/history": { events: [] },
+      "GET /api/sessions/session-2/activity": { events: [] },
+      "GET /api/sessions/session-2/status": () => {
+        activeSessionId = "session-2";
+        return response({ status: "idle", session_id: "session-2" });
+      },
+      "POST /api/sessions/session-2/activate": { session_id: "session-2" }
+    });
+
+    render(<GatewayApp />);
+
+    await screen.findByLabelText("Agent Gateway");
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.emit({
+        id: 50,
+        session_id: "session-2",
+        event_seq: 1,
+        type: "codex.event",
+        payload: { item: { type: "agent_message", id: "agent-2", text: "background answer" } }
+      });
+    });
+
+    expect(screen.queryByText("background answer")).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByText("Background chat"));
+
+    expect(await screen.findByText("background answer")).toBeInTheDocument();
+  });
+
+  it("does not disable active composer when another session is busy", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions: [
+        sessions[0],
+        { ...sessions[0], id: "session-2", title: "Background chat", status: "running", is_active: false }
+      ] },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/sessions/session-1/history": { events: [] },
+      "GET /api/sessions/session-1/activity": { events: [] },
+      "GET /api/sessions/session-1/status": { status: "idle", session_id: "session-1" }
+    });
+
+    render(<GatewayApp />);
+
+    await screen.findByLabelText("Agent Gateway");
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.emit({
+        id: 51,
+        session_id: "session-2",
+        event_seq: 1,
+        type: "runtime.user_message.started",
+        payload: { message: "background work" }
+      });
+    });
+
+    expect(screen.getByPlaceholderText("Message the agent, or describe a local action...")).not.toBeDisabled();
+    expect(screen.getByText("AGENT IDLE")).toBeInTheDocument();
+  });
+
   it("does not recreate the SSE connection when chat busy state changes", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
@@ -236,7 +326,7 @@ describe("GatewayApp", () => {
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
-      "POST /api/chat": { messages: [{ content: "Fallback answer" }], pending_approval: null },
+      "POST /api/sessions/session-1/chat": { messages: [{ content: "Fallback answer" }], pending_approval: null },
       "GET /api/artifacts": { artifacts: [] }
     });
 

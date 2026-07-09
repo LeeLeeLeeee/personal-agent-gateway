@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../api/client.js";
-import { entryFromSse, normalizeApproval, timelineFromHistory } from "../../../lib/timeline.js";
+import { entryFromSse, normalizeApproval, timelineFromHistory, timelineFromSession } from "../../../lib/timeline.js";
 import { nowHM } from "../../../lib/time.js";
 import { AuthCard } from "../../molecules/AuthCard/index.jsx";
 import { AuthTemplate } from "../../templates/AuthTemplate/index.jsx";
@@ -24,6 +24,34 @@ function appendOrReconcileCommand(entries, entry) {
   if (index < 0) return [...entries, entry];
   const next = entries.slice();
   next[index] = { ...entry, order: entries[index].order ?? entry.order };
+  return next;
+}
+
+function emptyChatSessionState() {
+  return {
+    entries: [],
+    pendingApproval: null,
+    busy: false,
+    turnStart: null,
+    turnEnd: null,
+    turnStreamed: false,
+    nextLocalOrder: 0,
+    lastServerEventId: null,
+    lastLoadedAt: null
+  };
+}
+
+function updateOneSession(current, sessionId, updater) {
+  const base = current[sessionId] || emptyChatSessionState();
+  return { ...current, [sessionId]: updater(base) };
+}
+
+function appendOrReconcileEntry(entries, entry) {
+  if (!entry.key) return appendOrReconcileCommand(entries, entry);
+  const index = entries.findIndex((candidate) => candidate.key === entry.key);
+  if (index < 0) return appendOrReconcileCommand(entries, entry);
+  const next = entries.slice();
+  next[index] = { ...entries[index], ...entry, order: entries[index].order ?? entry.order };
   return next;
 }
 
@@ -67,14 +95,10 @@ export function GatewayApp() {
   const [agents, setAgents] = useState([]);
   const [sessionConfig, setSessionConfig] = useState(null);
   const [sessionConfigError, setSessionConfigError] = useState("");
-  const [entries, setEntries] = useState([]);
-  const [pendingApproval, setPendingApproval] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState(null);
+  const [sessionStateById, setSessionStateById] = useState({});
   const [navOpen, setNavOpen] = useState(false);
   const [sseState, setSseState] = useState("idle");
-  const [turnStart, setTurnStart] = useState(null);
-  const [turnEnd, setTurnEnd] = useState(null);
-  const [turnStreamed, setTurnStreamed] = useState(false);
   const [personas, setPersonas] = useState([]);
   const [avatarChoices, setAvatarChoices] = useState([]);
   const [teamRuns, setTeamRuns] = useState([]);
@@ -85,15 +109,22 @@ export function GatewayApp() {
   const [artifacts, setArtifacts] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [schedules, setSchedules] = useState([]);
-  const turnHadAgentRef = useRef(false);
-  const turnStreamedRef = useRef(false);
   const turnStartRef = useRef(null);
   const selectedTeamRunIdRef = useRef(null);
   const lastConfigAttemptRef = useRef(null);
-  const entryOrderRef = useRef(0);
   const activeSessionIdRef = useRef(null);
   const busyRef = useRef(false);
   const seenSseEventIdsRef = useRef(new Set());
+
+  const activeSessionState = activeSessionId
+    ? (sessionStateById[activeSessionId] || emptyChatSessionState())
+    : emptyChatSessionState();
+  const entries = activeSessionState.entries;
+  const pendingApproval = activeSessionState.pendingApproval;
+  const busy = activeSessionState.busy;
+  const turnStart = activeSessionState.turnStart;
+  const turnEnd = activeSessionState.turnEnd;
+  const turnStreamed = activeSessionState.turnStreamed;
 
   useForceTick(screen === "chat" && busy);
 
@@ -105,39 +136,47 @@ export function GatewayApp() {
       api.agents(),
       api.activeSessionConfig()
     ]);
-    activeSessionIdRef.current = nextStatus?.session_id || null;
+    const sessionId = nextStatus?.session_id || null;
+    setActiveSessionId(sessionId);
+    activeSessionIdRef.current = sessionId;
     setStatus(withSessionConfigStatus(nextStatus, nextConfig));
     setSessions(nextSessions);
     setAgents(nextAgents);
     setSessionConfig(nextConfig || nextStatus?.session_config || null);
-    const nextEntries = timelineFromHistory(history);
-    entryOrderRef.current = nextEntries.length;
-    setEntries(nextEntries);
+    let nextEntries = timelineFromHistory(history);
+    if (sessionId && api.sessionHistory && api.sessionActivity) {
+      const [sessionHistory, sessionActivity] = await Promise.all([
+        api.sessionHistory(sessionId),
+        api.sessionActivity(sessionId)
+      ]);
+      nextEntries = timelineFromSession(sessionHistory, sessionActivity);
+    }
+    setSessionStateById((current) => (
+      sessionId
+        ? {
+          ...current,
+          [sessionId]: {
+            ...emptyChatSessionState(),
+            entries: nextEntries,
+            pendingApproval: normalizeApproval(nextStatus?.pending_approval),
+            busy: nextStatus?.session_status === "running" || nextStatus?.status === "running",
+            nextLocalOrder: nextEntries.length,
+            lastLoadedAt: Date.now()
+          }
+        }
+        : current
+    ));
     setAuthenticated(true);
     setBooting(false);
   }, []);
 
-  function stampEntry(entry) {
-    if (entry.order != null) return entry;
-    const order = entryOrderRef.current;
-    entryOrderRef.current += 1;
-    return { ...entry, order };
-  }
-
-  function stampEntries(nextEntries) {
-    return nextEntries.map((entry) => stampEntry(entry));
-  }
-
-  function shouldIgnoreScopedEvent(event) {
-    if (event.type?.startsWith("team.")) return false;
-    if (!event.session_id) return false;
-    const activeSessionId = activeSessionIdRef.current;
-    if (activeSessionId) return event.session_id !== activeSessionId;
-    if (busyRef.current && event.type === "runtime.user_message.started") {
-      activeSessionIdRef.current = event.session_id;
-      return false;
-    }
-    return true;
+  function stampSessionEntry(sessionId, state, entry) {
+    if (entry.order != null) return { entry, nextLocalOrder: state.nextLocalOrder };
+    const order = state.nextLocalOrder;
+    return {
+      entry: { ...entry, order },
+      nextLocalOrder: order + 1
+    };
   }
 
   useEffect(() => {
@@ -179,29 +218,74 @@ export function GatewayApp() {
         if (seenSseEventIdsRef.current.has(eventId)) return;
         seenSseEventIdsRef.current.add(eventId);
       }
-      if (shouldIgnoreScopedEvent(parsed)) return;
-      if (parsed.type === "runtime.user_message.started") {
-        const started = Date.now();
-        turnStartRef.current = started;
-        setTurnStart(started);
-        setTurnEnd(null);
+      if (parsed.session_id) {
+        const sessionId = parsed.session_id;
+        if (sessionId === activeSessionIdRef.current) {
+          if (parsed.type === "runtime.user_message.started") {
+            turnStartRef.current = Date.now();
+            busyRef.current = true;
+          } else if (parsed.type === "runtime.completed" || parsed.type === "runtime.error") {
+            busyRef.current = false;
+          }
+        }
+        const entry = entryFromSse(parsed);
+        setSessionStateById((current) => updateOneSession(current, sessionId, (state) => {
+          const started = parsed.type === "runtime.user_message.started" ? Date.now() : state.turnStart;
+          const ended = parsed.type === "runtime.completed" || parsed.type === "runtime.error" ? Date.now() : (parsed.type === "runtime.user_message.started" ? null : state.turnEnd);
+          const busyNext = parsed.type === "runtime.user_message.started"
+            ? true
+            : (parsed.type === "runtime.completed" || parsed.type === "runtime.error")
+              ? false
+              : state.busy;
+          if (!entry) {
+            return {
+              ...state,
+              busy: busyNext,
+              turnStart: started,
+              turnEnd: ended,
+              lastServerEventId: parsed.id ?? state.lastServerEventId
+            };
+          }
+          const stamped = stampSessionEntry(sessionId, state, entry);
+          return {
+            ...state,
+            entries: appendOrReconcileEntry(state.entries, stamped.entry),
+            busy: busyNext,
+            turnStart: started,
+            turnEnd: ended,
+            turnStreamed: true,
+            nextLocalOrder: stamped.nextLocalOrder,
+            lastServerEventId: parsed.id ?? state.lastServerEventId
+          };
+        }));
+        return;
       }
       if (parsed.type?.startsWith("team.") && parsed.team_run_id === selectedTeamRunIdRef.current) {
         api.teamRunDetail(selectedTeamRunIdRef.current).then(setTeamRunDetail);
       }
       const entry = entryFromSse(parsed);
       if (!entry) return;
-      turnStreamedRef.current = true;
-      setTurnStreamed(true);
-      if (entry.type === "agent") turnHadAgentRef.current = true;
-      setEntries((current) => appendOrReconcileCommand(current, stampEntry(entry)));
+      const sessionId = activeSessionIdRef.current;
+      if (!sessionId) return;
+      setSessionStateById((current) => updateOneSession(current, sessionId, (state) => {
+        const stamped = stampSessionEntry(sessionId, state, entry);
+        return {
+          ...state,
+          entries: appendOrReconcileEntry(state.entries, stamped.entry),
+          turnStreamed: true,
+          nextLocalOrder: stamped.nextLocalOrder,
+          lastServerEventId: parsed.id ?? state.lastServerEventId
+        };
+      }));
     };
     return () => source.close();
   }, [authenticated]);
 
   useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
     busyRef.current = busy;
-  }, [busy]);
+    turnStartRef.current = turnStart;
+  }, [activeSessionId, busy, turnStart]);
 
   useEffect(() => {
     selectedTeamRunIdRef.current = selectedTeamRunId;
@@ -273,7 +357,6 @@ export function GatewayApp() {
       api.sessions(),
       api.activeSessionConfig()
     ]);
-    activeSessionIdRef.current = nextStatus?.session_id || null;
     setStatus(withSessionConfigStatus(nextStatus, nextConfig));
     setSessions(nextSessions);
     setSessionConfig(nextConfig || nextStatus?.session_config || null);
@@ -307,84 +390,137 @@ export function GatewayApp() {
   }
 
   function clearActiveConversationState() {
+    const sessionId = activeSessionIdRef.current;
     activeSessionIdRef.current = null;
-    entryOrderRef.current = 0;
-    setEntries([]);
-    setPendingApproval(null);
-    setTurnStart(null);
-    setTurnEnd(null);
+    setActiveSessionId(null);
+    if (sessionId) {
+      setSessionStateById((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+    }
     turnStartRef.current = null;
-    turnHadAgentRef.current = false;
-    turnStreamedRef.current = false;
-    setTurnStreamed(false);
+    busyRef.current = false;
     setSessionConfigError("");
   }
 
-  async function maybeAppendArtifact(nextStatus) {
-    if (!turnStartRef.current) return;
+  async function maybeAppendArtifact(sessionId) {
+    if (!sessionId || !turnStartRef.current) return;
     const artifacts = await api.artifacts();
-    const sessionId = nextStatus?.session_id;
     const fresh = artifacts.filter((artifact) => (
       artifact.source_session_id === sessionId && Date.parse(artifact.created_at) >= turnStartRef.current - 2000
     ));
     if (fresh.length) {
-      setEntries((current) => [
-        ...current,
-        ...stampEntries(fresh.map((artifact) => ({ type: "artifact", artifact })))
-      ]);
+      setSessionStateById((current) => updateOneSession(current, sessionId, (state) => {
+        let nextState = state;
+        for (const artifact of fresh) {
+          const stamped = stampSessionEntry(sessionId, nextState, { type: "artifact", artifact });
+          nextState = {
+            ...nextState,
+            entries: appendOrReconcileEntry(nextState.entries, stamped.entry),
+            nextLocalOrder: stamped.nextLocalOrder
+          };
+        }
+        return nextState;
+      }));
     }
   }
 
-  async function postTurn(data) {
-    setPendingApproval(data ? normalizeApproval(data.pending_approval) : null);
-    if (!turnHadAgentRef.current && data && Array.isArray(data.messages)) {
-      const agentEntries = data.messages
-        .filter((message) => typeof message.content === "string")
-        .map((message) => ({ type: "agent", text: message.content, time: nowHM() }));
-      if (agentEntries.length) setEntries((current) => [...current, ...stampEntries(agentEntries)]);
-    }
+  async function postTurn(sessionId, data) {
+    setSessionStateById((current) => updateOneSession(current, sessionId, (state) => {
+      const pending = data ? normalizeApproval(data.pending_approval) : null;
+      const agentEntries = !state.turnStreamed && data && Array.isArray(data.messages)
+        ? data.messages
+          .filter((message) => typeof message.content === "string")
+          .map((message, index) => ({
+            type: "agent",
+            text: message.content,
+            time: nowHM(),
+            key: `fallback:${sessionId}:${data?.request_id || data?.last_event_id || "none"}:${index}`
+          }))
+        : [];
+      let nextState = { ...state, pendingApproval: pending };
+      for (const entry of agentEntries) {
+        const stamped = stampSessionEntry(sessionId, nextState, entry);
+        nextState = {
+          ...nextState,
+          entries: appendOrReconcileEntry(nextState.entries, stamped.entry),
+          nextLocalOrder: stamped.nextLocalOrder
+        };
+      }
+      return nextState;
+    }));
     const nextStatus = await refreshStatusAndSessions();
-    await maybeAppendArtifact(nextStatus);
+    await maybeAppendArtifact(nextStatus?.session_id || sessionId);
   }
 
   async function handleSend(message) {
+    let sessionId = activeSessionIdRef.current || activeSessionId;
+    if (!sessionId) {
+      const reset = await api.reset();
+      sessionId = reset?.session_id || null;
+      setActiveSessionId(sessionId);
+      activeSessionIdRef.current = sessionId;
+    }
+    if (!sessionId) return;
     const started = Date.now();
     turnStartRef.current = started;
-    turnHadAgentRef.current = false;
-    turnStreamedRef.current = false;
-    setEntries((current) => [...current, stampEntry({ type: "user", text: message, time: nowHM() })]);
-    setBusy(true);
     busyRef.current = true;
-    setTurnStart(started);
-    setTurnEnd(null);
-    setTurnStreamed(false);
+    setSessionStateById((current) => updateOneSession(current, sessionId, (state) => {
+      const stamped = stampSessionEntry(sessionId, state, {
+        type: "user",
+        text: message,
+        time: nowHM(),
+        key: `local:user:${started}`
+      });
+      return {
+        ...state,
+        entries: [...state.entries, stamped.entry],
+        busy: true,
+        turnStart: started,
+        turnEnd: null,
+        turnStreamed: false,
+        nextLocalOrder: stamped.nextLocalOrder
+      };
+    }));
     try {
-      await postTurn(await api.sendChat(message));
+      await postTurn(sessionId, await api.sendSessionChat(sessionId, message));
     } finally {
-      setBusy(false);
+      setSessionStateById((current) => updateOneSession(current, sessionId, (state) => ({
+        ...state,
+        busy: false,
+        turnEnd: Date.now()
+      })));
       busyRef.current = false;
-      setTurnEnd(Date.now());
     }
   }
 
   async function handleResolveApproval(action) {
-    if (!pendingApproval || busy) return;
+    const sessionId = activeSessionIdRef.current || activeSessionId;
+    if (!pendingApproval || busy || !sessionId) return;
     const started = turnStartRef.current || Date.now();
     turnStartRef.current = started;
-    turnHadAgentRef.current = false;
-    turnStreamedRef.current = true;
-    setBusy(true);
     busyRef.current = true;
-    setTurnStart(started);
-    setTurnEnd(null);
-    setTurnStreamed(true);
+    setSessionStateById((current) => updateOneSession(current, sessionId, (state) => ({
+      ...state,
+      busy: true,
+      turnStart: started,
+      turnEnd: null,
+      turnStreamed: true
+    })));
     try {
-      const data = action === "approve" ? await api.approve(pendingApproval.id) : await api.deny(pendingApproval.id);
-      await postTurn(data);
+      const data = action === "approve"
+        ? await api.approveSession(sessionId, pendingApproval.id)
+        : await api.denySession(sessionId, pendingApproval.id);
+      await postTurn(sessionId, data);
     } finally {
-      setBusy(false);
+      setSessionStateById((current) => updateOneSession(current, sessionId, (state) => ({
+        ...state,
+        busy: false,
+        turnEnd: Date.now()
+      })));
       busyRef.current = false;
-      setTurnEnd(Date.now());
     }
   }
 
@@ -395,18 +531,28 @@ export function GatewayApp() {
   async function handleActivate(id) {
     const data = await api.activate(id);
     if (!data) return;
-    activeSessionIdRef.current = data.session_id || id;
-    const nextEntries = timelineFromHistory(data.events || []);
-    entryOrderRef.current = nextEntries.length;
-    setEntries(nextEntries);
-    setPendingApproval(null);
-    setTurnStart(null);
-    setTurnEnd(null);
-    turnStartRef.current = null;
-    turnHadAgentRef.current = false;
-    turnStreamedRef.current = false;
-    setTurnStreamed(false);
+    const sessionId = data.session_id || id;
+    setActiveSessionId(sessionId);
+    activeSessionIdRef.current = sessionId;
     setSessionConfigError("");
+    const [historyEvents, activityEvents, nextSessionStatus] = await Promise.all([
+      api.sessionHistory(sessionId),
+      api.sessionActivity(sessionId),
+      api.sessionStatus(sessionId)
+    ]);
+    const nextEntries = timelineFromSession(historyEvents, activityEvents);
+    setSessionStateById((current) => updateOneSession(current, sessionId, (state) => ({
+      ...state,
+      entries: nextEntries.length ? nextEntries : state.entries,
+      pendingApproval: normalizeApproval(nextSessionStatus?.pending_approval),
+      busy: nextSessionStatus?.status === "running",
+      turnStart: nextSessionStatus?.status === "running" ? state.turnStart : null,
+      turnEnd: nextSessionStatus?.status === "running" ? null : state.turnEnd,
+      nextLocalOrder: Math.max(state.nextLocalOrder, nextEntries.length),
+      lastLoadedAt: Date.now()
+    })));
+    turnStartRef.current = nextSessionStatus?.status === "running" ? turnStartRef.current : null;
+    busyRef.current = nextSessionStatus?.status === "running";
     await refreshStatusAndSessions();
   }
 
