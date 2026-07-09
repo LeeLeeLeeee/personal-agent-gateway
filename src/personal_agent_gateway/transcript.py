@@ -49,11 +49,16 @@ class TranscriptStore:
 
     def start_new(self) -> str:
         transcript_id = uuid4().hex
+        self._session_dir.mkdir(parents=True, exist_ok=True)
+        self._transcript_path(transcript_id).touch(exist_ok=True)
         self._write_active(transcript_id)
         return transcript_id
 
     def active_id(self) -> str | None:
         return self._read_active_id()
+
+    def exists(self, transcript_id: str) -> bool:
+        return self._transcript_path(transcript_id).exists()
 
     def list_sessions(self) -> list[SessionSummary]:
         active_id = self._read_active_id()

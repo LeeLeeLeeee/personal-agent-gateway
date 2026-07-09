@@ -31,10 +31,16 @@ class AgentRuntimeFactory:
         if session_id is None:
             return self._create_runtime_for_app_config()
 
+        return self._create_runtime_for_session_id(session_id)
+
+    def create_runtime_for_session(self, session_id: str) -> AgentRuntime:
+        return self._create_runtime_for_session_id(session_id)
+
+    def _create_runtime_for_session_id(self, session_id: str) -> AgentRuntime:
         events = self._transcript.load(session_id)
         has_explicit_session_config = any(event.kind == "session_config_set" for event in events)
         if not has_explicit_session_config and self._config.model_provider != "codex":
-            return self._create_runtime_for_app_config()
+            return self._create_runtime_for_app_config(session_id=session_id)
 
         session_config = SessionAgentConfigService(self._transcript).effective_config(session_id)
         agent_id, model, options = self._effective_session_runtime_config(session_config)
@@ -99,14 +105,16 @@ class AgentRuntimeFactory:
 
         raise ConfigError(f"Unsupported session agent: {agent_id}")
 
-    def _create_runtime_for_app_config(self) -> AgentRuntime:
+    def _create_runtime_for_app_config(self, session_id: str | None = None) -> AgentRuntime:
         config = self._config
-        session_id = self._transcript.active_id()
+        effective_session_id = session_id if session_id is not None else self._transcript.active_id()
         if config.model_provider == "codex":
 
             async def publish_codex_event(event: dict[str, object]) -> None:
                 if self._event_bus is not None:
-                    await self._event_bus.publish({"type": "codex.event", **event, "session_id": session_id})
+                    await self._event_bus.publish(
+                        {"type": "codex.event", **event, "session_id": effective_session_id}
+                    )
 
             return self._runtime(
                 CodexModelClient(
@@ -119,7 +127,7 @@ class AgentRuntimeFactory:
                     timeout_seconds=config.codex_timeout_seconds,
                     on_event=publish_codex_event,
                 ),
-                session_id=session_id,
+                session_id=effective_session_id,
             )
 
         if config.model_provider != "openai":
@@ -127,7 +135,10 @@ class AgentRuntimeFactory:
         if not config.openai_api_key:
             raise ConfigError("OPENAI_API_KEY is required when AGENT_MODEL_PROVIDER=openai")
 
-        return self._runtime(OpenAIModelClient(api_key=config.openai_api_key or "", model=config.model))
+        return self._runtime(
+            OpenAIModelClient(api_key=config.openai_api_key or "", model=config.model),
+            session_id=effective_session_id,
+        )
 
     def _runtime(
         self,

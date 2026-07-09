@@ -134,7 +134,7 @@ describe("GatewayApp", () => {
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
-      "POST /api/chat": { messages: [{ content: "Fallback answer" }], pending_approval: null },
+      "POST /api/sessions/session-1/chat": { messages: [{ content: "Fallback answer" }], pending_approval: null },
       "GET /api/artifacts": { artifacts: [] }
     });
 
@@ -148,7 +148,7 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("Fallback answer")).toBeInTheDocument();
   });
 
-  it("searches and activates sessions from the session rail", async () => {
+  it("uses the session approval endpoint for pending approvals", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
       "GET /api/status": status,
@@ -156,10 +156,89 @@ describe("GatewayApp", () => {
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/session-1/chat": {
+        messages: [],
+        pending_approval: { id: "approval-1", command: "dir" }
+      },
+      "POST /api/sessions/session-1/approvals/approval-1/approve": {
+        session_id: "session-1",
+        request_id: "request-1",
+        messages: [{ content: "Approved via session endpoint" }],
+        pending_approval: null
+      },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<GatewayApp />);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await userEvent.type(input, "run it");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("WAITING APPROVAL");
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/session-1/approvals/approval-1/approve",
+      expect.objectContaining({ method: "POST" })
+    ));
+    expect(fetch).not.toHaveBeenCalledWith(
+      "/api/approvals/approval-1/approve",
+      expect.anything()
+    );
+    expect(await screen.findByText("Approved via session endpoint")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("WAITING APPROVAL")).not.toBeInTheDocument());
+  });
+
+  it("keeps pending approval visible when approval request is rejected", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/session-1/chat": {
+        messages: [],
+        pending_approval: { id: "approval-1", command: "dir" }
+      },
+      "POST /api/sessions/session-1/approvals/approval-1/approve": () => response({ detail: "Session is already running" }, false),
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await userEvent.type(input, "run it");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("WAITING APPROVAL");
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(await screen.findByText("Failed to resolve approval")).toBeInTheDocument();
+    expect(screen.getByText("WAITING APPROVAL")).toBeInTheDocument();
+  });
+
+  it("searches and activates sessions from the session rail", async () => {
+    let activeSessionId = "session-1";
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": () => response({ ...status, session_id: activeSessionId }),
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
       "GET /api/sessions/search?q=old": { sessions: [{ ...sessions[0], id: "session-2", title: "Old chat", is_active: false }] },
       "POST /api/sessions/session-2/activate": {
-        session_id: "session-2",
+        session_id: "session-2"
+      },
+      "GET /api/sessions/session-2/history": {
         events: [{ kind: "user", created_at: "2026-07-08T01:02:00Z", payload: { content: "previous" } }]
+      },
+      "GET /api/sessions/session-2/activity": { events: [] },
+      "GET /api/sessions/session-2/status": () => {
+        activeSessionId = "session-2";
+        return response({ status: "idle", session_id: "session-2" });
       }
     });
 
@@ -182,6 +261,10 @@ describe("GatewayApp", () => {
       "GET /api/history": {
         events: [{ kind: "user", created_at: "2026-07-08T01:02:00Z", payload: { content: "deleted session text" } }]
       },
+      "GET /api/sessions/session-1/history": {
+        events: [{ kind: "user", created_at: "2026-07-08T01:02:00Z", payload: { content: "deleted session text" } }]
+      },
+      "GET /api/sessions/session-1/activity": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
       "DELETE /api/sessions/session-1": () => {
@@ -197,6 +280,48 @@ describe("GatewayApp", () => {
 
     await waitFor(() => expect(screen.queryByText("deleted session text")).not.toBeInTheDocument());
     expect(screen.getByText("AGENT IDLE")).toBeInTheDocument();
+  });
+
+  it("rebinds frontend active session to the reset session before the next send", async () => {
+    let resetCount = 0;
+    let activeSessionId = "session-1";
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": () => response({ ...status, session_id: activeSessionId }),
+      "GET /api/sessions": () => response({
+        sessions: activeSessionId === "session-2"
+          ? [{ ...sessions[0], id: "session-2", title: "Fresh session", is_active: true }]
+          : sessions
+      }),
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/reset": () => {
+        resetCount += 1;
+        activeSessionId = "session-2";
+        return response({ session_id: "session-2" });
+      },
+      "POST /api/sessions/session-2/chat": { messages: [{ content: "After reset reply" }], pending_approval: null },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<GatewayApp />);
+
+    await screen.findByLabelText("Agent Gateway");
+    await userEvent.click(screen.getByRole("button", { name: "+" }));
+
+    await waitFor(() => expect(screen.getAllByText("Fresh session").length).toBeGreaterThan(0));
+
+    const input = screen.getByPlaceholderText("Message the agent, or describe a local action...");
+    await userEvent.type(input, "hello after reset");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/session-2/chat",
+      expect.objectContaining({ method: "POST" })
+    ));
+    expect(resetCount).toBe(1);
+    expect(await screen.findByText("After reset reply")).toBeInTheDocument();
   });
 
   it("ignores live chat events from non-active sessions", async () => {
@@ -228,6 +353,116 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("active session answer")).toBeInTheDocument();
   });
 
+  it("keeps non-active session SSE entries in that session cache and shows them after activation", async () => {
+    let activeSessionId = "session-1";
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": () => response({ ...status, session_id: activeSessionId }),
+      "GET /api/sessions": { sessions: [
+        sessions[0],
+        { ...sessions[0], id: "session-2", title: "Background chat", is_active: false }
+      ] },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/sessions/session-1/history": { events: [] },
+      "GET /api/sessions/session-1/activity": { events: [] },
+      "GET /api/sessions/session-1/status": { status: "idle", session_id: "session-1" },
+      "GET /api/sessions/session-2/history": { events: [] },
+      "GET /api/sessions/session-2/activity": { events: [] },
+      "GET /api/sessions/session-2/status": () => {
+        activeSessionId = "session-2";
+        return response({ status: "idle", session_id: "session-2" });
+      },
+      "POST /api/sessions/session-2/activate": { session_id: "session-2" }
+    });
+
+    render(<GatewayApp />);
+
+    await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.emit({
+        id: 50,
+        session_id: "session-2",
+        event_seq: 1,
+        type: "codex.event",
+        payload: { item: { type: "agent_message", id: "agent-2", text: "background answer" } }
+      });
+    });
+
+    expect(screen.queryByText("background answer")).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByText("Background chat"));
+
+    expect(await screen.findByText("background answer")).toBeInTheDocument();
+  });
+
+  it("does not disable active composer when another session is busy", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions: [
+        sessions[0],
+        { ...sessions[0], id: "session-2", title: "Background chat", status: "running", is_active: false }
+      ] },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/sessions/session-1/history": { events: [] },
+      "GET /api/sessions/session-1/activity": { events: [] },
+      "GET /api/sessions/session-1/status": { status: "idle", session_id: "session-1" }
+    });
+
+    render(<GatewayApp />);
+
+    await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.emit({
+        id: 51,
+        session_id: "session-2",
+        event_seq: 1,
+        type: "runtime.user_message.started",
+        payload: { message: "background work" }
+      });
+    });
+
+    expect(screen.getByPlaceholderText("Message the agent, or describe a local action...")).not.toBeDisabled();
+    expect(screen.getByText("AGENT IDLE")).toBeInTheDocument();
+  });
+
+  it("keeps active session state when deleting a running session fails", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [
+        { kind: "user", created_at: "2026-07-09T01:00:00Z", payload: { content: "hello" } }
+      ] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/sessions/session-1/history": { events: [
+        { kind: "user", created_at: "2026-07-09T01:00:00Z", payload: { content: "hello" } }
+      ] },
+      "GET /api/sessions/session-1/activity": { events: [] },
+      "GET /api/sessions/session-1/status": { status: "idle", session_id: "session-1" },
+      "DELETE /api/sessions/session-1": () => response({ detail: "Session is running" }, false)
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+
+    expect(await screen.findByText("hello")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "DELETE SESSION" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByText("Failed to delete session")).toBeInTheDocument();
+    expect(screen.getByText("hello")).toBeInTheDocument();
+    expect(screen.queryByText("Session deleted")).not.toBeInTheDocument();
+  });
+
   it("does not recreate the SSE connection when chat busy state changes", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
@@ -236,7 +471,7 @@ describe("GatewayApp", () => {
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
-      "POST /api/chat": { messages: [{ content: "Fallback answer" }], pending_approval: null },
+      "POST /api/sessions/session-1/chat": { messages: [{ content: "Fallback answer" }], pending_approval: null },
       "GET /api/artifacts": { artifacts: [] }
     });
 
@@ -249,6 +484,102 @@ describe("GatewayApp", () => {
 
     expect(await screen.findByText("Fallback answer")).toBeInTheDocument();
     expect(MockEventSource.instances.length).toBe(1);
+  });
+
+  it("removes unsent local user row when chat request is rejected", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/session-1/chat": () => response({ detail: "Session is already running" }, false)
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await userEvent.type(input, "lost message");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Failed to send message")).toBeInTheDocument();
+    expect(screen.queryByText("lost message")).not.toBeInTheDocument();
+  });
+
+  it("renders HTTP fallback answer when only runtime activity streamed", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/session-1/chat": { messages: [{ content: "HTTP answer" }], pending_approval: null },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<GatewayApp />);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    const source = MockEventSource.instances[0];
+    await userEvent.type(input, "hello");
+    const send = screen.getByRole("button", { name: "Send" });
+    await userEvent.click(send);
+    act(() => {
+      source.emit({
+        id: 101,
+        session_id: "session-1",
+        event_seq: 1,
+        type: "runtime.user_message.started",
+        payload: { message: "hello" }
+      });
+      source.emit({
+        id: 102,
+        session_id: "session-1",
+        event_seq: 2,
+        type: "runtime.completed",
+        payload: { pending_approval: null }
+      });
+    });
+
+    expect(await screen.findByText("HTTP answer")).toBeInTheDocument();
+  });
+
+  it("reconciles a late streamed agent answer with the HTTP fallback answer", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/session-1/chat": { messages: [{ content: "Same final answer" }], pending_approval: null },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    render(<GatewayApp />);
+
+    const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    const source = MockEventSource.instances[0];
+    await userEvent.type(input, "hello");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Same final answer")).toBeInTheDocument();
+
+    act(() => {
+      source.emit({
+        id: 103,
+        session_id: "session-1",
+        event_seq: 3,
+        type: "codex.event",
+        payload: { item: { type: "agent_message", id: "agent-1", text: "Same final answer" } }
+      });
+    });
+
+    expect(screen.getAllByText("Same final answer")).toHaveLength(1);
   });
 
   it("ignores duplicate SSE event ids", async () => {
@@ -370,7 +701,7 @@ describe("GatewayApp", () => {
     expect(screen.getByDisplayValue("Owns the plan")).toBeInTheDocument();
   });
 
-  it("creates and starts a team run, shows its detail, and refreshes on team SSE events", async () => {
+  it("creates and starts a team run, shows its detail, and refreshes on mixed team SSE events without adding chat entries", async () => {
     let taskCalls = 0;
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
@@ -428,12 +759,20 @@ describe("GatewayApp", () => {
     expect(screen.queryByText("Define schema")).not.toBeInTheDocument();
 
     const source = MockEventSource.instances[0];
-    source.emit({ type: "team.task.updated", team_run_id: "run-1", task_id: "t1" });
+    source.emit({
+      type: "team.task.updated",
+      team_run_id: "run-1",
+      session_id: "session-1",
+      task_id: "t1",
+      payload: { item: { type: "agent_message", text: "should not enter chat" } }
+    });
 
     expect(await screen.findByText("Define schema")).toBeInTheDocument();
 
     await userEvent.click(screen.getByText("← TEAM RUNS"));
     expect(screen.queryByText("Ship it")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(screen.queryByText("should not enter chat")).not.toBeInTheDocument();
   });
 
   it("shows an error and keeps the app usable when creating a team run fails", async () => {

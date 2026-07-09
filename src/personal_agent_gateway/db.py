@@ -155,6 +155,21 @@ create table if not exists team_messages (
     foreign key (sender_agent_id) references team_agents(id) on delete set null,
     foreign key (recipient_agent_id) references team_agents(id) on delete set null
 );
+
+create table if not exists session_activity_events (
+    id integer primary key autoincrement,
+    session_id text not null,
+    event_seq integer not null,
+    event_type text not null,
+    source text not null,
+    payload_json text not null,
+    transcript_event_id text,
+    created_at text not null,
+    unique(session_id, event_seq)
+);
+
+create index if not exists idx_session_activity_events_session_seq
+on session_activity_events(session_id, event_seq);
 """
 
 
