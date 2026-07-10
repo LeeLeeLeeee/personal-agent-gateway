@@ -277,3 +277,42 @@ async def test_budget_exhausted_rejects_and_best_effort(tmp_path):
     assert task.result == "best effort final"
     kinds = [m.kind for m in teams.list_messages(run.id)]
     assert "answer" not in kinds  # 중재 없음
+
+
+@pytest.mark.asyncio
+async def test_reinvocation_cap_rejects_after_three(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+    db = Database(tmp_path / "app.db"); db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    # 예산은 넉넉하게 잡아서(캡이 아니라 예산이) 걸림돌이 되지 않도록 한다.
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1, rounds_budget=10)
+    plan = '[{"title":"T1","description":"d1"}]'
+    needs_q1 = 'x\n```json\n{"needs_info":{"topic":"t","question":"q1?"}}\n```'
+    needs_q2 = 'x\n```json\n{"needs_info":{"topic":"t","question":"q2?"}}\n```'
+    needs_q3 = 'x\n```json\n{"needs_info":{"topic":"t","question":"q3?"}}\n```'
+    needs_q4 = 'x\n```json\n{"needs_info":{"topic":"t","question":"q4?"}}\n```'
+
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role(
+            [plan, "answer1", "answer2", "answer3"],
+            [needs_q1, needs_q2, needs_q3, needs_q4, "final result after cap"],
+        ),
+    )
+    result = await runtime.start(run.id)
+
+    assert result.status == "completed"
+    # 3번의 중재만 예산을 소비한다 (4번째 needs_info는 캡에 막혀 거절된다).
+    assert result.rounds_used == 3
+    agent = [a for a in teams.list_agents(run.id) if a.role == "member"][0]
+    assert agent.reinvocations == 3
+    task = teams.list_tasks(run.id)[0]
+    assert task.result == "final result after cap"
+    kinds = [m.kind for m in teams.list_messages(run.id)]
+    assert kinds.count("query") == 3
+    assert kinds.count("answer") == 3
