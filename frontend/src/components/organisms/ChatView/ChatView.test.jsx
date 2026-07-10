@@ -78,3 +78,18 @@ describe("ChatView transcript follow behavior", () => {
     expect(screen.getByText("FINAL ANSWER").closest(".msg-agent-final")).not.toBeNull();
   });
 });
+
+describe("ChatView working indicator", () => {
+  it("shows a live working indicator with elapsed time while busy", () => {
+    render(<ChatView {...props([])} busy turnStart={Date.now() - 5000} turnStreamed />);
+    const indicator = document.querySelector(".working-indicator");
+    expect(indicator).toBeTruthy();
+    expect(indicator.textContent).toContain("WORKING");
+    expect(indicator.textContent).toContain("esc to interrupt");
+  });
+
+  it("hides the working indicator when idle", () => {
+    render(<ChatView {...props([])} busy={false} />);
+    expect(document.querySelector(".working-indicator")).toBeNull();
+  });
+});
