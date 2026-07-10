@@ -14,3 +14,11 @@ def test_claude_permission_mode_from_env(tmp_path):
         "AGENT_CLAUDE_PERMISSION_MODE": "plan",
     })
     assert config.claude_permission_mode == "plan"
+
+
+def test_load_config_forwards_claude_permission_mode(tmp_path, monkeypatch):
+    from personal_agent_gateway.config import load_config
+    monkeypatch.setenv("AGENT_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("AGENT_SESSION_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("AGENT_CLAUDE_PERMISSION_MODE", "bypassPermissions")
+    assert load_config().claude_permission_mode == "bypassPermissions"

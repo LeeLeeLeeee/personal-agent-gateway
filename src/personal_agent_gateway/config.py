@@ -181,6 +181,7 @@ def load_config() -> AppConfig:
             "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
             "AGENT_CODEX_BIN": os.getenv("AGENT_CODEX_BIN"),
             "AGENT_CLAUDE_BIN": os.getenv("AGENT_CLAUDE_BIN"),
+            "AGENT_CLAUDE_PERMISSION_MODE": os.getenv("AGENT_CLAUDE_PERMISSION_MODE"),
             "AGENT_CODEX_SANDBOX": os.getenv("AGENT_CODEX_SANDBOX"),
             "AGENT_CODEX_APPROVAL_POLICY": os.getenv("AGENT_CODEX_APPROVAL_POLICY"),
             "AGENT_CODEX_TIMEOUT_SECONDS": os.getenv("AGENT_CODEX_TIMEOUT_SECONDS"),
