@@ -18,7 +18,22 @@ Persona:
 Goal: {goal}
 Assigned task: {task_title}
 Task description: {task_description}
-Return concise result, changed files, and verification evidence."""
+
+If you need information from another team member to proceed, end your reply with
+ONLY this fenced block and nothing after it:
+```json
+{{"needs_info": {{"topic": "<short topic>", "question": "<your question>"}}}}
+```
+Otherwise, return your concise final result: changed files and verification evidence."""
+
+MEDIATION_PROMPT = """You are the leader mediating a Team Run.
+Goal: {goal}
+A worker on task "{task_title}" asks: {question}
+
+Team outputs so far:
+{outputs}
+
+Answer concisely to unblock the worker. If the information is unavailable, say so plainly."""
 
 AGENT_REINVOCATION_CAP = 3
 
@@ -132,7 +147,65 @@ class TeamRuntime:
         )
         if response.upstream_session_id:
             self._teams.set_agent_session(worker_agent.id, response.upstream_session_id)
+        content = response.content
+
+        while True:
+            req = _parse_needs_info(content)
+            if req is None:
+                return content
+            run = self._teams.get_team_run(run.id)
+            worker_agent = self._teams.get_agent(worker.id)
+            if run.rounds_used >= run.rounds_budget or worker_agent.reinvocations >= AGENT_REINVOCATION_CAP:
+                return await self._resume_worker(
+                    worker.id,
+                    "No more consultation is available. Produce your best-effort final "
+                    "result now, without a needs_info block.",
+                )
+            self._teams.append_message(
+                run.id, worker.id, leader.id, "query", req["question"],
+                {"task_id": task.id, "topic": req["topic"]},
+            )
+            answer = await self._mediate(run, leader, task, req["question"])
+            run = self._teams.increment_rounds_used(run.id)
+            self._teams.append_message(
+                run.id, leader.id, worker.id, "answer", answer, {"round": run.rounds_used}
+            )
+            content = await self._resume_worker(
+                worker.id,
+                f"Answer to your question: {answer}\n\nContinue and produce your final "
+                "result, or ask again only if essential.",
+            )
+            self._teams.increment_agent_reinvocations(worker.id)
+
+    async def _resume_worker(self, worker_id: str, instruction: str) -> str:
+        worker_agent = self._teams.get_agent(worker_id)
+        model = self._model_factory(worker_agent)
+        response = await model.complete([{"role": "user", "content": instruction}])
+        if response.upstream_session_id:
+            self._teams.set_agent_session(worker_agent.id, response.upstream_session_id)
         return response.content
+
+    async def _mediate(self, run: TeamRun, leader: TeamAgent, task: TeamTask, question: str) -> str:
+        leader_agent = self._teams.get_agent(leader.id)
+        model = self._model_factory(leader_agent)
+        prompt = MEDIATION_PROMPT.format(
+            goal=run.goal,
+            task_title=task.title,
+            question=question,
+            outputs=self._collect_outputs(run),
+        )
+        response = await model.complete([{"role": "user", "content": prompt}])
+        if response.upstream_session_id:
+            self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
+        return response.content
+
+    def _collect_outputs(self, run: TeamRun) -> str:
+        lines = [
+            f"[{task.title}]\n{task.result}"
+            for task in self._teams.list_tasks(run.id)
+            if task.status == "completed" and task.result
+        ]
+        return "\n\n".join(lines) if lines else "(no completed task outputs yet)"
 
     def _worker_prompt(self, run: TeamRun, worker: TeamAgent, task: TeamTask) -> str:
         return WORKER_PROMPT.format(
@@ -211,3 +284,39 @@ def _parse_task_plan(content: str) -> list[dict[str, str]]:
             raise ValueError("Planner task requires title and description")
         tasks.append({"title": title, "description": description})
     return tasks
+
+
+def _parse_needs_info(content: str) -> dict[str, str] | None:
+    block = _last_json_block(content)
+    if block is None:
+        return None
+    try:
+        data = json.loads(block)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    req = data.get("needs_info")
+    if not isinstance(req, dict):
+        return None
+    question = req.get("question")
+    if not isinstance(question, str) or not question.strip():
+        return None
+    topic = req.get("topic")
+    return {"topic": topic if isinstance(topic, str) else "", "question": question.strip()}
+
+
+def _last_json_block(content: str) -> str | None:
+    fence = "```json"
+    idx = content.rfind(fence)
+    if idx != -1:
+        rest = content[idx + len(fence):]
+        end = rest.find("```")
+        if end != -1:
+            return rest[:end].strip()
+    # 펜스가 없으면 마지막 중괄호 그룹 시도
+    start = content.rfind("{")
+    end = content.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return content[start:end + 1].strip()
+    return None

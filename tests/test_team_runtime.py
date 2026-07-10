@@ -215,3 +215,65 @@ async def test_all_workers_fail_yields_failed(tmp_path):
     )
     result = await runtime.start(run.id)
     assert result.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_worker_query_consumes_round_and_reinvokes(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+    db = Database(tmp_path / "app.db"); db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    plan = '[{"title":"T1","description":"d1"}]'
+
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role(
+            [plan, "use schema X"],
+            [
+                'Working...\n```json\n{"needs_info":{"topic":"schema","question":"what schema?"}}\n```',
+                "final result using schema X",
+            ],
+        ),
+    )
+    result = await runtime.start(run.id)
+
+    assert result.status == "completed"
+    assert result.rounds_used == 1
+    agent = [a for a in teams.list_agents(run.id) if a.role == "member"][0]
+    assert agent.reinvocations == 1
+    kinds = [m.kind for m in teams.list_messages(run.id)]
+    assert "query" in kinds and "answer" in kinds
+
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_rejects_and_best_effort(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+    db = Database(tmp_path / "app.db"); db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    # 예산 0으로 생성 → 즉시 거절 경로
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1, rounds_budget=0)
+    plan = '[{"title":"T1","description":"d1"}]'
+    needs = 'x\n```json\n{"needs_info":{"topic":"t","question":"q"}}\n```'
+
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role([plan], [needs, "best effort final"]),
+    )
+    result = await runtime.start(run.id)
+
+    assert result.status == "completed"
+    assert result.rounds_used == 0
+    task = teams.list_tasks(run.id)[0]
+    assert task.result == "best effort final"
+    kinds = [m.kind for m in teams.list_messages(run.id)]
+    assert "answer" not in kinds  # 중재 없음
