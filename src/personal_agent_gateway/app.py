@@ -104,6 +104,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             raise HTTPException(status_code=409, detail="Session is already running") from exc
         if not started:
             raise HTTPException(status_code=404, detail="Session not found")
+        run_registry.attach_task(session_id, request_id, asyncio.current_task())
         try:
             result = await runtime_for_session(session_id).handle_user_message(message)
             return {
@@ -111,6 +112,18 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
                 "session_id": session_id,
                 "request_id": request_id,
                 "last_event_id": _last_session_event_id(event_bus.recent(), session_id),
+            }
+        except asyncio.CancelledError:
+            await app.state.session_activity_publisher.publish(
+                {"type": "runtime.interrupted", "session_id": session_id}
+            )
+            return {
+                "messages": [],
+                "pending_approval": False,
+                "session_id": session_id,
+                "request_id": request_id,
+                "last_event_id": _last_session_event_id(event_bus.recent(), session_id),
+                "interrupted": True,
             }
         finally:
             run_registry.finish(session_id, request_id)
@@ -262,6 +275,16 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     ) -> dict[str, object]:
         require_session_id(session_id)
         return await chat_for_session(session_id, request.message)
+
+    @app.post("/api/sessions/{session_id}/interrupt")
+    async def interrupt_session(
+        session_id: str,
+        _session: None = session_dependency,
+    ) -> dict[str, object]:
+        require_session_id(session_id)
+        if not run_registry.interrupt(session_id):
+            raise HTTPException(status_code=409, detail="Session is not running")
+        return {"session_id": session_id, "interrupting": True}
 
     @app.post("/api/sessions/{session_id}/activate")
     def activate_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:

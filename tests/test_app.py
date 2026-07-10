@@ -500,6 +500,41 @@ def test_session_chat_rejects_second_active_run_for_same_session(tmp_path: Path)
     assert store.load(session_id) == []
 
 
+def test_interrupt_idle_session_returns_409(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = auth_client(config, FakeRuntime())
+    session_id = client.post("/api/reset").json()["session_id"]
+
+    resp = client.post(f"/api/sessions/{session_id}/interrupt")
+
+    assert resp.status_code == 409
+
+
+def test_interrupt_cancels_registered_task(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = auth_client(config, FakeRuntime())
+    session_id = client.post("/api/reset").json()["session_id"]
+
+    class _DummyTask:
+        def __init__(self) -> None:
+            self.canceled = False
+
+        def cancel(self) -> None:
+            self.canceled = True
+
+    registry = client.app.state.run_registry
+    registry.start(session_id, "req-x")
+    dummy = _DummyTask()
+    registry.attach_task(session_id, "req-x", dummy)  # type: ignore[arg-type]
+
+    resp = client.post(f"/api/sessions/{session_id}/interrupt")
+
+    assert resp.status_code == 200
+    assert resp.json()["interrupting"] is True
+    assert dummy.canceled is True
+    registry.finish(session_id, "req-x")
+
+
 def test_session_status_separates_sse_event_id_from_activity_id(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     store = TranscriptStore(config.session_dir)
