@@ -175,6 +175,18 @@ export function entryFromSse(event) {
       createdAtMs
     };
   }
+  if (event.type === "runtime.interrupted") {
+    return {
+      type: "event_row",
+      key: `event:${event.event_seq || event.id || event.type}`,
+      label: "runtime.interrupted",
+      detail: "interrupted by user",
+      dotColor: "#FFA500",
+      time: fmtTime(event.created_at, true) || nowHMS(),
+      serverOrder: event.event_seq,
+      createdAtMs
+    };
+  }
   if (event.type === "runtime.error") {
     return {
       type: "runtime_error",

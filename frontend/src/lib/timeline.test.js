@@ -190,6 +190,14 @@ describe("timeline model", () => {
     }));
   });
 
+  it("maps runtime.interrupted to an event row", () => {
+    const entry = entryFromSse({
+      type: "runtime.interrupted", session_id: "s1", event_seq: 9,
+      created_at: "2026-07-10T00:00:02Z"
+    });
+    expect(entry).toMatchObject({ type: "event_row", label: "runtime.interrupted" });
+  });
+
   it("derives live status from busy state and command outcomes", () => {
     expect(deriveLive({ entries: [], busy: false, turnStart: null, turnEnd: null }))
       .toEqual(expect.objectContaining({ phase: "IDLE", lastKind: "idle", running: 0 }));
