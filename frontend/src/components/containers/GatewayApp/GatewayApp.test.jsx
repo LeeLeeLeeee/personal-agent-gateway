@@ -197,6 +197,34 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("Fallback answer")).toBeInTheDocument();
   });
 
+  it("keeps a newly sent message below older history (createdAtMs stamped)", async () => {
+    const oldEvents = [{ kind: "assistant", created_at: "2020-01-01T00:00:00Z", payload: { content: "old answer" } }];
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: oldEvents },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/artifacts": { artifacts: [] },
+      "GET /api/sessions/session-1/history": { events: oldEvents },
+      "GET /api/sessions/session-1/activity": { events: [] },
+      "GET /api/sessions/session-1/status": { session_id: "session-1", status: "idle", pending_approval: false },
+      "POST /api/sessions/session-1/chat": () => response({ messages: [], pending_approval: false, session_id: "session-1", request_id: "r1" })
+    });
+
+    render(<GatewayApp />);
+    await screen.findByLabelText("Agent Gateway");
+
+    const composer = screen.getByPlaceholderText("Message the agent, or describe a local action...");
+    await userEvent.type(composer, "hello");
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => expect(screen.getByText("hello")).toBeInTheDocument());
+    const texts = Array.from(document.querySelectorAll(".msg-user .bubble, .msg-agent .bubble")).map((node) => node.textContent);
+    expect(texts.indexOf("old answer")).toBeLessThan(texts.indexOf("hello"));
+  });
+
   it("uses the session approval endpoint for pending approvals", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },

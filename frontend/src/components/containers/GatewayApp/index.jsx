@@ -209,10 +209,11 @@ export function GatewayApp() {
   }, []);
 
   function stampSessionEntry(sessionId, state, entry) {
-    if (entry.order != null) return { entry, nextLocalOrder: state.nextLocalOrder };
+    const withTime = entry.createdAtMs != null ? entry : { ...entry, createdAtMs: Date.now() };
+    if (withTime.order != null) return { entry: withTime, nextLocalOrder: state.nextLocalOrder };
     const order = state.nextLocalOrder;
     return {
-      entry: { ...entry, order },
+      entry: { ...withTime, order },
       nextLocalOrder: order + 1
     };
   }
