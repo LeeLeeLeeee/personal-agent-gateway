@@ -110,6 +110,7 @@ async def test_plan_and_execute_assigns_tasks_to_workers(tmp_path):
     responses = iter([
         '[{"title":"Verify API","description":"Check team run endpoints"}]',
         "Verified API behavior. No files changed. Evidence: tests passed.",
+        "Summary: API endpoints verified successfully.",
     ])
     runtime = TeamRuntime(teams=teams, model_factory=lambda _agent: FakeModel(next(responses)))
 
@@ -277,6 +278,27 @@ async def test_budget_exhausted_rejects_and_best_effort(tmp_path):
     assert task.result == "best effort final"
     kinds = [m.kind for m in teams.list_messages(run.id)]
     assert "answer" not in kinds  # 중재 없음
+
+
+@pytest.mark.asyncio
+async def test_synthesis_summary_from_leader(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+    db = Database(tmp_path / "app.db"); db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    plan = '[{"title":"T1","description":"d1"}]'
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role([plan, "SYNTHESIZED SUMMARY"], ["result"]),
+    )
+    result = await runtime.start(run.id)
+    assert result.summary == "SYNTHESIZED SUMMARY"
+    assert [m.kind for m in teams.list_messages(run.id)].count("synthesis") == 1
 
 
 @pytest.mark.asyncio

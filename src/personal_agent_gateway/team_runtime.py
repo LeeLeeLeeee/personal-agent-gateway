@@ -26,6 +26,13 @@ ONLY this fenced block and nothing after it:
 ```
 Otherwise, return your concise final result: changed files and verification evidence."""
 
+SYNTHESIS_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
+Summarize the outcome for the user.
+Goal: {goal}
+Task results:
+{results}
+Write a concise summary of what was accomplished and note any failures."""
+
 MEDIATION_PROMPT = """You are the leader mediating a Team Run.
 Goal: {goal}
 A worker on task "{task_title}" asks: {question}
@@ -224,12 +231,26 @@ class TeamRuntime:
             await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": "All tasks failed"})
             return run
         run = self._teams.set_run_status(run.id, "summarizing")
-        done = sum(1 for t in tasks if t.status == "completed")
-        summary = f"{done}/{len(tasks)} tasks completed."
+        summary = await self._leader_synthesis(run, leader, tasks)
         run = self._teams.set_run_status(run.id, status, summary=summary)
         self._teams.set_agent_status(leader.id, "completed")
         await self._publish({"type": "team.run.completed", "team_run_id": run.id})
         return run
+
+    async def _leader_synthesis(self, run: TeamRun, leader: TeamAgent, tasks: list[TeamTask]) -> str:
+        results = "\n\n".join(
+            f"[{task.status}] {task.title}\n{task.result or task.error_message or ''}"
+            for task in tasks
+        )
+        leader_agent = self._teams.get_agent(leader.id)
+        model = self._model_factory(leader_agent)
+        response = await model.complete(
+            [{"role": "user", "content": SYNTHESIS_PROMPT.format(goal=run.goal, results=results)}]
+        )
+        if response.upstream_session_id:
+            self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
+        self._teams.append_message(run.id, leader.id, None, "synthesis", response.content, {})
+        return response.content
 
     def _settle_canceled(self, run: TeamRun) -> None:
         for agent in self._teams.list_agents(run.id):
