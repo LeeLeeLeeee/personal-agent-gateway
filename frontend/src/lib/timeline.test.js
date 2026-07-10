@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveLive, entryFromSse, timelineFromHistory, timelineFromSession } from "./timeline.js";
+import { compareEntries, deriveLive, entryFromSse, timelineFromHistory, timelineFromSession } from "./timeline.js";
 
 describe("timeline model", () => {
   it("maps persisted transcript events to renderable timeline entries", () => {
@@ -207,5 +207,25 @@ describe("timeline model", () => {
       turnStart: null,
       turnEnd: null
     })).toEqual(expect.objectContaining({ phase: "FAILED", lastKind: "failed" }));
+  });
+});
+
+describe("compareEntries", () => {
+  it("orders by createdAtMs first", () => {
+    const a = { type: "agent", createdAtMs: 200, serverOrder: 1 };
+    const b = { type: "user", createdAtMs: 100, serverOrder: 9 };
+    expect([a, b].sort(compareEntries).map((e) => e.type)).toEqual(["user", "agent"]);
+  });
+
+  it("breaks createdAtMs ties by logical rank (reasoning before agent)", () => {
+    const reasoning = { type: "reasoning", createdAtMs: 100, serverOrder: 5 };
+    const agent = { type: "agent", createdAtMs: 100, serverOrder: 2 };
+    expect([agent, reasoning].sort(compareEntries).map((e) => e.type)).toEqual(["reasoning", "agent"]);
+  });
+
+  it("breaks rank ties by serverOrder", () => {
+    const first = { type: "command", createdAtMs: 100, serverOrder: 1 };
+    const second = { type: "command", createdAtMs: 100, serverOrder: 2 };
+    expect([second, first].sort(compareEntries).map((e) => e.serverOrder)).toEqual([1, 2]);
   });
 });

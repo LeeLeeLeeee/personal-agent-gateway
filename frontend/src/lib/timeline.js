@@ -19,9 +19,22 @@ function timelineRank(entry) {
   if (entry.type === "user") return 0;
   if (entry.type === "event_row" && entry.label === "runtime.user_message.started") return 1;
   if (entry.type === "command" || entry.type === "runtime_error") return 2;
-  if (entry.type === "agent") return 3;
-  if (entry.type === "event_row" && entry.label === "runtime.completed") return 4;
-  return 5;
+  if (entry.type === "reasoning") return 3;
+  if (entry.type === "agent") return 4;
+  if (entry.type === "event_row" && entry.label === "runtime.completed") return 5;
+  if (entry.type === "event_row" && entry.label === "runtime.interrupted") return 6;
+  return 7;
+}
+
+export function compareEntries(left, right) {
+  const byTime = (left.createdAtMs ?? 0) - (right.createdAtMs ?? 0);
+  if (byTime) return byTime;
+  const byRank = timelineRank(left) - timelineRank(right);
+  if (byRank) return byRank;
+  const leftSeq = left.serverOrder ?? left.historyOrder ?? left.activityOrder ?? left.order ?? 0;
+  const rightSeq = right.serverOrder ?? right.historyOrder ?? right.activityOrder ?? right.order ?? 0;
+  if (leftSeq !== rightSeq) return leftSeq - rightSeq;
+  return String(left.key || left.type).localeCompare(String(right.key || right.type));
 }
 
 export function normalizeApproval(value) {
@@ -172,12 +185,7 @@ export function timelineFromSession(historyEvents, activityEvents) {
     .filter(Boolean)
     .map((entry, index) => ({ ...entry, activityOrder: index, source: "activity" }));
   const sortedEntries = [...historyEntries, ...activityEntries]
-    .sort((left, right) => (
-      (left.createdAtMs ?? 0) - (right.createdAtMs ?? 0)
-      || timelineRank(left) - timelineRank(right)
-      || (left.serverOrder ?? left.historyOrder ?? left.activityOrder ?? 0) - (right.serverOrder ?? right.historyOrder ?? right.activityOrder ?? 0)
-      || String(left.key || left.type).localeCompare(String(right.key || right.type))
-    ))
+    .sort(compareEntries)
     .filter((entry, _index, entries) => {
       if (entry.type !== "agent" || entry.source !== "activity" || typeof entry.text !== "string") return true;
       return !entries.some((candidate) => (
