@@ -1,6 +1,8 @@
+import asyncio
 import sys
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -533,6 +535,48 @@ def test_interrupt_cancels_registered_task(tmp_path: Path) -> None:
     assert resp.json()["interrupting"] is True
     assert dummy.canceled is True
     registry.finish(session_id, "req-x")
+
+
+async def test_interrupt_cancels_in_flight_chat_end_to_end(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+
+    class BlockingRuntime:
+        def __init__(self) -> None:
+            self.never_resolves = asyncio.Event()
+
+        async def handle_user_message(self, _content: str) -> RuntimeResult:
+            await self.never_resolves.wait()
+            return RuntimeResult(messages=[], pending_approval=None)
+
+    app = create_app(config=config, runtime=BlockingRuntime())
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        client.cookies.set("agent_session", "test-session")
+
+        chat_task = asyncio.ensure_future(
+            client.post(f"/api/sessions/{session_id}/chat", json={"message": "hello"})
+        )
+
+        run_registry = app.state.run_registry
+        for _ in range(200):
+            if run_registry.is_running(session_id):
+                break
+            await asyncio.sleep(0.01)
+        assert run_registry.is_running(session_id) is True
+
+        interrupt_response = await client.post(f"/api/sessions/{session_id}/interrupt")
+        assert interrupt_response.status_code == 200
+
+        chat_response = await chat_task
+
+    assert chat_response.status_code == 200
+    assert chat_response.json()["interrupted"] is True
+
+    activity_events = app.state.session_activity_service.list(session_id)
+    assert any(event.type == "runtime.interrupted" for event in activity_events)
 
 
 def test_session_status_separates_sse_event_id_from_activity_id(tmp_path: Path) -> None:
