@@ -33,7 +33,6 @@ class TeamRuntime:
         self._teams = teams
         self._model_factory = model_factory
         self._event_bus = event_bus
-        self._worker_models: dict[str, ModelClient] = {}
 
     async def start(self, team_run_id: str) -> TeamRun:
         run = self._teams.get_team_run(team_run_id)
@@ -103,11 +102,6 @@ class TeamRuntime:
 
     async def _execute(self, run: TeamRun, leader: TeamAgent, workers: list[TeamAgent]) -> None:
         tasks = self._teams.list_tasks(run.id)
-        # One model instance per worker for this execute pass, so a worker assigned
-        # multiple tasks keeps a single underlying session/conversation across them.
-        self._worker_models = {
-            worker.id: self._model_factory(self._teams.get_agent(worker.id)) for worker in workers
-        }
         for index, task in enumerate(tasks):
             worker = workers[index % len(workers)]
             self._teams.set_task_status(task.id, "in_progress")
@@ -132,7 +126,7 @@ class TeamRuntime:
         self, run: TeamRun, leader: TeamAgent, worker: TeamAgent, task: TeamTask
     ) -> str:
         worker_agent = self._teams.get_agent(worker.id)
-        model = self._worker_models[worker_agent.id]
+        model = self._model_factory(worker_agent)
         response = await model.complete(
             [{"role": "user", "content": self._worker_prompt(run, worker_agent, task)}]
         )

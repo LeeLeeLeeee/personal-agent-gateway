@@ -37,10 +37,12 @@ class ScriptedModel:
 
 def _factory_by_role(leader_responses, worker_responses):
     from personal_agent_gateway.teams import TeamAgent
+    models = {}
     def factory(agent: TeamAgent):
-        if agent.role == "leader":
-            return ScriptedModel(list(leader_responses))
-        return ScriptedModel(list(worker_responses))
+        if agent.id not in models:
+            responses = leader_responses if agent.role == "leader" else worker_responses
+            models[agent.id] = ScriptedModel(list(responses))
+        return models[agent.id]
     return factory
 
 
@@ -184,12 +186,10 @@ async def test_partial_failure_yields_completed_with_failures(tmp_path):
 
     plan = '[{"title":"T1","description":"d1"},{"title":"T2","description":"d2"}]'
     # 워커: T1 성공, T2 예외
-    def factory(agent):
-        if agent.role == "leader":
-            return ScriptedModel([plan, "summary"])
-        return ScriptedModel(["ok result", RuntimeError("boom")])
-
-    runtime = TeamRuntime(teams=teams, model_factory=factory)
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role([plan, "summary"], ["ok result", RuntimeError("boom")]),
+    )
     result = await runtime.start(run.id)
 
     assert result.status == "completed_with_failures"
@@ -209,10 +209,9 @@ async def test_all_workers_fail_yields_failed(tmp_path):
     member = personas.create_persona("W", "work", "d", [], [])
     run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
     plan = '[{"title":"T1","description":"d1"}]'
-    def factory(agent):
-        if agent.role == "leader":
-            return ScriptedModel([plan, "summary"])
-        return ScriptedModel([RuntimeError("boom")])
-    runtime = TeamRuntime(teams=teams, model_factory=factory)
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role([plan, "summary"], [RuntimeError("boom")]),
+    )
     result = await runtime.start(run.id)
     assert result.status == "failed"
