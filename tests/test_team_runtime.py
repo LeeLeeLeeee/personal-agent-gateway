@@ -338,3 +338,38 @@ async def test_reinvocation_cap_rejects_after_three(tmp_path):
     kinds = [m.kind for m in teams.list_messages(run.id)]
     assert kinds.count("query") == 3
     assert kinds.count("answer") == 3
+
+
+@pytest.mark.asyncio
+async def test_cancel_settles_run_and_task(tmp_path):
+    import asyncio
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+    db = Database(tmp_path / "app.db"); db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    plan = '[{"title":"T1","description":"d1"}]'
+    started = asyncio.Event()
+
+    class HangingModel:
+        def __init__(self, role): self.role = role
+        async def complete(self, messages):
+            from personal_agent_gateway.model_client import ModelResponse
+            if self.role == "leader":
+                return ModelResponse(content=plan, tool_calls=[], upstream_session_id="s")
+            started.set()
+            await asyncio.sleep(60)  # 워커 실행 중 매달림
+
+    runtime = TeamRuntime(teams=teams, model_factory=lambda a: HangingModel(a.role))
+    task = asyncio.create_task(runtime.start(run.id))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert teams.get_team_run(run.id).status == "canceled"
+    assert teams.list_tasks(run.id)[0].status == "canceled"

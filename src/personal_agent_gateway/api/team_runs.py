@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
@@ -7,6 +8,9 @@ from personal_agent_gateway.teams import TeamAgent, TeamMessage, TeamRun, TeamTa
 
 
 router = APIRouter(prefix="/api/team-runs", tags=["team-runs"])
+
+_ACTIVE = {"planning", "running", "summarizing"}
+_TERMINAL = {"completed", "completed_with_failures", "failed", "canceled"}
 
 
 class CreateTeamRunRequest(BaseModel):
@@ -56,19 +60,40 @@ def get_team_run(request: Request, team_run_id: str, _session: None = session_de
 
 @router.post("/{team_run_id}/start")
 async def start_team_run(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, object]:
+    service = request.app.state.team_run_service
+    registry = request.app.state.team_run_registry
+    runtime = request.app.state.team_runtime
     try:
-        run = await request.app.state.team_runtime.start(team_run_id)
+        run = service.get_team_run(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
+    if registry.is_running(team_run_id) or run.status in _ACTIVE:
+        raise HTTPException(status_code=409, detail="Team run already running")
+    if run.status in _TERMINAL:
+        raise HTTPException(status_code=409, detail="Team run already finished")
+
+    async def _run_and_finish() -> None:
+        try:
+            await runtime.start(team_run_id)
+        finally:
+            registry.finish(team_run_id)
+
+    task = asyncio.create_task(_run_and_finish())
+    registry.register(team_run_id, task)
     return {"team_run": _team_run_payload(run)}
 
 
 @router.post("/{team_run_id}/cancel")
 def cancel_team_run(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, object]:
+    service = request.app.state.team_run_service
+    registry = request.app.state.team_run_registry
     try:
-        run = request.app.state.team_run_service.set_run_status(team_run_id, "canceled")
+        run = service.get_team_run(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
+    if registry.cancel(team_run_id):
+        return {"team_run": _team_run_payload(service.get_team_run(team_run_id))}
+    run = service.set_run_status(team_run_id, "canceled")
     return {"team_run": _team_run_payload(run)}
 
 

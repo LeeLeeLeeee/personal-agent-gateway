@@ -35,7 +35,7 @@ from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelCli
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
-from personal_agent_gateway.run_state import SessionAlreadyRunningError, SessionRunRegistry
+from personal_agent_gateway.run_state import SessionAlreadyRunningError, SessionRunRegistry, TeamRunRegistry
 from personal_agent_gateway.runners.agent import AgentRunner
 from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
@@ -67,8 +67,10 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     frontend_assets_dir = package_dir / "frontend_dist" / "assets"
     event_bus = EventBus()
     run_registry = SessionRunRegistry()
+    team_run_registry = TeamRunRegistry()
     app.state.event_bus = event_bus
     app.state.run_registry = run_registry
+    app.state.team_run_registry = team_run_registry
     runtime_factory = _attach_local_services(app, app_config, transcript, event_bus)
     app.state.team_runtime = TeamRuntime(
         app.state.team_run_service,

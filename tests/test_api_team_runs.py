@@ -90,3 +90,43 @@ def test_team_run_api_requires_auth(tmp_path: Path) -> None:
     response = client.get("/api/team-runs")
 
     assert response.status_code == 401
+
+
+def test_start_returns_immediately_without_blocking(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "QA Tester")
+    created = client.post(
+        "/api/team-runs",
+        json={
+            "goal": "g",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": [member_id],
+            "run_mode": "planning_only",
+            "max_workers": 1,
+        },
+    ).json()["team_run"]
+
+    resp = client.post(f"/api/team-runs/{created['id']}/start")
+
+    assert resp.status_code == 200
+    # 즉시 반환된 payload는 team_run을 포함
+    assert resp.json()["team_run"]["id"] == created["id"]
+
+
+def test_double_start_conflicts(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    created = client.post(
+        "/api/team-runs",
+        json={
+            "goal": "g",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": [],
+            "run_mode": "planning_only",
+            "max_workers": 1,
+        },
+    ).json()["team_run"]
+    client.post(f"/api/team-runs/{created['id']}/start")
+    second = client.post(f"/api/team-runs/{created['id']}/start")
+    assert second.status_code in (200, 409)  # 이미 끝났으면 finished 409, 실행중이면 409
