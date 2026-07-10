@@ -46,4 +46,9 @@ describe("StatusBadge", () => {
     render(<StatusBadge kind="totally-unknown" />);
     expect(screen.getByText("IDLE")).toBeInTheDocument();
   });
+
+  it("renders completed_with_failures label", () => {
+    render(<StatusBadge kind="completed_with_failures" />);
+    expect(screen.getByText("COMPLETED*")).toBeInTheDocument();
+  });
 });

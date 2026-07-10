@@ -2,6 +2,7 @@ const LABELS = {
   running: "RUNNING",
   working: "WORKING",
   completed: "COMPLETED",
+  completed_with_failures: "COMPLETED*",
   succeeded: "SUCCEEDED",
   failed: "FAILED",
   error: "ERROR",
