@@ -31,7 +31,7 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
-from personal_agent_gateway.model_client import CodexModelClient
+from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelClient, ModelClient
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
@@ -445,8 +445,18 @@ def main() -> None:
     uvicorn.run(create_app(config), host=config.web_host, port=config.web_port)
 
 
-def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], CodexModelClient]:
-    def team_model_factory(agent: TeamAgent) -> CodexModelClient:
+def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], ModelClient]:
+    def team_model_factory(agent: TeamAgent) -> ModelClient:
+        session = agent.upstream_session_id or None
+        if agent.backend == "claude":
+            return ClaudeModelClient(
+                binary=config.claude_binary,
+                model=agent.model,
+                workspace_root=config.workspace_root,
+                effort="high",
+                permission_mode=config.claude_permission_mode,
+                upstream_session_id=session,
+            )
         return CodexModelClient(
             binary=config.codex_binary,
             model=agent.model,
@@ -455,6 +465,7 @@ def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], CodexModelCl
             approval_policy=config.codex_approval_policy,
             effort="high",
             timeout_seconds=config.codex_timeout_seconds,
+            upstream_session_id=session,
         )
 
     return team_model_factory

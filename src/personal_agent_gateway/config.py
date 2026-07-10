@@ -51,6 +51,7 @@ class AppConfig(BaseModel):
     openai_api_key: str | None = None
     codex_binary: str = _default_codex_binary()
     claude_binary: str = _default_claude_binary()
+    claude_permission_mode: str = "acceptEdits"
     codex_sandbox: str = "workspace-write"
     codex_approval_policy: str = "never"
     codex_timeout_seconds: int = 600
@@ -141,6 +142,7 @@ class AppConfig(BaseModel):
                 openai_api_key=env.get("OPENAI_API_KEY"),
                 codex_binary=env.get("AGENT_CODEX_BIN") or _default_codex_binary(),
                 claude_binary=env.get("AGENT_CLAUDE_BIN") or _default_claude_binary(),
+                claude_permission_mode=env.get("AGENT_CLAUDE_PERMISSION_MODE") or "acceptEdits",
                 codex_sandbox=env.get("AGENT_CODEX_SANDBOX") or "workspace-write",
                 codex_approval_policy=env.get("AGENT_CODEX_APPROVAL_POLICY") or "never",
                 codex_timeout_seconds=int(env.get("AGENT_CODEX_TIMEOUT_SECONDS") or "600"),
