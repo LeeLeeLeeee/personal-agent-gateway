@@ -139,6 +139,16 @@ export function entryFromSse(event) {
         createdAtMs
       };
     }
+    if (item.type === "reasoning") {
+      return {
+        type: "reasoning",
+        key: `reasoning:${event.session_id || "legacy"}:${item.id || event.event_seq || ""}`,
+        text: item.text || "",
+        time: fmtTime(event.created_at, true) || nowHMS(),
+        serverOrder: event.event_seq,
+        createdAtMs
+      };
+    }
     return null;
   }
   if (event.type === "runtime.user_message.started") {

@@ -210,6 +210,28 @@ describe("timeline model", () => {
   });
 });
 
+describe("reasoning mapping", () => {
+  it("maps codex reasoning items to reasoning entries", () => {
+    const entry = entryFromSse({
+      type: "item.completed",
+      session_id: "s1",
+      event_seq: 7,
+      created_at: "2026-07-10T00:00:01Z",
+      item: { id: "r1", type: "reasoning", text: "thinking about it" }
+    });
+    expect(entry).toMatchObject({ type: "reasoning", text: "thinking about it", serverOrder: 7 });
+    expect(entry.key).toContain("reasoning:");
+  });
+
+  it("ignores reasoning items with no text as empty string", () => {
+    const entry = entryFromSse({
+      type: "item.completed", session_id: "s1", event_seq: 8,
+      item: { id: "r2", type: "reasoning" }
+    });
+    expect(entry).toMatchObject({ type: "reasoning", text: "" });
+  });
+});
+
 describe("compareEntries", () => {
   it("orders by createdAtMs first", () => {
     const a = { type: "agent", createdAtMs: 200, serverOrder: 1 };
