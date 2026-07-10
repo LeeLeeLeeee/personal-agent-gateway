@@ -91,3 +91,29 @@ class SessionRunRegistry:
         if has_pending:
             return "waiting_approval"
         return "idle"
+
+
+class TeamRunRegistry:
+    def __init__(self) -> None:
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._lock = Lock()
+
+    def register(self, team_run_id: str, task: asyncio.Task) -> None:
+        with self._lock:
+            self._tasks[team_run_id] = task
+
+    def is_running(self, team_run_id: str) -> bool:
+        with self._lock:
+            return team_run_id in self._tasks
+
+    def cancel(self, team_run_id: str) -> bool:
+        with self._lock:
+            task = self._tasks.get(team_run_id)
+        if task is None:
+            return False
+        task.cancel()
+        return True
+
+    def finish(self, team_run_id: str) -> None:
+        with self._lock:
+            self._tasks.pop(team_run_id, None)

@@ -2,7 +2,11 @@ import asyncio
 
 import pytest
 
-from personal_agent_gateway.run_state import SessionAlreadyRunningError, SessionRunRegistry
+from personal_agent_gateway.run_state import (
+    SessionAlreadyRunningError,
+    SessionRunRegistry,
+    TeamRunRegistry,
+)
 
 
 def test_finish_ignores_stale_request_id_for_same_session() -> None:
@@ -101,3 +105,23 @@ def test_attach_task_ignores_mismatched_request_id() -> None:
         return result
 
     assert asyncio.run(scenario()) is False
+
+
+@pytest.mark.asyncio
+async def test_register_cancel_finish():
+    registry = TeamRunRegistry()
+
+    async def sleeper():
+        await asyncio.sleep(60)
+
+    task = asyncio.create_task(sleeper())
+    registry.register("run-1", task)
+    assert registry.is_running("run-1") is True
+
+    assert registry.cancel("run-1") is True
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    registry.finish("run-1")
+    assert registry.is_running("run-1") is False
+    assert registry.cancel("run-1") is False
