@@ -18,6 +18,32 @@ class FakeModel:
         return ModelResponse(content=self.content, tool_calls=[])
 
 
+@dataclass
+class ScriptedModel:
+    """호출마다 responses에서 순서대로 반환. 소진되면 마지막 값 반복."""
+    responses: list
+
+    def __post_init__(self):
+        self._calls = 0
+
+    async def complete(self, messages):
+        idx = min(self._calls, len(self.responses) - 1)
+        self._calls += 1
+        value = self.responses[idx]
+        if isinstance(value, Exception):
+            raise value
+        return ModelResponse(content=value, tool_calls=[], upstream_session_id=f"sess-{self._calls}")
+
+
+def _factory_by_role(leader_responses, worker_responses):
+    from personal_agent_gateway.teams import TeamAgent
+    def factory(agent: TeamAgent):
+        if agent.role == "leader":
+            return ScriptedModel(list(leader_responses))
+        return ScriptedModel(list(worker_responses))
+    return factory
+
+
 @pytest.mark.asyncio
 async def test_planning_only_creates_tasks_and_completes_run(tmp_path):
     workspace = tmp_path / "workspace"
@@ -142,3 +168,51 @@ async def test_team_runtime_publishes_team_events(tmp_path):
     assert "team.run.started" in event_types
     assert "team.task.created" in event_types
     assert "team.run.completed" in event_types
+
+
+@pytest.mark.asyncio
+async def test_partial_failure_yields_completed_with_failures(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+    db = Database(tmp_path / "app.db"); db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+
+    plan = '[{"title":"T1","description":"d1"},{"title":"T2","description":"d2"}]'
+    # 워커: T1 성공, T2 예외
+    def factory(agent):
+        if agent.role == "leader":
+            return ScriptedModel([plan, "summary"])
+        return ScriptedModel(["ok result", RuntimeError("boom")])
+
+    runtime = TeamRuntime(teams=teams, model_factory=factory)
+    result = await runtime.start(run.id)
+
+    assert result.status == "completed_with_failures"
+    tasks = teams.list_tasks(run.id)
+    assert {t.title: t.status for t in tasks} == {"T1": "completed", "T2": "failed"}
+
+
+@pytest.mark.asyncio
+async def test_all_workers_fail_yields_failed(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+    db = Database(tmp_path / "app.db"); db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    plan = '[{"title":"T1","description":"d1"}]'
+    def factory(agent):
+        if agent.role == "leader":
+            return ScriptedModel([plan, "summary"])
+        return ScriptedModel([RuntimeError("boom")])
+    runtime = TeamRuntime(teams=teams, model_factory=factory)
+    result = await runtime.start(run.id)
+    assert result.status == "failed"
