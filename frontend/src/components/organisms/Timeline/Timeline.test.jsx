@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Timeline } from "./index.jsx";
 
@@ -39,5 +39,21 @@ describe("Timeline ordering", () => {
     const blocks = document.querySelectorAll(".msg-user, .msg-agent");
     expect(blocks[0].className).toContain("msg-user");
     expect(blocks[1].className).toContain("msg-agent");
+  });
+
+  it("groups consecutive reasoning entries into one collapsed block that expands on click", () => {
+    const entries = [
+      { type: "reasoning", text: "step one", createdAtMs: 100, serverOrder: 1 },
+      { type: "reasoning", text: "step two", createdAtMs: 101, serverOrder: 2 },
+      { type: "agent", text: "final", createdAtMs: 200, serverOrder: 3 }
+    ];
+    render(<Timeline entries={entries} busy={false} />);
+    const head = document.querySelector(".reasoning-head");
+    expect(head).toBeTruthy();
+    expect(head.textContent).toContain("2 steps");
+    expect(document.querySelector(".reasoning-body")).toBeNull(); // 기본 접힘
+    fireEvent.click(head);
+    expect(document.querySelector(".reasoning-body").textContent).toContain("step one");
+    expect(document.querySelector(".reasoning-body").textContent).toContain("step two");
   });
 });

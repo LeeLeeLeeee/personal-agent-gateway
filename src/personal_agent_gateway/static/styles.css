@@ -3276,3 +3276,20 @@ p {
         grid-template-columns: 1fr;
     }
 }
+
+.tl-reasoning { margin: 6px 0; }
+.reasoning-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: transparent; border: 1px dashed var(--c-grey); border-radius: 4px;
+  padding: 6px 10px; cursor: pointer; color: var(--c-grey);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; text-align: left;
+}
+.reasoning-head:hover { color: #b8b8b8; }
+.reasoning-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c-grey); flex: none; }
+.reasoning-title { flex: 1; }
+.reasoning-toggle { flex: none; }
+.reasoning-body {
+  margin-top: 4px; padding: 8px 12px; white-space: pre-wrap;
+  font-family: var(--font-mono); font-size: 12px; color: #9a9a9a;
+  border-left: 2px solid var(--c-grey);
+}

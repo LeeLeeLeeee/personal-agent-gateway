@@ -62,6 +62,22 @@ function CommandBlock({ entry }) {
   );
 }
 
+function ReasoningBlock({ steps }) {
+  const [open, setOpen] = useState(false);
+  const text = steps.map((step) => step.text).filter(Boolean).join("\n\n");
+  const label = `${steps.length} ${steps.length === 1 ? "step" : "steps"}`;
+  return (
+    <div className="tl-reasoning">
+      <button type="button" className="reasoning-head" onClick={() => setOpen((value) => !value)}>
+        <span className="reasoning-dot" />
+        <span className="reasoning-title">REASONING · {label}</span>
+        <span className="reasoning-toggle">{open ? "▾" : "▸"}</span>
+      </button>
+      {open ? <div className="reasoning-body">{text}</div> : null}
+    </div>
+  );
+}
+
 function EventRow({ entry }) {
   return (
     <div className="tl-row">
@@ -122,7 +138,8 @@ export function Timeline({ entries, busy, sessionId = null, registeredByPath = n
 
   const nodes = [];
   let cluster = [];
-  const flush = () => {
+  let reasoning = [];
+  const flushCluster = () => {
     if (!cluster.length) return;
     nodes.push(
       <div className="tl-wrap" key={`cluster-${nodes.length}`}>
@@ -136,18 +153,31 @@ export function Timeline({ entries, busy, sessionId = null, registeredByPath = n
     );
     cluster = [];
   };
+  const flushReasoning = () => {
+    if (!reasoning.length) return;
+    nodes.push(<ReasoningBlock key={`reasoning-${nodes.length}`} steps={reasoning} />);
+    reasoning = [];
+  };
 
   for (const entry of orderedEntries(entries)) {
+    if (entry.type === "reasoning") {
+      flushCluster();
+      reasoning.push(entry);
+      continue;
+    }
     if (entry.type === "event_row" || entry.type === "command") {
+      flushReasoning();
       cluster.push(entry);
       continue;
     }
-    flush();
+    flushReasoning();
+    flushCluster();
     if (entry.type === "user") nodes.push(<UserMessage key={`u-${nodes.length}`} entry={entry} />);
     if (entry.type === "agent") nodes.push(<AgentMessage key={`a-${nodes.length}`} entry={entry} sessionId={sessionId} registeredByPath={registeredByPath} onRegistered={onRegistered} />);
     if (entry.type === "artifact") nodes.push(<ArtifactCard key={`ar-${nodes.length}`} entry={entry} />);
     if (entry.type === "runtime_error") nodes.push(<RuntimeError key={`e-${nodes.length}`} entry={entry} />);
   }
-  flush();
+  flushReasoning();
+  flushCluster();
   return <div className="stream">{nodes}</div>;
 }
