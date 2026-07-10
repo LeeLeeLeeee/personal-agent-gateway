@@ -159,15 +159,20 @@ class CodexModelClient:
 
         stderr_task = asyncio.create_task(process.stderr.read())
         stdout_parts: list[str] = []
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            text = line.decode(errors="replace")
-            stdout_parts.append(text)
-            event = _parse_json_line(text)
-            if event is not None and self._on_event is not None:
-                await self._on_event(event)
+        try:
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                text = line.decode(errors="replace")
+                stdout_parts.append(text)
+                event = _parse_json_line(text)
+                if event is not None and self._on_event is not None:
+                    await self._on_event(event)
+        except BaseException:
+            if not stderr_task.done():
+                stderr_task.cancel()
+            raise
 
         stderr = await stderr_task
         await process.wait()
