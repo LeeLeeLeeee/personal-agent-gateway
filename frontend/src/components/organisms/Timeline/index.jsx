@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { MarkdownContent } from "../MarkdownContent/index.jsx";
+import { compareEntries } from "../../../lib/timeline.js";
 
 function UserMessage({ entry }) {
   return (
@@ -113,15 +114,7 @@ function IdleEmpty() {
 }
 
 function orderedEntries(entries) {
-  return entries
-    .map((entry, index) => ({ entry, index }))
-    .sort((left, right) => {
-      const leftOrder = left.entry.order ?? left.index;
-      const rightOrder = right.entry.order ?? right.index;
-      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-      return left.index - right.index;
-    })
-    .map(({ entry }) => entry);
+  return [...entries].sort(compareEntries);
 }
 
 export function Timeline({ entries, busy, sessionId = null, registeredByPath = null, onRegistered = null }) {

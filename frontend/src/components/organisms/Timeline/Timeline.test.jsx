@@ -29,4 +29,15 @@ describe("Timeline ordering", () => {
     expect(user.compareDocumentPosition(finalAnswer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(finalAnswer.compareDocumentPosition(completion) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+
+  it("renders live entries in canonical createdAtMs order regardless of array order", () => {
+    const entries = [
+      { type: "agent", text: "answer", createdAtMs: 300, serverOrder: 3, order: 0 },
+      { type: "user", text: "question", createdAtMs: 100, serverOrder: 1, order: 1 }
+    ];
+    render(<Timeline entries={entries} busy={false} />);
+    const blocks = document.querySelectorAll(".msg-user, .msg-agent");
+    expect(blocks[0].className).toContain("msg-user");
+    expect(blocks[1].className).toContain("msg-agent");
+  });
 });
