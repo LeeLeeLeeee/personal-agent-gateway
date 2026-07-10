@@ -309,7 +309,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     def delete_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:
         try:
             deleted = run_registry.delete_if_idle(session_id, lambda: transcript.delete(session_id))
-        except SessionAlreadyRunningError as exc:
+        except SessionAlreadyRunningError:
             raise HTTPException(status_code=409, detail="Session is running")
         if not deleted:
             raise HTTPException(status_code=404, detail="Session not found")

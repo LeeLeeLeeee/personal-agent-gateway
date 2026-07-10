@@ -1,4 +1,3 @@
-from pathlib import Path
 from personal_agent_gateway.config import AppConfig
 
 

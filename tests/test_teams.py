@@ -56,7 +56,8 @@ def test_new_run_has_default_budget(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService
     from personal_agent_gateway.teams import TeamRunService
-    db = Database(tmp_path / "app.db"); db.initialize()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, tmp_path)
     leader = personas.create_persona("L", "role", "d", [], [])
@@ -69,7 +70,8 @@ def test_agent_session_and_counters(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService
     from personal_agent_gateway.teams import TeamRunService
-    db = Database(tmp_path / "app.db"); db.initialize()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, tmp_path)
     leader = personas.create_persona("L", "role", "d", [], [])
@@ -89,7 +91,8 @@ def test_completed_with_failures_is_terminal(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService
     from personal_agent_gateway.teams import TeamRunService
-    db = Database(tmp_path / "app.db"); db.initialize()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, tmp_path)
     leader = personas.create_persona("L", "role", "d", [], [])

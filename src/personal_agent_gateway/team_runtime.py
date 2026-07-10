@@ -65,7 +65,7 @@ class TeamRuntime:
             leader = self._teams.set_agent_status(leader.id, "running")
             await self._publish({"type": "team.run.started", "team_run_id": run.id})
 
-            tasks = await self._plan(run, leader)
+            await self._plan(run, leader)
 
             run = self._teams.get_team_run(run.id)
             if run.run_mode != "plan_and_execute":

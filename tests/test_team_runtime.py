@@ -178,7 +178,8 @@ async def test_partial_failure_yields_completed_with_failures(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService
     from personal_agent_gateway.teams import TeamRunService
-    db = Database(tmp_path / "app.db"); db.initialize()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])
@@ -203,7 +204,8 @@ async def test_all_workers_fail_yields_failed(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService
     from personal_agent_gateway.teams import TeamRunService
-    db = Database(tmp_path / "app.db"); db.initialize()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])
@@ -223,7 +225,8 @@ async def test_worker_query_consumes_round_and_reinvokes(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService
     from personal_agent_gateway.teams import TeamRunService
-    db = Database(tmp_path / "app.db"); db.initialize()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])
@@ -256,7 +259,8 @@ async def test_budget_exhausted_rejects_and_best_effort(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService
     from personal_agent_gateway.teams import TeamRunService
-    db = Database(tmp_path / "app.db"); db.initialize()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])
@@ -285,7 +289,8 @@ async def test_synthesis_summary_from_leader(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService
     from personal_agent_gateway.teams import TeamRunService
-    db = Database(tmp_path / "app.db"); db.initialize()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])
@@ -306,7 +311,8 @@ async def test_reinvocation_cap_rejects_after_three(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService
     from personal_agent_gateway.teams import TeamRunService
-    db = Database(tmp_path / "app.db"); db.initialize()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])
@@ -346,7 +352,8 @@ async def test_cancel_settles_run_and_task(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService
     from personal_agent_gateway.teams import TeamRunService
-    db = Database(tmp_path / "app.db"); db.initialize()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])
