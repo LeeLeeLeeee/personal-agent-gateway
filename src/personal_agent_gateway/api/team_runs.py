@@ -93,7 +93,8 @@ def cancel_team_run(request: Request, team_run_id: str, _session: None = session
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     if registry.cancel(team_run_id):
         return {"team_run": _team_run_payload(service.get_team_run(team_run_id))}
-    run = service.set_run_status(team_run_id, "canceled")
+    if run.status not in _TERMINAL:
+        run = service.set_run_status(team_run_id, "canceled")
     return {"team_run": _team_run_payload(run)}
 
 

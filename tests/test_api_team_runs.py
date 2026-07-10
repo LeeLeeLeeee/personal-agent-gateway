@@ -186,6 +186,33 @@ def test_double_start_conflicts(tmp_path: Path) -> None:
     assert second.status_code in (200, 409)  # 이미 끝났으면 finished 409, 실행중이면 409
 
 
+def test_cancel_does_not_overwrite_already_terminal_run(tmp_path: Path) -> None:
+    """registry에 없는(이미 끝난) 팀런을 /cancel해도 실제 종료 상태가 덮어써지지 않아야 함."""
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    created = client.post(
+        "/api/team-runs",
+        json={
+            "goal": "g",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": [],
+            "run_mode": "planning_only",
+            "max_workers": 1,
+        },
+    ).json()["team_run"]
+    run_id = created["id"]
+
+    service = client.app.state.team_run_service
+    service.set_run_status(run_id, "completed", summary="real result")
+
+    cancel_resp = client.post(f"/api/team-runs/{run_id}/cancel")
+    assert cancel_resp.status_code == 200
+
+    final = client.get(f"/api/team-runs/{run_id}").json()["team_run"]
+    assert final["status"] == "completed"
+    assert final["summary"] == "real result"
+
+
 async def test_start_returns_before_orchestration_completes(tmp_path: Path) -> None:
     """오케스트레이션이 아직 끝나지 않았을 때도 /start가 즉시 반환되는지 확인.
 
