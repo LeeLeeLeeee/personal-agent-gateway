@@ -96,6 +96,8 @@ create table if not exists team_runs (
     run_mode text not null,
     leader_agent_id text,
     max_workers integer not null,
+    rounds_budget integer not null default 8,
+    rounds_used integer not null default 0,
     workspace_root text not null,
     summary text,
     error_message text,
@@ -117,6 +119,8 @@ create table if not exists team_agents (
     status text not null,
     workspace_path text,
     current_task_id text,
+    reinvocations integer not null default 0,
+    upstream_session_id text,
     started_at text,
     finished_at text,
     created_at text not null,
@@ -223,4 +227,26 @@ def _migrate(connection: sqlite3.Connection) -> None:
     if "avatar" not in persona_columns:
         connection.execute(
             "alter table personas add column avatar text not null default ''"
+        )
+    team_run_columns = {
+        row["name"] for row in connection.execute("pragma table_info(team_runs)")
+    }
+    if "rounds_budget" not in team_run_columns:
+        connection.execute(
+            "alter table team_runs add column rounds_budget integer not null default 8"
+        )
+    if "rounds_used" not in team_run_columns:
+        connection.execute(
+            "alter table team_runs add column rounds_used integer not null default 0"
+        )
+    team_agent_columns = {
+        row["name"] for row in connection.execute("pragma table_info(team_agents)")
+    }
+    if "reinvocations" not in team_agent_columns:
+        connection.execute(
+            "alter table team_agents add column reinvocations integer not null default 0"
+        )
+    if "upstream_session_id" not in team_agent_columns:
+        connection.execute(
+            "alter table team_agents add column upstream_session_id text"
         )

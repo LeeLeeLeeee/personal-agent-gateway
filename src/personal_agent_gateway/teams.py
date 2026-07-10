@@ -15,15 +15,16 @@ TeamRunStatus = Literal[
     "running",
     "summarizing",
     "completed",
+    "completed_with_failures",
     "failed",
     "canceled",
 ]
 RunMode = Literal["planning_only", "plan_and_execute", "review_only"]
 AgentStatus = Literal["pending", "running", "waiting", "completed", "failed", "canceled"]
-TaskStatus = Literal["pending", "in_progress", "blocked", "completed", "failed"]
+TaskStatus = Literal["pending", "in_progress", "blocked", "completed", "failed", "canceled"]
 
 _ACTIVE_RUN_STATUSES = {"planning", "running"}
-_TERMINAL_RUN_STATUSES = {"completed", "failed", "canceled"}
+_TERMINAL_RUN_STATUSES = {"completed", "completed_with_failures", "failed", "canceled"}
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,8 @@ class TeamRun:
     run_mode: RunMode
     leader_agent_id: str | None
     max_workers: int
+    rounds_budget: int
+    rounds_used: int
     workspace_root: str
     summary: str | None
     error_message: str | None
@@ -56,6 +59,8 @@ class TeamAgent:
     status: AgentStatus
     workspace_path: str | None
     current_task_id: str | None
+    reinvocations: int
+    upstream_session_id: str | None
     created_at: str
     updated_at: str
     started_at: str | None = None
@@ -103,6 +108,7 @@ class TeamRunService:
         member_persona_ids: list[str],
         run_mode: RunMode,
         max_workers: int,
+        rounds_budget: int = 8,
     ) -> TeamRun:
         team_run_id = uuid4().hex
         now = _now()
@@ -111,25 +117,15 @@ class TeamRunService:
             """
             insert into team_runs (
                 id, goal, status, run_mode, leader_agent_id, max_workers,
-                workspace_root, summary, error_message, created_at, started_at,
-                finished_at, updated_at
+                rounds_budget, rounds_used, workspace_root, summary, error_message,
+                created_at, started_at, finished_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                team_run_id,
-                goal,
-                "draft",
-                run_mode,
-                None,
-                max_workers,
-                workspace_root,
-                None,
-                None,
-                now,
-                None,
-                None,
-                now,
+                team_run_id, goal, "draft", run_mode, None, max_workers,
+                rounds_budget, 0, workspace_root, None, None,
+                now, None, None, now,
             ),
         )
         leader_agent = self._create_agent(team_run_id, leader_persona_id, "leader")
@@ -185,6 +181,33 @@ class TeamRunService:
         )
         return self._get_agent(agent_id)
 
+    def get_agent(self, agent_id: str) -> TeamAgent:
+        return self._get_agent(agent_id)
+
+    def set_agent_session(self, agent_id: str, upstream_session_id: str | None) -> TeamAgent:
+        self._get_agent(agent_id)
+        self._db.execute(
+            "update team_agents set upstream_session_id = ?, updated_at = ? where id = ?",
+            (upstream_session_id, _now(), agent_id),
+        )
+        return self._get_agent(agent_id)
+
+    def increment_agent_reinvocations(self, agent_id: str) -> TeamAgent:
+        self._get_agent(agent_id)
+        self._db.execute(
+            "update team_agents set reinvocations = reinvocations + 1, updated_at = ? where id = ?",
+            (_now(), agent_id),
+        )
+        return self._get_agent(agent_id)
+
+    def increment_rounds_used(self, team_run_id: str) -> TeamRun:
+        self.get_team_run(team_run_id)
+        self._db.execute(
+            "update team_runs set rounds_used = rounds_used + 1, updated_at = ? where id = ?",
+            (_now(), team_run_id),
+        )
+        return self.get_team_run(team_run_id)
+
     def create_task(
         self,
         team_run_id: str,
@@ -239,7 +262,7 @@ class TeamRunService:
     ) -> TeamTask:
         self._get_task(task_id)
         started_at = _now() if status == "in_progress" else None
-        finished_at = _now() if status in ("completed", "failed") else None
+        finished_at = _now() if status in ("completed", "failed", "canceled") else None
         self._db.execute(
             """
             update team_tasks
@@ -331,26 +354,17 @@ class TeamRunService:
             insert into team_agents (
                 id, team_run_id, name, role, persona_id, persona_snapshot_json,
                 backend, model, status, workspace_path, current_task_id,
+                reinvocations, upstream_session_id,
                 started_at, finished_at, created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                agent_id,
-                team_run_id,
-                persona.name,
-                role,
-                persona.id,
+                agent_id, team_run_id, persona.name, role, persona.id,
                 json.dumps(_persona_snapshot(persona), ensure_ascii=False, sort_keys=True),
-                persona.default_backend,
-                persona.default_model,
-                "pending",
-                None,
-                None,
-                None,
-                None,
-                now,
-                now,
+                persona.default_backend, persona.default_model, "pending", None, None,
+                0, None,
+                None, None, now, now,
             ),
         )
         return self._get_agent(agent_id)
@@ -395,6 +409,8 @@ def _team_run_from_row(row: object) -> TeamRun:
         run_mode=row["run_mode"],
         leader_agent_id=row["leader_agent_id"],
         max_workers=row["max_workers"],
+        rounds_budget=row["rounds_budget"],
+        rounds_used=row["rounds_used"],
         workspace_root=row["workspace_root"],
         summary=row["summary"],
         error_message=row["error_message"],
@@ -418,6 +434,8 @@ def _team_agent_from_row(row: object) -> TeamAgent:
         status=row["status"],
         workspace_path=row["workspace_path"],
         current_task_id=row["current_task_id"],
+        reinvocations=row["reinvocations"],
+        upstream_session_id=row["upstream_session_id"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
         created_at=row["created_at"],
