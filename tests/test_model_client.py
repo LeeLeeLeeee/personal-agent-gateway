@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -499,3 +500,72 @@ def test_parse_claude_output_includes_upstream_session_id() -> None:
     )
 
     assert _parse_claude_session_id(output) == "f7c44fcb-e059-4799-94e3-f64d39305050"
+
+
+class _HangingStdout:
+    async def read(self) -> bytes:
+        await asyncio.sleep(60)
+        return b""
+
+    async def readline(self) -> bytes:
+        await asyncio.sleep(60)
+        return b""
+
+
+class _FakeStdin:
+    def write(self, _data: bytes) -> None: ...
+    async def drain(self) -> None: ...
+    def close(self) -> None: ...
+
+
+class _FakeProcess:
+    def __init__(self) -> None:
+        self.killed = False
+        self.stdin = _FakeStdin()
+        self.stdout = _HangingStdout()
+        self.stderr = _HangingStdout()
+        self.returncode = 0
+
+    def kill(self) -> None:
+        self.killed = True
+
+    async def wait(self) -> int:
+        return 0
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        await asyncio.sleep(60)
+        return b"", b""
+
+
+@pytest.mark.asyncio
+async def test_codex_client_kills_process_on_cancel(monkeypatch) -> None:
+    fake = _FakeProcess()
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    monkeypatch.setattr("personal_agent_gateway.model_client.asyncio.create_subprocess_exec", fake_create)
+    client = CodexModelClient(binary="codex", model="m", workspace_root=Path("."), sandbox="s", approval_policy="never")
+    task = asyncio.ensure_future(client.complete([{"role": "user", "content": "hi"}]))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert fake.killed is True
+
+
+@pytest.mark.asyncio
+async def test_claude_client_kills_process_on_cancel(monkeypatch) -> None:
+    fake = _FakeProcess()
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    monkeypatch.setattr("personal_agent_gateway.model_client.asyncio.create_subprocess_exec", fake_create)
+    client = ClaudeModelClient(binary="claude", model="sonnet", workspace_root=Path("."), effort="high", permission_mode="manual")
+    task = asyncio.ensure_future(client.complete([{"role": "user", "content": "hi"}]))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert fake.killed is True

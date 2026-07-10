@@ -126,6 +126,13 @@ class CodexModelClient:
             process.kill()
             await process.communicate()
             raise RuntimeError("Codex execution timed out") from exc
+        except asyncio.CancelledError:
+            process.kill()
+            try:
+                await process.wait()
+            except ProcessLookupError:
+                pass
+            raise
 
         if process.returncode != 0:
             detail = _summarize_process_output(stderr_text, stdout_text)
@@ -254,6 +261,13 @@ class ClaudeModelClient:
             process.kill()
             await process.communicate()
             raise RuntimeError("Claude execution timed out") from exc
+        except asyncio.CancelledError:
+            process.kill()
+            try:
+                await process.wait()
+            except ProcessLookupError:
+                pass
+            raise
 
         stdout_text = stdout.decode(errors="replace")
         stderr_text = stderr.decode(errors="replace")
