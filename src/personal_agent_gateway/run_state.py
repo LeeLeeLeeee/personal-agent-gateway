@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,6 +23,7 @@ class SessionAlreadyRunningError(RuntimeError):
 class SessionRunRegistry:
     def __init__(self) -> None:
         self._running: dict[str, SessionRunState] = {}
+        self._tasks: dict[str, tuple[str, asyncio.Task]] = {}
         self._lock = Lock()
 
     def start(self, session_id: str, request_id: str) -> None:
@@ -55,6 +57,21 @@ class SessionRunRegistry:
             if request_id is not None and current.request_id != request_id:
                 return
             self._running.pop(session_id, None)
+            self._tasks.pop(session_id, None)
+
+    def attach_task(self, session_id: str, request_id: str, task: asyncio.Task) -> None:
+        with self._lock:
+            current = self._running.get(session_id)
+            if current is not None and current.request_id == request_id:
+                self._tasks[session_id] = (request_id, task)
+
+    def interrupt(self, session_id: str) -> bool:
+        with self._lock:
+            entry = self._tasks.get(session_id)
+        if entry is None:
+            return False
+        entry[1].cancel()
+        return True
 
     def is_running(self, session_id: str | None) -> bool:
         with self._lock:
