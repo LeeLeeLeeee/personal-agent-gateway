@@ -40,6 +40,38 @@ function LiveStatusSummary({ entries, busy, turnStart, turnEnd }) {
   );
 }
 
+function agentLabel(agents, config) {
+  return agents.find((agent) => agent.id === config?.agent_id)?.label || config?.agent_id || "unknown";
+}
+
+function CompactLockedStatus({ agents, config, entries, busy, turnStart, turnEnd }) {
+  const live = deriveLive({ entries, busy, turnStart, turnEnd });
+  const chips = [
+    { k: "AGENT", v: agentLabel(agents, config) },
+    { k: "MODEL", v: config.model },
+    ...Object.entries(config.options || {})
+      .filter(([, value]) => value)
+      .map(([key, value]) => ({ k: key.toUpperCase(), v: String(value) })),
+    { k: "LOCKED", v: "FIRST MESSAGE SENT", emphasis: true },
+    { k: "PHASE", v: live.phase, color: live.color },
+    { k: "RUNNING", v: live.running, color: live.running > 0 ? "var(--c-warn)" : "var(--c-grey)" },
+    { k: "LAST EVENT", node: <StatusBadge kind={live.lastKind} /> },
+    { k: "ELAPSED", v: live.elapsed }
+  ];
+
+  return (
+    <div className="locked-status-bar" aria-label="Locked session status">
+      <span className="locked-status-title mono">SESSION CONFIG</span>
+      {chips.map((chip) => (
+        <span className={`locked-status-chip${chip.emphasis ? " locked-status-chip-em" : ""}`} key={chip.k}>
+          <span className="locked-status-k mono">{chip.k}</span>
+          {chip.node || <span className="locked-status-v mono" style={chip.color ? { color: chip.color } : undefined}>{chip.v}</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function Proposal({ approval, onResolve }) {
   if (!approval) return null;
   return (
@@ -117,14 +149,20 @@ export function ChatView({
       <SessionRail sessions={sessions} activeConfig={sessionConfig} onSearch={onSearch} onActivate={onActivate} onReset={onReset} onRename={onRename} onDelete={onDelete} />
       <div className="chat-col">
         <ChatHeader sessions={sessions} locked={locked} />
-        <AgentPicker
-          agents={agents}
-          config={sessionConfig}
-          error={sessionConfigError}
-          onChange={onSessionConfigChange}
-          onRetry={onSessionConfigRetry}
-        />
-        <LiveStatusSummary entries={entries} busy={busy} turnStart={turnStart} turnEnd={turnEnd} />
+        {locked ? (
+          <CompactLockedStatus agents={agents} config={sessionConfig} entries={entries} busy={busy} turnStart={turnStart} turnEnd={turnEnd} />
+        ) : (
+          <>
+            <AgentPicker
+              agents={agents}
+              config={sessionConfig}
+              error={sessionConfigError}
+              onChange={onSessionConfigChange}
+              onRetry={onSessionConfigRetry}
+            />
+            <LiveStatusSummary entries={entries} busy={busy} turnStart={turnStart} turnEnd={turnEnd} />
+          </>
+        )}
         <div className="transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
           <Timeline entries={entries} busy={busy} sessionId={activeSessionId} registeredByPath={registeredByPath} onRegistered={onArtifactChange} />
           {busy && !turnStreamed ? <LoaderCube label="AGENT WORKING" /> : null}

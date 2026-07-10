@@ -47,6 +47,7 @@ class AppConfig(BaseModel):
     cookie_secure: bool = False
     auth_setup_token: str | None = None
     auth_require_token_and_otp: bool = False
+    environment_title: str | None = None
     openai_api_key: str | None = None
     codex_binary: str = _default_codex_binary()
     claude_binary: str = _default_claude_binary()
@@ -136,6 +137,7 @@ class AppConfig(BaseModel):
                 cookie_secure=env.get("AGENT_COOKIE_SECURE") or False,
                 auth_setup_token=env.get("AGENT_AUTH_SETUP_TOKEN") or None,
                 auth_require_token_and_otp=env.get("AGENT_AUTH_REQUIRE_TOKEN_AND_OTP") or False,
+                environment_title=env.get("AGENT_ENVIRONMENT_TITLE") or env.get("PAG_ENV_TITLE") or None,
                 openai_api_key=env.get("OPENAI_API_KEY"),
                 codex_binary=env.get("AGENT_CODEX_BIN") or _default_codex_binary(),
                 claude_binary=env.get("AGENT_CLAUDE_BIN") or _default_claude_binary(),
@@ -172,6 +174,8 @@ def load_config() -> AppConfig:
             "AGENT_COOKIE_SECURE": os.getenv("AGENT_COOKIE_SECURE"),
             "AGENT_AUTH_SETUP_TOKEN": os.getenv("AGENT_AUTH_SETUP_TOKEN"),
             "AGENT_AUTH_REQUIRE_TOKEN_AND_OTP": os.getenv("AGENT_AUTH_REQUIRE_TOKEN_AND_OTP"),
+            "AGENT_ENVIRONMENT_TITLE": os.getenv("AGENT_ENVIRONMENT_TITLE"),
+            "PAG_ENV_TITLE": os.getenv("PAG_ENV_TITLE"),
             "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
             "AGENT_CODEX_BIN": os.getenv("AGENT_CODEX_BIN"),
             "AGENT_CLAUDE_BIN": os.getenv("AGENT_CLAUDE_BIN"),

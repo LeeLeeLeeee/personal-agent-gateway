@@ -179,6 +179,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             "provider": provider,
             "model": model,
             "workspace_root": str(app_config.workspace_root),
+            "environment_title": app_config.environment_title or None,
             "session_id": session_id,
             "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
             "pending_approval": _pending_shell_approval(events) or False,

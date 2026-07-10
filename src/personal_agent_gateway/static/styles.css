@@ -355,6 +355,8 @@ p {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-height: 48px;
+    overflow: hidden;
 }
 .sidebar-status-dot {
     width: 9px;
@@ -367,6 +369,17 @@ p {
     font-family: var(--font-mono);
     font-size: 11px;
     letter-spacing: 1px;
+    white-space: nowrap;
+}
+.sidebar-env-label {
+    margin-left: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0;
 }
 .main-col {
     flex: 1;
@@ -458,7 +471,8 @@ p {
     align-items: center;
 }
 .sess-item {
-    padding: 12px 16px;
+    position: relative;
+    padding: 12px 46px 12px 16px;
     border-bottom: var(--bd-in);
 }
 .sess-item:hover:not(.sess-item-active) {
@@ -467,6 +481,67 @@ p {
 .sess-item-active {
     background: var(--c-black);
     color: var(--c-white);
+}
+.sess-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.sess-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sess-menu-wrap {
+    position: absolute;
+    right: 12px;
+    bottom: 10px;
+}
+.sess-menu-button {
+    width: 24px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: var(--bd-sm);
+    background: var(--c-white);
+    color: var(--c-black);
+    cursor: pointer;
+}
+.sess-menu-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+}
+.sess-menu-icon span {
+    width: 3px;
+    height: 3px;
+    background: currentColor;
+}
+.sess-menu-button:hover,
+.sess-menu-button[aria-expanded="true"] {
+    background: var(--c-black);
+    color: var(--c-white);
+}
+.sess-item-active .sess-menu-button {
+    border-color: var(--c-white);
+}
+.sess-menu {
+    position: fixed;
+    right: auto;
+    min-width: 128px;
+    margin-top: 0;
+    z-index: 80;
+}
+.config-menu-item.danger {
+    color: var(--c-danger);
 }
 .chat-col {
     flex: 1;
@@ -681,6 +756,39 @@ p {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+.locked-status-bar {
+    flex: none;
+    border-bottom: var(--bd);
+    background: var(--c-panel);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+.locked-status-title,
+.locked-status-k {
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: var(--c-grey);
+}
+.locked-status-title {
+    flex: none;
+}
+.locked-status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+}
+.locked-status-chip-em {
+    margin-left: auto;
+}
+.locked-status-v {
+    font-size: 11px;
+    color: var(--c-black);
 }
 
 .stream {

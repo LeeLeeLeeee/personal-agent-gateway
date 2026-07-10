@@ -13,7 +13,17 @@ export const TEAM_NAV = [
   { key: "personas", label: "Personas" }
 ];
 
-export function Sidebar({ screen, teamRunBadge = 0, onScreenChange }) {
+function formatEnvironmentLabel(value) {
+  const trimmed = String(value || "").trim();
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return trimmed;
+  const machine = parts[parts.length - 1];
+  const env = parts.slice(0, -1).join(" ");
+  return `${machine}(${env})`;
+}
+
+export function Sidebar({ screen, teamRunBadge = 0, environmentTitle = "", onScreenChange }) {
+  const environmentLabel = formatEnvironmentLabel(environmentTitle);
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -56,6 +66,9 @@ export function Sidebar({ screen, teamRunBadge = 0, onScreenChange }) {
       <div className="sidebar-foot">
         <span className="sidebar-status-dot" />
         <span className="sidebar-status-label">AUTHENTICATED</span>
+        {environmentLabel ? (
+          <span className="sidebar-env-label" title={environmentTitle}>{environmentLabel}</span>
+        ) : null}
       </div>
     </aside>
   );

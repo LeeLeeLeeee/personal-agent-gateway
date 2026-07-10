@@ -91,6 +91,10 @@ function withSessionConfigStatus(nextStatus, nextConfig) {
   };
 }
 
+function normalizeEnvironmentTitle(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function useForceTick(active) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -145,8 +149,13 @@ export function GatewayApp() {
   const turnStart = activeSessionState.turnStart;
   const turnEnd = activeSessionState.turnEnd;
   const turnStreamed = activeSessionState.turnStreamed;
+  const environmentTitle = normalizeEnvironmentTitle(status?.environment_title);
 
   useForceTick(screen === "chat" && busy);
+
+  useEffect(() => {
+    document.title = environmentTitle ? `${environmentTitle} · Agent Gateway` : "Agent Gateway";
+  }, [environmentTitle]);
 
   const registeredByPath = useMemo(() => {
     const map = new Map();
@@ -830,6 +839,7 @@ export function GatewayApp() {
       screen={screen}
       teamRunBadge={teamRunBadge}
       status={status}
+      environmentTitle={environmentTitle}
       entries={entries}
       busy={busy}
       turnStart={turnStart}

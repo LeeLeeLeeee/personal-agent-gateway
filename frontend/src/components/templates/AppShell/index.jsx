@@ -6,6 +6,7 @@ export function AppShell({
   screen,
   teamRunBadge,
   status,
+  environmentTitle,
   entries,
   busy,
   turnStart,
@@ -18,7 +19,12 @@ export function AppShell({
 }) {
   return (
     <div className={`shell${navOpen ? " nav-open" : ""}`}>
-      <Sidebar screen={screen} teamRunBadge={teamRunBadge} onScreenChange={onScreenChange} />
+      <Sidebar
+        screen={screen}
+        teamRunBadge={teamRunBadge}
+        environmentTitle={environmentTitle}
+        onScreenChange={onScreenChange}
+      />
       <div className="main-col">
         <Statusbar
           status={status}

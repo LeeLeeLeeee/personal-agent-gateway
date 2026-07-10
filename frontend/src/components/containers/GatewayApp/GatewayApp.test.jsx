@@ -67,6 +67,55 @@ describe("GatewayApp", () => {
     expect(await screen.findByRole("heading", { name: "Schedules" })).toBeInTheDocument();
   });
 
+  it("shows the configured environment title in the browser title and sidebar footer", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": { ...status, environment_title: "MPX PC" },
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null }
+    });
+
+    render(<GatewayApp />);
+
+    expect(await screen.findByText("PC(MPX)")).toBeInTheDocument();
+    await waitFor(() => expect(document.title).toBe("MPX PC · Agent Gateway"));
+  });
+
+  it("shows working sessions and moves session actions into a popover menu", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions: [{ ...sessions[0], status: "running" }] },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "DELETE /api/sessions/session-1": { deleted: true, active_session_id: null }
+    });
+
+    render(<GatewayApp />);
+
+    expect(await screen.findByText("WORKING")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rename" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Session actions Main chat" }));
+
+    const menu = await screen.findByRole("menu", { name: "Session actions" });
+    expect(menu).toBeInTheDocument();
+    expect(screen.getByLabelText("Sessions")).not.toContainElement(menu);
+    expect(screen.getByRole("menuitem", { name: "Rename" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/session-1",
+      expect.objectContaining({ method: "DELETE" })
+    ));
+    window.confirm.mockRestore();
+  });
+
   it("shows the active session config in the statusbar even when /api/status is stale", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
@@ -276,7 +325,8 @@ describe("GatewayApp", () => {
     render(<GatewayApp />);
 
     expect(await screen.findByText("deleted session text")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "Session actions Main chat" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
     await waitFor(() => expect(screen.queryByText("deleted session text")).not.toBeInTheDocument());
     expect(screen.getByText("AGENT IDLE")).toBeInTheDocument();
@@ -454,7 +504,8 @@ describe("GatewayApp", () => {
     render(<UiProvider><GatewayApp /></UiProvider>);
 
     expect(await screen.findByText("hello")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "Session actions Main chat" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog", { name: "DELETE SESSION" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
 
@@ -676,8 +727,17 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
 
-    expect((await screen.findAllByText(/LOCKED/)).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Claude Code/)).toBeInTheDocument();
+    const compactStatus = await screen.findByLabelText("Locked session status");
+
+    expect(compactStatus).toHaveTextContent("SESSION CONFIG");
+    expect(compactStatus).toHaveTextContent(/AGENT\s*Claude Code/);
+    expect(compactStatus).toHaveTextContent(/MODEL\s*sonnet/);
+    expect(compactStatus).toHaveTextContent(/EFFORT\s*high/);
+    expect(compactStatus).toHaveTextContent("LOCKED");
+    expect(compactStatus).toHaveTextContent("FIRST MESSAGE SENT");
+    expect(compactStatus).toHaveTextContent("PHASE");
+    expect(compactStatus).toHaveTextContent(/RUNNING\s*0/);
+    expect(screen.queryByText("CURRENT PHASE")).not.toBeInTheDocument();
   });
 
   it("loads the persona library and shows the selected persona detail", async () => {

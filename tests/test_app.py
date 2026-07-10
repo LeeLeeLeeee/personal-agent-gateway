@@ -221,6 +221,7 @@ def test_rename_session_rejects_empty_and_unknown(tmp_path: Path) -> None:
 
 def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
     config = make_config(tmp_path)
+    config.environment_title = "MPX PC"
     client = auth_client(config, FakeRuntime())
 
     response = client.get("/api/status")
@@ -230,6 +231,7 @@ def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
     assert payload["provider"] == "codex"
     assert payload["model"] == "default"
     assert payload["workspace_root"] == str(config.workspace_root)
+    assert payload["environment_title"] == "MPX PC"
     assert payload["session_id"] is None
     assert payload["message_count"] == 0
     assert payload["pending_approval"] is False
