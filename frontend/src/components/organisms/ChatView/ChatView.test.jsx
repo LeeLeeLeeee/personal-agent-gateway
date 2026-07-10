@@ -93,3 +93,19 @@ describe("ChatView working indicator", () => {
     expect(document.querySelector(".working-indicator")).toBeNull();
   });
 });
+
+describe("ChatView esc-to-interrupt", () => {
+  it("calls onInterrupt when Escape is pressed while busy", () => {
+    const onInterrupt = vi.fn();
+    render(<ChatView {...props([])} busy turnStart={Date.now()} onInterrupt={onInterrupt} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call onInterrupt on Escape when idle", () => {
+    const onInterrupt = vi.fn();
+    render(<ChatView {...props([])} busy={false} onInterrupt={onInterrupt} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onInterrupt).not.toHaveBeenCalled();
+  });
+});

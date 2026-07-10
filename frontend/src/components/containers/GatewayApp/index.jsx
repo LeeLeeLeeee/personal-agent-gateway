@@ -269,17 +269,17 @@ export function GatewayApp() {
           if (parsed.type === "runtime.user_message.started") {
             turnStartRef.current = Date.now();
             busyRef.current = true;
-          } else if (parsed.type === "runtime.completed" || parsed.type === "runtime.error") {
+          } else if (parsed.type === "runtime.completed" || parsed.type === "runtime.error" || parsed.type === "runtime.interrupted") {
             busyRef.current = false;
           }
         }
         const entry = entryFromSse(parsed);
         setSessionStateById((current) => updateOneSession(current, sessionId, (state) => {
           const started = parsed.type === "runtime.user_message.started" ? Date.now() : state.turnStart;
-          const ended = parsed.type === "runtime.completed" || parsed.type === "runtime.error" ? Date.now() : (parsed.type === "runtime.user_message.started" ? null : state.turnEnd);
+          const ended = parsed.type === "runtime.completed" || parsed.type === "runtime.error" || parsed.type === "runtime.interrupted" ? Date.now() : (parsed.type === "runtime.user_message.started" ? null : state.turnEnd);
           const busyNext = parsed.type === "runtime.user_message.started"
             ? true
-            : (parsed.type === "runtime.completed" || parsed.type === "runtime.error")
+            : (parsed.type === "runtime.completed" || parsed.type === "runtime.error" || parsed.type === "runtime.interrupted")
               ? false
               : state.busy;
           if (!entry) {
@@ -552,6 +552,12 @@ export function GatewayApp() {
       })));
       busyRef.current = false;
     }
+  }
+
+  async function handleInterrupt() {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId || !busyRef.current) return;
+    await api.interruptSession(sessionId);
   }
 
   async function handleResolveApproval(action) {
@@ -880,6 +886,7 @@ export function GatewayApp() {
           onRename={handleRename}
           onDelete={handleDelete}
           onResolveApproval={handleResolveApproval}
+          onInterrupt={handleInterrupt}
           registeredByPath={registeredByPath}
           onArtifactChange={() => api.artifacts().then(setArtifacts)}
         />

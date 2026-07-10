@@ -149,6 +149,18 @@ export function ChatView({
     node.scrollTop = node.scrollHeight;
   }, [entries, busy, turnStreamed, pendingApproval]);
 
+  useEffect(() => {
+    if (!busy || typeof onInterrupt !== "function") return undefined;
+    function onKeyDown(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onInterrupt();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, onInterrupt]);
+
   function handleTranscriptScroll(event) {
     const node = event.currentTarget;
     const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;

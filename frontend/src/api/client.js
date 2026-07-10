@@ -63,6 +63,9 @@ export const api = {
       body: JSON.stringify({ message })
     }));
   },
+  async interruptSession(id) {
+    return jsonOrNull(await fetch(`/api/sessions/${encodeURIComponent(id)}/interrupt`, { method: "POST" }));
+  },
   async approveSession(id, approvalId) {
     return jsonOrNull(await fetch(
       `/api/sessions/${encodeURIComponent(id)}/approvals/${encodeURIComponent(approvalId)}/approve`,

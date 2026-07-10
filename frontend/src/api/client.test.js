@@ -99,4 +99,12 @@ describe("api client", () => {
     expect(fetch).toHaveBeenCalledWith("/api/sessions/session-1/approvals/approval-1/approve", expect.objectContaining({ method: "POST" }));
     expect(fetch).toHaveBeenCalledWith("/api/sessions/session-1/approvals/approval-1/deny", expect.objectContaining({ method: "POST" }));
   });
+
+  it("interruptSession posts to the interrupt endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ interrupting: true }) });
+    global.fetch = fetchMock;
+    const result = await api.interruptSession("sess 1");
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/sess%201/interrupt", { method: "POST" });
+    expect(result).toEqual({ interrupting: true });
+  });
 });
