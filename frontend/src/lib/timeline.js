@@ -220,8 +220,8 @@ export function timelineFromSession(historyEvents, activityEvents) {
     });
   const reconciled = [];
   for (const entry of sortedEntries) {
-    if (entry.type === "command" && entry.key) {
-      const index = reconciled.findIndex((candidate) => candidate.type === "command" && candidate.key === entry.key);
+    if ((entry.type === "command" || entry.type === "reasoning") && entry.key) {
+      const index = reconciled.findIndex((candidate) => candidate.type === entry.type && candidate.key === entry.key);
       if (index >= 0) {
         reconciled[index] = { ...entry, order: reconciled[index].order ?? entry.order };
         continue;

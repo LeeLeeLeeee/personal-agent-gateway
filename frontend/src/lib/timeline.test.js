@@ -238,6 +238,32 @@ describe("reasoning mapping", () => {
     });
     expect(entry).toMatchObject({ type: "reasoning", text: "" });
   });
+
+  it("reconciles persisted reasoning updates by stable reasoning key on reload", () => {
+    const timeline = timelineFromSession(
+      [],
+      [
+        {
+          event_seq: 1,
+          session_id: "session-1",
+          type: "item.completed",
+          created_at: "2026-07-10T00:00:01Z",
+          item: { id: "r1", type: "reasoning", text: "" }
+        },
+        {
+          event_seq: 2,
+          session_id: "session-1",
+          type: "item.completed",
+          created_at: "2026-07-10T00:00:02Z",
+          item: { id: "r1", type: "reasoning", text: "final thought" }
+        }
+      ]
+    );
+
+    const reasonings = timeline.filter((entry) => entry.type === "reasoning");
+    expect(reasonings).toHaveLength(1);
+    expect(reasonings[0].text).toBe("final thought");
+  });
 });
 
 describe("compareEntries", () => {
