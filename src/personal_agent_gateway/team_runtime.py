@@ -123,9 +123,14 @@ class TeamRuntime:
         return tasks
 
     async def _execute(self, run: TeamRun, leader: TeamAgent, workers: list[TeamAgent]) -> None:
-        tasks = self._teams.list_tasks(run.id)
-        for index, task in enumerate(tasks):
-            worker = workers[index % len(workers)]
+        counter = 0
+        while True:
+            pending = [task for task in self._teams.list_tasks(run.id) if task.status == "pending"]
+            if not pending:
+                return
+            task = pending[0]
+            worker = workers[counter % len(workers)]
+            counter += 1
             self._teams.set_task_status(task.id, "in_progress")
             self._teams.set_agent_status(worker.id, "running")
             try:

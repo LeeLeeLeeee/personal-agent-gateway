@@ -380,3 +380,47 @@ async def test_cancel_settles_run_and_task(tmp_path):
 
     assert teams.get_team_run(run.id).status == "canceled"
     assert teams.list_tasks(run.id)[0].status == "canceled"
+
+
+@pytest.mark.asyncio
+async def test_execute_drains_task_added_during_execution(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.model_client import ModelResponse
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+
+    plan = '[{"title":"T1","description":"d1"}]'
+    state = {"injected": False}
+    models = {}
+
+    def factory(agent):
+        if agent.role == "leader":
+            if agent.id not in models:
+                models[agent.id] = ScriptedModel([plan, "summary"])
+            return models[agent.id]
+
+        class WorkerModel:
+            async def complete(self, messages):
+                if not state["injected"]:
+                    state["injected"] = True
+                    teams.create_task(run.id, "T2", "d2")
+                return ModelResponse(content="did it", tool_calls=[])
+
+        return WorkerModel()
+
+    runtime = TeamRuntime(teams=teams, model_factory=factory)
+    result = await runtime.start(run.id)
+
+    assert result.status == "completed"
+    assert {t.title: t.status for t in teams.list_tasks(run.id)} == {
+        "T1": "completed",
+        "T2": "completed",
+    }
