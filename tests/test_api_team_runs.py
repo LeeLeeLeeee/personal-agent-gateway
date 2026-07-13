@@ -259,6 +259,84 @@ async def test_start_returns_before_orchestration_completes(tmp_path: Path) -> N
         assert final["status"] == "completed"
 
 
+def test_add_work_rejects_non_execute_mode(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Lead")
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "goal": "g",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": [],
+            "run_mode": "planning_only",
+            "max_workers": 1,
+        },
+    ).json()["team_run"]
+
+    resp = client.post(f"/api/team-runs/{run['id']}/add-work", json={"instruction": "x"})
+    assert resp.status_code == 409
+
+
+def test_add_work_rejects_draft_run(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Lead")
+    member_id = create_persona(client, "Worker")
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "goal": "g",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": [member_id],
+            "run_mode": "plan_and_execute",
+            "max_workers": 1,
+        },
+    ).json()["team_run"]
+
+    resp = client.post(f"/api/team-runs/{run['id']}/add-work", json={"instruction": "x"})
+    assert resp.status_code == 409  # draft: run not started yet
+
+
+async def test_add_work_reopens_terminal_run(tmp_path: Path) -> None:
+    app = create_app(make_config(tmp_path))
+    gate = asyncio.Event()
+    gate.set()  # never block
+    _inject_gated_team_runtime(app, gate)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        client.cookies.set("agent_session", "test-session")
+        leader_id = await _async_create_persona(client, "Lead")
+        member_id = await _async_create_persona(client, "Worker")
+        created = (
+            await client.post(
+                "/api/team-runs",
+                json={
+                    "goal": "g",
+                    "leader_persona_id": leader_id,
+                    "member_persona_ids": [member_id],
+                    "run_mode": "plan_and_execute",
+                    "max_workers": 1,
+                },
+            )
+        ).json()["team_run"]
+        run_id = created["id"]
+        registry = app.state.team_run_registry
+
+        await client.post(f"/api/team-runs/{run_id}/start")
+        await _poll_until(lambda: not registry.is_running(run_id))
+        before = len((await client.get(f"/api/team-runs/{run_id}/tasks")).json()["tasks"])
+
+        resp = await client.post(f"/api/team-runs/{run_id}/add-work", json={"instruction": "also do Y"})
+        assert resp.status_code == 200
+
+        await _poll_until(lambda: not registry.is_running(run_id))
+        after = (await client.get(f"/api/team-runs/{run_id}/tasks")).json()["tasks"]
+        assert len(after) == before + 1
+        final = (await client.get(f"/api/team-runs/{run_id}")).json()["team_run"]
+        assert final["status"] in {"completed", "completed_with_failures"}
+        assert all(task["status"] in {"completed", "failed"} for task in after)
+
+
 async def test_cancel_endpoint_settles_blocked_run_as_canceled(tmp_path: Path) -> None:
     """실행 중인 팀런을 /cancel로 실제 취소했을 때 canceled로 정착하는지 확인."""
     app = create_app(make_config(tmp_path))

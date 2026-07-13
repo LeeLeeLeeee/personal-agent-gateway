@@ -21,6 +21,10 @@ class CreateTeamRunRequest(BaseModel):
     max_workers: int = 3
 
 
+class AddWorkRequest(BaseModel):
+    instruction: str
+
+
 def require_session(session: Annotated[str | None, Cookie(alias="agent_session")] = None) -> None:
     if not session:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -81,6 +85,37 @@ async def start_team_run(request: Request, team_run_id: str, _session: None = se
     task = asyncio.create_task(_run_and_finish())
     registry.register(team_run_id, task)
     return {"team_run": _team_run_payload(run)}
+
+
+@router.post("/{team_run_id}/add-work")
+async def add_work(
+    request: Request, team_run_id: str, payload: AddWorkRequest, _session: None = session_dependency
+) -> dict[str, object]:
+    service = request.app.state.team_run_service
+    registry = request.app.state.team_run_registry
+    runtime = request.app.state.team_runtime
+    try:
+        run = service.get_team_run(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    if run.run_mode != "plan_and_execute":
+        raise HTTPException(status_code=409, detail="Additional work is only supported for plan_and_execute runs")
+    if run.status == "draft":
+        raise HTTPException(status_code=409, detail="Start the run before adding work")
+
+    await runtime.add_work(team_run_id, payload.instruction)
+
+    if run.status in _TERMINAL and not registry.is_running(team_run_id):
+        async def _resume_and_finish() -> None:
+            try:
+                await runtime.resume(team_run_id)
+            finally:
+                registry.finish(team_run_id)
+
+        task = asyncio.create_task(_resume_and_finish())
+        registry.register(team_run_id, task)
+
+    return {"team_run": _team_run_payload(service.get_team_run(team_run_id))}
 
 
 @router.post("/{team_run_id}/cancel")
