@@ -1,7 +1,10 @@
+import { useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
+import { Button } from "../../atoms/Button/index.jsx";
 import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
 
 const TEAM_TASK_COLUMNS = ["pending", "in_progress", "blocked", "completed", "failed"];
+const TERMINAL_STATUSES = ["completed", "completed_with_failures", "failed", "canceled"];
 
 function initials(name) {
   return (name || "")
@@ -21,7 +24,8 @@ function findTask(tasks, id) {
   return tasks.find((task) => task.id === id) || null;
 }
 
-export function TeamRunDetail({ detail }) {
+export function TeamRunDetail({ detail, onAddWork }) {
+  const [workInput, setWorkInput] = useState("");
   const run = detail?.run;
 
   if (!run) {
@@ -175,6 +179,29 @@ export function TeamRunDetail({ detail }) {
           ) : null}
         </div>
       </div>
+
+      {onAddWork ? (
+        <div className="team-add-work">
+          <div className="team-section-head">
+            <span className="mono team-section-label">Add work</span>
+            <span className="team-section-rule" />
+          </div>
+          <textarea
+            className="team-add-work-input"
+            aria-label="Additional work"
+            value={workInput}
+            onChange={(event) => setWorkInput(event.target.value)}
+            placeholder="추가로 요청할 업무를 자연어로 적어주세요"
+          />
+          <Button
+            variant="primary"
+            disabled={!workInput.trim()}
+            onClick={() => { onAddWork(workInput.trim()); setWorkInput(""); }}
+          >
+            {TERMINAL_STATUSES.includes(run.status) ? "재개하며 요청" : "추가 업무 요청"}
+          </Button>
+        </div>
+      ) : null}
     </section>
   );
 }

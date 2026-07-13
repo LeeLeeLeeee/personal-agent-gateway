@@ -1,5 +1,7 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { vi } from "vitest";
 import { TeamRunDetail } from "./index.jsx";
 
 describe("TeamRunDetail", () => {
@@ -24,5 +26,40 @@ describe("TeamRunDetail", () => {
   it("renders a placeholder when no run is selected", () => {
     render(<TeamRunDetail detail={null} />);
     expect(screen.getByText("No team run selected.")).toBeInTheDocument();
+  });
+
+  it("submits additional work through onAddWork", async () => {
+    const onAddWork = vi.fn();
+    render(
+      <TeamRunDetail
+        onAddWork={onAddWork}
+        detail={{
+          run: { id: "r1", goal: "Design", status: "running", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [],
+          messages: []
+        }}
+      />
+    );
+
+    await userEvent.type(screen.getByLabelText("Additional work"), "also write docs");
+    await userEvent.click(screen.getByRole("button", { name: "추가 업무 요청" }));
+
+    expect(onAddWork).toHaveBeenCalledWith("also write docs");
+  });
+
+  it("labels the add-work button for reopening a finished run", () => {
+    render(
+      <TeamRunDetail
+        onAddWork={vi.fn()}
+        detail={{
+          run: { id: "r1", goal: "Design", status: "completed", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [],
+          messages: []
+        }}
+      />
+    );
+    expect(screen.getByRole("button", { name: "재개하며 요청" })).toBeInTheDocument();
   });
 });

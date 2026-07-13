@@ -219,6 +219,13 @@ export const api = {
     const body = await jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/start`, { method: "POST" }));
     return body?.team_run || null;
   },
+  async addWork(id, instruction) {
+    return jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/add-work`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction })
+    }));
+  },
   async deleteTeamRun(id) {
     const response = await fetch(`/api/team-runs/${encodeURIComponent(id)}`, { method: "DELETE" });
     return response.ok;

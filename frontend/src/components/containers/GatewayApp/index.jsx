@@ -812,6 +812,21 @@ export function GatewayApp() {
     setSelectedTeamRunId(id);
   }
 
+  async function handleAddWork(instruction) {
+    if (!selectedTeamRunId || !instruction.trim()) return;
+    try {
+      const result = await api.addWork(selectedTeamRunId, instruction.trim());
+      if (!result) {
+        toast("Failed to add work", "error");
+        return;
+      }
+      setTeamRunDetail(await api.teamRunDetail(selectedTeamRunId));
+      toast("추가 업무를 전달했습니다", "success");
+    } catch (_error) {
+      toast("Failed to add work", "error");
+    }
+  }
+
   function handleBackToTeamRuns() {
     setSelectedTeamRunId(null);
     setCreatingTeamRun(false);
@@ -913,7 +928,7 @@ export function GatewayApp() {
             >
               ← TEAM RUNS
             </a>
-            <TeamRunDetail detail={teamRunDetail} />
+            <TeamRunDetail detail={teamRunDetail} onAddWork={handleAddWork} />
           </div>
         ) : creatingTeamRun ? (
           <div className="screen">
