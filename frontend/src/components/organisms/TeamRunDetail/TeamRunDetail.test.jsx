@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { vi } from "vitest";
@@ -46,6 +46,28 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("button", { name: "추가 업무 요청" }));
 
     expect(onAddWork).toHaveBeenCalledWith("also write docs");
+  });
+
+  it("disables the add-work button while a submit is in flight", async () => {
+    const onAddWork = vi.fn(() => new Promise(() => {}));
+    render(
+      <TeamRunDetail
+        onAddWork={onAddWork}
+        detail={{
+          run: { id: "r1", goal: "Design", status: "running", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [],
+          messages: []
+        }}
+      />
+    );
+
+    await userEvent.type(screen.getByLabelText("Additional work"), "also write docs");
+    await userEvent.click(screen.getByRole("button", { name: "추가 업무 요청" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "추가 업무 요청" })).toBeDisabled();
+    });
   });
 
   it("labels the add-work button for reopening a finished run", () => {

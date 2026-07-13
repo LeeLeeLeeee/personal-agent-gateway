@@ -44,6 +44,7 @@ function buildHandoffs(messages) {
 
 export function TeamRunDetail({ detail, onAddWork }) {
   const [workInput, setWorkInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const run = detail?.run;
 
   if (!run) {
@@ -277,8 +278,17 @@ export function TeamRunDetail({ detail, onAddWork }) {
           />
           <Button
             variant="primary"
-            disabled={!workInput.trim()}
-            onClick={() => { onAddWork(workInput.trim()); setWorkInput(""); }}
+            disabled={submitting || !workInput.trim()}
+            onClick={async () => {
+              const text = workInput.trim();
+              setSubmitting(true);
+              try {
+                await onAddWork(text);
+                setWorkInput("");
+              } finally {
+                setSubmitting(false);
+              }
+            }}
           >
             {TERMINAL_STATUSES.includes(run.status) ? "재개하며 요청" : "추가 업무 요청"}
           </Button>

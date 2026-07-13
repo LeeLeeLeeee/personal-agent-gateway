@@ -105,6 +105,7 @@ async def add_work(
 
     await runtime.add_work(team_run_id, payload.instruction)
 
+    run = service.get_team_run(team_run_id)
     if run.status in _TERMINAL and not registry.is_running(team_run_id):
         async def _resume_and_finish() -> None:
             try:
