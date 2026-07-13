@@ -36,6 +36,12 @@ function findTask(tasks, id) {
   return tasks.find((task) => task.id === id) || null;
 }
 
+function buildHandoffs(messages) {
+  const queries = messages.filter((message) => message.kind === "query");
+  const answers = messages.filter((message) => message.kind === "answer");
+  return queries.map((query, index) => ({ query, answer: answers[index] || null }));
+}
+
 export function TeamRunDetail({ detail, onAddWork }) {
   const [workInput, setWorkInput] = useState("");
   const run = detail?.run;
@@ -49,6 +55,7 @@ export function TeamRunDetail({ detail, onAddWork }) {
   const messages = detail.messages || [];
   const leader = findAgent(agents, run.leader_agent_id);
   const reports = messages.filter((message) => message.kind === "agent_output");
+  const handoffs = buildHandoffs(messages);
 
   return (
     <section className="team-run-detail" aria-label="Team run detail">
@@ -184,23 +191,68 @@ export function TeamRunDetail({ detail, onAddWork }) {
 
         <div className="team-results-col">
           <div className="team-section-head">
-            <span className="mono team-section-label">Results</span>
+            <span className="mono team-section-label">Shared Documents</span>
             <span className="team-section-rule" />
           </div>
-          <div className="team-reports">
-            {reports.map((message) => {
-              const sender = findAgent(agents, message.sender_agent_id);
-              return (
-                <article className="team-report-card" key={message.id}>
-                  <div className="team-report-head">
-                    <span className="mono team-report-owner">{initials(sender?.name)}</span>
-                    <span className="mono team-report-name">{sender ? sender.name : "Agent"}</span>
-                  </div>
-                  <p className="team-report-body">{message.content}</p>
-                </article>
-              );
-            })}
+          <div className="team-docs">
+            {reports.length ? (
+              reports.map((message) => {
+                const sender = findAgent(agents, message.sender_agent_id);
+                const task = findTask(tasks, message.metadata?.task_id);
+                const avatar = sender?.persona_snapshot?.avatar;
+                return (
+                  <article className="team-doc-card" key={message.id}>
+                    <div className="team-doc-head">
+                      {avatar ? (
+                        <img className="team-doc-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
+                      ) : (
+                        <span className="team-doc-avatar team-doc-avatar-initials mono">{initials(sender?.name)}</span>
+                      )}
+                      <div className="team-doc-meta">
+                        <span className="mono team-doc-owner">{sender ? sender.name : "Agent"}</span>
+                        {task ? <span className="team-doc-task">{task.title}</span> : null}
+                      </div>
+                    </div>
+                    <p className="team-doc-body">{message.content}</p>
+                  </article>
+                );
+              })
+            ) : (
+              <div className="team-task-empty mono">-</div>
+            )}
           </div>
+
+          {handoffs.length ? (
+            <>
+              <div className="team-section-head">
+                <span className="mono team-section-label">Shared / Handoffs</span>
+                <span className="team-section-rule" />
+              </div>
+              <div className="team-handoffs">
+                {handoffs.map(({ query, answer }) => {
+                  const asker = findAgent(agents, query.sender_agent_id);
+                  const responder = answer ? findAgent(agents, answer.sender_agent_id) : null;
+                  return (
+                    <div className="team-handoff" key={query.id}>
+                      <div className="team-handoff-q">
+                        <span className="mono team-handoff-who">{asker ? asker.name : "Agent"} →</span>
+                        <span className="team-handoff-text">{query.content}</span>
+                      </div>
+                      {answer ? (
+                        <div className="team-handoff-a">
+                          <span className="mono team-handoff-who">{responder ? responder.name : "Leader"} ↩</span>
+                          <span className="team-handoff-text">{answer.content}</span>
+                        </div>
+                      ) : (
+                        <div className="team-handoff-a team-handoff-unanswered mono">no answer (budget/cap reached)</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
+
           {run.summary ? (
             <div className="team-final-summary">
               <div className="mono team-final-summary-head">FINAL SUMMARY · {leader?.name || ""}</div>

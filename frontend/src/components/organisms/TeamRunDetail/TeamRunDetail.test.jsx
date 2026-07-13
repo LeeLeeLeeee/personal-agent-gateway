@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { vi } from "vitest";
@@ -76,5 +76,37 @@ describe("TeamRunDetail", () => {
     );
     expect(screen.getByText("Summarizing").closest(".team-phase")).toHaveAttribute("aria-current", "step");
     expect(screen.getByText("Planning").closest(".team-phase")).not.toHaveAttribute("aria-current");
+  });
+
+  it("renders shared documents and handoff pairs", () => {
+    const { container } = render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "Design", status: "completed", run_mode: "plan_and_execute" },
+          agents: [
+            { id: "a1", name: "Lead", role: "leader", status: "completed" },
+            { id: "a2", name: "Worker", role: "member", status: "completed" }
+          ],
+          tasks: [{ id: "t1", title: "Build API", status: "completed" }],
+          messages: [
+            { id: "m1", kind: "query", sender_agent_id: "a2", content: "which schema?", created_at: "2026-07-13T00:00:00Z" },
+            { id: "m2", kind: "answer", sender_agent_id: "a1", content: "use schema X", created_at: "2026-07-13T00:01:00Z" },
+            { id: "m3", kind: "agent_output", sender_agent_id: "a2", content: "API built", metadata: { task_id: "t1" }, created_at: "2026-07-13T00:02:00Z" }
+          ]
+        }}
+      />
+    );
+
+    // Note: the "Live Activity" timeline (Task 9) also renders every message's raw
+    // content, so these strings appear twice on the page. Scope queries to the new
+    // panels (`.team-docs` / `.team-handoffs`) to disambiguate instead of asserting
+    // on global uniqueness.
+    expect(screen.getByText("Shared Documents")).toBeInTheDocument();
+    const docsSection = container.querySelector(".team-docs");
+    expect(within(docsSection).getByText("API built")).toBeInTheDocument();
+    expect(within(docsSection).getByText("Build API")).toBeInTheDocument();
+    const handoffsSection = container.querySelector(".team-handoffs");
+    expect(within(handoffsSection).getByText("which schema?")).toBeInTheDocument();
+    expect(within(handoffsSection).getByText("use schema X")).toBeInTheDocument();
   });
 });
