@@ -82,8 +82,7 @@ class TeamRuntime:
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
                 return run
 
-            await self._execute(run, leader, workers)
-            return await self._synthesize(run, leader)
+            return await self._execute_and_synthesize(run, leader, workers)
         except asyncio.CancelledError:
             if run is not None:
                 self._settle_canceled(run)
@@ -227,20 +226,52 @@ class TeamRuntime:
             task_description=task.description,
         )
 
-    async def _synthesize(self, run: TeamRun, leader: TeamAgent) -> TeamRun:
-        tasks = self._teams.list_tasks(run.id)
-        status = _terminal_status(tasks)
-        if status == "failed":
-            run = self._teams.set_run_status(run.id, "failed", error_message="All tasks failed")
-            self._teams.set_agent_status(leader.id, "failed")
-            await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": "All tasks failed"})
+    async def _execute_and_synthesize(self, run: TeamRun, leader: TeamAgent, workers: list[TeamAgent]) -> TeamRun:
+        while True:
+            await self._execute(run, leader, workers)
+            tasks = self._teams.list_tasks(run.id)
+            status = _terminal_status(tasks)
+            if status == "failed":
+                run = self._teams.set_run_status(run.id, "failed", error_message="All tasks failed")
+                self._teams.set_agent_status(leader.id, "failed")
+                await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": "All tasks failed"})
+                return run
+            run = self._teams.set_run_status(run.id, "summarizing")
+            summary = await self._leader_synthesis(run, leader, tasks)
+            if any(task.status == "pending" for task in self._teams.list_tasks(run.id)):
+                run = self._teams.set_run_status(run.id, "running")
+                continue
+            run = self._teams.set_run_status(run.id, status, summary=summary)
+            self._teams.set_agent_status(leader.id, "completed")
+            await self._publish({"type": "team.run.completed", "team_run_id": run.id})
             return run
-        run = self._teams.set_run_status(run.id, "summarizing")
-        summary = await self._leader_synthesis(run, leader, tasks)
-        run = self._teams.set_run_status(run.id, status, summary=summary)
-        self._teams.set_agent_status(leader.id, "completed")
-        await self._publish({"type": "team.run.completed", "team_run_id": run.id})
-        return run
+
+    async def resume(self, team_run_id: str) -> TeamRun:
+        run = self._teams.get_team_run(team_run_id)
+        leader: TeamAgent | None = None
+        try:
+            leader = _find_leader(self._teams.list_agents(run.id))
+            run = self._teams.set_run_status(run.id, "running")
+            leader = self._teams.set_agent_status(leader.id, "running")
+            await self._publish({"type": "team.run.reopened", "team_run_id": run.id})
+            workers = _find_workers(self._teams.list_agents(run.id))
+            if not workers:
+                error = "resume has no worker agents"
+                run = self._teams.set_run_status(run.id, "failed", error_message=error)
+                self._teams.set_agent_status(leader.id, "failed")
+                await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
+                return run
+            return await self._execute_and_synthesize(run, leader, workers)
+        except asyncio.CancelledError:
+            if run is not None:
+                self._settle_canceled(run)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            run = self._teams.set_run_status(run.id, "failed", error_message=str(exc))
+            if leader is not None:
+                self._teams.set_agent_status(leader.id, "failed")
+            await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": str(exc)})
+            return run
 
     async def _leader_synthesis(self, run: TeamRun, leader: TeamAgent, tasks: list[TeamTask]) -> str:
         results = "\n\n".join(

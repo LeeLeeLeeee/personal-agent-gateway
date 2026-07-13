@@ -424,3 +424,83 @@ async def test_execute_drains_task_added_during_execution(tmp_path):
         "T1": "completed",
         "T2": "completed",
     }
+
+
+@pytest.mark.asyncio
+async def test_task_added_during_synthesis_is_executed_before_terminal(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.model_client import ModelResponse
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+
+    plan = '[{"title":"T1","description":"d1"}]'
+    models = {}
+
+    def factory(agent):
+        if agent.role == "leader":
+            if agent.id not in models:
+                class LeaderModel:
+                    def __init__(self): self.calls = 0
+                    async def complete(self, messages):
+                        self.calls += 1
+                        if self.calls == 1:
+                            return ModelResponse(content=plan, tool_calls=[])
+                        if self.calls == 2:
+                            # First synthesis pass: user work lands mid-synthesis.
+                            teams.create_task(run.id, "T2", "d2")
+                            return ModelResponse(content="interim", tool_calls=[])
+                        return ModelResponse(content="final summary", tool_calls=[])
+                models[agent.id] = LeaderModel()
+            return models[agent.id]
+        return FakeModel("worker done")
+
+    runtime = TeamRuntime(teams=teams, model_factory=factory)
+    result = await runtime.start(run.id)
+
+    assert result.status == "completed"
+    assert result.summary == "final summary"
+    assert {t.title: t.status for t in teams.list_tasks(run.id)} == {
+        "T1": "completed",
+        "T2": "completed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_resume_runs_added_tasks_on_terminal_run(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+
+    plan = '[{"title":"T1","description":"d1"}]'
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role([plan, "summary1", "summary2"], ["r1", "r2"]),
+    )
+    first = await runtime.start(run.id)
+    assert first.status == "completed"
+
+    # Simulate add-work having created a new pending task, then reopen.
+    teams.create_task(run.id, "T2", "d2")
+    resumed = await runtime.resume(run.id)
+
+    assert resumed.status == "completed"
+    assert {t.title: t.status for t in teams.list_tasks(run.id)} == {
+        "T1": "completed",
+        "T2": "completed",
+    }
