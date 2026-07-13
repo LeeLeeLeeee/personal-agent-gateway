@@ -100,3 +100,19 @@ def test_completed_with_failures_is_terminal(tmp_path):
     updated = teams.set_run_status(run.id, "completed_with_failures", summary="1/2")
     assert updated.status == "completed_with_failures"
     assert updated.finished_at is not None
+
+
+def test_persona_snapshot_includes_avatar(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [], avatar="person01")
+    run = teams.create_team_run("goal", leader.id, [], "planning_only", 1)
+
+    agent = teams.list_agents(run.id)[0]
+    assert agent.persona_snapshot["avatar"] == "person01"

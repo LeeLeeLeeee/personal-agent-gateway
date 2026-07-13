@@ -398,6 +398,7 @@ def _persona_snapshot(persona: Persona) -> dict[str, object]:
         "constraints": persona.constraints,
         "default_backend": persona.default_backend,
         "default_model": persona.default_model,
+        "avatar": persona.avatar,
     }
 
 
