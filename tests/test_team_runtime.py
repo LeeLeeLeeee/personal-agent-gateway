@@ -504,3 +504,30 @@ async def test_resume_runs_added_tasks_on_terminal_run(tmp_path):
         "T1": "completed",
         "T2": "completed",
     }
+
+
+@pytest.mark.asyncio
+async def test_add_work_creates_pending_tasks_from_instruction(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+
+    decomposition = '[{"title":"Extra A","description":"da"},{"title":"Extra B","description":"db"}]'
+    runtime = TeamRuntime(teams=teams, model_factory=lambda _agent: FakeModel(decomposition))
+
+    created = await runtime.add_work(run.id, "please also do A and B")
+
+    assert [task.title for task in created] == ["Extra A", "Extra B"]
+    assert {t.title: t.status for t in teams.list_tasks(run.id)} == {
+        "Extra A": "pending",
+        "Extra B": "pending",
+    }
+    assert any(m.kind == "plan_note" for m in teams.list_messages(run.id))

@@ -42,6 +42,13 @@ Team outputs so far:
 
 Answer concisely to unblock the worker. If the information is unavailable, say so plainly."""
 
+ADD_WORK_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
+The user is adding work to an in-flight run. Break the request into concrete tasks.
+Return ONLY a JSON array of task objects. Each object must have "title" and "description".
+Goal: {goal}
+Existing tasks: {existing_titles}
+User request: {instruction}"""
+
 AGENT_REINVOCATION_CAP = 3
 
 
@@ -272,6 +279,35 @@ class TeamRuntime:
                 self._teams.set_agent_status(leader.id, "failed")
             await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": str(exc)})
             return run
+
+    async def add_work(self, team_run_id: str, instruction: str) -> list[TeamTask]:
+        run = self._teams.get_team_run(team_run_id)
+        leader = _find_leader(self._teams.list_agents(run.id))
+        leader_agent = self._teams.get_agent(leader.id)
+        model = self._model_factory(leader_agent)
+        existing = ", ".join(task.title for task in self._teams.list_tasks(run.id)) or "(none)"
+        prompt = ADD_WORK_PROMPT.format(goal=run.goal, existing_titles=existing, instruction=instruction)
+        response = await model.complete([{"role": "user", "content": prompt}])
+        if response.upstream_session_id:
+            self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
+        try:
+            specs = _parse_task_plan(response.content)
+        except ValueError:
+            retry = await model.complete(
+                [{"role": "user", "content": prompt + "\nReturn ONLY a JSON array. No prose, no code fences."}]
+            )
+            if retry.upstream_session_id:
+                self._teams.set_agent_session(leader_agent.id, retry.upstream_session_id)
+            specs = _parse_task_plan(retry.content)
+        created: list[TeamTask] = []
+        for spec in specs:
+            task = self._teams.create_task(run.id, spec["title"], spec["description"])
+            created.append(task)
+            await self._publish({"type": "team.task.created", "team_run_id": run.id, "task_id": task.id})
+        self._teams.append_message(
+            run.id, leader.id, None, "plan_note", f"Added {len(created)} task(s) from user request.", {}
+        )
+        return created
 
     async def _leader_synthesis(self, run: TeamRun, leader: TeamAgent, tasks: list[TeamTask]) -> str:
         results = "\n\n".join(
