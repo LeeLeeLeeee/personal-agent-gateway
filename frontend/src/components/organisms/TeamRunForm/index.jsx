@@ -35,6 +35,10 @@ export function TeamRunForm({ personas = [], onSubmit }) {
     if (!leaderPersonaId && personas.length) setLeaderPersonaId(personas[0].id);
   }, [personas, leaderPersonaId]);
 
+  useEffect(() => {
+    setMemberPersonaIds((prev) => prev.filter((id) => id !== leaderPersonaId));
+  }, [leaderPersonaId]);
+
   function toggleMember(personaId) {
     setMemberPersonaIds((prev) =>
       prev.includes(personaId) ? prev.filter((id) => id !== personaId) : [...prev, personaId]
@@ -101,22 +105,24 @@ export function TeamRunForm({ personas = [], onSubmit }) {
           </div>
           <div className="team-run-members">
             {personas.map((persona) => {
+              const isLeader = persona.id === leaderPersonaId;
               const active = memberPersonaIds.includes(persona.id);
               return (
                 <button
                   key={persona.id}
                   type="button"
+                  disabled={isLeader}
                   aria-pressed={active}
-                  aria-label={`Toggle ${persona.name} as member`}
-                  className={`team-run-member${active ? " active" : ""}`}
-                  onClick={() => toggleMember(persona.id)}
+                  aria-label={isLeader ? `${persona.name} is the leader` : `Toggle ${persona.name} as member`}
+                  className={`team-run-member${active ? " active" : ""}${isLeader ? " is-leader" : ""}`}
+                  onClick={() => { if (!isLeader) toggleMember(persona.id); }}
                 >
                   <span className="team-run-member-top">
-                    <span className="team-run-check">{active ? "✓" : ""}</span>
+                    <span className="team-run-check">{isLeader ? "" : active ? "✓" : ""}</span>
                     <PersonaMark persona={persona} />
                     <span className="team-run-member-title">
                       <span className="team-run-member-name">{persona.name}</span>
-                      <span className="team-run-member-role">{persona.role || "—"}</span>
+                      <span className="team-run-member-role">{isLeader ? "LEADER" : persona.role || "—"}</span>
                     </span>
                   </span>
                 </button>

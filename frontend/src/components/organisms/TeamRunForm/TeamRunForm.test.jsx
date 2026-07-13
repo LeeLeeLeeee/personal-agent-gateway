@@ -56,4 +56,27 @@ describe("TeamRunForm", () => {
     expect(screen.getByText("1 agents")).toBeInTheDocument();
     expect(screen.getByLabelText("Max workers")).toHaveTextContent("3");
   });
+
+  it("disables the current leader in the member list", async () => {
+    render(<TeamRunForm personas={personas} onSubmit={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: /select tech lead as leader/i }));
+
+    const leaderAsMember = screen.getByRole("button", { name: /tech lead is the leader/i });
+    expect(leaderAsMember).toBeDisabled();
+  });
+
+  it("deselects a member when it becomes the leader", async () => {
+    const onSubmit = vi.fn();
+    render(<TeamRunForm personas={personas} onSubmit={onSubmit} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /toggle qa tester as member/i }));
+    // Promote QA Tester to leader; it must drop out of the member set.
+    await userEvent.click(screen.getByRole("button", { name: /select qa tester as leader/i }));
+    await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      leader_persona_id: "p2",
+      member_persona_ids: []
+    }));
+  });
 });
