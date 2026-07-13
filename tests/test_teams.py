@@ -116,3 +116,34 @@ def test_persona_snapshot_includes_avatar(tmp_path):
 
     agent = teams.list_agents(run.id)[0]
     assert agent.persona_snapshot["avatar"] == "person01"
+
+
+def test_backfill_agent_avatars_populates_missing(tmp_path):
+    import json
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [], avatar="tech03")
+    run = teams.create_team_run("goal", leader.id, [], "planning_only", 1)
+    agent = teams.list_agents(run.id)[0]
+
+    # Simulate a legacy snapshot with no avatar key.
+    snapshot = dict(agent.persona_snapshot)
+    snapshot.pop("avatar", None)
+    db.execute(
+        "update team_agents set persona_snapshot_json = ? where id = ?",
+        (json.dumps(snapshot, ensure_ascii=False, sort_keys=True), agent.id),
+    )
+    assert "avatar" not in teams.list_agents(run.id)[0].persona_snapshot
+
+    updated = teams.backfill_agent_avatars()
+
+    assert updated == 1
+    assert teams.list_agents(run.id)[0].persona_snapshot["avatar"] == "tech03"
+    # Idempotent: a second pass changes nothing.
+    assert teams.backfill_agent_avatars() == 0

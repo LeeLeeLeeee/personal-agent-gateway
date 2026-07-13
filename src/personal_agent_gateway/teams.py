@@ -345,6 +345,26 @@ class TeamRunService:
         )
         return self.get_team_run(team_run_id)
 
+    def backfill_agent_avatars(self) -> int:
+        updated = 0
+        for row in self._db.fetchall(
+            "select id, persona_id, persona_snapshot_json from team_agents"
+        ):
+            snapshot = json.loads(row["persona_snapshot_json"])
+            if "avatar" in snapshot:
+                continue
+            try:
+                persona = self._personas.get_persona(row["persona_id"])
+            except KeyError:
+                continue
+            snapshot["avatar"] = persona.avatar
+            self._db.execute(
+                "update team_agents set persona_snapshot_json = ?, updated_at = ? where id = ?",
+                (json.dumps(snapshot, ensure_ascii=False, sort_keys=True), _now(), row["id"]),
+            )
+            updated += 1
+        return updated
+
     def _create_agent(self, team_run_id: str, persona_id: str, role: str) -> TeamAgent:
         persona = self._personas.get_persona(persona_id)
         agent_id = uuid4().hex

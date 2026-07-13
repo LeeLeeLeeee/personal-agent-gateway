@@ -77,6 +77,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         _team_model_factory(app_config),
         event_bus,
     )
+    app.state.team_run_service.backfill_agent_avatars()
     injected_runtime = runtime
     if injected_runtime is not None and hasattr(injected_runtime, "attach_event_bus"):
         injected_runtime.attach_event_bus(app.state.session_activity_publisher)
