@@ -62,4 +62,19 @@ describe("TeamRunDetail", () => {
     );
     expect(screen.getByRole("button", { name: "재개하며 요청" })).toBeInTheDocument();
   });
+
+  it("marks the current phase in the stepper", () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "Design", status: "summarizing", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [],
+          messages: []
+        }}
+      />
+    );
+    expect(screen.getByText("Summarizing").closest(".team-phase")).toHaveAttribute("aria-current", "step");
+    expect(screen.getByText("Planning").closest(".team-phase")).not.toHaveAttribute("aria-current");
+  });
 });

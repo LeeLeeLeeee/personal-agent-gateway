@@ -2718,6 +2718,77 @@ p {
     text-align: center;
     color: var(--c-grey);
 }
+.team-phase-stepper {
+    display: flex;
+    gap: 8px;
+    margin: 14px 0 6px;
+    flex-wrap: wrap;
+}
+.team-phase {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: var(--bd-sm);
+    padding: 5px 10px;
+    opacity: 0.45;
+}
+.team-phase.done {
+    opacity: 0.75;
+}
+.team-phase.active {
+    opacity: 1;
+    background: var(--c-black);
+    color: var(--c-white);
+}
+.team-phase-dot {
+    width: 8px;
+    height: 8px;
+    border: var(--bd-sm);
+    flex: none;
+}
+.team-phase.active .team-phase-dot {
+    background: var(--c-ok);
+    border-color: var(--c-white);
+}
+.team-phase-label {
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+.team-lane-running {
+    box-shadow: 0 0 0 2px var(--c-ok) inset;
+}
+.team-lane-failed {
+    box-shadow: 0 0 0 2px var(--c-danger) inset;
+}
+.team-lane-leader .team-lane-head {
+    background: var(--c-panel);
+}
+.tl-kind-query .tl-label {
+    color: var(--c-link);
+}
+.tl-kind-answer .tl-label {
+    color: var(--c-ok);
+}
+.tl-kind-agent_output .tl-label {
+    color: var(--c-black);
+    font-weight: 700;
+}
+.tl-kind-synthesis .tl-label {
+    color: var(--c-warn);
+}
+.team-add-work {
+    margin-top: 22px;
+}
+.team-add-work-input {
+    width: 100%;
+    min-height: 70px;
+    border: var(--bd-sm);
+    padding: 8px 10px;
+    font: inherit;
+    resize: vertical;
+    margin-bottom: 8px;
+}
 @media (max-width: 1100px) {
     .team-task-board {
         grid-template-columns: repeat(2, 1fr);

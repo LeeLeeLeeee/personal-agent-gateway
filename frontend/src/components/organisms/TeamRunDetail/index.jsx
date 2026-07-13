@@ -6,6 +6,18 @@ import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
 const TEAM_TASK_COLUMNS = ["pending", "in_progress", "blocked", "completed", "failed"];
 const TERMINAL_STATUSES = ["completed", "completed_with_failures", "failed", "canceled"];
 
+const RUN_PHASES = [
+  { key: "planning", label: "Planning", statuses: ["planning"] },
+  { key: "executing", label: "Executing", statuses: ["running"] },
+  { key: "summarizing", label: "Summarizing", statuses: ["summarizing"] },
+  { key: "done", label: "Done", statuses: ["completed", "completed_with_failures", "failed", "canceled"] }
+];
+
+function phaseIndex(status) {
+  const index = RUN_PHASES.findIndex((phase) => phase.statuses.includes(status));
+  return index < 0 ? 0 : index;
+}
+
 function initials(name) {
   return (name || "")
     .trim()
@@ -48,6 +60,24 @@ export function TeamRunDetail({ detail, onAddWork }) {
         <h1 className="headline team-run-detail-goal">{run.goal}</h1>
       </header>
 
+      <div className="team-phase-stepper" aria-label="Run phase">
+        {RUN_PHASES.map((phase, index) => {
+          const activeIndex = phaseIndex(run.status);
+          const isActive = index === activeIndex;
+          const isDone = index < activeIndex;
+          return (
+            <div
+              key={phase.key}
+              className={`team-phase${isActive ? " active" : ""}${isDone ? " done" : ""}`}
+              aria-current={isActive ? "step" : undefined}
+            >
+              <span className="team-phase-dot" />
+              <span className="mono team-phase-label">{phase.label}</span>
+            </div>
+          );
+        })}
+      </div>
+
       <div className="team-run-meta">
         <div className="team-run-meta-cell">
           <div className="mono team-run-meta-k">MODE</div>
@@ -81,7 +111,7 @@ export function TeamRunDetail({ detail, onAddWork }) {
           const avatar = agent.persona_snapshot?.avatar;
           const roleLabel = agent.persona_snapshot?.role || agent.role;
           return (
-            <article className="team-lane" key={agent.id}>
+            <article className={`team-lane team-lane-${agent.status}${agent.role === "leader" ? " team-lane-leader" : ""}`} key={agent.id}>
               <div className="team-lane-head">
                 {avatar ? (
                   <img className="team-lane-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
@@ -141,7 +171,7 @@ export function TeamRunDetail({ detail, onAddWork }) {
             {messages.map((message) => {
               const sender = findAgent(agents, message.sender_agent_id);
               return (
-                <div className="tl-row" key={message.id}>
+                <div className={`tl-row tl-kind-${message.kind}`} key={message.id}>
                   <span className="tl-time mono">{message.created_at}</span>
                   <span className="mono team-activity-agent">{sender ? sender.name : "SYSTEM"}</span>
                   <span className="mono tl-label">{message.kind}</span>
