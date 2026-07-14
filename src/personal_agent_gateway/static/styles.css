@@ -3763,3 +3763,19 @@ p {
 .team-docs-list-row:disabled { cursor: default; color: #808080; }
 .team-docs-name { font-size: 12px; }
 .team-docs-kind { font-size: 10px; color: #808080; letter-spacing: 1px; }
+
+.team-detail-tabs { display: flex; align-items: stretch; border: 3px solid #000; margin-top: 26px; flex-wrap: wrap; }
+.team-detail-tab { border: none; border-right: 2px solid #000; background: #fff; color: #000; font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; padding: 11px 18px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.team-detail-tab:last-child { border-right: none; }
+.team-detail-tab.active { background: #000; color: #fff; }
+.team-detail-tab:hover:not(.active) { background: #F0F0F0; }
+.team-detail-tab-badge { min-width: 18px; height: 17px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid currentColor; font-size: 9px; }
+.team-tab-panel { margin-top: 18px; }
+.team-reports { display: flex; flex-direction: column; gap: 8px; }
+.team-report-card { border: 3px solid #000; background: #fff; }
+.team-report-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #000; }
+.team-report-avatar { width: 22px; height: 22px; border: 2px solid #000; object-fit: cover; flex: none; }
+.team-report-avatar.team-doc-avatar-initials { display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; background: #E8E8E8; }
+.team-report-owner { font-size: 11px; font-weight: 700; flex: 1; }
+.team-report-time { font-size: 10px; color: #808080; }
+.team-report-body { padding: 9px 12px; margin: 0; font-family: var(--font-body); font-size: 12px; line-height: 1.5; color: #333; }

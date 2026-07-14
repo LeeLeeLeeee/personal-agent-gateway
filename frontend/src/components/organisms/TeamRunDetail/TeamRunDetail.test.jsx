@@ -124,15 +124,16 @@ describe("TeamRunDetail", () => {
 
     expect(screen.getByText("1 documents")).toBeInTheDocument();
     expect(screen.getByText("DOCS 1")).toBeInTheDocument();
-    expect(screen.queryByText("Shared Documents")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: /SHARED \/ HANDOFFS/ }));
+    const handoffsSection = container.querySelector(".team-handoffs");
+    expect(within(handoffsSection).getByText("which schema?")).toBeInTheDocument();
+    expect(within(handoffsSection).getByText("use schema X")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Open task Build API" }));
     const taskDialog = screen.getByRole("dialog", { name: "Task details: Build API" });
     expect(within(taskDialog).getByText("API built")).toBeInTheDocument();
     expect(within(taskDialog).getByText("SHARED DOCUMENTS · 1")).toBeInTheDocument();
-    const handoffsSection = container.querySelector(".team-handoffs");
-    expect(within(handoffsSection).getByText("which schema?")).toBeInTheDocument();
-    expect(within(handoffsSection).getByText("use schema X")).toBeInTheDocument();
   });
 
   it("only offers add work for started plan-and-execute runs", () => {
@@ -226,8 +227,34 @@ describe("TeamRunDetail", () => {
         onLoadDocument={onLoadDocument}
       />
     );
+    await userEvent.click(screen.getByRole("tab", { name: /DOCUMENTS/ }));
     await userEvent.click(screen.getByText("notes.md"));
     expect(onLoadDocument).toHaveBeenCalledWith("notes.md");
     expect(await screen.findByRole("heading", { name: "hi" })).toBeInTheDocument();
+  });
+
+  it("switches between detail tabs (activity default, results, documents)", async () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "Design", status: "completed", run_mode: "plan_and_execute", summary: "All shipped." },
+          agents: [{ id: "a1", name: "Worker", role: "member", status: "completed" }],
+          tasks: [],
+          messages: [
+            { id: "m1", kind: "note", content: "Planning started", created_at: "2026-07-08T00:00:00Z" },
+            { id: "m2", kind: "agent_output", sender_agent_id: "a1", content: "Feature built", created_at: "2026-07-08T00:01:00Z" }
+          ]
+        }}
+      />
+    );
+
+    // LIVE ACTIVITY is the default tab
+    expect(screen.getByText("Planning started")).toBeInTheDocument();
+
+    // RESULTS shows agent reports + final summary, and unmounts the activity timeline
+    await userEvent.click(screen.getByRole("tab", { name: "RESULTS" }));
+    expect(screen.getByText("Feature built")).toBeInTheDocument();
+    expect(screen.getByText("All shipped.")).toBeInTheDocument();
+    expect(screen.queryByText("Planning started")).not.toBeInTheDocument();
   });
 });

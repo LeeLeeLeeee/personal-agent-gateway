@@ -8,6 +8,13 @@ import { fmtDateTime } from "../../../lib/time.js";
 const TEAM_TASK_COLUMNS = ["pending", "in_progress", "blocked", "completed", "failed"];
 const TERMINAL_STATUSES = ["completed", "completed_with_failures", "failed", "canceled"];
 
+const DETAIL_TABS = [
+  ["results", "RESULTS"],
+  ["activity", "LIVE ACTIVITY"],
+  ["handoffs", "SHARED / HANDOFFS"],
+  ["documents", "DOCUMENTS"]
+];
+
 const RUN_PHASES = [
   { key: "planning", label: "Planning", statuses: ["planning"] },
   { key: "executing", label: "Executing", statuses: ["running"] },
@@ -171,6 +178,7 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
   const [workDialogOpen, setWorkDialogOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
+  const [activeTab, setActiveTab] = useState("activity");
   const run = detail?.run;
 
   if (!run) {
@@ -349,12 +357,62 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
         })}
       </div>
 
-      <div className={`team-activity-results${!handoffs.length && !run.summary ? " team-activity-results-single" : ""}`}>
-        <div className="team-activity-col">
+      <div className="team-detail-tabs" role="tablist" aria-label="Run detail views">
+        {DETAIL_TABS.map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === key}
+            className={`team-detail-tab${activeTab === key ? " active" : ""}`}
+            onClick={() => setActiveTab(key)}
+          >
+            <span>{label}</span>
+            {key === "documents" && documents.length ? (
+              <span className="team-detail-tab-badge mono">{documents.length}</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "results" ? (
+        <div className="team-tab-panel" role="tabpanel" aria-label="Results">
           <div className="team-section-head">
-            <span className="mono team-section-label">Live Activity</span>
+            <span className="mono team-section-label">Agent Reports</span>
+            <span className="mono team-section-count">{reports.length}</span>
             <span className="team-section-rule" />
           </div>
+          <div className="team-reports">
+            {reports.length ? reports.map((message) => {
+              const sender = findAgent(agents, message.sender_agent_id);
+              const avatar = sender?.persona_snapshot?.avatar;
+              return (
+                <article className="team-report-card" key={message.id}>
+                  <div className="team-report-head">
+                    {avatar ? (
+                      <img className="team-report-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
+                    ) : (
+                      <span className="team-report-avatar team-doc-avatar-initials mono">{initials(sender?.name)}</span>
+                    )}
+                    <span className="mono team-report-owner">{sender ? sender.name : "Agent"}</span>
+                    <span className="team-report-time mono">{fmtDateTime(message.created_at)}</span>
+                  </div>
+                  <p className="team-report-body">{message.content}</p>
+                </article>
+              );
+            }) : <div className="team-task-empty mono">No agent reports yet.</div>}
+          </div>
+          {run.summary ? (
+            <div className="team-final-summary">
+              <div className="mono team-final-summary-head">FINAL SUMMARY · {leader?.name || ""}</div>
+              <div className="team-final-summary-body">{run.summary}</div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {activeTab === "activity" ? (
+        <div className="team-tab-panel" role="tabpanel" aria-label="Live activity">
           <div className="timeline">
             {messages.map((message) => {
               const sender = findAgent(agents, message.sender_agent_id);
@@ -369,78 +427,64 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
             })}
           </div>
         </div>
+      ) : null}
 
-        {handoffs.length || run.summary ? (
-          <div className="team-results-col">
-            {handoffs.length ? (
-            <>
-              <div className="team-section-head">
-                <span className="mono team-section-label">Shared / Handoffs</span>
-                <span className="team-section-rule" />
-              </div>
-              <div className="team-handoffs">
-                {handoffs.map(({ query, answer }) => {
-                  const asker = findAgent(agents, query.sender_agent_id);
-                  const responder = answer ? findAgent(agents, answer.sender_agent_id) : null;
-                  return (
-                    <div className="team-handoff" key={query.id}>
-                      <div className="team-handoff-q">
-                        <span className="mono team-handoff-who">{asker ? asker.name : "Agent"} →</span>
-                        <span className="team-handoff-text">{query.content}</span>
-                      </div>
-                      {answer ? (
-                        <div className="team-handoff-a">
-                          <span className="mono team-handoff-who">{responder ? responder.name : "Leader"} ↩</span>
-                          <span className="team-handoff-text">{answer.content}</span>
-                        </div>
-                      ) : (
-                        <div className="team-handoff-a team-handoff-unanswered mono">no answer (budget/cap reached)</div>
-                      )}
+      {activeTab === "handoffs" ? (
+        <div className="team-tab-panel" role="tabpanel" aria-label="Shared and handoffs">
+          {handoffs.length ? (
+            <div className="team-handoffs">
+              {handoffs.map(({ query, answer }) => {
+                const asker = findAgent(agents, query.sender_agent_id);
+                const responder = answer ? findAgent(agents, answer.sender_agent_id) : null;
+                return (
+                  <div className="team-handoff" key={query.id}>
+                    <div className="team-handoff-q">
+                      <span className="mono team-handoff-who">{asker ? asker.name : "Agent"} →</span>
+                      <span className="team-handoff-text">{query.content}</span>
                     </div>
-                  );
-                })}
-              </div>
-            </>
-            ) : null}
+                    {answer ? (
+                      <div className="team-handoff-a">
+                        <span className="mono team-handoff-who">{responder ? responder.name : "Leader"} ↩</span>
+                        <span className="team-handoff-text">{answer.content}</span>
+                      </div>
+                    ) : (
+                      <div className="team-handoff-a team-handoff-unanswered mono">no answer (budget/cap reached)</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : <div className="team-task-empty mono">No handoffs yet.</div>}
+        </div>
+      ) : null}
 
-            {run.summary ? (
-              <div className="team-final-summary">
-                <div className="mono team-final-summary-head">FINAL SUMMARY · {leader?.name || ""}</div>
-                <div className="team-final-summary-body">{run.summary}</div>
-              </div>
-            ) : null}
+      {activeTab === "documents" ? (
+        <div className="team-tab-panel" role="tabpanel" aria-label="Documents">
+          <div className="team-docs-list">
+            {documents.length ? documents.map((doc) => (
+              <button
+                key={doc.path}
+                type="button"
+                className="team-docs-list-row"
+                aria-label={`Preview ${doc.path}`}
+                disabled={!doc.previewable || !onLoadDocument}
+                onClick={async () => {
+                  if (!onLoadDocument) return;
+                  try {
+                    const loaded = await onLoadDocument(doc.path);
+                    setPreviewDoc(loaded || { ...doc, previewable: false, reason: "load failed" });
+                  } catch (_error) {
+                    setPreviewDoc({ ...doc, previewable: false, reason: "load failed" });
+                  }
+                }}
+              >
+                <span className="mono team-docs-name">{doc.path}</span>
+                <span className="mono team-docs-kind">{doc.kind}</span>
+              </button>
+            )) : <div className="team-task-empty mono">No documents in the workspace yet.</div>}
           </div>
-        ) : null}
-      </div>
-
-      <div className="team-section-head">
-        <span className="mono team-section-label">Documents</span>
-        <span className="mono team-section-count">{documents.length} files</span>
-        <span className="team-section-rule" />
-      </div>
-      <div className="team-docs-list">
-        {documents.length ? documents.map((doc) => (
-          <button
-            key={doc.path}
-            type="button"
-            className="team-docs-list-row"
-            aria-label={`Preview ${doc.path}`}
-            disabled={!doc.previewable || !onLoadDocument}
-            onClick={async () => {
-              if (!onLoadDocument) return;
-              try {
-                const loaded = await onLoadDocument(doc.path);
-                setPreviewDoc(loaded || { ...doc, previewable: false, reason: "load failed" });
-              } catch (_error) {
-                setPreviewDoc({ ...doc, previewable: false, reason: "load failed" });
-              }
-            }}
-          >
-            <span className="mono team-docs-name">{doc.path}</span>
-            <span className="mono team-docs-kind">{doc.kind}</span>
-          </button>
-        )) : <div className="team-task-empty mono">No documents in the workspace yet.</div>}
-      </div>
+        </div>
+      ) : null}
 
       <DocumentPreview open={Boolean(previewDoc)} doc={previewDoc} onClose={() => setPreviewDoc(null)} />
 
