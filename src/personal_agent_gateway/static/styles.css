@@ -3749,3 +3749,14 @@ p {
 .rules-enforce-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .rules-enforce-req { width: 11px; height: 11px; background: #000; flex: none; }
 .rules-enforce-guide { width: 11px; height: 11px; border: 2px solid #000; flex: none; }
+.doc-preview { max-width: 860px; width: 90%; }
+.doc-preview-body { padding: 16px; max-height: 70vh; overflow: auto; }
+.doc-preview-pre { font-family: var(--font-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; margin: 0; }
+.doc-preview-unavailable { color: #808080; padding: 20px; }
+.team-docs-list { display: flex; flex-direction: column; border: 3px solid #000; }
+.team-docs-list-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: none; border-bottom: 1px solid #000; background: #fff; padding: 10px 14px; cursor: pointer; text-align: left; }
+.team-docs-list-row:last-child { border-bottom: none; }
+.team-docs-list-row:hover:not(:disabled) { background: #F0F0F0; }
+.team-docs-list-row:disabled { cursor: default; color: #808080; }
+.team-docs-name { font-size: 12px; }
+.team-docs-kind { font-size: 10px; color: #808080; letter-spacing: 1px; }

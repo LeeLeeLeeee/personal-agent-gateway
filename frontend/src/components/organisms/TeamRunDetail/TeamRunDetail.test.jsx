@@ -211,4 +211,23 @@ describe("TeamRunDetail", () => {
     );
     expect(screen.queryByRole("button", { name: "Retry failed task" })).not.toBeInTheDocument();
   });
+
+  it("lists workspace documents and opens a preview", async () => {
+    const onLoadDocument = vi.fn(async () => ({ path: "notes.md", kind: "md", previewable: true, content: "# hi" }));
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "Design", status: "running", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [],
+          messages: []
+        }}
+        documents={[{ path: "notes.md", kind: "md", previewable: true, size: 10 }]}
+        onLoadDocument={onLoadDocument}
+      />
+    );
+    await userEvent.click(screen.getByText("notes.md"));
+    expect(onLoadDocument).toHaveBeenCalledWith("notes.md");
+    expect(await screen.findByRole("heading", { name: "hi" })).toBeInTheDocument();
+  });
 });

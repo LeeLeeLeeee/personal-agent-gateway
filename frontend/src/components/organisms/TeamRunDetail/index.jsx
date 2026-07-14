@@ -2,6 +2,7 @@ import { useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
+import { DocumentPreview } from "../DocumentPreview/index.jsx";
 import { fmtDateTime } from "../../../lib/time.js";
 
 const TEAM_TASK_COLUMNS = ["pending", "in_progress", "blocked", "completed", "failed"];
@@ -162,13 +163,14 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
   );
 }
 
-export function TeamRunDetail({ detail, onAddWork, onResume, onRetryTask }) {
+export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWork, onResume, onRetryTask }) {
   const [workInput, setWorkInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [retryingTaskId, setRetryingTaskId] = useState(null);
   const [workDialogOpen, setWorkDialogOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
+  const [previewDoc, setPreviewDoc] = useState(null);
   const run = detail?.run;
 
   if (!run) {
@@ -410,6 +412,33 @@ export function TeamRunDetail({ detail, onAddWork, onResume, onRetryTask }) {
           </div>
         ) : null}
       </div>
+
+      <div className="team-section-head">
+        <span className="mono team-section-label">Documents</span>
+        <span className="mono team-section-count">{documents.length} files</span>
+        <span className="team-section-rule" />
+      </div>
+      <div className="team-docs-list">
+        {documents.length ? documents.map((doc) => (
+          <button
+            key={doc.path}
+            type="button"
+            className="team-docs-list-row"
+            aria-label={`Preview ${doc.path}`}
+            disabled={!doc.previewable || !onLoadDocument}
+            onClick={async () => {
+              if (!onLoadDocument) return;
+              const loaded = await onLoadDocument(doc.path);
+              setPreviewDoc(loaded || { ...doc, previewable: false, reason: "load failed" });
+            }}
+          >
+            <span className="mono team-docs-name">{doc.path}</span>
+            <span className="mono team-docs-kind">{doc.kind}</span>
+          </button>
+        )) : <div className="team-task-empty mono">No documents in the workspace yet.</div>}
+      </div>
+
+      <DocumentPreview open={Boolean(previewDoc)} doc={previewDoc} onClose={() => setPreviewDoc(null)} />
 
       <TaskDetailDialog
         task={selectedTask}

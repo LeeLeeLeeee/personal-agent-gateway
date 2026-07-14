@@ -133,6 +133,7 @@ export function GatewayApp() {
   const [runFilter, setRunFilter] = useState("all");
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
+  const [teamRunDocuments, setTeamRunDocuments] = useState([]);
   const [settings, setSettings] = useState(null);
   const [rules, setRules] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
@@ -265,6 +266,7 @@ export function GatewayApp() {
       if (parsed.type?.startsWith("team.") && parsed.team_run_id) {
         if (parsed.team_run_id === selectedTeamRunIdRef.current) {
           api.teamRunDetail(parsed.team_run_id).then(setTeamRunDetail);
+          api.teamDocuments(parsed.team_run_id).then(setTeamRunDocuments);
         }
         return;
       }
@@ -370,11 +372,15 @@ export function GatewayApp() {
   useEffect(() => {
     if (!selectedTeamRunId) {
       setTeamRunDetail(null);
+      setTeamRunDocuments([]);
       return undefined;
     }
     let alive = true;
     api.teamRunDetail(selectedTeamRunId).then((detail) => {
       if (alive) setTeamRunDetail(detail);
+    });
+    api.teamDocuments(selectedTeamRunId).then((docs) => {
+      if (alive) setTeamRunDocuments(docs);
     });
     return () => {
       alive = false;
@@ -1027,6 +1033,8 @@ export function GatewayApp() {
             </a>
             <TeamRunDetail
               detail={teamRunDetail}
+              documents={teamRunDocuments}
+              onLoadDocument={(path) => api.teamDocumentContent(selectedTeamRunId, path)}
               onAddWork={handleAddWork}
               onResume={handleResumeTeamRun}
               onRetryTask={handleRetryTeamTask}
