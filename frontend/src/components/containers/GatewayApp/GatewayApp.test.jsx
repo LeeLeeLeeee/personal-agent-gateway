@@ -804,9 +804,13 @@ describe("GatewayApp", () => {
           goal: "Ship it",
           status: "running",
           run_mode: "plan_and_execute",
-          max_workers: 3,
-          updated_at: "2020-07-14T04:00:00Z",
-          workspace_root: "C:/very/long/workspace/run-1"
+          team_id: "t1",
+          leader_name: "Tech Lead",
+          members: [{ name: "Frontend Dev", avatar: null, initials: "FD" }],
+          task_counts: { completed: 1, in_progress: 1, pending: 1 },
+          task_done: 1,
+          task_total: 3,
+          elapsed_seconds: 125
         }]
       }
     });
@@ -816,9 +820,8 @@ describe("GatewayApp", () => {
 
     const runButton = await screen.findByRole("button", { name: "Open team run Ship it" });
     expect(runButton).toHaveTextContent("plan_and_execute");
-    expect(runButton).toHaveTextContent("WORKERS 3");
-    expect(runButton).toHaveTextContent("2020년 07월 14일 13시 00분 00초");
-    expect(screen.getByTitle("C:/very/long/workspace/run-1")).toBeInTheDocument();
+    expect(runButton).toHaveTextContent("Tech Lead");
+    expect(runButton).toHaveTextContent("1 / 3 DONE");
   });
 
   it("submits additional work and refreshes the selected team run", async () => {
@@ -1069,36 +1072,6 @@ describe("GatewayApp", () => {
 
     expect(await screen.findByText("Failed to create team run")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /start team run/i })).toBeInTheDocument();
-  });
-
-  it("deletes a team run from the home list after confirmation", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    let listCalls = 0;
-    installFetch({
-      "GET /api/auth/status": { authenticated: true, totp_configured: true },
-      "GET /api/status": status,
-      "GET /api/sessions": { sessions },
-      "GET /api/history": { events: [] },
-      "GET /api/agents": { agents: [] },
-      "GET /api/sessions/active/config": { config: null },
-      "GET /api/personas": { personas: [] },
-      "GET /api/team-runs": () => {
-        listCalls += 1;
-        return response({ team_runs: listCalls > 1 ? [] : [{ id: "run-1", goal: "Ship it", status: "running" }] });
-      },
-      "DELETE /api/team-runs/run-1": { deleted: true }
-    });
-
-    render(<GatewayApp />);
-
-    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
-    expect(await screen.findByText("Ship it")).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: /delete team run ship it/i }));
-
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/team-runs/run-1", expect.objectContaining({ method: "DELETE" })));
-    await waitFor(() => expect(screen.queryByText("Ship it")).not.toBeInTheDocument());
-    window.confirm.mockRestore();
   });
 
   it("clears the selected team run detail when navigating away from the teams screen", async () => {

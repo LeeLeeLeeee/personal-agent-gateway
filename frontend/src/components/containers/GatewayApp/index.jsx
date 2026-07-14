@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../api/client.js";
 import { entryFromSse, normalizeApproval, timelineFromHistory, timelineFromSession } from "../../../lib/timeline.js";
-import { fmtDateTime, nowDateTime } from "../../../lib/time.js";
+import { nowDateTime } from "../../../lib/time.js";
 import { AuthCard } from "../../molecules/AuthCard/index.jsx";
 import { AuthTemplate } from "../../templates/AuthTemplate/index.jsx";
 import { AppShell } from "../../templates/AppShell/index.jsx";
 import { ChatView } from "../../organisms/ChatView/index.jsx";
 import { NAV } from "../../organisms/Sidebar/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
-import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { PersonaLibrary } from "../../organisms/PersonaLibrary/index.jsx";
+import { TeamRunCard } from "../../molecules/TeamRunCard/index.jsx";
 import { TeamRunForm } from "../../organisms/TeamRunForm/index.jsx";
 import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
 import { SettingsView } from "../../organisms/SettingsView/index.jsx";
@@ -127,6 +127,7 @@ export function GatewayApp() {
   const [avatarChoices, setAvatarChoices] = useState([]);
   const [teamRuns, setTeamRuns] = useState([]);
   const [creatingTeamRun, setCreatingTeamRun] = useState(false);
+  const [runFilter, setRunFilter] = useState("all");
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
   const [settings, setSettings] = useState(null);
@@ -714,24 +715,6 @@ export function GatewayApp() {
     }
   }
 
-  async function handleDeleteTeamRun(id) {
-    try {
-      const ok = await api.deleteTeamRun(id);
-      if (!ok) {
-        toast("Failed to delete team run", "error");
-        return;
-      }
-      if (selectedTeamRunId === id) {
-        setSelectedTeamRunId(null);
-        setTeamRunDetail(null);
-      }
-      setTeamRuns(await api.teamRuns());
-      toast("Team run deleted", "success");
-    } catch (_error) {
-      toast("Failed to delete team run", "error");
-    }
-  }
-
   async function handleCreateTeamRun(payload) {
     try {
       const created = await api.createTeamRun(payload);
@@ -1021,42 +1004,32 @@ export function GatewayApp() {
               </div>
               <Button variant="primary" onClick={() => setCreatingTeamRun(true)}>New team run</Button>
             </div>
-            <div className="team-run-list">
-              {teamRuns.map((run) => (
-                <div key={run.id} className="team-run-list-item">
-                  <button
-                    type="button"
-                    className="team-run-list-open"
-                    aria-label={`Open team run ${run.goal}`}
-                    onClick={() => handleSelectTeamRun(run.id)}
-                  >
-                    <span className="team-run-list-primary">
-                      <span className="mono team-run-list-id">{run.id}</span>
-                      <StatusBadge kind={run.status} />
-                      <span className="headline team-run-list-goal">{run.goal}</span>
-                    </span>
-                    <span className="mono team-run-list-meta">
-                      <span>MODE <strong>{run.run_mode || "-"}</strong></span>
-                      <span>WORKERS <strong>{run.max_workers ?? "-"}</strong></span>
-                      <span>UPDATED <strong>{fmtDateTime(run.updated_at) || "-"}</strong></span>
-                      <span className="team-run-list-workspace" title={run.workspace_root || ""}>
-                        WORKSPACE <strong>{run.workspace_root || "-"}</strong>
-                      </span>
-                    </span>
-                  </button>
-                  <Button
-                    variant="destructive"
-                    size="btn-sm"
-                    aria-label={`Delete team run ${run.goal}`}
-                    onClick={async () => {
-                      const ok = await confirm({ title: "DELETE TEAM RUN", message: `Delete team run "${run.goal}"? This cannot be undone.`, confirmLabel: "Delete", danger: true });
-                      if (ok) handleDeleteTeamRun(run.id);
-                    }}
-                  >
-                    Delete
-                  </Button>
-                </div>
+            <div className="team-runs-filter">
+              <span className="mono team-runs-filter-k">STATUS</span>
+              {[["all", "All"], ["running", "Running"], ["completed", "Completed"], ["failed", "Failed"]].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`chip${runFilter === key ? " chip-active" : ""}`}
+                  aria-pressed={runFilter === key}
+                  onClick={() => setRunFilter(key)}
+                >
+                  {label}
+                </button>
               ))}
+            </div>
+            <div className="team-run-list">
+              {teamRuns
+                .filter((run) => {
+                  if (runFilter === "all") return true;
+                  if (runFilter === "running") return run.status === "running" || run.status === "planning";
+                  if (runFilter === "completed") return run.status === "completed" || run.status === "completed_with_failures";
+                  if (runFilter === "failed") return run.status === "failed";
+                  return true;
+                })
+                .map((run) => (
+                  <TeamRunCard key={run.id} run={run} onOpen={handleSelectTeamRun} />
+                ))}
             </div>
           </div>
         )
