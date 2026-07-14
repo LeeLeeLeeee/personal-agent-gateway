@@ -984,7 +984,9 @@ describe("GatewayApp", () => {
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
-      "GET /api/personas": { personas: [{ id: "p1", name: "Tech Lead", role: "Planning" }] },
+      "GET /api/teams": {
+        teams: [{ id: "t1", name: "Release Crew", leader: { name: "Tech Lead", avatar: null }, members: [] }]
+      },
       "GET /api/team-runs": { team_runs: [] },
       "POST /api/team-runs": { team_run: { id: "run-1", goal: "Ship it", status: "draft", run_mode: "planning_only" } },
       "POST /api/team-runs/run-1/start": {
@@ -1024,8 +1026,7 @@ describe("GatewayApp", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
-    await userEvent.type(await screen.findByLabelText("Goal"), "Ship it");
-    await userEvent.click(screen.getByRole("button", { name: /select tech lead as leader/i }));
+    await userEvent.type(await screen.findByLabelText(/goal/i), "Ship it");
     await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
 
     expect((await screen.findAllByText("Tech Lead")).length).toBeGreaterThan(0);
@@ -1057,7 +1058,9 @@ describe("GatewayApp", () => {
       "GET /api/history": { events: [] },
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
-      "GET /api/personas": { personas: [{ id: "p1", name: "Tech Lead", role: "Planning" }] },
+      "GET /api/teams": {
+        teams: [{ id: "t1", name: "Release Crew", leader: { name: "Tech Lead", avatar: null }, members: [] }]
+      },
       "GET /api/team-runs": { team_runs: [] },
       "POST /api/team-runs": response({}, false)
     });
@@ -1066,8 +1069,7 @@ describe("GatewayApp", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
-    await userEvent.type(await screen.findByLabelText("Goal"), "Ship it");
-    await userEvent.click(screen.getByRole("button", { name: /select tech lead as leader/i }));
+    await userEvent.type(await screen.findByLabelText(/goal/i), "Ship it");
     await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
 
     expect(await screen.findByText("Failed to create team run")).toBeInTheDocument();

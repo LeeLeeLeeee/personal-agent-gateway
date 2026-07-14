@@ -10,7 +10,7 @@ import { NAV } from "../../organisms/Sidebar/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 import { PersonaLibrary } from "../../organisms/PersonaLibrary/index.jsx";
 import { TeamRunCard } from "../../molecules/TeamRunCard/index.jsx";
-import { TeamRunForm } from "../../organisms/TeamRunForm/index.jsx";
+import { TeamPicker } from "../../organisms/TeamPicker/index.jsx";
 import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
 import { SettingsView } from "../../organisms/SettingsView/index.jsx";
 import { ArtifactsView } from "../../organisms/ArtifactsView/index.jsx";
@@ -126,6 +126,7 @@ export function GatewayApp() {
   const [personas, setPersonas] = useState([]);
   const [avatarChoices, setAvatarChoices] = useState([]);
   const [teamRuns, setTeamRuns] = useState([]);
+  const [teams, setTeams] = useState([]);
   const [creatingTeamRun, setCreatingTeamRun] = useState(false);
   const [runFilter, setRunFilter] = useState("all");
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
@@ -342,8 +343,12 @@ export function GatewayApp() {
       api.personas().then(setPersonas);
       api.avatarManifest().then(setAvatarChoices);
     } else if (screen === "teams") {
-      api.personas().then(setPersonas);
       api.teamRuns().then(setTeamRuns);
+      api.teams().then(setTeams);
+    } else if (screen === "team-admin") {
+      api.teams().then(setTeams);
+    } else if (screen === "rules") {
+      api.teams().then(setTeams);
     } else if (screen === "settings") {
       api.settings().then(setSettings);
     } else if (screen === "artifacts") {
@@ -993,7 +998,7 @@ export function GatewayApp() {
             </a>
             <h1 className="headline" style={{ fontSize: 34, marginTop: 10 }}>New Team Run</h1>
             <div className="team-run-new-sub">Personas are snapshotted when the run starts and stay locked for its lifetime.</div>
-            <TeamRunForm personas={personas} onSubmit={handleCreateTeamRun} />
+            <TeamPicker teams={teams} onStart={handleCreateTeamRun} />
           </div>
         ) : (
           <div className="screen team-runs-home">

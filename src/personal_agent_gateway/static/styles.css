@@ -3654,3 +3654,37 @@ p {
 .trc-open { font-size: 10px; color: #0000FF; }
 .team-runs-filter { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 18px 0 16px; }
 .team-runs-filter-k { font-size: 10px; letter-spacing: 1px; color: #808080; width: 52px; }
+
+.tp { display: grid; grid-template-columns: 1fr 380px; gap: 24px; align-items: start; margin-top: 22px; }
+.tp-empty { border: 3px solid #000; padding: 24px; color: #808080; }
+.tp-form { display: flex; flex-direction: column; gap: 22px; }
+.tp-label { font-family: var(--font-headline); font-size: 13px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 8px; }
+.tp-teams { display: flex; flex-wrap: wrap; gap: 8px; }
+.tp-team { border: 3px solid #CCC; background: #fff; padding: 8px 14px; cursor: pointer; font-family: var(--font-mono); font-size: 12px; }
+.tp-team.active { border-color: #000; background: #000; color: #fff; }
+.tp-roster { border: 3px solid #000; }
+.tp-roster-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #000; }
+.tp-roster-row:last-child { border-bottom: none; }
+.tp-avatar { width: 26px; height: 26px; border: 2px solid #000; object-fit: cover; }
+.tp-avatar-initials { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: #E8E8E8; }
+.tp-roster-name { font-size: 12px; font-weight: 700; flex: 1; }
+.tp-roster-role { font-size: 9px; color: #808080; letter-spacing: 1px; }
+.tp-goal { border: 3px solid #000; padding: 12px 14px; font-family: var(--font-body); font-size: 15px; min-height: 64px; width: 100%; box-sizing: border-box; }
+.tp-settings { display: grid; grid-template-columns: 1fr 200px; gap: 20px; }
+.tp-mode { display: flex; border: 3px solid #000; }
+.tp-mode-btn { flex: 1; border: none; border-right: 2px solid #000; background: #fff; font-family: var(--font-mono); font-size: 10px; padding: 9px 4px; cursor: pointer; }
+.tp-mode-btn:last-child { border-right: none; }
+.tp-mode-btn.active { background: #000; color: #fff; }
+.tp-mode-desc { font-size: 12px; color: #555; margin-top: 8px; }
+.tp-workers { display: flex; border: 3px solid #000; }
+.tp-workers button { flex: none; width: 42px; border: none; background: #fff; font-family: var(--font-mono); font-size: 16px; cursor: pointer; }
+.tp-workers button:first-child { border-right: 2px solid #000; }
+.tp-workers button:last-child { border-left: 2px solid #000; }
+.tp-workers-val { flex: 1; text-align: center; padding: 9px 0; font-family: var(--font-mono); font-size: 16px; }
+.tp-preview { border: 5px solid #000; position: sticky; top: 0; }
+.tp-preview-head { background: #000; color: #fff; padding: 8px 14px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; }
+.tp-preview-body { padding: 16px; }
+.tp-preview-kv { display: grid; grid-template-columns: 88px 1fr; border: 1px solid #000; }
+.tp-preview-kv > div { padding: 8px 10px; border-bottom: 1px solid #000; font-family: var(--font-mono); font-size: 12px; }
+.tp-preview-kv > .k { border-right: 1px solid #000; font-size: 10px; color: #808080; letter-spacing: 1px; }
+.tp-preview-action { margin-top: 14px; }
