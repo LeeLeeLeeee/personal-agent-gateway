@@ -52,6 +52,35 @@ User request: {instruction}"""
 AGENT_REINVOCATION_CAP = 3
 
 
+def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:
+    if not snapshot:
+        return ""
+    sections: list[tuple[str, dict | None]] = [
+        ("GLOBAL RULES", snapshot.get("global")),
+        ("TEAM RULES", snapshot.get("team")),
+    ]
+    if include_persona_baseline:
+        sections.append(("PERSONA BASELINE", snapshot.get("persona_baseline")))
+    lines: list[str] = []
+    for title, section in sections:
+        if not section:
+            continue
+        personality = (section.get("personality") or "").strip()
+        rules = section.get("rules") or []
+        if not personality and not rules:
+            continue
+        lines.append(f"[{title}]")
+        if personality:
+            lines.append(personality)
+        for rule in rules:
+            prefix = "MUST" if rule.get("level") == "REQUIRED" else "SHOULD"
+            lines.append(f"- {prefix}: {rule.get('text', '')}")
+        lines.append("")
+    if not lines:
+        return ""
+    return "TEAM CHARTER (frozen at run start):\n" + "\n".join(lines).strip() + "\n\n"
+
+
 class TeamRuntime:
     def __init__(
         self,
@@ -104,7 +133,7 @@ class TeamRuntime:
     async def _plan(self, run: TeamRun, leader: TeamAgent) -> list[dict[str, str]]:
         leader_agent = self._teams.get_agent(leader.id)
         model = self._model_factory(leader_agent)
-        prompt = PLANNING_PROMPT.format(
+        prompt = _rules_block(run.rules_snapshot, include_persona_baseline=False) + PLANNING_PROMPT.format(
             goal=run.goal,
             persona_snapshot_json=json.dumps(leader_agent.persona_snapshot, ensure_ascii=False),
         )
@@ -226,7 +255,7 @@ class TeamRuntime:
         return "\n\n".join(lines) if lines else "(no completed task outputs yet)"
 
     def _worker_prompt(self, run: TeamRun, worker: TeamAgent, task: TeamTask) -> str:
-        return WORKER_PROMPT.format(
+        return _rules_block(run.rules_snapshot, include_persona_baseline=True) + WORKER_PROMPT.format(
             persona_snapshot_json=json.dumps(worker.persona_snapshot, ensure_ascii=False),
             goal=run.goal,
             task_title=task.title,

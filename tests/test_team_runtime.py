@@ -593,3 +593,40 @@ async def test_add_work_creates_pending_tasks_from_instruction(tmp_path):
         "Extra B": "pending",
     }
     assert any(m.kind == "plan_note" for m in teams.list_messages(run.id))
+
+
+from personal_agent_gateway.team_runtime import _rules_block
+
+
+def test_rules_block_empty_when_no_snapshot():
+    assert _rules_block(None, include_persona_baseline=True) == ""
+
+
+def test_rules_block_marks_required_and_guideline():
+    snapshot = {
+        "global": {"personality": "global voice",
+                   "rules": [{"level": "REQUIRED", "text": "no destructive writes"}]},
+        "team": {"personality": "team voice",
+                 "rules": [{"level": "GUIDELINE", "text": "prefer CRF"}]},
+        "persona_baseline": {"personality": "persona voice",
+                             "rules": [{"level": "REQUIRED", "text": "cite paths"}]},
+    }
+    block = _rules_block(snapshot, include_persona_baseline=True)
+    assert "global voice" in block
+    assert "team voice" in block
+    assert "persona voice" in block
+    assert "MUST: no destructive writes" in block
+    assert "SHOULD: prefer CRF" in block
+    assert "MUST: cite paths" in block
+
+
+def test_rules_block_excludes_persona_baseline_for_leader():
+    snapshot = {
+        "global": {"personality": "", "rules": []},
+        "team": None,
+        "persona_baseline": {"personality": "persona voice",
+                             "rules": [{"level": "REQUIRED", "text": "cite paths"}]},
+    }
+    block = _rules_block(snapshot, include_persona_baseline=False)
+    assert "persona voice" not in block
+    assert "cite paths" not in block
