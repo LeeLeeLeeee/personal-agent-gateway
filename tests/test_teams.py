@@ -43,6 +43,28 @@ def test_create_team_run_snapshots_personas(tmp_path):
     assert unchanged.persona_snapshot["name"] == "QA Tester"
 
 
+def test_list_team_runs_enriched(tmp_path):
+    (tmp_path / "workspace").mkdir()
+    personas, teams = make_services(tmp_path)
+    lead = personas.create_persona("Lead", "lead", "d", [], [], avatar="a01")
+    member = personas.create_persona("Frontend Dev", "fe", "d", [], [], avatar="a05")
+    run = teams.create_team_run("goal", lead.id, [member.id], "plan_and_execute", 2)
+    t1 = teams.create_task(run.id, "t1", "d")
+    teams.create_task(run.id, "t2", "d")
+    teams.set_task_status(t1.id, "completed", result="ok")
+
+    enriched = teams.list_team_runs_enriched()
+    row = next(r for r in enriched if r["id"] == run.id)
+    assert row["leader_name"] == "Lead"
+    assert {m["name"] for m in row["members"]} == {"Frontend Dev"}
+    assert row["members"][0]["avatar"] == "a05"
+    assert row["members"][0]["initials"] == "FD"
+    assert row["task_total"] == 2
+    assert row["task_done"] == 1
+    assert row["task_counts"]["completed"] == 1
+    assert isinstance(row["elapsed_seconds"], (int, float))
+
+
 def test_delete_team_run_removes_isolated_workspace_and_related_records(tmp_path):
     personas, teams = make_services(tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])

@@ -35,11 +35,7 @@ session_dependency = Depends(require_session)
 
 @router.get("")
 def list_team_runs(request: Request, _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
-    return {
-        "team_runs": [
-            _team_run_payload(run) for run in request.app.state.team_run_service.list_team_runs()
-        ]
-    }
+    return {"team_runs": request.app.state.team_run_service.list_team_runs_enriched()}
 
 
 @router.post("")

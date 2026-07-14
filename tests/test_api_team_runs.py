@@ -119,6 +119,30 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
     assert model._workspace_root == Path(run["workspace_root"]).resolve()
 
 
+def test_list_team_runs_returns_enriched_fields(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "QA Tester")
+    run_id = client.post(
+        "/api/team-runs",
+        json={
+            "goal": "Design Agent Teams",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": [member_id],
+            "run_mode": "planning_only",
+            "max_workers": 2,
+        },
+    ).json()["team_run"]["id"]
+
+    body = client.get("/api/team-runs").json()
+    run = next(r for r in body["team_runs"] if r["id"] == run_id)
+
+    assert run["leader_name"] == "Tech Lead"
+    assert "members" in run
+    assert "task_counts" in run
+    assert "elapsed_seconds" in run
+
+
 def test_delete_team_run_removes_it(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")

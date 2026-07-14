@@ -191,6 +191,46 @@ class TeamRunService:
             for row in self._db.fetchall("select * from team_runs order by created_at desc")
         ]
 
+    def list_team_runs_enriched(self) -> list[dict[str, object]]:
+        runs = self.list_team_runs()
+        result: list[dict[str, object]] = []
+        for run in runs:
+            agents = self.list_agents(run.id)
+            tasks = self.list_tasks(run.id)
+            leader = next((a for a in agents if a.role == "leader"), None)
+            members = [a for a in agents if a.role != "leader"]
+            counts: dict[str, int] = {}
+            for task in tasks:
+                counts[task.status] = counts.get(task.status, 0) + 1
+            result.append(
+                {
+                    "id": run.id,
+                    "goal": run.goal,
+                    "status": run.status,
+                    "run_mode": run.run_mode,
+                    "max_workers": run.max_workers,
+                    "team_id": run.team_id,
+                    "created_at": run.created_at,
+                    "started_at": run.started_at,
+                    "finished_at": run.finished_at,
+                    "updated_at": run.updated_at,
+                    "leader_name": leader.name if leader else None,
+                    "members": [
+                        {
+                            "name": agent.name,
+                            "avatar": agent.persona_snapshot.get("avatar", ""),
+                            "initials": _initials(agent.name),
+                        }
+                        for agent in members
+                    ],
+                    "task_counts": counts,
+                    "task_total": len(tasks),
+                    "task_done": counts.get("completed", 0),
+                    "elapsed_seconds": _elapsed_seconds(run.started_at, run.finished_at),
+                }
+            )
+        return result
+
     def interrupt_active_runs(self) -> list[TeamRun]:
         run_ids = [
             row["id"]
@@ -684,3 +724,19 @@ def _team_message_from_row(row: object) -> TeamMessage:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _initials(name: str) -> str:
+    parts = (name or "").strip().split()
+    if not parts:
+        return "?"
+    letters = [word[0] for word in parts[:2]]
+    return "".join(letters).upper()
+
+
+def _elapsed_seconds(started_at: str | None, finished_at: str | None) -> float:
+    if not started_at:
+        return 0.0
+    start = datetime.fromisoformat(started_at)
+    end = datetime.fromisoformat(finished_at) if finished_at else datetime.now(timezone.utc)
+    return max(0.0, (end - start).total_seconds())
