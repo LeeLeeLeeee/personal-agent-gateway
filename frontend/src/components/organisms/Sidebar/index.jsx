@@ -10,7 +10,9 @@ export const NAV = [
 
 export const TEAM_NAV = [
   { key: "teams", label: "Team Runs" },
-  { key: "personas", label: "Personas" }
+  { key: "team-admin", label: "Teams" },
+  { key: "personas", label: "Personas" },
+  { key: "rules", label: "Rules" }
 ];
 
 function formatEnvironmentLabel(value) {
