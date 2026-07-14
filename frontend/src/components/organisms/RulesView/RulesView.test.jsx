@@ -37,4 +37,34 @@ describe("RulesView", () => {
     const inputs = screen.getAllByPlaceholderText(/rule text/i);
     expect(inputs.length).toBeGreaterThan(1);
   });
+
+  it("saves persona baseline via onSavePersonaBaseline", async () => {
+    const onSaveGlobal = vi.fn(async () => ({}));
+    const onSavePersonaBaseline = vi.fn(async () => ({}));
+    const onSaveTeam = vi.fn(async () => ({}));
+    render(<RulesView rules={rules} teams={teams} onSaveGlobal={onSaveGlobal}
+      onSavePersonaBaseline={onSavePersonaBaseline} onSaveTeam={onSaveTeam} />);
+    await userEvent.click(screen.getByRole("button", { name: /persona baseline/i }));
+    expect(screen.getByDisplayValue("be terse")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(onSavePersonaBaseline).toHaveBeenCalledWith({
+      personality: "persona voice",
+      rules: [{ level: "GUIDELINE", text: "be terse" }]
+    });
+    expect(onSaveGlobal).not.toHaveBeenCalled();
+    expect(onSaveTeam).not.toHaveBeenCalled();
+  });
+
+  it("saves an individual team via onSaveTeam", async () => {
+    const onSaveGlobal = vi.fn(async () => ({}));
+    const onSavePersonaBaseline = vi.fn(async () => ({}));
+    const onSaveTeam = vi.fn(async () => ({}));
+    render(<RulesView rules={rules} teams={teams} onSaveGlobal={onSaveGlobal}
+      onSavePersonaBaseline={onSavePersonaBaseline} onSaveTeam={onSaveTeam} />);
+    await userEvent.click(screen.getByRole("button", { name: "Release Crew" }));
+    expect(screen.getByDisplayValue("team voice")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(onSaveTeam).toHaveBeenCalledWith("t1", { personality: "team voice", rules: [] });
+    expect(onSaveGlobal).not.toHaveBeenCalled();
+  });
 });
