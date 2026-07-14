@@ -3710,3 +3710,42 @@ p {
 .teams-persona { border: 2px solid #000; background: #fff; padding: 6px 11px; cursor: pointer; font-family: var(--font-mono); font-size: 12px; }
 .teams-persona.active { background: #000; color: #fff; }
 .teams-edit-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+/* ---- rules (global / persona baseline / team) ---- */
+.rules-view-sub { font-family: var(--font-mono); font-size: 12px; color: #808080; margin: 6px 0 18px; }
+.rules-tabs { display: flex; border: 3px solid #000; width: fit-content; margin-bottom: 20px; }
+.rules-tab { border: none; border-right: 3px solid #000; background: #fff; color: #000; font-family: var(--font-mono); font-size: 12px; letter-spacing: 1px; padding: 11px 22px; cursor: pointer; }
+.rules-tab:last-child { border-right: none; }
+.rules-tab.active { background: #000; color: #fff; }
+.rules-team-selector { display: flex; align-items: stretch; border: 2px solid #000; width: fit-content; margin-bottom: 16px; flex-wrap: wrap; }
+.rules-team-k { display: flex; align-items: center; padding: 0 12px; border-right: 2px solid #000; font-size: 9px; letter-spacing: 1px; color: #808080; background: #F0F0F0; }
+.rules-team-btn { border: none; border-right: 2px solid #000; background: #fff; font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; padding: 7px 14px; cursor: pointer; }
+.rules-team-btn.active { background: #000; color: #fff; }
+.rules-inherit { border: 3px solid #000; background: #F0F0F0; padding: 10px 14px; display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 12px; }
+.rules-inherit-tag { background: #000; color: #fff; padding: 2px 7px; font-size: 10px; letter-spacing: 1px; }
+.rules-grid { display: grid; grid-template-columns: 1fr 300px; gap: 22px; align-items: start; }
+.rules-personality { border: 5px solid #000; margin-bottom: 20px; }
+.rules-personality-head { background: #000; color: #fff; padding: 8px 14px; display: flex; justify-content: space-between; font-size: 11px; letter-spacing: 1px; }
+.rules-personality-note { color: #808080; }
+.rules-personality-input { width: 100%; box-sizing: border-box; border: none; padding: 16px; font-family: var(--font-body); font-size: 14px; line-height: 1.65; min-height: 90px; resize: vertical; }
+.rules-list-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+.rules-counts { font-size: 10px; color: #808080; }
+.rules-list { border: 3px solid #000; }
+.rules-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #000; }
+.rules-n { font-size: 12px; color: #808080; width: 20px; }
+.rules-level { border: 2px solid #000; background: #fff; color: #000; font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px; padding: 2px 7px; cursor: pointer; flex: none; }
+.rules-level.req { background: #000; color: #fff; }
+.rules-text { flex: 1; border: none; border-bottom: 1px solid transparent; font-family: var(--font-body); font-size: 13.5px; padding: 2px 0; }
+.rules-text:focus { outline: none; border-bottom-color: #000; }
+.rules-del { border: none; background: none; cursor: pointer; font-size: 16px; color: #808080; }
+.rules-add { display: flex; width: 100%; border: none; background: #fff; padding: 11px 14px; cursor: pointer; font-size: 11px; letter-spacing: 1px; }
+.rules-add:hover { background: #000; color: #fff; }
+.rules-save { margin-top: 14px; }
+.rules-meta { border: 3px solid #000; }
+.rules-meta-head { background: #000; color: #fff; padding: 8px 14px; font-size: 11px; letter-spacing: 1px; }
+.rules-meta-body { padding: 14px; }
+.rules-enforce { border: 3px solid #000; padding: 10px 12px; }
+.rules-enforce-k { font-size: 9px; letter-spacing: 1px; color: #808080; margin-bottom: 5px; }
+.rules-enforce-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.rules-enforce-req { width: 11px; height: 11px; background: #000; flex: none; }
+.rules-enforce-guide { width: 11px; height: 11px; border: 2px solid #000; flex: none; }

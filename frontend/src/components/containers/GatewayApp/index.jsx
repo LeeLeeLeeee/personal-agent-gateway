@@ -13,6 +13,7 @@ import { TeamsView } from "../../organisms/TeamsView/index.jsx";
 import { TeamRunCard } from "../../molecules/TeamRunCard/index.jsx";
 import { TeamPicker } from "../../organisms/TeamPicker/index.jsx";
 import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
+import { RulesView } from "../../organisms/RulesView/index.jsx";
 import { SettingsView } from "../../organisms/SettingsView/index.jsx";
 import { ArtifactsView } from "../../organisms/ArtifactsView/index.jsx";
 import { JobsView } from "../../organisms/JobsView/index.jsx";
@@ -133,6 +134,7 @@ export function GatewayApp() {
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [rules, setRules] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -351,6 +353,7 @@ export function GatewayApp() {
       api.personas().then(setPersonas);
     } else if (screen === "rules") {
       api.teams().then(setTeams);
+      api.rules().then(setRules);
     } else if (screen === "settings") {
       api.settings().then(setSettings);
     } else if (screen === "artifacts") {
@@ -749,6 +752,22 @@ export function GatewayApp() {
     toast("Team deleted", "success");
   }
 
+  async function handleSaveGlobalRules(payload) {
+    const saved = await api.updateGlobalRules(payload);
+    if (!saved) { toast("Failed to save rules", "error"); return null; }
+    setRules(await api.rules()); toast("Rules saved", "success"); return saved;
+  }
+  async function handleSavePersonaBaselineRules(payload) {
+    const saved = await api.updatePersonaBaselineRules(payload);
+    if (!saved) { toast("Failed to save rules", "error"); return null; }
+    setRules(await api.rules()); toast("Rules saved", "success"); return saved;
+  }
+  async function handleSaveTeamRules(teamId, payload) {
+    const saved = await api.updateTeamRules(teamId, payload);
+    if (!saved) { toast("Failed to save rules", "error"); return null; }
+    setRules(await api.rules()); toast("Rules saved", "success"); return saved;
+  }
+
   async function handleCreateTeamRun(payload) {
     try {
       const created = await api.createTeamRun(payload);
@@ -1076,6 +1095,18 @@ export function GatewayApp() {
             onUpdate={handleUpdateTeam}
             onDelete={handleDeleteTeam}
           />
+        </div>
+      ) : screen === "rules" ? (
+        <div className="screen">
+          {rules ? (
+            <RulesView
+              rules={rules}
+              teams={teams}
+              onSaveGlobal={handleSaveGlobalRules}
+              onSavePersonaBaseline={handleSavePersonaBaselineRules}
+              onSaveTeam={handleSaveTeamRules}
+            />
+          ) : null}
         </div>
       ) : screen === "settings" ? (
         settings ? <SettingsView settings={settings} /> : null
