@@ -42,9 +42,18 @@ def create_persona(client: TestClient, name: str) -> str:
 def authed_client_with_run(tmp_path: Path):
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
+    team_id = client.post(
+        "/api/teams",
+        json={
+            "name": "Team",
+            "description": "",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": [],
+        },
+    ).json()["team"]["id"]
     run = client.post(
         "/api/team-runs",
-        json={"goal": "Ship it", "leader_persona_id": leader_id},
+        json={"team_id": team_id, "goal": "Ship it"},
     ).json()["team_run"]
     workspace = Path(run["workspace_root"])
     workspace.mkdir(parents=True, exist_ok=True)

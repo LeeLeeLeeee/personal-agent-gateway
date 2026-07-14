@@ -16,9 +16,8 @@ _TERMINAL = {"completed", "completed_with_failures", "failed", "canceled"}
 
 
 class CreateTeamRunRequest(BaseModel):
+    team_id: str
     goal: str
-    leader_persona_id: str
-    member_persona_ids: list[str] = []
     run_mode: Literal["planning_only", "plan_and_execute", "review_only"] = "planning_only"
     max_workers: int = 3
 
@@ -45,9 +44,16 @@ def create_team_run(
     request: Request, payload: CreateTeamRunRequest, _session: None = session_dependency
 ) -> dict[str, object]:
     try:
-        run = request.app.state.team_run_service.create_team_run(**payload.model_dump())
+        run = request.app.state.team_run_service.create_team_run_from_team(
+            request.app.state.team_directory_service,
+            request.app.state.rule_set_service,
+            team_id=payload.team_id,
+            goal=payload.goal,
+            run_mode=payload.run_mode,
+            max_workers=payload.max_workers,
+        )
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Persona not found") from exc
+        raise HTTPException(status_code=404, detail="Team not found") from exc
     return {"team_run": _team_run_payload(run)}
 
 
@@ -319,6 +325,8 @@ def _team_run_payload(run: TeamRun) -> dict[str, object]:
         "leader_agent_id": run.leader_agent_id,
         "max_workers": run.max_workers,
         "workspace_root": run.workspace_root,
+        "team_id": run.team_id,
+        "rules_snapshot": run.rules_snapshot,
         "summary": run.summary,
         "error_message": run.error_message,
         "created_at": run.created_at,

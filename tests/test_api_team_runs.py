@@ -44,6 +44,19 @@ def create_persona(client: TestClient, name: str) -> str:
     return response.json()["persona"]["id"]
 
 
+def create_team(client: TestClient, leader_id: str, member_ids: list[str] | None = None) -> str:
+    response = client.post(
+        "/api/teams",
+        json={
+            "name": "Team",
+            "description": "",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": member_ids or [],
+        },
+    )
+    return response.json()["team"]["id"]
+
+
 @dataclass
 class GatedModel:
     """gate가 set()될 때까지 complete()에서 블로킹하는 테스트 전용 모델.
@@ -82,6 +95,21 @@ async def _async_create_persona(client: httpx.AsyncClient, name: str) -> str:
     return response.json()["persona"]["id"]
 
 
+async def _async_create_team(
+    client: httpx.AsyncClient, leader_id: str, member_ids: list[str] | None = None
+) -> str:
+    response = await client.post(
+        "/api/teams",
+        json={
+            "name": "Team",
+            "description": "",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": member_ids or [],
+        },
+    )
+    return response.json()["team"]["id"]
+
+
 async def _poll_until(predicate, timeout: float = 2.0, interval: float = 0.01) -> None:
     elapsed = 0.0
     while not predicate():
@@ -95,13 +123,13 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "QA Tester")
+    team_id = create_team(client, leader_id, [member_id])
 
     response = client.post(
         "/api/team-runs",
         json={
+            "team_id": team_id,
             "goal": "Design Agent Teams",
-            "leader_persona_id": leader_id,
-            "member_persona_ids": [member_id],
             "run_mode": "planning_only",
             "max_workers": 2,
         },
@@ -123,12 +151,12 @@ def test_list_team_runs_returns_enriched_fields(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "QA Tester")
+    team_id = create_team(client, leader_id, [member_id])
     run_id = client.post(
         "/api/team-runs",
         json={
+            "team_id": team_id,
             "goal": "Design Agent Teams",
-            "leader_persona_id": leader_id,
-            "member_persona_ids": [member_id],
             "run_mode": "planning_only",
             "max_workers": 2,
         },
@@ -146,10 +174,11 @@ def test_list_team_runs_returns_enriched_fields(tmp_path: Path) -> None:
 def test_delete_team_run_removes_it(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
 
     run = client.post(
         "/api/team-runs",
-        json={"goal": "Ship it", "leader_persona_id": leader_id},
+        json={"team_id": team_id, "goal": "Ship it"},
     ).json()["team_run"]
     workspace = Path(run["workspace_root"])
     workspace.mkdir(parents=True, exist_ok=True)
@@ -167,9 +196,10 @@ def test_delete_team_run_removes_it(tmp_path: Path) -> None:
 def test_delete_running_team_run_keeps_workspace_and_record(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
     run = client.post(
         "/api/team-runs",
-        json={"goal": "Temporary test run", "leader_persona_id": leader_id},
+        json={"team_id": team_id, "goal": "Temporary test run"},
     ).json()["team_run"]
     workspace = Path(run["workspace_root"])
     workspace.mkdir(parents=True, exist_ok=True)
@@ -201,12 +231,12 @@ def test_retry_failed_team_task_api_requeues_task_for_manual_resume(tmp_path: Pa
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "Developer")
+    team_id = create_team(client, leader_id, [member_id])
     run = client.post(
         "/api/team-runs",
         json={
+            "team_id": team_id,
             "goal": "Ship it",
-            "leader_persona_id": leader_id,
-            "member_persona_ids": [member_id],
             "run_mode": "plan_and_execute",
         },
     ).json()["team_run"]
@@ -226,9 +256,10 @@ def test_retry_failed_team_task_api_requeues_task_for_manual_resume(tmp_path: Pa
 def test_retry_team_task_api_rejects_missing_task(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
     run = client.post(
         "/api/team-runs",
-        json={"goal": "Ship it", "leader_persona_id": leader_id},
+        json={"team_id": team_id, "goal": "Ship it"},
     ).json()["team_run"]
     client.app.state.team_run_service.set_run_status(run["id"], "failed")
 
@@ -241,12 +272,12 @@ def test_start_returns_immediately_without_blocking(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "QA Tester")
+    team_id = create_team(client, leader_id, [member_id])
     created = client.post(
         "/api/team-runs",
         json={
+            "team_id": team_id,
             "goal": "g",
-            "leader_persona_id": leader_id,
-            "member_persona_ids": [member_id],
             "run_mode": "planning_only",
             "max_workers": 1,
         },
@@ -262,12 +293,12 @@ def test_start_returns_immediately_without_blocking(tmp_path: Path) -> None:
 def test_double_start_conflicts(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
     created = client.post(
         "/api/team-runs",
         json={
+            "team_id": team_id,
             "goal": "g",
-            "leader_persona_id": leader_id,
-            "member_persona_ids": [],
             "run_mode": "planning_only",
             "max_workers": 1,
         },
@@ -281,12 +312,12 @@ def test_cancel_does_not_overwrite_already_terminal_run(tmp_path: Path) -> None:
     """registry에 없는(이미 끝난) 팀런을 /cancel해도 실제 종료 상태가 덮어써지지 않아야 함."""
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
     created = client.post(
         "/api/team-runs",
         json={
+            "team_id": team_id,
             "goal": "g",
-            "leader_persona_id": leader_id,
-            "member_persona_ids": [],
             "run_mode": "planning_only",
             "max_workers": 1,
         },
@@ -318,13 +349,13 @@ async def test_start_returns_before_orchestration_completes(tmp_path: Path) -> N
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         client.cookies.set("agent_session", "test-session")
         leader_id = await _async_create_persona(client, "Tech Lead")
+        team_id = await _async_create_team(client, leader_id)
         created = (
             await client.post(
                 "/api/team-runs",
                 json={
+                    "team_id": team_id,
                     "goal": "g",
-                    "leader_persona_id": leader_id,
-                    "member_persona_ids": [],
                     "run_mode": "planning_only",
                     "max_workers": 1,
                 },
@@ -353,12 +384,12 @@ async def test_start_returns_before_orchestration_completes(tmp_path: Path) -> N
 def test_add_work_rejects_non_execute_mode(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Lead")
+    team_id = create_team(client, leader_id)
     run = client.post(
         "/api/team-runs",
         json={
+            "team_id": team_id,
             "goal": "g",
-            "leader_persona_id": leader_id,
-            "member_persona_ids": [],
             "run_mode": "planning_only",
             "max_workers": 1,
         },
@@ -372,12 +403,12 @@ def test_add_work_rejects_draft_run(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Lead")
     member_id = create_persona(client, "Worker")
+    team_id = create_team(client, leader_id, [member_id])
     run = client.post(
         "/api/team-runs",
         json={
+            "team_id": team_id,
             "goal": "g",
-            "leader_persona_id": leader_id,
-            "member_persona_ids": [member_id],
             "run_mode": "plan_and_execute",
             "max_workers": 1,
         },
@@ -411,12 +442,12 @@ def test_interrupted_run_rejects_start_and_add_work(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Lead")
     member_id = create_persona(client, "Worker")
+    team_id = create_team(client, leader_id, [member_id])
     run = client.post(
         "/api/team-runs",
         json={
+            "team_id": team_id,
             "goal": "g",
-            "leader_persona_id": leader_id,
-            "member_persona_ids": [member_id],
             "run_mode": "plan_and_execute",
             "max_workers": 1,
         },
@@ -443,13 +474,13 @@ async def test_resume_interrupted_run_registers_background_task_and_blocks_dupli
         client.cookies.set("agent_session", "test-session")
         leader_id = await _async_create_persona(client, "Lead")
         member_id = await _async_create_persona(client, "Worker")
+        team_id = await _async_create_team(client, leader_id, [member_id])
         run = (
             await client.post(
                 "/api/team-runs",
                 json={
+                    "team_id": team_id,
                     "goal": "g",
-                    "leader_persona_id": leader_id,
-                    "member_persona_ids": [member_id],
                     "run_mode": "plan_and_execute",
                     "max_workers": 1,
                 },
@@ -512,13 +543,13 @@ async def test_add_work_reopens_terminal_run(tmp_path: Path) -> None:
         client.cookies.set("agent_session", "test-session")
         leader_id = await _async_create_persona(client, "Lead")
         member_id = await _async_create_persona(client, "Worker")
+        team_id = await _async_create_team(client, leader_id, [member_id])
         created = (
             await client.post(
                 "/api/team-runs",
                 json={
+                    "team_id": team_id,
                     "goal": "g",
-                    "leader_persona_id": leader_id,
-                    "member_persona_ids": [member_id],
                     "run_mode": "plan_and_execute",
                     "max_workers": 1,
                 },
@@ -552,13 +583,13 @@ async def test_cancel_endpoint_settles_blocked_run_as_canceled(tmp_path: Path) -
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         client.cookies.set("agent_session", "test-session")
         leader_id = await _async_create_persona(client, "Tech Lead")
+        team_id = await _async_create_team(client, leader_id)
         created = (
             await client.post(
                 "/api/team-runs",
                 json={
+                    "team_id": team_id,
                     "goal": "g",
-                    "leader_persona_id": leader_id,
-                    "member_persona_ids": [],
                     "run_mode": "planning_only",
                     "max_workers": 1,
                 },

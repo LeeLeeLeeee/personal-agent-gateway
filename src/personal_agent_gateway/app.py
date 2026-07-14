@@ -18,10 +18,12 @@ from personal_agent_gateway.api import (
     capabilities_router,
     jobs_router,
     personas_router,
+    rules_router,
     schedules_router,
     session_config_router,
     settings_router,
     team_runs_router,
+    teams_router,
 )
 from personal_agent_gateway.artifacts import ArtifactStore
 from personal_agent_gateway.agents import AgentRegistry
@@ -36,6 +38,7 @@ from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelCli
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
+from personal_agent_gateway.rule_sets import RuleSetService
 from personal_agent_gateway.run_state import SessionAlreadyRunningError, SessionRunRegistry, TeamRunRegistry
 from personal_agent_gateway.runners.agent import AgentRunner
 from personal_agent_gateway.runners.capture import CaptureRunner
@@ -44,6 +47,7 @@ from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
 from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
 from personal_agent_gateway.session_config import SessionAgentConfigService
+from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
 from personal_agent_gateway.transcript import TranscriptStore
@@ -150,6 +154,8 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(settings_router)
     app.include_router(personas_router)
     app.include_router(team_runs_router)
+    app.include_router(teams_router)
+    app.include_router(rules_router)
 
     @app.exception_handler(Exception)
     async def internal_error_handler(_request: Request, _exc: Exception) -> JSONResponse:
@@ -415,6 +421,9 @@ def _attach_local_services(
     session_activity_publisher = SessionActivityPublisher(session_activity_service, event_bus)
     persona_service = PersonaService(db)
     team_run_service = TeamRunService(db, persona_service, config.workspace_root)
+    team_directory_service = TeamService(db, persona_service)
+    rule_set_service = RuleSetService(db)
+    rule_set_service.seed_defaults()
     registry = CapabilityRegistry.default()
     job_service = JobService(db, registry)
     schedule_service = ScheduleService(db, registry)
@@ -450,6 +459,8 @@ def _attach_local_services(
     app.state.session_activity_publisher = session_activity_publisher
     app.state.session_activity_service = session_activity_service
     app.state.team_run_service = team_run_service
+    app.state.team_directory_service = team_directory_service
+    app.state.rule_set_service = rule_set_service
     return runtime_factory
 
 
