@@ -3688,3 +3688,25 @@ p {
 .tp-preview-kv > div { padding: 8px 10px; border-bottom: 1px solid #000; font-family: var(--font-mono); font-size: 12px; }
 .tp-preview-kv > .k { border-right: 1px solid #000; font-size: 10px; color: #808080; letter-spacing: 1px; }
 .tp-preview-action { margin-top: 14px; }
+
+/* ---- teams admin (CRUD + roster) ---- */
+.teams-view-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+.teams-view-sub { font-family: var(--font-mono); font-size: 12px; color: #808080; margin-top: 6px; }
+.teams-grid { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
+.teams-list { border: 3px solid #000; }
+.teams-list-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #000; padding: 0 10px 0 0; }
+.teams-list-row.active { background: #F0F0F0; }
+.teams-list-open { flex: 1; text-align: left; border: none; background: none; cursor: pointer; padding: 12px 14px; }
+.teams-list-name { display: block; font-size: 13px; font-weight: 700; }
+.teams-list-lead { display: block; font-size: 11px; color: #555; margin-top: 2px; }
+.teams-empty { padding: 20px; color: #808080; }
+.teams-edit { border: 5px solid #000; }
+.teams-edit-head { background: #000; color: #fff; padding: 8px 14px; font-size: 11px; letter-spacing: 1px; }
+.teams-edit-body { padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+.teams-edit-field { display: flex; flex-direction: column; gap: 6px; }
+.teams-edit-k { font-size: 10px; letter-spacing: 1px; color: #808080; }
+.teams-edit-field input { border: 3px solid #000; padding: 9px 12px; font-family: var(--font-mono); font-size: 13px; }
+.teams-persona-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.teams-persona { border: 2px solid #000; background: #fff; padding: 6px 11px; cursor: pointer; font-family: var(--font-mono); font-size: 12px; }
+.teams-persona.active { background: #000; color: #fff; }
+.teams-edit-actions { display: flex; justify-content: flex-end; gap: 10px; }

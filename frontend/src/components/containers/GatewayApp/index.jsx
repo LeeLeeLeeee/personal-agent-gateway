@@ -9,6 +9,7 @@ import { ChatView } from "../../organisms/ChatView/index.jsx";
 import { NAV } from "../../organisms/Sidebar/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 import { PersonaLibrary } from "../../organisms/PersonaLibrary/index.jsx";
+import { TeamsView } from "../../organisms/TeamsView/index.jsx";
 import { TeamRunCard } from "../../molecules/TeamRunCard/index.jsx";
 import { TeamPicker } from "../../organisms/TeamPicker/index.jsx";
 import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
@@ -347,6 +348,7 @@ export function GatewayApp() {
       api.teams().then(setTeams);
     } else if (screen === "team-admin") {
       api.teams().then(setTeams);
+      api.personas().then(setPersonas);
     } else if (screen === "rules") {
       api.teams().then(setTeams);
     } else if (screen === "settings") {
@@ -720,6 +722,33 @@ export function GatewayApp() {
     }
   }
 
+  async function handleCreateTeam(payload) {
+    try {
+      const created = await api.createTeam(payload);
+      if (!created) { toast("Failed to create team", "error"); return null; }
+      setTeams(await api.teams());
+      toast("Team created", "success");
+      return created;
+    } catch (_error) { toast("Failed to create team", "error"); return null; }
+  }
+  async function handleUpdateTeam(id, payload) {
+    try {
+      const updated = await api.updateTeam(id, payload);
+      if (!updated) { toast("Failed to save team", "error"); return null; }
+      setTeams(await api.teams());
+      toast("Team saved", "success");
+      return updated;
+    } catch (_error) { toast("Failed to save team", "error"); return null; }
+  }
+  async function handleDeleteTeam(id) {
+    const ok = await confirm({ title: "DELETE TEAM", message: "Delete this team? Running snapshots are unaffected.", confirmLabel: "Delete", danger: true });
+    if (!ok) return;
+    const done = await api.deleteTeam(id);
+    if (!done) { toast("Failed to delete team", "error"); return; }
+    setTeams(await api.teams());
+    toast("Team deleted", "success");
+  }
+
   async function handleCreateTeamRun(payload) {
     try {
       const created = await api.createTeamRun(payload);
@@ -1038,6 +1067,16 @@ export function GatewayApp() {
             </div>
           </div>
         )
+      ) : screen === "team-admin" ? (
+        <div className="screen">
+          <TeamsView
+            teams={teams}
+            personas={personas}
+            onCreate={handleCreateTeam}
+            onUpdate={handleUpdateTeam}
+            onDelete={handleDeleteTeam}
+          />
+        </div>
       ) : screen === "settings" ? (
         settings ? <SettingsView settings={settings} /> : null
       ) : screen === "artifacts" ? (
