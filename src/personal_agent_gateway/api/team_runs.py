@@ -1,4 +1,6 @@
 import asyncio
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
@@ -221,6 +223,91 @@ def list_team_messages(request: Request, team_run_id: str, _session: None = sess
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     return {"messages": [_message_payload(message) for message in messages]}
+
+
+@router.get("/{team_run_id}/documents")
+def list_team_documents(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
+    try:
+        run = request.app.state.team_run_service.get_team_run(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    root = _resolved_workspace(run)
+    documents: list[dict[str, object]] = []
+    if root.is_dir():
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            kind = _doc_kind(path)
+            size = path.stat().st_size
+            documents.append(
+                {
+                    "path": path.relative_to(root).as_posix(),
+                    "size": size,
+                    "modified_at": _iso_mtime(path),
+                    "kind": kind,
+                    "previewable": kind != "binary" and size <= _MAX_PREVIEW_BYTES,
+                }
+            )
+    return {"documents": documents}
+
+
+@router.get("/{team_run_id}/documents/content")
+def read_team_document(request: Request, team_run_id: str, path: str, _session: None = session_dependency) -> dict[str, object]:
+    try:
+        run = request.app.state.team_run_service.get_team_run(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    root = _resolved_workspace(run)
+    try:
+        target = _safe_child(root, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid document path") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+    kind = _doc_kind(target)
+    size = target.stat().st_size
+    if kind == "binary" or size > _MAX_PREVIEW_BYTES:
+        return {"path": path, "kind": kind, "content": None, "previewable": False,
+                "reason": "binary or too large"}
+    try:
+        content = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return {"path": path, "kind": "binary", "content": None, "previewable": False,
+                "reason": "not utf-8 text"}
+    return {"path": path, "kind": kind, "content": content, "previewable": True}
+
+
+_TEXT_EXTS = {".txt", ".log", ".csv", ".yaml", ".yml", ".toml", ".ini", ".env"}
+_CODE_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".sh", ".sql"}
+_MAX_PREVIEW_BYTES = 1_000_000
+
+
+def _doc_kind(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".md":
+        return "md"
+    if suffix == ".json":
+        return "json"
+    if suffix in _TEXT_EXTS:
+        return "text"
+    if suffix in _CODE_EXTS:
+        return "code"
+    return "binary"
+
+
+def _resolved_workspace(run) -> Path:
+    return Path(run.workspace_root).resolve()
+
+
+def _safe_child(root: Path, relative: str) -> Path:
+    candidate = (root / relative).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError("Path escapes workspace")
+    return candidate
+
+
+def _iso_mtime(path: Path) -> str:
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
 
 
 def _team_run_payload(run: TeamRun) -> dict[str, object]:
