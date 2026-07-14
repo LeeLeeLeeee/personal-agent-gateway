@@ -374,6 +374,7 @@ def test_create_team_run_from_team_snapshots_roster_and_rules(tmp_path):
 
     assert run.team_id == team.id
     assert run.rules_snapshot["team"]["personality"] == "team voice"
+    assert run.rules_snapshot["team"]["name"] == team.name
     assert run.rules_snapshot["global"]["rules"]
     agents = teams.list_agents(run.id)
     assert [a.role for a in agents] == ["leader", "member"]

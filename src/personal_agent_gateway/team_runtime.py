@@ -78,7 +78,7 @@ def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:
         lines.append("")
     if not lines:
         return ""
-    return "TEAM CHARTER (frozen at run start):\n" + "\n".join(lines).strip() + "\n\n"
+    return "TEAM RULES (frozen at run start):\n" + "\n".join(lines).strip() + "\n\n"
 
 
 class TeamRuntime:

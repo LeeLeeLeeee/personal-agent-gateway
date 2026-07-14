@@ -48,6 +48,10 @@ def put_persona_baseline(request: Request, payload: RuleSetRequest, _session: No
 
 @router.put("/api/teams/{team_id}/rules")
 def put_team_rules(request: Request, team_id: str, payload: RuleSetRequest, _session: None = session_dependency) -> dict[str, object]:
+    try:
+        request.app.state.team_directory_service.get_team(team_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team not found") from exc
     return _upsert(request, "team", team_id, payload)
 
 

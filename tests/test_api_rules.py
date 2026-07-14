@@ -47,3 +47,11 @@ def test_put_rules_rejects_bad_level(tmp_path: Path):
 def test_rules_api_requires_auth(tmp_path: Path) -> None:
     client = TestClient(create_app(make_config(tmp_path)))
     assert client.get("/api/rules").status_code == 401
+
+
+def test_put_team_rules_404s_for_unknown_team(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    resp = client.put("/api/teams/bad-team-id/rules", json={
+        "personality": "x", "rules": [],
+    })
+    assert resp.status_code == 404

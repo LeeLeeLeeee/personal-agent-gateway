@@ -157,6 +157,8 @@ class TeamRunService:
     ) -> TeamRun:
         team = team_service.get_team(team_id)
         snapshot = rule_set_service.snapshot_for_team(team_id)
+        if snapshot.get("team") is not None:
+            snapshot["team"]["name"] = team.name
         return self.create_team_run(
             goal=goal,
             leader_persona_id=team.leader_persona_id,
