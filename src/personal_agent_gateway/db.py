@@ -102,6 +102,8 @@ create table if not exists team_runs (
     workspace_root text not null,
     summary text,
     error_message text,
+    team_id text,
+    rules_snapshot_json text,
     created_at text not null,
     started_at text,
     finished_at text,
@@ -175,6 +177,26 @@ create table if not exists session_activity_events (
 
 create index if not exists idx_session_activity_events_session_seq
 on session_activity_events(session_id, event_seq);
+
+create table if not exists teams (
+    id text primary key,
+    name text not null,
+    description text not null default '',
+    leader_persona_id text not null,
+    member_persona_ids_json text not null default '[]',
+    created_at text not null,
+    updated_at text not null
+);
+
+create table if not exists rule_sets (
+    id text primary key,
+    scope text not null,
+    team_id text,
+    personality text not null default '',
+    rules_json text not null default '[]',
+    updated_at text not null,
+    unique(scope, team_id)
+);
 """
 
 
@@ -255,3 +277,10 @@ def _migrate(connection: sqlite3.Connection) -> None:
         connection.execute(
             "alter table team_agents add column upstream_session_id text"
         )
+    team_run_columns_v2 = {
+        row["name"] for row in connection.execute("pragma table_info(team_runs)")
+    }
+    if "team_id" not in team_run_columns_v2:
+        connection.execute("alter table team_runs add column team_id text")
+    if "rules_snapshot_json" not in team_run_columns_v2:
+        connection.execute("alter table team_runs add column rules_snapshot_json text")
