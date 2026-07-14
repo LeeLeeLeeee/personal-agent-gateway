@@ -46,6 +46,8 @@ class TeamRun:
     started_at: str | None
     finished_at: str | None
     updated_at: str
+    team_id: str | None = None
+    rules_snapshot: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,8 @@ class TeamRunService:
         run_mode: RunMode,
         max_workers: int,
         rounds_budget: int = 8,
+        team_id: str | None = None,
+        rules_snapshot_json: str | None = None,
     ) -> TeamRun:
         team_run_id = uuid4().hex
         now = _now()
@@ -122,14 +126,14 @@ class TeamRunService:
             insert into team_runs (
                 id, goal, status, run_mode, leader_agent_id, max_workers,
                 rounds_budget, rounds_used, workspace_root, summary, error_message,
-                created_at, started_at, finished_at, updated_at
+                created_at, started_at, finished_at, updated_at, team_id, rules_snapshot_json
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 team_run_id, goal, "draft", run_mode, None, max_workers,
                 rounds_budget, 0, workspace_root, None, None,
-                now, None, None, now,
+                now, None, None, now, team_id, rules_snapshot_json,
             ),
         )
         leader_agent = self._create_agent(team_run_id, leader_persona_id, "leader")
@@ -140,6 +144,29 @@ class TeamRunService:
             (leader_agent.id, _now(), team_run_id),
         )
         return self.get_team_run(team_run_id)
+
+    def create_team_run_from_team(
+        self,
+        team_service,
+        rule_set_service,
+        team_id: str,
+        goal: str,
+        run_mode: RunMode,
+        max_workers: int,
+        rounds_budget: int = 8,
+    ) -> TeamRun:
+        team = team_service.get_team(team_id)
+        snapshot = rule_set_service.snapshot_for_team(team_id)
+        return self.create_team_run(
+            goal=goal,
+            leader_persona_id=team.leader_persona_id,
+            member_persona_ids=list(team.member_persona_ids),
+            run_mode=run_mode,
+            max_workers=max_workers,
+            rounds_budget=rounds_budget,
+            team_id=team_id,
+            rules_snapshot_json=json.dumps(snapshot, ensure_ascii=False),
+        )
 
     def get_team_run(self, team_run_id: str) -> TeamRun:
         row = self._db.fetchone("select * from team_runs where id = ?", (team_run_id,))
@@ -594,6 +621,12 @@ def _team_run_from_row(row: object) -> TeamRun:
         started_at=row["started_at"],
         finished_at=row["finished_at"],
         updated_at=row["updated_at"],
+        team_id=row["team_id"] if "team_id" in row.keys() else None,
+        rules_snapshot=(
+            json.loads(row["rules_snapshot_json"])
+            if "rules_snapshot_json" in row.keys() and row["rules_snapshot_json"]
+            else None
+        ),
     )
 
 

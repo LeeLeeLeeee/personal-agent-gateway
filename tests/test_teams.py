@@ -324,3 +324,44 @@ def test_retry_failed_task_rejects_nonfailed_task_and_nonterminal_run(tmp_path):
     teams.set_run_status(run.id, "failed", error_message="all failed")
     with pytest.raises(ValueError, match="Only failed tasks"):
         teams.retry_failed_task(run.id, task.id)
+
+
+from personal_agent_gateway.rule_sets import RuleSetService
+from personal_agent_gateway.team_directory import TeamService
+
+
+def test_create_team_run_from_team_snapshots_roster_and_rules(tmp_path):
+    (tmp_path / "workspace").mkdir()
+    personas, teams = make_services(tmp_path)
+    from personal_agent_gateway.db import Database  # already imported at top; keep local clarity
+    # reuse same db as make_services by rebuilding services on that db:
+    db = Database(tmp_path / "app.db")
+    directory = TeamService(db, personas)
+    rules = RuleSetService(db)
+    rules.seed_defaults()
+    lead = personas.create_persona("Lead", "lead", "d", ["plan"], ["scoped"])
+    member = personas.create_persona("QA", "qa", "d", ["test"], ["evidence"])
+    rules.upsert("team", None, "", [])  # noop guard
+    team = directory.create_team("Release Crew", "ships", lead.id, [member.id])
+    rules.upsert("team", team.id, "team voice", [{"level": "REQUIRED", "text": "green regression"}])
+
+    run = teams.create_team_run_from_team(
+        directory, rules, team_id=team.id, goal="ship pdf",
+        run_mode="plan_and_execute", max_workers=2,
+    )
+
+    assert run.team_id == team.id
+    assert run.rules_snapshot["team"]["personality"] == "team voice"
+    assert run.rules_snapshot["global"]["rules"]
+    agents = teams.list_agents(run.id)
+    assert [a.role for a in agents] == ["leader", "member"]
+    assert agents[0].persona_snapshot["name"] == "Lead"
+
+
+def test_legacy_create_team_run_has_no_team_or_rules(tmp_path):
+    (tmp_path / "workspace").mkdir()
+    personas, teams = make_services(tmp_path)
+    lead = personas.create_persona("Lead", "lead", "d", [], [])
+    run = teams.create_team_run("legacy", lead.id, [], "planning_only", 1)
+    assert run.team_id is None
+    assert run.rules_snapshot is None
