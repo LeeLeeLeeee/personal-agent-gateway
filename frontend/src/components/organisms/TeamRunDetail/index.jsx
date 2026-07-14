@@ -387,17 +387,17 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
               const sender = findAgent(agents, message.sender_agent_id);
               const avatar = sender?.persona_snapshot?.avatar;
               return (
-                <article className="team-report-card" key={message.id}>
-                  <div className="team-report-head">
+                <article className="team-agent-report" key={message.id}>
+                  <div className="team-agent-report-head">
                     {avatar ? (
-                      <img className="team-report-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
+                      <img className="team-agent-report-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
                     ) : (
-                      <span className="team-report-avatar team-doc-avatar-initials mono">{initials(sender?.name)}</span>
+                      <span className="team-agent-report-avatar team-doc-avatar-initials mono">{initials(sender?.name)}</span>
                     )}
-                    <span className="mono team-report-owner">{sender ? sender.name : "Agent"}</span>
-                    <span className="team-report-time mono">{fmtDateTime(message.created_at)}</span>
+                    <span className="mono team-agent-report-owner">{sender ? sender.name : "Agent"}</span>
+                    <span className="team-agent-report-time mono">{fmtDateTime(message.created_at)}</span>
                   </div>
-                  <p className="team-report-body">{message.content}</p>
+                  <p className="team-agent-report-body">{message.content}</p>
                 </article>
               );
             }) : <div className="team-task-empty mono">No agent reports yet.</div>}
