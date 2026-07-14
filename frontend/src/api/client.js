@@ -251,5 +251,53 @@ export const api = {
       jsonList(await fetch(`/api/team-runs/${encodeURIComponent(id)}/messages`), "messages")
     ]);
     return { run: run?.team_run || null, agents, tasks, messages };
+  },
+  async teams() {
+    return jsonList(await fetch("/api/teams"), "teams");
+  },
+  async createTeam(payload) {
+    const body = await jsonOrNull(await fetch("/api/teams", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+    return body?.team || null;
+  },
+  async updateTeam(id, payload) {
+    const body = await jsonOrNull(await fetch(`/api/teams/${encodeURIComponent(id)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+    return body?.team || null;
+  },
+  async deleteTeam(id) {
+    const response = await fetch(`/api/teams/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return response.ok;
+  },
+  async rules() {
+    return jsonOrNull(await fetch("/api/rules"));
+  },
+  async updateGlobalRules(payload) {
+    const body = await jsonOrNull(await fetch("/api/rules/global", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+    return body?.rule_set || null;
+  },
+  async updatePersonaBaselineRules(payload) {
+    const body = await jsonOrNull(await fetch("/api/rules/persona-baseline", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+    return body?.rule_set || null;
+  },
+  async updateTeamRules(teamId, payload) {
+    const body = await jsonOrNull(await fetch(`/api/teams/${encodeURIComponent(teamId)}/rules`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+    return body?.rule_set || null;
+  },
+  async teamDocuments(runId) {
+    return jsonList(await fetch(`/api/team-runs/${encodeURIComponent(runId)}/documents`), "documents");
+  },
+  async teamDocumentContent(runId, path) {
+    return jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(runId)}/documents/content?path=${encodeURIComponent(path)}`
+    ));
   }
 };

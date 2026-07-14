@@ -164,4 +164,70 @@ describe("api client", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/sessions/sess%201/interrupt", { method: "POST" });
     expect(result).toEqual({ interrupting: true });
   });
+
+  it("teams() returns the teams array", async () => {
+    fetch.mockResolvedValueOnce(jsonResponse({ teams: [{ id: "t1", name: "Release Crew" }] }));
+    await expect(api.teams()).resolves.toEqual([{ id: "t1", name: "Release Crew" }]);
+    expect(fetch).toHaveBeenCalledWith("/api/teams");
+  });
+
+  it("creates, updates, and deletes a team", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ team: { id: "t1", name: "Release Crew" } }))
+      .mockResolvedValueOnce(jsonResponse({ team: { id: "t1", name: "Renamed" } }))
+      .mockResolvedValueOnce({ ok: true });
+
+    await expect(api.createTeam({ name: "Release Crew" })).resolves.toEqual({ id: "t1", name: "Release Crew" });
+    await expect(api.updateTeam("t1", { name: "Renamed" })).resolves.toEqual({ id: "t1", name: "Renamed" });
+    await expect(api.deleteTeam("t1")).resolves.toBe(true);
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/teams", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ name: "Release Crew" })
+    }));
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/teams/t1", expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ name: "Renamed" })
+    }));
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/teams/t1", { method: "DELETE" });
+  });
+
+  it("reads and updates global, persona-baseline, and team rule sets", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ global: { rules: [] }, persona_baseline: { rules: [] } }))
+      .mockResolvedValueOnce(jsonResponse({ rule_set: { rules: ["global-1"] } }))
+      .mockResolvedValueOnce(jsonResponse({ rule_set: { rules: ["baseline-1"] } }))
+      .mockResolvedValueOnce(jsonResponse({ rule_set: { rules: ["team-1"] } }));
+
+    await expect(api.rules()).resolves.toEqual({ global: { rules: [] }, persona_baseline: { rules: [] } });
+    await expect(api.updateGlobalRules({ rules: ["global-1"] })).resolves.toEqual({ rules: ["global-1"] });
+    await expect(api.updatePersonaBaselineRules({ rules: ["baseline-1"] })).resolves.toEqual({ rules: ["baseline-1"] });
+    await expect(api.updateTeamRules("t1", { rules: ["team-1"] })).resolves.toEqual({ rules: ["team-1"] });
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/rules");
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/rules/global", expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ rules: ["global-1"] })
+    }));
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/rules/persona-baseline", expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ rules: ["baseline-1"] })
+    }));
+    expect(fetch).toHaveBeenNthCalledWith(4, "/api/teams/t1/rules", expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ rules: ["team-1"] })
+    }));
+  });
+
+  it("teamDocuments() returns the documents array and teamDocumentContent() fetches by path", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ documents: [{ path: "notes.md", kind: "md", previewable: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ path: "notes.md", content: "# Notes" }));
+
+    await expect(api.teamDocuments("run-1")).resolves.toEqual([{ path: "notes.md", kind: "md", previewable: true }]);
+    await expect(api.teamDocumentContent("run-1", "notes.md")).resolves.toEqual({ path: "notes.md", content: "# Notes" });
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/team-runs/run-1/documents");
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/team-runs/run-1/documents/content?path=notes.md");
+  });
 });
