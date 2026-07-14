@@ -1074,6 +1074,58 @@ describe("GatewayApp", () => {
     expect(screen.getByRole("button", { name: /start team run/i })).toBeInTheDocument();
   });
 
+  it("filters the team-run list by status using the STATUS chips", async () => {
+    const runs = [
+      { id: "run-running", goal: "Running goal", status: "running", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 0, task_total: 1, elapsed_seconds: 10, team_id: "t1" },
+      { id: "run-planning", goal: "Planning goal", status: "planning", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 0, task_total: 1, elapsed_seconds: 10, team_id: "t1" },
+      { id: "run-completed", goal: "Completed goal", status: "completed", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 1, task_total: 1, elapsed_seconds: 10, team_id: "t1" },
+      { id: "run-completed-failures", goal: "Completed with failures goal", status: "completed_with_failures", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 1, task_total: 2, elapsed_seconds: 10, team_id: "t1" },
+      { id: "run-failed", goal: "Failed goal", status: "failed", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 0, task_total: 1, elapsed_seconds: 10, team_id: "t1" }
+    ];
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": { team_runs: runs }
+    });
+
+    render(<GatewayApp />);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await screen.findByText("Running goal");
+
+    await userEvent.click(screen.getByRole("button", { name: "Running" }));
+    expect(screen.getByText("Running goal")).toBeInTheDocument();
+    expect(screen.getByText("Planning goal")).toBeInTheDocument();
+    expect(screen.queryByText("Completed goal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Completed with failures goal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Failed goal")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Completed" }));
+    expect(screen.getByText("Completed goal")).toBeInTheDocument();
+    expect(screen.getByText("Completed with failures goal")).toBeInTheDocument();
+    expect(screen.queryByText("Running goal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Planning goal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Failed goal")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Failed" }));
+    expect(screen.getByText("Failed goal")).toBeInTheDocument();
+    expect(screen.queryByText("Running goal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Planning goal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Completed goal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Completed with failures goal")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByText("Running goal")).toBeInTheDocument();
+    expect(screen.getByText("Planning goal")).toBeInTheDocument();
+    expect(screen.getByText("Completed goal")).toBeInTheDocument();
+    expect(screen.getByText("Completed with failures goal")).toBeInTheDocument();
+    expect(screen.getByText("Failed goal")).toBeInTheDocument();
+  });
+
   it("clears the selected team run detail when navigating away from the teams screen", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
