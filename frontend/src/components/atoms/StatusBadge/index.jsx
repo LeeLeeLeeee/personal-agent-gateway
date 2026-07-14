@@ -11,6 +11,7 @@ const LABELS = {
   planning: "PLANNING",
   summarizing: "SUMMARIZING",
   canceled: "CANCELED",
+  interrupted: "INTERRUPTED",
   pending: "PENDING",
   waiting: "WAITING",
   waiting_approval: "WAITING",

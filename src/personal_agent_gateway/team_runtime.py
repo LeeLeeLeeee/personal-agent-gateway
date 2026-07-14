@@ -255,13 +255,18 @@ class TeamRuntime:
 
     async def resume(self, team_run_id: str) -> TeamRun:
         run = self._teams.get_team_run(team_run_id)
+        if not self._teams.list_tasks(run.id):
+            return await self.start(team_run_id)
         leader: TeamAgent | None = None
         try:
             leader = _find_leader(self._teams.list_agents(run.id))
             run = self._teams.set_run_status(run.id, "running")
             leader = self._teams.set_agent_status(leader.id, "running")
             await self._publish({"type": "team.run.reopened", "team_run_id": run.id})
-            workers = _find_workers(self._teams.list_agents(run.id))
+            workers = sorted(
+                _find_workers(self._teams.list_agents(run.id)),
+                key=lambda agent: agent.status != "pending",
+            )
             if not workers:
                 error = "resume has no worker agents"
                 run = self._teams.set_run_status(run.id, "failed", error_message=error)

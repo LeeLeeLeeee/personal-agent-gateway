@@ -51,4 +51,11 @@ describe("StatusBadge", () => {
     render(<StatusBadge kind="completed_with_failures" />);
     expect(screen.getByText("COMPLETED*")).toBeInTheDocument();
   });
+
+  it("renders interrupted as a non-live warning status", () => {
+    const { container } = render(<StatusBadge kind="interrupted" />);
+    expect(screen.getByText("INTERRUPTED")).toBeInTheDocument();
+    expect(container.querySelector(".badge-interrupted")).not.toBeNull();
+    expect(container.querySelector(".dot")).toBeNull();
+  });
 });

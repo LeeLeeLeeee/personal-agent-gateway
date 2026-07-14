@@ -219,6 +219,16 @@ export const api = {
     const body = await jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/start`, { method: "POST" }));
     return body?.team_run || null;
   },
+  async resumeTeamRun(id) {
+    const body = await jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/resume`, { method: "POST" }));
+    return body?.team_run || null;
+  },
+  async retryTeamTask(runId, taskId) {
+    const path = "/api/team-runs/" + encodeURIComponent(runId)
+      + "/tasks/" + encodeURIComponent(taskId) + "/retry";
+    const body = await jsonOrNull(await fetch(path, { method: "POST" }));
+    return body?.team_run && body?.task ? { run: body.team_run, task: body.task } : null;
+  },
   async addWork(id, instruction) {
     return jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/add-work`, {
       method: "POST",

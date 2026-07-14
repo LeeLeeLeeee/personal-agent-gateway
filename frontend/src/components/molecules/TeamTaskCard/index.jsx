@@ -13,12 +13,17 @@ function note(task) {
   return null;
 }
 
-export function TeamTaskCard({ task, owner }) {
+export function TeamTaskCard({ task, owner, documentCount = 0, onOpen }) {
   const avatar = owner?.persona_snapshot?.avatar;
   const noteText = note(task);
 
   return (
-    <article className="team-task-card">
+    <button
+      type="button"
+      className="team-task-card"
+      aria-label={`Open task ${task.title}`}
+      onClick={onOpen}
+    >
       <div className="team-task-title">{task.title}</div>
       <div className="team-task-meta">
         {avatar ? (
@@ -31,7 +36,10 @@ export function TeamTaskCard({ task, owner }) {
             {noteText}
           </span>
         ) : null}
+        <span className={`team-task-doc-count mono${documentCount ? " has-documents" : ""}`}>
+          DOCS {documentCount}
+        </span>
       </div>
-    </article>
+    </button>
   );
 }

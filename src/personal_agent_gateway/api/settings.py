@@ -27,6 +27,7 @@ def _settings_payload(config: AppConfig, request: Request) -> dict[str, object]:
         "codex_sandbox": config.codex_sandbox,
         "codex_approval_policy": config.codex_approval_policy,
         "codex_timeout_seconds": config.codex_timeout_seconds,
+        "codex_idle_timeout_seconds": config.codex_idle_timeout_seconds,
         "ffmpeg_binary": config.ffmpeg_binary,
         "ffprobe_binary": config.ffprobe_binary,
         "capture_binary": config.capture_binary,

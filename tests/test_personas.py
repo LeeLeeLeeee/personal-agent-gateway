@@ -19,11 +19,13 @@ def test_create_and_list_personas(tmp_path):
         constraints=["Do not change backend APIs unless assigned"],
         default_backend="codex",
         default_model="default",
+        default_options={"effort": "high", "sandbox": "workspace-write"},
     )
 
     assert persona.id
     assert persona.name == "Frontend Designer"
     assert persona.responsibilities == ["Review layout", "Check responsive behavior"]
+    assert persona.default_options == {"effort": "high", "sandbox": "workspace-write"}
     assert [item.name for item in service.list_personas()] == ["Frontend Designer"]
 
 
@@ -96,3 +98,24 @@ def test_update_persona_sets_and_preserves_avatar(tmp_path):
     again = service.update_persona(persona.id, name="Y")
     assert again.name == "Y"
     assert again.avatar == "wolf"
+
+
+def test_update_persona_sets_and_preserves_default_options(tmp_path):
+    service = make_service(tmp_path)
+    persona = service.create_persona(
+        name="X",
+        role="r",
+        description="d",
+        responsibilities=[],
+        constraints=[],
+        default_options={"effort": "high"},
+    )
+
+    updated = service.update_persona(
+        persona.id,
+        default_options={"effort": "xhigh", "approval_policy": "never"},
+    )
+    assert updated.default_options == {"approval_policy": "never", "effort": "xhigh"}
+
+    again = service.update_persona(persona.id, name="Y")
+    assert again.default_options == updated.default_options

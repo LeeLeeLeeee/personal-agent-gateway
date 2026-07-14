@@ -58,6 +58,7 @@ def test_personas_table_has_avatar_column(tmp_path: Path) -> None:
     db.initialize()
 
     assert "avatar" in _columns(db, "personas")
+    assert "default_options_json" in _columns(db, "personas")
 
 
 def test_initialize_migrates_avatar_onto_legacy_personas(tmp_path: Path) -> None:
@@ -72,6 +73,10 @@ def test_initialize_migrates_avatar_onto_legacy_personas(tmp_path: Path) -> None
         "constraints_json text not null, default_backend text not null, "
         "default_model text not null, created_at text not null, updated_at text not null)"
     )
+    conn.execute(
+        "insert into personas values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("p1", "Legacy", "role", "description", "[]", "[]", "codex", "default", "t", "t"),
+    )
     conn.commit()
     conn.close()
 
@@ -81,3 +86,7 @@ def test_initialize_migrates_avatar_onto_legacy_personas(tmp_path: Path) -> None
     db.initialize()
 
     assert "avatar" in _columns(db, "personas")
+    assert "default_options_json" in _columns(db, "personas")
+    row = db.fetchone("select default_options_json from personas where id = 'p1'")
+    assert row is not None
+    assert row["default_options_json"] == "{}"

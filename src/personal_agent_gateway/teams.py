@@ -1,4 +1,5 @@
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,12 +19,13 @@ TeamRunStatus = Literal[
     "completed_with_failures",
     "failed",
     "canceled",
+    "interrupted",
 ]
 RunMode = Literal["planning_only", "plan_and_execute", "review_only"]
 AgentStatus = Literal["pending", "running", "waiting", "completed", "failed", "canceled"]
 TaskStatus = Literal["pending", "in_progress", "blocked", "completed", "failed", "canceled"]
 
-_ACTIVE_RUN_STATUSES = {"planning", "running"}
+_ACTIVE_RUN_STATUSES = {"planning", "running", "summarizing"}
 _TERMINAL_RUN_STATUSES = {"completed", "completed_with_failures", "failed", "canceled"}
 
 
@@ -112,7 +114,9 @@ class TeamRunService:
     ) -> TeamRun:
         team_run_id = uuid4().hex
         now = _now()
-        workspace_root = str(self._workspace_root / team_run_id)
+        workspace_root_path = self._workspace_root / team_run_id
+        workspace_root_path.mkdir(parents=True)
+        workspace_root = str(workspace_root_path)
         self._db.execute(
             """
             insert into team_runs (
@@ -144,7 +148,13 @@ class TeamRunService:
         return _team_run_from_row(row)
 
     def delete_team_run(self, team_run_id: str) -> None:
-        self.get_team_run(team_run_id)
+        run = self.get_team_run(team_run_id)
+        workspace_root = Path(run.workspace_root).resolve()
+        expected_workspace_root = (self._workspace_root.resolve() / team_run_id).resolve()
+        if workspace_root != expected_workspace_root:
+            raise ValueError("Team workspace is outside the configured workspace root")
+        if workspace_root.exists():
+            shutil.rmtree(workspace_root)
         # team_agents / team_tasks / team_messages cascade via foreign keys
         self._db.execute("delete from team_runs where id = ?", (team_run_id,))
 
@@ -153,6 +163,90 @@ class TeamRunService:
             _team_run_from_row(row)
             for row in self._db.fetchall("select * from team_runs order by created_at desc")
         ]
+
+    def interrupt_active_runs(self) -> list[TeamRun]:
+        run_ids = [
+            row["id"]
+            for row in self._db.fetchall(
+                "select id from team_runs where status in ('planning', 'running', 'summarizing')"
+            )
+        ]
+        return [self.interrupt_run(team_run_id) for team_run_id in run_ids]
+
+    def interrupt_run(self, team_run_id: str, include_canceled: bool = False) -> TeamRun:
+        now = _now()
+        with self._db.connect() as connection:
+            run = connection.execute(
+                "select status from team_runs where id = ?", (team_run_id,)
+            ).fetchone()
+            if run is None:
+                raise KeyError(f"Team run not found: {team_run_id}")
+            allowed = set(_ACTIVE_RUN_STATUSES)
+            if include_canceled:
+                allowed.add("canceled")
+            if run["status"] not in allowed:
+                return self.get_team_run(team_run_id)
+
+            task_statuses = ("in_progress", "canceled") if include_canceled else ("in_progress",)
+            placeholders = ", ".join("?" for _ in task_statuses)
+            task_rows = connection.execute(
+                f"select id from team_tasks where team_run_id = ? and status in ({placeholders})",
+                (team_run_id, *task_statuses),
+            ).fetchall()
+            requeued_task_ids = [row["id"] for row in task_rows]
+            connection.execute(
+                f"""
+                update team_tasks
+                set status = 'pending', result = null, error_message = null,
+                    started_at = null, finished_at = null, updated_at = ?
+                where team_run_id = ? and status in ({placeholders})
+                """,
+                (now, team_run_id, *task_statuses),
+            )
+
+            agent_statuses = ("running", "canceled") if include_canceled else ("running",)
+            agent_placeholders = ", ".join("?" for _ in agent_statuses)
+            connection.execute(
+                f"""
+                update team_agents
+                set status = 'pending', current_task_id = null,
+                    finished_at = null, updated_at = ?
+                where team_run_id = ? and status in ({agent_placeholders})
+                """,
+                (now, team_run_id, *agent_statuses),
+            )
+            connection.execute(
+                """
+                update team_runs
+                set status = 'interrupted', error_message = null,
+                    finished_at = null, updated_at = ?
+                where id = ?
+                """,
+                (now, team_run_id),
+            )
+            connection.execute(
+                """
+                insert into team_messages (
+                    id, team_run_id, sender_agent_id, recipient_agent_id,
+                    kind, content, metadata_json, created_at
+                ) values (?, ?, null, null, ?, ?, ?, ?)
+                """,
+                (
+                    uuid4().hex,
+                    team_run_id,
+                    "system_interrupted",
+                    "Gateway execution stopped. Resume is required.",
+                    json.dumps(
+                        {
+                            "previous_status": run["status"],
+                            "requeued_task_ids": requeued_task_ids,
+                        },
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
+            )
+        return self.get_team_run(team_run_id)
 
     def list_agents(self, team_run_id: str) -> list[TeamAgent]:
         self.get_team_run(team_run_id)
@@ -252,6 +346,66 @@ class TeamRunService:
                 (team_run_id,),
             )
         ]
+
+    def retry_failed_task(self, team_run_id: str, task_id: str) -> tuple[TeamRun, TeamTask]:
+        now = _now()
+        with self._db.connect() as connection:
+            run = connection.execute(
+                "select status from team_runs where id = ?", (team_run_id,)
+            ).fetchone()
+            if run is None:
+                raise KeyError(f"Team run not found: {team_run_id}")
+            if run["status"] not in {"completed_with_failures", "failed"}:
+                raise ValueError("Only failed terminal team runs can retry tasks")
+
+            task = connection.execute(
+                "select status, error_message from team_tasks where id = ? and team_run_id = ?",
+                (task_id, team_run_id),
+            ).fetchone()
+            if task is None:
+                raise KeyError(f"Team task not found: {task_id}")
+            if task["status"] != "failed":
+                raise ValueError("Only failed tasks can be retried")
+
+            connection.execute(
+                """
+                update team_tasks
+                set status = 'pending', result = null, error_message = null,
+                    started_at = null, finished_at = null, updated_at = ?
+                where id = ?
+                """,
+                (now, task_id),
+            )
+            connection.execute(
+                """
+                update team_runs
+                set status = 'interrupted', summary = null, error_message = null,
+                    finished_at = null, updated_at = ?
+                where id = ?
+                """,
+                (now, team_run_id),
+            )
+            connection.execute(
+                """
+                insert into team_messages (
+                    id, team_run_id, sender_agent_id, recipient_agent_id,
+                    kind, content, metadata_json, created_at
+                ) values (?, ?, null, null, ?, ?, ?, ?)
+                """,
+                (
+                    uuid4().hex,
+                    team_run_id,
+                    "system_task_retried",
+                    "Failed task queued for retry. Resume is required.",
+                    json.dumps(
+                        {"task_id": task_id, "previous_error": task["error_message"]},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
+            )
+        return self.get_team_run(team_run_id), self._get_task(task_id)
 
     def set_task_status(
         self,
@@ -418,6 +572,7 @@ def _persona_snapshot(persona: Persona) -> dict[str, object]:
         "constraints": persona.constraints,
         "default_backend": persona.default_backend,
         "default_model": persona.default_model,
+        "default_options": persona.default_options,
         "avatar": persona.avatar,
     }
 

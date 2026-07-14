@@ -1,4 +1,4 @@
-import { fmtElapsed, fmtTime, nowHM, nowHMS } from "./time.js";
+import { fmtDateTime, fmtElapsed, nowDateTime } from "./time.js";
 
 function legacyAgentKeySuffix(text) {
   const source = typeof text === "string" && text ? text : "empty";
@@ -57,7 +57,7 @@ export function timelineFromHistory(events) {
   });
   sortedEvents.forEach((event, index) => {
     const payload = event.payload || {};
-    const time = fmtTime(event.created_at, false);
+    const time = fmtDateTime(event.created_at);
     const createdAtMs = parseCreatedAtMs(event.created_at);
     if (event.kind === "user" && typeof payload.content === "string") {
       out.push({ type: "user", text: payload.content, time, order: index, createdAtMs, historyOrder: index, source: "history" });
@@ -71,7 +71,7 @@ export function timelineFromHistory(events) {
         status: payload.exit_code === 0 ? "completed" : "failed",
         exit: payload.exit_code,
         lines: linesFrom(`${payload.stdout || ""}${payload.stderr || ""}`),
-        time: fmtTime(event.created_at, true),
+        time: fmtDateTime(event.created_at),
         duration: "",
         order: index,
         createdAtMs,
@@ -84,7 +84,7 @@ export function timelineFromHistory(events) {
         label: "tool_denial",
         detail: payload.command,
         dotColor: "#FF0000",
-        time: fmtTime(event.created_at, true),
+        time: fmtDateTime(event.created_at),
         order: index,
         createdAtMs,
         historyOrder: index,
@@ -94,7 +94,7 @@ export function timelineFromHistory(events) {
       out.push({
         type: "runtime_error",
         message: payload.message,
-        time: fmtTime(event.created_at, true),
+        time: fmtDateTime(event.created_at),
         order: index,
         createdAtMs,
         historyOrder: index,
@@ -121,7 +121,7 @@ export function entryFromSse(event) {
         status,
         exit: item.exit_code,
         lines: linesFrom(item.aggregated_output || ""),
-        time: nowHMS(),
+        time: nowDateTime(),
         duration: done ? "" : "live",
         serverOrder: event.event_seq,
         createdAtMs
@@ -133,7 +133,7 @@ export function entryFromSse(event) {
         type: "agent",
         key: `agent:${event.session_id || "legacy"}:${agentId}`,
         text: item.text || "",
-        time: fmtTime(event.created_at, false) || nowHM(),
+        time: fmtDateTime(event.created_at) || nowDateTime(),
         streaming: false,
         serverOrder: event.event_seq,
         createdAtMs
@@ -144,7 +144,7 @@ export function entryFromSse(event) {
         type: "reasoning",
         key: `reasoning:${event.session_id || "legacy"}:${item.id || event.event_seq || ""}`,
         text: item.text || "",
-        time: fmtTime(event.created_at, true) || nowHMS(),
+        time: fmtDateTime(event.created_at) || nowDateTime(),
         serverOrder: event.event_seq,
         createdAtMs
       };
@@ -158,7 +158,7 @@ export function entryFromSse(event) {
       label: "runtime.user_message.started",
       detail: "message accepted",
       dotColor: "#000",
-      time: fmtTime(event.created_at, true) || nowHMS(),
+      time: fmtDateTime(event.created_at) || nowDateTime(),
       serverOrder: event.event_seq,
       createdAtMs
     };
@@ -170,7 +170,7 @@ export function entryFromSse(event) {
       label: "runtime.completed",
       detail: "session finished",
       dotColor: "#008000",
-      time: fmtTime(event.created_at, true) || nowHMS(),
+      time: fmtDateTime(event.created_at) || nowDateTime(),
       serverOrder: event.event_seq,
       createdAtMs
     };
@@ -182,7 +182,7 @@ export function entryFromSse(event) {
       label: "runtime.interrupted",
       detail: "interrupted by user",
       dotColor: "#FFA500",
-      time: fmtTime(event.created_at, true) || nowHMS(),
+      time: fmtDateTime(event.created_at) || nowDateTime(),
       serverOrder: event.event_seq,
       createdAtMs
     };
@@ -192,7 +192,7 @@ export function entryFromSse(event) {
       type: "runtime_error",
       key: `event:${event.event_seq || event.id || event.type}`,
       message: typeof payload.message === "string" ? payload.message : (typeof event.message === "string" ? event.message : "runtime error"),
-      time: fmtTime(event.created_at, true) || nowHMS(),
+      time: fmtDateTime(event.created_at) || nowDateTime(),
       serverOrder: event.event_seq,
       createdAtMs
     };

@@ -73,8 +73,8 @@ async def start_team_run(request: Request, team_run_id: str, _session: None = se
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     if registry.is_running(team_run_id) or run.status in _ACTIVE:
         raise HTTPException(status_code=409, detail="Team run already running")
-    if run.status in _TERMINAL:
-        raise HTTPException(status_code=409, detail="Team run already finished")
+    if run.status != "draft":
+        raise HTTPException(status_code=409, detail="Only draft team runs can be started")
 
     async def _run_and_finish() -> None:
         try:
@@ -85,6 +85,53 @@ async def start_team_run(request: Request, team_run_id: str, _session: None = se
     task = asyncio.create_task(_run_and_finish())
     registry.register(team_run_id, task)
     return {"team_run": _team_run_payload(run)}
+
+
+@router.post("/{team_run_id}/resume")
+async def resume_team_run(
+    request: Request, team_run_id: str, _session: None = session_dependency
+) -> dict[str, object]:
+    service = request.app.state.team_run_service
+    registry = request.app.state.team_run_registry
+    runtime = request.app.state.team_runtime
+    try:
+        run = service.get_team_run(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    if registry.is_running(team_run_id):
+        raise HTTPException(status_code=409, detail="Team run already running")
+    if run.status != "interrupted":
+        raise HTTPException(status_code=409, detail="Only interrupted team runs can be resumed")
+
+    async def _resume_and_finish() -> None:
+        try:
+            await runtime.resume(team_run_id)
+        finally:
+            registry.finish(team_run_id)
+
+    task = asyncio.create_task(_resume_and_finish())
+    registry.register(team_run_id, task)
+    return {"team_run": _team_run_payload(run)}
+
+
+@router.post("/{team_run_id}/tasks/{task_id}/retry")
+async def retry_team_task(
+    request: Request, team_run_id: str, task_id: str, _session: None = session_dependency
+) -> dict[str, object]:
+    service = request.app.state.team_run_service
+    registry = request.app.state.team_run_registry
+    if registry.is_running(team_run_id):
+        raise HTTPException(status_code=409, detail="Team run already running")
+    try:
+        run, task = service.retry_failed_task(team_run_id, task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run or task not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await request.app.state.event_bus.publish(
+        {"type": "team.task.updated", "team_run_id": team_run_id, "task_id": task_id}
+    )
+    return {"team_run": _team_run_payload(run), "task": _task_payload(task)}
 
 
 @router.post("/{team_run_id}/add-work")
@@ -102,6 +149,8 @@ async def add_work(
         raise HTTPException(status_code=409, detail="Additional work is only supported for plan_and_execute runs")
     if run.status == "draft":
         raise HTTPException(status_code=409, detail="Start the run before adding work")
+    if run.status == "interrupted":
+        raise HTTPException(status_code=409, detail="Resume the run before adding work")
 
     await runtime.add_work(team_run_id, payload.instruction)
 
@@ -136,10 +185,18 @@ def cancel_team_run(request: Request, team_run_id: str, _session: None = session
 
 @router.delete("/{team_run_id}")
 def delete_team_run(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, object]:
+    service = request.app.state.team_run_service
+    registry = request.app.state.team_run_registry
     try:
-        request.app.state.team_run_service.delete_team_run(team_run_id)
+        run = service.get_team_run(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
+    if registry.is_running(team_run_id) or run.status in _ACTIVE:
+        raise HTTPException(status_code=409, detail="Running team runs cannot be deleted")
+    try:
+        service.delete_team_run(team_run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"deleted": True}
 
 

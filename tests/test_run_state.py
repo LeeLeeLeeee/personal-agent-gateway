@@ -125,3 +125,19 @@ async def test_register_cancel_finish():
     registry.finish("run-1")
     assert registry.is_running("run-1") is False
     assert registry.cancel("run-1") is False
+
+
+async def test_cancel_all_records_shutdown_reason():
+    registry = TeamRunRegistry()
+
+    async def wait_forever():
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(wait_forever())
+    registry.register("run-1", task)
+
+    canceled = await registry.cancel_all(reason="shutdown")
+
+    assert canceled == ["run-1"]
+    assert task.cancelled() is True
+    assert registry.cancel_reason("run-1") == "shutdown"

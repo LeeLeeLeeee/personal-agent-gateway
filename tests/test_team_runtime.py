@@ -507,6 +507,68 @@ async def test_resume_runs_added_tasks_on_terminal_run(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_resume_restarts_planning_when_interrupted_before_tasks_exist(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [], "planning_only", 1)
+    teams.set_run_status(run.id, "planning")
+    teams.interrupt_active_runs()
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=lambda _agent: FakeModel('[{"title":"T1","description":"d1"}]'),
+    )
+
+    resumed = await runtime.resume(run.id)
+
+    assert resumed.status == "completed"
+    assert [task.title for task in teams.list_tasks(run.id)] == ["T1"]
+
+
+@pytest.mark.asyncio
+async def test_resume_prefers_worker_that_was_running_before_interruption(tmp_path):
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.personas import PersonaService
+    from personal_agent_gateway.teams import TeamRunService
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    finished_worker = personas.create_persona("W1", "planning", "d", [], [])
+    interrupted_worker = personas.create_persona("W2", "developer", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [finished_worker.id, interrupted_worker.id], "plan_and_execute", 2
+    )
+    leader_agent, first_worker, second_worker = teams.list_agents(run.id)
+    task = teams.create_task(run.id, "current", "d")
+    teams.set_agent_status(first_worker.id, "completed")
+    teams.set_agent_status(second_worker.id, "running")
+    teams.set_task_status(task.id, "in_progress")
+    teams.set_run_status(run.id, "running")
+    teams.interrupt_active_runs()
+    worker_calls = []
+
+    def factory(agent):
+        if agent.id == leader_agent.id:
+            return FakeModel("summary")
+        worker_calls.append(agent.name)
+        return FakeModel("done")
+
+    resumed = await TeamRuntime(teams=teams, model_factory=factory).resume(run.id)
+
+    assert resumed.status == "completed"
+    assert worker_calls[0] == "W2"
+
+
+@pytest.mark.asyncio
 async def test_add_work_creates_pending_tasks_from_instruction(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService

@@ -1,5 +1,9 @@
 import json
 import asyncio
+import os
+import signal
+import subprocess
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Awaitable, Callable
@@ -14,6 +18,12 @@ WIRE_TOOL_NAMES: dict[ToolName, str] = {
     "shell.run": "shell_run",
 }
 INTERNAL_TOOL_NAMES = {wire_name: tool_name for tool_name, wire_name in WIRE_TOOL_NAMES.items()}
+_PROCESS_EXIT_GRACE_SECONDS = 2.0
+_PROCESS_KILL_GRACE_SECONDS = 5.0
+
+
+class _CodexIdleTimeout(TimeoutError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -88,7 +98,8 @@ class CodexModelClient:
         sandbox: str = "workspace-write",
         approval_policy: str = "never",
         profile: str | None = None,
-        timeout_seconds: int = 600,
+        timeout_seconds: int = 3600,
+        idle_timeout_seconds: int = 600,
         on_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
         *,
         effort: str | None = None,
@@ -103,9 +114,11 @@ class CodexModelClient:
         self._profile = profile
         self._upstream_session_id = upstream_session_id
         self._timeout_seconds = timeout_seconds
+        self._idle_timeout_seconds = idle_timeout_seconds
         self._on_event = on_event
 
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
+        stdout_parts: list[str] = []
         try:
             process = await asyncio.create_subprocess_exec(
                 *self._command(),
@@ -113,28 +126,39 @@ class CodexModelClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self._workspace_root),
+                **_process_group_options(),
             )
         except FileNotFoundError as exc:
             raise RuntimeError(f"Codex binary not found: {self._binary}") from exc
 
         try:
             stdout_text, stderr_text = await asyncio.wait_for(
-                self._communicate_stream(process, _codex_prompt(messages).encode()),
+                self._communicate_stream(
+                    process,
+                    _codex_prompt(messages).encode(),
+                    stdout_parts,
+                ),
                 timeout=self._timeout_seconds,
             )
+        except _CodexIdleTimeout as exc:
+            stdout_text = "".join(stdout_parts)
+            final_message = _parse_codex_final_message(stdout_text)
+            await _terminate_process_tree(process)
+            if final_message is None:
+                raise RuntimeError("Codex execution idle timed out") from exc
+            stderr_text = ""
         except TimeoutError as exc:
-            process.kill()
-            await process.communicate()
-            raise RuntimeError("Codex execution timed out") from exc
+            stdout_text = "".join(stdout_parts)
+            final_message = _parse_codex_final_message(stdout_text)
+            await _terminate_process_tree(process)
+            if final_message is None:
+                raise RuntimeError("Codex execution timed out") from exc
+            stderr_text = ""
         except asyncio.CancelledError:
-            process.kill()
-            try:
-                await process.wait()
-            except ProcessLookupError:
-                pass
+            await _terminate_process_tree(process)
             raise
 
-        if process.returncode != 0:
+        if process.returncode != 0 and _parse_codex_final_message(stdout_text) is None:
             detail = _summarize_process_output(stderr_text, stdout_text)
             raise RuntimeError(f"Codex exited with status {process.returncode}: {detail}")
 
@@ -149,6 +173,7 @@ class CodexModelClient:
         self,
         process: asyncio.subprocess.Process,
         prompt: bytes,
+        stdout_parts: list[str],
     ) -> tuple[str, str]:
         if process.stdin is None or process.stdout is None or process.stderr is None:
             raise RuntimeError("Codex process pipes were not available")
@@ -158,10 +183,15 @@ class CodexModelClient:
         process.stdin.close()
 
         stderr_task = asyncio.create_task(process.stderr.read())
-        stdout_parts: list[str] = []
         try:
             while True:
-                line = await process.stdout.readline()
+                try:
+                    line = await asyncio.wait_for(
+                        process.stdout.readline(),
+                        timeout=self._idle_timeout_seconds,
+                    )
+                except TimeoutError as exc:
+                    raise _CodexIdleTimeout from exc
                 if not line:
                     break
                 text = line.decode(errors="replace")
@@ -169,9 +199,31 @@ class CodexModelClient:
                 event = _parse_json_line(text)
                 if event is not None and self._on_event is not None:
                     await self._on_event(event)
+                if (
+                    event is not None
+                    and _is_codex_terminal_event(event)
+                    and _parse_codex_final_message("".join(stdout_parts)) is not None
+                ):
+                    try:
+                        stderr = await asyncio.wait_for(
+                            stderr_task,
+                            timeout=_PROCESS_EXIT_GRACE_SECONDS,
+                        )
+                        await asyncio.wait_for(
+                            process.wait(),
+                            timeout=_PROCESS_EXIT_GRACE_SECONDS,
+                        )
+                    except TimeoutError:
+                        if not stderr_task.done():
+                            stderr_task.cancel()
+                        await _terminate_process_tree(process)
+                        stderr = b""
+                    return "".join(stdout_parts), stderr.decode(errors="replace")
         except BaseException:
             if not stderr_task.done():
                 stderr_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await stderr_task
             raise
 
         stderr = await stderr_task
@@ -256,6 +308,7 @@ class ClaudeModelClient:
                 cwd=str(self._workspace_root),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **_process_group_options(),
             )
         except FileNotFoundError as exc:
             raise RuntimeError(f"Claude binary not found: {self._binary}") from exc
@@ -263,15 +316,10 @@ class ClaudeModelClient:
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self._timeout_seconds)
         except TimeoutError as exc:
-            process.kill()
-            await process.communicate()
+            await _terminate_process_tree(process)
             raise RuntimeError("Claude execution timed out") from exc
         except asyncio.CancelledError:
-            process.kill()
-            try:
-                await process.wait()
-            except ProcessLookupError:
-                pass
+            await _terminate_process_tree(process)
             raise
 
         stdout_text = stdout.decode(errors="replace")
@@ -364,7 +412,7 @@ def _parse_claude_session_id(output: str) -> str | None:
     return None
 
 
-def _parse_codex_output(output: str) -> str:
+def _parse_codex_final_message(output: str) -> str | None:
     final_message = ""
     for line in output.splitlines():
         event = _parse_json_line(line)
@@ -379,7 +427,53 @@ def _parse_codex_output(output: str) -> str:
                 final_message = text
     if final_message:
         return final_message
+    return None
+
+
+def _parse_codex_output(output: str) -> str:
+    final_message = _parse_codex_final_message(output)
+    if final_message is not None:
+        return final_message
     return output
+
+
+def _is_codex_terminal_event(event: dict[str, object]) -> bool:
+    return event.get("type") in {"turn.completed", "task_complete"}
+
+
+def _process_group_options() -> dict[str, object]:
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+
+    pid = getattr(process, "pid", None)
+    try:
+        if os.name == "nt" and isinstance(pid, int):
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/PID",
+                str(pid),
+                "/T",
+                "/F",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(killer.wait(), timeout=_PROCESS_KILL_GRACE_SECONDS)
+        elif isinstance(pid, int):
+            os.killpg(pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except (FileNotFoundError, ProcessLookupError, TimeoutError):
+        with suppress(ProcessLookupError):
+            process.kill()
+
+    with suppress(ProcessLookupError, TimeoutError):
+        await asyncio.wait_for(process.wait(), timeout=_PROCESS_KILL_GRACE_SECONDS)
 
 
 def _parse_json_line(line: str) -> dict[str, object] | None:

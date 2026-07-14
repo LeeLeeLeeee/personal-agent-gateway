@@ -22,6 +22,6 @@ Project-local Atomic Design catalog for the Vite React frontend.
 
 ### TeamTaskCard
 - Path: `src/components/molecules/TeamTaskCard/`
-- Props: `{ task, owner? }`
-- Use when: Rendering a single team-run task card (title, owner avatar/initials, optional failed/blocked note) inside a task board column.
+- Props: `{ task, owner?, documentCount?, onOpen? }`
+- Use when: Rendering a clickable team-run task card (title, owner avatar/initials, linked-document count, optional failed/blocked note) inside a task board column.
 - Don't use when: Rendering the full task board layout or columns; use the `TeamRunDetail` organism.

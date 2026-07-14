@@ -2,6 +2,7 @@ import { useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { useConfirm } from "../../providers/UiProvider/index.jsx";
 import { buildCron, describeCron } from "../../../lib/cron.js";
+import { fmtDateTime } from "../../../lib/time.js";
 
 const MODES = [
   { value: "daily", label: "DAILY" },
@@ -12,14 +13,6 @@ const MODES = [
 const WEEKDAYS = [
   [0, "Sunday"], [1, "Monday"], [2, "Tuesday"], [3, "Wednesday"], [4, "Thursday"], [5, "Friday"], [6, "Saturday"]
 ];
-
-function fmtWhen(iso) {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (value) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 function ScheduleForm({ onCreate }) {
   const [name, setName] = useState("");
@@ -163,8 +156,8 @@ function ScheduleRow({ schedule, onPause, onResume, onDelete, onRunNow }) {
         <div className="schedule-row-meta">
           <span className="schedule-cron mono">{schedule.cron_expression}</span>
           <StatusBadge kind={schedule.enabled ? "enabled" : "paused"} />
-          <span className="mono schedule-row-when">NEXT · {fmtWhen(schedule.next_run_at) || "—"}</span>
-          <span className="mono schedule-row-when">LAST · {fmtWhen(schedule.last_run_at) || "never"}</span>
+          <span className="mono schedule-row-when">NEXT · {fmtDateTime(schedule.next_run_at) || "—"}</span>
+          <span className="mono schedule-row-when">LAST · {fmtDateTime(schedule.last_run_at) || "never"}</span>
         </div>
       </div>
       <div className="schedule-row-actions">

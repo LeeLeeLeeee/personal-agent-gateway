@@ -1,7 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { compareEntries, deriveLive, entryFromSse, timelineFromHistory, timelineFromSession } from "./timeline.js";
 
 describe("timeline model", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 14, 18, 0, 0));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("maps persisted transcript events to renderable timeline entries", () => {
     const timeline = timelineFromHistory([
       { kind: "user", created_at: "2026-07-08T01:02:03Z", payload: { content: "hello" } },
@@ -88,7 +97,7 @@ describe("timeline model", () => {
       key: "event:2",
       serverOrder: 2,
       label: "runtime.completed",
-      time: "10:00:03"
+      time: "09일 10시 00분 03초"
     }));
   });
 
@@ -172,7 +181,7 @@ describe("timeline model", () => {
       key: "event:7",
       serverOrder: 7,
       label: "runtime.completed",
-      time: "10:05:06"
+      time: "09일 10시 05분 06초"
     }));
 
     expect(entryFromSse({
@@ -186,7 +195,7 @@ describe("timeline model", () => {
       key: "event:8",
       serverOrder: 8,
       message: "normalized failure",
-      time: "10:05:07"
+      time: "09일 10시 05분 07초"
     }));
   });
 

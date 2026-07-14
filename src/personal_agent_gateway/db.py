@@ -84,6 +84,7 @@ create table if not exists personas (
     constraints_json text not null,
     default_backend text not null,
     default_model text not null,
+    default_options_json text not null default '{}',
     avatar text not null default '',
     created_at text not null,
     updated_at text not null
@@ -227,6 +228,10 @@ def _migrate(connection: sqlite3.Connection) -> None:
     if "avatar" not in persona_columns:
         connection.execute(
             "alter table personas add column avatar text not null default ''"
+        )
+    if "default_options_json" not in persona_columns:
+        connection.execute(
+            "alter table personas add column default_options_json text not null default '{}'"
         )
     team_run_columns = {
         row["name"] for row in connection.execute("pragma table_info(team_runs)")

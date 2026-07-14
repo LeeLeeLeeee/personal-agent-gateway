@@ -24,6 +24,7 @@ from personal_agent_gateway.api import (
     team_runs_router,
 )
 from personal_agent_gateway.artifacts import ArtifactStore
+from personal_agent_gateway.agents import AgentRegistry
 from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.capabilities import CapabilityRegistry
 from personal_agent_gateway.config import AppConfig, load_config
@@ -72,12 +73,20 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.state.run_registry = run_registry
     app.state.team_run_registry = team_run_registry
     runtime_factory = _attach_local_services(app, app_config, transcript, event_bus)
+    app.state.team_run_service.interrupt_active_runs()
     app.state.team_runtime = TeamRuntime(
         app.state.team_run_service,
         _team_model_factory(app_config),
         event_bus,
     )
     app.state.team_run_service.backfill_agent_avatars()
+
+    async def interrupt_team_runs_on_shutdown() -> None:
+        team_run_ids = await team_run_registry.cancel_all(reason="shutdown")
+        for team_run_id in team_run_ids:
+            app.state.team_run_service.interrupt_run(team_run_id, include_canceled=True)
+
+    app.router.add_event_handler("shutdown", interrupt_team_runs_on_shutdown)
     injected_runtime = runtime
     if injected_runtime is not None and hasattr(injected_runtime, "attach_event_bus"):
         injected_runtime.attach_event_bus(app.state.session_activity_publisher)
@@ -430,6 +439,7 @@ def _attach_local_services(
         },
     )
     app.state.app_config = config
+    app.state.agent_registry = AgentRegistry(config)
     app.state.auth_store = AuthStore(config.auth_dir)
     app.state.capability_registry = registry
     app.state.job_service = job_service
@@ -451,23 +461,35 @@ def main() -> None:
 def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], ModelClient]:
     def team_model_factory(agent: TeamAgent) -> ModelClient:
         session = agent.upstream_session_id or None
+        workspace_root = config.workspace_root / agent.team_run_id
+        workspace_root.mkdir(parents=True, exist_ok=True)
+        raw_options = agent.persona_snapshot.get("default_options")
+        options = raw_options if isinstance(raw_options, dict) else {}
         if agent.backend == "claude":
             return ClaudeModelClient(
                 binary=config.claude_binary,
                 model=agent.model,
-                workspace_root=config.workspace_root,
-                effort="high",
-                permission_mode=config.claude_permission_mode,
+                workspace_root=workspace_root,
+                effort=str(options.get("effort") or "high"),
+                permission_mode=str(
+                    options.get("permission_mode") or config.claude_permission_mode
+                ),
+                agent=str(options["agent"]) if options.get("agent") else None,
+                timeout_seconds=config.codex_timeout_seconds,
                 upstream_session_id=session,
             )
         return CodexModelClient(
             binary=config.codex_binary,
             model=agent.model,
-            workspace_root=config.workspace_root,
-            sandbox=config.codex_sandbox,
-            approval_policy=config.codex_approval_policy,
-            effort="high",
+            workspace_root=workspace_root,
+            sandbox=str(options.get("sandbox") or config.codex_sandbox),
+            approval_policy=str(
+                options.get("approval_policy") or config.codex_approval_policy
+            ),
+            profile=str(options["profile"]) if options.get("profile") else None,
+            effort=str(options.get("effort") or "high"),
             timeout_seconds=config.codex_timeout_seconds,
+            idle_timeout_seconds=config.codex_idle_timeout_seconds,
             upstream_session_id=session,
         )
 

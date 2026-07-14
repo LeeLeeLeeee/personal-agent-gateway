@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from personal_agent_gateway.agents import AgentDescriptor, AgentOption, AgentRegistry
+from personal_agent_gateway.agents import AgentDescriptor, AgentOption
 from personal_agent_gateway.api.jobs import session_dependency
 from personal_agent_gateway.session_config import SessionAgentConfigService
 
@@ -23,7 +23,7 @@ def list_agents(
     request: Request,
     _session: None = session_dependency,
 ) -> dict[str, list[dict[str, object]]]:
-    registry = AgentRegistry(request.app.state.app_config)
+    registry = request.app.state.agent_registry
     return {"agents": [_public_agent_payload(agent) for agent in registry.catalog()]}
 
 
@@ -42,7 +42,7 @@ def set_active_session_config(
     request: Request,
     _session: None = session_dependency,
 ) -> dict[str, dict[str, object]]:
-    registry = AgentRegistry(request.app.state.app_config)
+    registry = request.app.state.agent_registry
     try:
         validated = registry.validate_config(payload.agent_id, payload.model, payload.options)
     except ValueError as exc:
@@ -68,9 +68,12 @@ def _public_agent_payload(agent: AgentDescriptor) -> dict[str, object]:
         "available": agent.available,
         "availability_error": agent.availability_error,
         "models": agent.models,
+        "model_options": [model.model_dump() for model in agent.model_options],
         "default_model": agent.default_model,
         "options_schema": [_public_option_payload(option) for option in agent.options_schema],
         "defaults": agent.defaults,
+        "version": agent.version,
+        "capability_source": agent.capability_source,
     }
 
 

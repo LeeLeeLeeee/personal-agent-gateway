@@ -11,8 +11,59 @@ const EMPTY_FORM = {
   constraints: "",
   default_backend: "codex",
   default_model: "default",
+  default_options: {},
   avatar: ""
 };
+
+function agentModels(agent, currentModel = "") {
+  const models = agent?.model_options?.length
+    ? agent.model_options
+    : (agent?.models || []).map((id) => ({ id, label: id, efforts: [] }));
+  if (!currentModel || models.some((model) => model.id === currentModel)) return models;
+  return [{ id: currentModel, label: currentModel, efforts: [] }, ...models];
+}
+
+function modelMetadata(agent, modelId) {
+  return agentModels(agent, modelId).find((model) => model.id === modelId) || null;
+}
+
+function optionChoices(agent, modelId, option) {
+  const model = modelMetadata(agent, modelId);
+  if (option.name === "effort" && model?.efforts?.length) return model.efforts;
+  return option.choices || [];
+}
+
+function normalizedOptions(agent, modelId, current = {}) {
+  const options = {};
+  for (const option of agent?.options_schema || []) {
+    if (option.kind !== "select") continue;
+    const choices = optionChoices(agent, modelId, option);
+    if (!choices.length) continue;
+    const model = modelMetadata(agent, modelId);
+    const preferred = option.name === "effort" ? model?.default_effort : "";
+    const value = current[option.name];
+    options[option.name] = choices.includes(value)
+      ? value
+      : choices.includes(preferred)
+        ? preferred
+        : choices.includes(agent.defaults?.[option.name])
+          ? agent.defaults[option.name]
+          : choices[0];
+  }
+  return options;
+}
+
+function initialForm(agents) {
+  const agent = agents.find((candidate) => candidate.id === "codex" && candidate.available)
+    || agents.find((candidate) => candidate.available);
+  if (!agent) return { ...EMPTY_FORM, default_options: {} };
+  return {
+    ...EMPTY_FORM,
+    default_backend: agent.id,
+    default_model: agent.default_model,
+    default_options: normalizedOptions(agent, agent.default_model, agent.defaults)
+  };
+}
 
 function initials(name) {
   return (name || "")
@@ -41,19 +92,23 @@ function formFromPersona(persona) {
     constraints: (persona.constraints || []).join("\n"),
     default_backend: persona.default_backend || "codex",
     default_model: persona.default_model || "default",
+    default_options: { ...(persona.default_options || {}) },
     avatar: persona.avatar || ""
   };
 }
 
-export function PersonaLibrary({ personas = [], avatars = [], onCreate, onSave, onDelete }) {
+export function PersonaLibrary({ personas = [], avatars = [], agents = [], onCreate, onSave, onDelete }) {
   const confirm = useConfirm();
   // editingId: undefined = not yet decided, null = new persona, string = existing persona id
   const [editingId, setEditingId] = useState(undefined);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState(() => personas.length ? EMPTY_FORM : initialForm(agents));
   const [avatarModalOpen, setAvatarModalOpen] = useState(false);
   const [avatarDraft, setAvatarDraft] = useState("");
 
-  const isNew = editingId === null;
+  // "new" whenever no existing persona is selected: null (explicit new) or
+  // undefined (empty library / nothing loaded) — so the first save creates
+  // instead of PATCHing /api/personas/undefined.
+  const isNew = editingId === null || editingId === undefined;
   const selected = isNew ? null : personas.find((persona) => persona.id === editingId) || null;
 
   // Default to the first persona once the library loads.
@@ -74,7 +129,35 @@ export function PersonaLibrary({ personas = [], avatars = [], onCreate, onSave, 
 
   function startNew() {
     setEditingId(null);
-    setForm(EMPTY_FORM);
+    setForm(initialForm(agents));
+  }
+
+  function changeBackend(agentId) {
+    const agent = agents.find((candidate) => candidate.id === agentId);
+    if (!agent) return;
+    const model = agent.default_model;
+    setForm((previous) => ({
+      ...previous,
+      default_backend: agent.id,
+      default_model: model,
+      default_options: normalizedOptions(agent, model, agent.defaults)
+    }));
+  }
+
+  function changeModel(modelId) {
+    const agent = agents.find((candidate) => candidate.id === form.default_backend);
+    setForm((previous) => ({
+      ...previous,
+      default_model: modelId,
+      default_options: normalizedOptions(agent, modelId, previous.default_options)
+    }));
+  }
+
+  function changeDefaultOption(name, value) {
+    setForm((previous) => ({
+      ...previous,
+      default_options: { ...previous.default_options, [name]: value }
+    }));
   }
 
   function submit(event) {
@@ -89,6 +172,7 @@ export function PersonaLibrary({ personas = [], avatars = [], onCreate, onSave, 
       constraints: splitLines(form.constraints),
       default_backend: form.default_backend.trim() || "codex",
       default_model: form.default_model.trim() || "default",
+      default_options: { ...form.default_options },
       avatar: form.avatar.trim()
     };
     if (isNew) {
@@ -124,6 +208,9 @@ export function PersonaLibrary({ personas = [], avatars = [], onCreate, onSave, 
   }
 
   const headMeta = isNew ? "NEW" : `PRESET · ${(editingId || "").slice(0, 8).toUpperCase()}`;
+  const currentAgent = agents.find((agent) => agent.id === form.default_backend) || null;
+  const backendChoices = agents.filter((agent) => agent.available || agent.id === form.default_backend);
+  const modelChoices = agentModels(currentAgent, form.default_model);
 
   return (
     <section className="persona-library" aria-label="Persona library">
@@ -219,12 +306,42 @@ export function PersonaLibrary({ personas = [], avatars = [], onCreate, onSave, 
             <div className="persona-edit-actions">
               <label className="persona-field">
                 <span className="persona-field-label">BACKEND</span>
-                <input className="persona-input" aria-label="Backend" value={form.default_backend} onChange={(event) => update("default_backend", event.target.value)} />
+                <select className="persona-input" aria-label="Backend" value={form.default_backend} onChange={(event) => changeBackend(event.target.value)}>
+                  {!backendChoices.some((agent) => agent.id === form.default_backend) ? (
+                    <option value={form.default_backend}>{form.default_backend}</option>
+                  ) : null}
+                  {backendChoices.map((agent) => (
+                    <option key={agent.id} value={agent.id}>{agent.label}{agent.version ? ` · ${agent.version}` : ""}</option>
+                  ))}
+                </select>
               </label>
               <label className="persona-field">
-                <span className="persona-field-label">MODEL · OPTIONAL</span>
-                <input className="persona-input" aria-label="Model" value={form.default_model} onChange={(event) => update("default_model", event.target.value)} />
+                <span className="persona-field-label">MODEL</span>
+                <select className="persona-input" aria-label="Model" value={form.default_model} onChange={(event) => changeModel(event.target.value)}>
+                  {modelChoices.map((model) => (
+                    <option key={model.id} value={model.id}>{model.label || model.id}</option>
+                  ))}
+                </select>
               </label>
+              {(currentAgent?.options_schema || []).filter((option) => option.kind === "select").map((option) => {
+                const choices = optionChoices(currentAgent, form.default_model, option);
+                if (!choices.length) return null;
+                const currentValue = form.default_options?.[option.name] || "";
+                const values = currentValue && !choices.includes(currentValue) ? [currentValue, ...choices] : choices;
+                return (
+                  <label className="persona-field" key={option.name}>
+                    <span className="persona-field-label">{option.name.replaceAll("_", " ").toUpperCase()}</span>
+                    <select
+                      className="persona-input"
+                      aria-label={option.name.replaceAll("_", " ")}
+                      value={currentValue}
+                      onChange={(event) => changeDefaultOption(option.name, event.target.value)}
+                    >
+                      {values.map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                  </label>
+                );
+              })}
               {!isNew ? (
                 <Button type="button" variant="destructive" onClick={handleDelete}>Delete</Button>
               ) : null}

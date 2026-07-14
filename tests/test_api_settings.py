@@ -49,6 +49,7 @@ def test_settings_returns_non_secret_config_snapshot(tmp_path: Path) -> None:
         "codex_sandbox",
         "codex_approval_policy",
         "codex_timeout_seconds",
+        "codex_idle_timeout_seconds",
         "ffmpeg_binary",
         "ffprobe_binary",
         "capture_binary",

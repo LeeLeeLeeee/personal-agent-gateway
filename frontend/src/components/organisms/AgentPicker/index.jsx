@@ -2,6 +2,18 @@ import { useState } from "react";
 
 const EFFORT_LABELS = { low: "LOW", medium: "MED", high: "HIGH", xhigh: "XHIGH", max: "MAX" };
 
+function modelOptions(agent, configuredModel) {
+  const detected = agent.model_options?.length
+    ? agent.model_options
+    : (agent.models || []).map((id) => ({ id, label: id, efforts: [] }));
+  if (!configuredModel || detected.some((model) => model.id === configuredModel)) return detected;
+  return [{ id: configuredModel, label: configuredModel, efforts: [] }, ...detected];
+}
+
+function selectedModel(agent, modelId) {
+  return modelOptions(agent, modelId).find((model) => model.id === modelId) || null;
+}
+
 function selectedAgent(agents, config) {
   const configured = agents.find((agent) => agent.id === config?.agent_id);
   if (configured) return configured;
@@ -59,7 +71,16 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
 
   function changeModel(model) {
     setMenu(null);
-    emit({ model });
+    const nextOptions = { ...(config.options || {}) };
+    const metadata = selectedModel(current, model);
+    if (metadata?.efforts?.length && !metadata.efforts.includes(nextOptions.effort)) {
+      nextOptions.effort = metadata.efforts.includes(metadata.default_effort)
+        ? metadata.default_effort
+        : metadata.efforts.includes(current.defaults?.effort)
+          ? current.defaults.effort
+          : metadata.efforts[0];
+    }
+    emit({ model, options: nextOptions });
   }
 
   function changeOption(name, value) {
@@ -76,13 +97,17 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
 
     const value = optionValue(config, current, option.name);
     const label = optionLabel(option.name);
+    const metadata = selectedModel(current, config.model);
+    const choices = option.name === "effort" && metadata?.efforts?.length
+      ? metadata.efforts
+      : (option.choices || []);
 
     if (option.name === "effort" && option.kind === "select") {
       return (
         <div className="config-field" key={option.name}>
           <span className="config-field-label mono">EFFORT</span>
           <div className="config-segment" role="group" aria-label="effort">
-            {(option.choices || []).map((choice) => (
+            {choices.map((choice) => (
               <button
                 key={choice}
                 type="button"
@@ -115,7 +140,7 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
           </button>
           {menu === option.name ? (
             <div className="config-menu" role="listbox" aria-label={`Select ${label}`}>
-              {(option.choices || []).map((choice) => (
+              {choices.map((choice) => (
                 <button
                   key={choice}
                   type="button"
@@ -179,7 +204,9 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
                         <span className="config-menu-name mono">{agent.label}</span>
                       </span>
                       <span className={`config-menu-sub mono${disabled ? " danger" : ""}`}>
-                        {disabled ? (agent.availability_error || "unavailable") : `${agent.default_model} · available`}
+                        {disabled
+                          ? (agent.availability_error || "unavailable")
+                          : `${agent.default_model} · ${agent.version || "available"}`}
                       </span>
                     </button>
                   );
@@ -206,17 +233,18 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
               </button>
               {menu === "model" ? (
                 <div className="config-menu" role="listbox" aria-label="Select model">
-                  {(current.models || []).map((model) => (
+                  {modelOptions(current, config.model).map((model) => (
                     <button
-                      key={model}
+                      key={model.id}
                       type="button"
-                      className={`config-menu-item${model === config.model ? " active" : ""}`}
-                      onClick={() => changeModel(model)}
+                      className={`config-menu-item${model.id === config.model ? " active" : ""}`}
+                      onClick={() => changeModel(model.id)}
                     >
                       <span className="config-menu-item-row">
-                        <span className="config-menu-mark mono">{model === config.model ? "✓" : ""}</span>
-                        <span className="config-menu-name mono">{model}</span>
+                        <span className="config-menu-mark mono">{model.id === config.model ? "✓" : ""}</span>
+                        <span className="config-menu-name mono">{model.label || model.id}</span>
                       </span>
+                      {model.description ? <span className="config-menu-sub mono">{model.description}</span> : null}
                     </button>
                   ))}
                 </div>

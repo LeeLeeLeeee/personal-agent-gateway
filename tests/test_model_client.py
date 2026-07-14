@@ -524,13 +524,14 @@ class _FakeProcess:
         self.stdin = _FakeStdin()
         self.stdout = _HangingStdout()
         self.stderr = _HangingStdout()
-        self.returncode = 0
+        self.returncode = None
 
     def kill(self) -> None:
         self.killed = True
+        self.returncode = -9
 
     async def wait(self) -> int:
-        return 0
+        return self.returncode or 0
 
     async def communicate(self) -> tuple[bytes, bytes]:
         await asyncio.sleep(60)
@@ -569,3 +570,159 @@ async def test_claude_client_kills_process_on_cancel(monkeypatch) -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert fake.killed is True
+
+
+class _ScriptedStdout:
+    def __init__(self, lines: list[tuple[float, bytes]], hang_after: bool = False) -> None:
+        self._lines = list(lines)
+        self._hang_after = hang_after
+
+    async def readline(self) -> bytes:
+        if self._lines:
+            delay, line = self._lines.pop(0)
+            await asyncio.sleep(delay)
+            return line
+        if self._hang_after:
+            await asyncio.sleep(60)
+        return b""
+
+
+class _EmptyStderr:
+    async def read(self) -> bytes:
+        return b""
+
+
+class _StreamingProcess:
+    def __init__(
+        self,
+        lines: list[tuple[float, bytes]],
+        *,
+        hang_after: bool = False,
+        wait_hangs: bool = False,
+    ) -> None:
+        self.stdin = _FakeStdin()
+        self.stdout = _ScriptedStdout(lines, hang_after=hang_after)
+        self.stderr = _EmptyStderr()
+        self.returncode = None
+        self.killed = False
+        self._wait_hangs = wait_hangs
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        if self._wait_hangs and not self.killed:
+            await asyncio.sleep(60)
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+
+@pytest.mark.asyncio
+async def test_codex_client_uses_idle_timeout_without_limiting_active_stream(monkeypatch) -> None:
+    final = b'{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\n'
+    fake = _StreamingProcess([
+        (0.04, b'{"type":"thread.started","thread_id":"thread-1"}\n'),
+        (0.04, b'{"type":"item.started","item":{"type":"reasoning"}}\n'),
+        (0.04, final),
+    ])
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    monkeypatch.setattr("personal_agent_gateway.model_client.asyncio.create_subprocess_exec", fake_create)
+    client = CodexModelClient(
+        binary="codex",
+        model="m",
+        workspace_root=Path("."),
+        timeout_seconds=0.3,
+        idle_timeout_seconds=0.08,
+    )
+
+    response = await client.complete([{"role": "user", "content": "hi"}])
+
+    assert response.content == "done"
+    assert fake.killed is False
+
+
+@pytest.mark.asyncio
+async def test_codex_client_preserves_final_message_at_hard_timeout(monkeypatch) -> None:
+    final = b'{"type":"item.completed","item":{"type":"agent_message","text":"finished"}}\n'
+    fake = _StreamingProcess([(0.001, final)], hang_after=True)
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    monkeypatch.setattr("personal_agent_gateway.model_client.asyncio.create_subprocess_exec", fake_create)
+    client = CodexModelClient(
+        binary="codex",
+        model="m",
+        workspace_root=Path("."),
+        timeout_seconds=0.03,
+        idle_timeout_seconds=1,
+    )
+
+    response = await client.complete([{"role": "user", "content": "hi"}])
+
+    assert response.content == "finished"
+    assert fake.killed is True
+
+
+@pytest.mark.asyncio
+async def test_codex_client_idle_timeout_fails_and_cleans_up(monkeypatch) -> None:
+    fake = _StreamingProcess([], hang_after=True)
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    monkeypatch.setattr("personal_agent_gateway.model_client.asyncio.create_subprocess_exec", fake_create)
+    client = CodexModelClient(
+        binary="codex",
+        model="m",
+        workspace_root=Path("."),
+        timeout_seconds=1,
+        idle_timeout_seconds=0.02,
+    )
+
+    with pytest.raises(RuntimeError, match="Codex execution idle timed out"):
+        await client.complete([{"role": "user", "content": "hi"}])
+
+    assert fake.killed is True
+
+
+@pytest.mark.asyncio
+async def test_codex_client_accepts_terminal_event_when_wrapper_lingers(monkeypatch) -> None:
+    final = b'{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\n'
+    terminal = b'{"type":"turn.completed"}\n'
+    fake = _StreamingProcess([(0, final), (0, terminal)], wait_hangs=True)
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    monkeypatch.setattr("personal_agent_gateway.model_client.asyncio.create_subprocess_exec", fake_create)
+    monkeypatch.setattr("personal_agent_gateway.model_client._PROCESS_EXIT_GRACE_SECONDS", 0.01)
+    client = CodexModelClient(binary="codex", model="m", workspace_root=Path("."))
+
+    response = await client.complete([{"role": "user", "content": "hi"}])
+
+    assert response.content == "done"
+    assert fake.killed is True
+
+
+@pytest.mark.asyncio
+async def test_codex_client_waits_for_final_message_after_early_terminal_event(monkeypatch) -> None:
+    terminal = b'{"type":"turn.completed"}\n'
+    final = b'{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\n'
+    fake = _StreamingProcess([(0, terminal), (0, final)])
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    monkeypatch.setattr("personal_agent_gateway.model_client.asyncio.create_subprocess_exec", fake_create)
+    client = CodexModelClient(binary="codex", model="m", workspace_root=Path("."))
+
+    response = await client.complete([{"role": "user", "content": "hi"}])
+
+    assert response.content == "done"
+    assert fake.killed is False

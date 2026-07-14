@@ -179,6 +179,14 @@ Vite build asset은 `/assets/*`로 서빙됩니다. 기존 vendor asset은 `/sta
 - Codex CLI 로그인 상태
 - 외부 접속을 쓸 경우 Cloudflare tunnel binary
 
+설치된 CLI가 제공하는 모델과 실행 옵션을 JSON으로 확인할 수 있습니다.
+
+```bash
+node scripts/detect_local_agent_capabilities.mjs --pretty
+```
+
+필요하면 `--codex-bin`, `--claude-bin`, `--cwd`를 지정합니다. Gateway는 시작 후 처음 agent catalog를 읽을 때 이 탐지 결과를 사용하며, 탐지에 실패하면 내장 기본값으로 동작합니다. CLI 모델이나 로컬 설정을 바꾼 뒤에는 Gateway를 재시작해야 목록이 갱신됩니다.
+
 ### 1. Backend 설치
 
 Windows PowerShell:

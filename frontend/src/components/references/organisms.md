@@ -40,14 +40,14 @@ Project-local Atomic Design catalog for the Vite React frontend.
 
 ### AgentPicker
 - Path: `src/components/organisms/AgentPicker/`
-- Props: `{ agents, config, onChange, error? }`
+- Props: `{ agents, config, onChange, error?, onRetry? }`
 - Use when: Rendering editable or locked session agent configuration state.
 - Don't use when: Loading agents or persisting config changes; the container owns API calls.
 
 ### PersonaLibrary
 - Path: `src/components/organisms/PersonaLibrary/`
-- Props: `{ personas, avatars, onCreate, onSave? }`
-- Use when: Rendering the persona master-detail (left list → right EDIT PERSONA panel for the selected persona; a New persona button opens a blank editable panel). Save calls `onCreate` for a new persona or `onSave(id, payload)` for an existing one; the avatar block opens a modal that reuses `AvatarPicker`.
+- Props: `{ personas, avatars, agents, onCreate, onSave?, onDelete? }`
+- Use when: Rendering the persona master-detail. The local agent catalog drives backend/model/model-specific effort and other select options; save includes `default_options`. The avatar block opens a modal that reuses `AvatarPicker`.
 - Don't use when: Loading personas or the avatar manifest; the container owns API calls.
 
 ### AvatarPicker
@@ -64,6 +64,6 @@ Project-local Atomic Design catalog for the Vite React frontend.
 
 ### TeamRunDetail
 - Path: `src/components/organisms/TeamRunDetail/`
-- Props: `{ detail: { run, agents, tasks, messages } }`
-- Use when: Rendering a team run's header/meta strip, agent session lanes (persona/role/status/current task), the pending/in_progress/blocked/completed/failed task board, the live activity list, and per-agent result reports plus the final summary. Renders "No team run selected." when `detail?.run` is absent.
+- Props: `{ detail: { run, agents, tasks, messages }, onAddWork?: (instruction) => Promise<boolean | void>, onResume?: () => Promise<boolean | void>, onRetryTask?: (taskId) => Promise<boolean | void> }`
+- Use when: Rendering a team run's header/meta strip, interrupted-run notice/manual Resume command, agent session lanes (persona/role/status/current task), the pending/in_progress/blocked/completed/failed task board, task-linked document and failed-task Retry actions, live activity, handoffs, final summary, and the supported add-work dialog. Renders "No team run selected." when `detail?.run` is absent.
 - Don't use when: Loading team run data or reacting to `/api/events` SSE updates; the container owns fetching and refetches `detail` on `team.*` events for the selected run.

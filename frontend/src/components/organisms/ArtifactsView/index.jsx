@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../../../api/client.js";
 import { ArtifactModal } from "../ArtifactModal/index.jsx";
 import { GLYPH, fmtSize } from "../../../lib/artifactFormat.js";
+import { fmtDateTime } from "../../../lib/time.js";
 
 const TYPE_FILTERS = [
   ["all", "All"],
@@ -13,14 +14,6 @@ const TYPE_FILTERS = [
   ["report", "Reports"],
   ["archive", "Archives"]
 ];
-
-function fmtWhen(iso) {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (value) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 export function ArtifactsView({ artifacts = [], onChange }) {
   const [type, setType] = useState("all");
@@ -74,7 +67,7 @@ export function ArtifactsView({ artifacts = [], onChange }) {
                 </div>
                 <div className="artifact-card-body">
                   <div className="artifact-card-title">{a.title}</div>
-                  <div className="mono artifact-card-meta">{fmtSize(a.size_bytes)} · {fmtWhen(a.created_at)}</div>
+                  <div className="mono artifact-card-meta">{fmtSize(a.size_bytes)} · {fmtDateTime(a.created_at)}</div>
                 </div>
               </button>
             ))}

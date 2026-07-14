@@ -125,3 +125,54 @@ def test_registry_rejects_unavailable_agent_for_new_config(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="Agent unavailable"):
         registry.validate_config("claude", "sonnet", {})
+
+
+def test_registry_uses_detected_models_and_model_specific_efforts(tmp_path: Path) -> None:
+    detected = {
+        "providers": {
+            "codex": {
+                "available": True,
+                "version": "codex-cli test",
+                "source": ["cli_help", "models_cache"],
+                "models": [
+                    {
+                        "id": "default",
+                        "label": "Default (gpt-new)",
+                        "efforts": ["low", "high"],
+                        "default_effort": "high",
+                    },
+                    {
+                        "id": "gpt-new",
+                        "label": "GPT New",
+                        "efforts": ["low"],
+                        "default_effort": "low",
+                    },
+                ],
+                "options": {
+                    "sandbox": ["read-only", "workspace-write"],
+                    "approval_policy": ["on-request", "never"],
+                    "profile": ["review"],
+                },
+                "defaults": {"model": "default", "effort": "high"},
+            }
+        }
+    }
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        probe=lambda _binary: CliProbeResult(True, None),
+        capability_loader=lambda _config: detected,
+    )
+
+    codex = registry.get("codex")
+
+    assert codex.models == ["default", "gpt-new"]
+    assert codex.model_options[1].label == "GPT New"
+    assert codex.model_options[1].efforts == ["low"]
+    assert codex.version == "codex-cli test"
+    assert codex.capability_source == ["cli_help", "models_cache"]
+    assert next(option for option in codex.options_schema if option.name == "profile").choices == [
+        "review"
+    ]
+    assert registry.validate_config("codex", "gpt-new", {"effort": "low"})["model"] == "gpt-new"
+    with pytest.raises(ValueError, match="Unsupported effort"):
+        registry.validate_config("codex", "gpt-new", {"effort": "high"})

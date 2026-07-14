@@ -114,6 +114,9 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
 
     agents = client.get(f"/api/team-runs/{run['id']}/agents").json()["agents"]
     assert [agent["name"] for agent in agents] == ["Tech Lead", "QA Tester"]
+    stored_agent = client.app.state.team_run_service.get_agent(agents[0]["id"])
+    model = client.app.state.team_runtime._model_factory(stored_agent)
+    assert model._workspace_root == Path(run["workspace_root"]).resolve()
 
 
 def test_delete_team_run_removes_it(tmp_path: Path) -> None:
@@ -124,6 +127,9 @@ def test_delete_team_run_removes_it(tmp_path: Path) -> None:
         "/api/team-runs",
         json={"goal": "Ship it", "leader_persona_id": leader_id},
     ).json()["team_run"]
+    workspace = Path(run["workspace_root"])
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "temporary.txt").write_text("test only", encoding="utf-8")
 
     deleted = client.delete(f"/api/team-runs/{run['id']}")
     assert deleted.status_code == 200
@@ -131,6 +137,27 @@ def test_delete_team_run_removes_it(tmp_path: Path) -> None:
 
     assert client.get(f"/api/team-runs/{run['id']}").status_code == 404
     assert client.get("/api/team-runs").json()["team_runs"] == []
+    assert not workspace.exists()
+
+
+def test_delete_running_team_run_keeps_workspace_and_record(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    run = client.post(
+        "/api/team-runs",
+        json={"goal": "Temporary test run", "leader_persona_id": leader_id},
+    ).json()["team_run"]
+    workspace = Path(run["workspace_root"])
+    workspace.mkdir(parents=True, exist_ok=True)
+    sentinel = workspace / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    client.app.state.team_run_service.set_run_status(run["id"], "running")
+
+    response = client.delete(f"/api/team-runs/{run['id']}")
+
+    assert response.status_code == 409
+    assert sentinel.exists()
+    assert client.get(f"/api/team-runs/{run['id']}").status_code == 200
 
 
 def test_delete_missing_team_run_returns_404(tmp_path: Path) -> None:
@@ -144,6 +171,46 @@ def test_team_run_api_requires_auth(tmp_path: Path) -> None:
     response = client.get("/api/team-runs")
 
     assert response.status_code == 401
+
+
+def test_retry_failed_team_task_api_requeues_task_for_manual_resume(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "goal": "Ship it",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": [member_id],
+            "run_mode": "plan_and_execute",
+        },
+    ).json()["team_run"]
+    service = client.app.state.team_run_service
+    task = service.create_task(run["id"], "QA", "Run checks")
+    service.set_task_status(task.id, "failed", error_message="timed out")
+    service.set_run_status(run["id"], "completed_with_failures", summary="old")
+
+    response = client.post(f"/api/team-runs/{run['id']}/tasks/{task.id}/retry")
+
+    assert response.status_code == 200
+    assert response.json()["team_run"]["status"] == "interrupted"
+    assert response.json()["task"]["status"] == "pending"
+    assert client.post(f"/api/team-runs/{run['id']}/tasks/{task.id}/retry").status_code == 409
+
+
+def test_retry_team_task_api_rejects_missing_task(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    run = client.post(
+        "/api/team-runs",
+        json={"goal": "Ship it", "leader_persona_id": leader_id},
+    ).json()["team_run"]
+    client.app.state.team_run_service.set_run_status(run["id"], "failed")
+
+    response = client.post(f"/api/team-runs/{run['id']}/tasks/missing/retry")
+
+    assert response.status_code == 404
 
 
 def test_start_returns_immediately_without_blocking(tmp_path: Path) -> None:
@@ -294,6 +361,120 @@ def test_add_work_rejects_draft_run(tmp_path: Path) -> None:
 
     resp = client.post(f"/api/team-runs/{run['id']}/add-work", json={"instruction": "x"})
     assert resp.status_code == 409  # draft: run not started yet
+
+
+def test_create_app_marks_stale_active_run_interrupted(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    first_app = create_app(config)
+    service = first_app.state.team_run_service
+    leader = first_app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    member = first_app.state.persona_service.create_persona("Worker", "work", "d", [], [])
+    run = service.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    worker = service.list_agents(run.id)[1]
+    task = service.create_task(run.id, "current", "d", worker.id)
+    service.set_task_status(task.id, "in_progress")
+    service.set_agent_status(worker.id, "running")
+    service.set_run_status(run.id, "running")
+
+    restarted_app = create_app(config)
+
+    recovered = restarted_app.state.team_run_service.get_team_run(run.id)
+    assert recovered.status == "interrupted"
+    assert restarted_app.state.team_run_service.list_tasks(run.id)[0].status == "pending"
+
+
+def test_interrupted_run_rejects_start_and_add_work(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Lead")
+    member_id = create_persona(client, "Worker")
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "goal": "g",
+            "leader_persona_id": leader_id,
+            "member_persona_ids": [member_id],
+            "run_mode": "plan_and_execute",
+            "max_workers": 1,
+        },
+    ).json()["team_run"]
+    service = client.app.state.team_run_service
+    service.set_run_status(run["id"], "running")
+    service.interrupt_active_runs()
+
+    assert client.post(f"/api/team-runs/{run['id']}/start").status_code == 409
+    assert client.post(
+        f"/api/team-runs/{run['id']}/add-work", json={"instruction": "x"}
+    ).status_code == 409
+
+
+async def test_resume_interrupted_run_registers_background_task_and_blocks_duplicate(
+    tmp_path: Path,
+) -> None:
+    app = create_app(make_config(tmp_path))
+    gate = asyncio.Event()
+    _inject_gated_team_runtime(app, gate)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        client.cookies.set("agent_session", "test-session")
+        leader_id = await _async_create_persona(client, "Lead")
+        member_id = await _async_create_persona(client, "Worker")
+        run = (
+            await client.post(
+                "/api/team-runs",
+                json={
+                    "goal": "g",
+                    "leader_persona_id": leader_id,
+                    "member_persona_ids": [member_id],
+                    "run_mode": "plan_and_execute",
+                    "max_workers": 1,
+                },
+            )
+        ).json()["team_run"]
+        service = app.state.team_run_service
+        worker = service.list_agents(run["id"])[1]
+        task = service.create_task(run["id"], "current", "d", worker.id)
+        service.set_task_status(task.id, "in_progress")
+        service.set_agent_status(worker.id, "running")
+        service.set_run_status(run["id"], "running")
+        service.interrupt_active_runs()
+
+        response = await client.post(f"/api/team-runs/{run['id']}/resume")
+
+        assert response.status_code == 200
+        assert app.state.team_run_registry.is_running(run["id"]) is True
+        assert (await client.post(f"/api/team-runs/{run['id']}/resume")).status_code == 409
+
+        gate.set()
+        await _poll_until(lambda: not app.state.team_run_registry.is_running(run["id"]))
+        final = service.get_team_run(run["id"])
+        assert final.status == "completed"
+        assert service.list_tasks(run["id"])[0].status == "completed"
+
+
+def test_shutdown_marks_registered_run_interrupted(tmp_path: Path) -> None:
+    app = create_app(make_config(tmp_path))
+    service = app.state.team_run_service
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    member = app.state.persona_service.create_persona("Worker", "work", "d", [], [])
+    run = service.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    worker = service.list_agents(run.id)[1]
+    task = service.create_task(run.id, "current", "d", worker.id)
+    service.set_task_status(task.id, "in_progress")
+    service.set_agent_status(worker.id, "running")
+    service.set_run_status(run.id, "running")
+    service.interrupt_active_runs()
+    gate = asyncio.Event()
+    _inject_gated_team_runtime(app, gate)
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", "test-session")
+        response = client.post(f"/api/team-runs/{run.id}/resume")
+        assert response.status_code == 200
+        assert app.state.team_run_registry.is_running(run.id) is True
+
+    assert service.get_team_run(run.id).status == "interrupted"
+    assert service.list_tasks(run.id)[0].status == "pending"
 
 
 async def test_add_work_reopens_terminal_run(tmp_path: Path) -> None:

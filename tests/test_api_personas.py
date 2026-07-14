@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from personal_agent_gateway.agents import AgentRegistry, CliProbeResult
 from personal_agent_gateway.app import create_app
 from personal_agent_gateway.config import AppConfig
 
@@ -18,7 +19,13 @@ def make_config(tmp_path: Path) -> AppConfig:
 
 
 def authenticated_client(tmp_path: Path) -> TestClient:
-    client = TestClient(create_app(make_config(tmp_path)))
+    config = make_config(tmp_path)
+    app = create_app(config)
+    app.state.agent_registry = AgentRegistry(
+        config,
+        probe=lambda _binary: CliProbeResult(True, None),
+    )
+    client = TestClient(app)
     client.cookies.set("agent_session", "test-session")
     return client
 
@@ -68,8 +75,8 @@ def test_patch_persona_partial_update_preserves_unset_fields(tmp_path: Path) -> 
             "description": "Writes and runs tests.",
             "responsibilities": ["Write tests", "Run suites"],
             "constraints": ["No flaky tests"],
-            "default_backend": "openai",
-            "default_model": "gpt-5",
+            "default_backend": "codex",
+            "default_model": "gpt-5.5",
         },
     )
     assert create_response.status_code == 200
@@ -85,8 +92,43 @@ def test_patch_persona_partial_update_preserves_unset_fields(tmp_path: Path) -> 
     assert persona["name"] == "New Name"
     assert persona["responsibilities"] == ["Write tests", "Run suites"]
     assert persona["constraints"] == ["No flaky tests"]
-    assert persona["default_backend"] == "openai"
-    assert persona["default_model"] == "gpt-5"
+    assert persona["default_backend"] == "codex"
+    assert persona["default_model"] == "gpt-5.5"
+
+
+def test_persona_api_validates_and_returns_default_options(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+
+    response = client.post(
+        "/api/personas",
+        json={
+            "name": "Local Codex",
+            "role": "local",
+            "description": "uses detected capabilities",
+            "default_backend": "codex",
+            "default_model": "gpt-5.4",
+            "default_options": {"effort": "xhigh", "sandbox": "workspace-write"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["persona"]["default_options"] == {
+        "effort": "xhigh",
+        "sandbox": "workspace-write",
+    }
+
+    invalid = client.post(
+        "/api/personas",
+        json={
+            "name": "Invalid",
+            "role": "local",
+            "description": "invalid effort",
+            "default_backend": "codex",
+            "default_model": "gpt-5.4",
+            "default_options": {"effort": "ultra"},
+        },
+    )
+    assert invalid.status_code == 400
 
 
 def test_create_persona_with_avatar_returns_it(tmp_path: Path) -> None:

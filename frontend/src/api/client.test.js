@@ -76,6 +76,63 @@ describe("api client", () => {
     expect(fetch).toHaveBeenNthCalledWith(5, "/api/team-runs/r2/start", expect.objectContaining({ method: "POST" }));
   });
 
+  it("adds work and combines the four team-run detail responses", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ team_run: { id: "r1", status: "running" } }))
+      .mockResolvedValueOnce(jsonResponse({ team_run: { id: "r1", goal: "Ship" } }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: "a1" }] }))
+      .mockResolvedValueOnce(jsonResponse({ tasks: [{ id: "t1" }] }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: "m1" }] }));
+
+    await expect(api.addWork("r1", "write docs")).resolves.toEqual({ team_run: { id: "r1", status: "running" } });
+    await expect(api.teamRunDetail("r1")).resolves.toEqual({
+      run: { id: "r1", goal: "Ship" },
+      agents: [{ id: "a1" }],
+      tasks: [{ id: "t1" }],
+      messages: [{ id: "m1" }]
+    });
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/team-runs/r1/add-work", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ instruction: "write docs" })
+    }));
+    expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1");
+    expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1/agents");
+    expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1/tasks");
+    expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1/messages");
+  });
+
+  it("returns null when adding work fails", async () => {
+    fetch.mockResolvedValueOnce(jsonResponse({}, false));
+    await expect(api.addWork("r1", "write docs")).resolves.toBeNull();
+  });
+
+  it("resumes an interrupted team run", async () => {
+    fetch.mockResolvedValueOnce(jsonResponse({ team_run: { id: "r1", status: "interrupted" } }));
+
+    await expect(api.resumeTeamRun("r1")).resolves.toEqual({ id: "r1", status: "interrupted" });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/r1/resume",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("queues a failed team task for retry", async () => {
+    fetch.mockResolvedValueOnce(jsonResponse({
+      team_run: { id: "r1", status: "interrupted" },
+      task: { id: "t1", status: "pending" }
+    }));
+
+    await expect(api.retryTeamTask("r1", "t1")).resolves.toEqual({
+      run: { id: "r1", status: "interrupted" },
+      task: { id: "t1", status: "pending" }
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/r1/tasks/t1/retry",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
   it("calls session-explicit chat APIs", async () => {
     fetch
       .mockResolvedValueOnce(jsonResponse({ events: [{ kind: "user" }] }))

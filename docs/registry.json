@@ -1,0 +1,3022 @@
+{
+  "schema_version": 1,
+  "document_count": 44,
+  "documents": [
+    {
+      "path": "docs/component-inspector/AgentPicker/2026-07-14-1626.md",
+      "title": "AgentPicker Local CLI Capability Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "local-cli-capabilities",
+      "status": "done",
+      "aliases": [
+        "AgentPicker capability analysis",
+        "로컬 CLI 모델 선택 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "agent-config"
+      ],
+      "updated_at": "2026-07-14",
+      "headings": [
+        {
+          "level": 1,
+          "text": "AgentPicker Local CLI Capability Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 흐름"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/AgentPicker/index.jsx` - Modes: `api-state`, `test` - Verdict: 컴포넌트는 이미 `agents[].models`와 `options_schema`를 일반화해 렌더링한다. 로컬 CLI 탐지 결과를 `GET /api/agents`에 연결하면 UI 구조 변경 없이 mod..."
+    },
+    {
+      "path": "docs/component-inspector/GatewayApp/2026-07-14-1526.md",
+      "title": "GatewayApp Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "gateway-app",
+      "status": "done",
+      "aliases": [
+        "GatewayApp analysis",
+        "GatewayApp 컴포넌트 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis"
+      ],
+      "updated_at": "2026-07-14",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 Effects"
+        },
+        {
+          "level": 3,
+          "text": "커스텀 hook과 주입 동작"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `refactor` - Verdict: 컨테이너 소유권은 적절하지만 날짜 표시가 컨테이너와 하위 화면에 중복돼 있다. 공통 순수 포맷터로 통합하는 것은 낮은 위험의 `pure helper 추출`이다."
+    },
+    {
+      "path": "docs/component-inspector/PersonaLibrary/2026-07-14-1626.md",
+      "title": "PersonaLibrary Local CLI Capability Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "local-cli-capabilities",
+      "status": "done",
+      "aliases": [
+        "PersonaLibrary capability analysis",
+        "페르소나 모델 선택 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "persona"
+      ],
+      "updated_at": "2026-07-14",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PersonaLibrary Local CLI Capability Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 흐름"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/PersonaLibrary/index.jsx` - Modes: `api-state`, `test` - Verdict: Persona의 `default_backend`와 `default_model`이 현재 free-text라 탐지된 catalog를 활용하지 않는다. `GatewayApp`이 이미 로드한 `agen..."
+    },
+    {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-14-1316.md",
+      "title": "TeamRunDetail Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-runs",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail analysis",
+        "Team Run 상세 UI 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run"
+      ],
+      "updated_at": "2026-07-14",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태 / Effect"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성과 primitive"
+        },
+        {
+          "level": 2,
+          "text": "현재 interaction 흐름"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 추적"
+        },
+        {
+          "level": 2,
+          "text": "Style / Layout"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / Story"
+        },
+        {
+          "level": 2,
+          "text": "Refactoring 판단"
+        },
+        {
+          "level": 2,
+          "text": "Removal Risk"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "Skill Handoff"
+        },
+        {
+          "level": 2,
+          "text": "Review"
+        },
+        {
+          "level": 2,
+          "text": "Evidence"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `all` - Verdict: 현재 ownership은 적절하지만 목록과 상세의 정보 구조를 함께 조정해야 한다. 문서는 기존 `agent_output.metadata.task_id`를 이용해 Task Board로 이동할 수 있고, 추가 업무 입력은 ..."
+    },
+    {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-14-1426.md",
+      "title": "TeamRunDetail Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-interruption-recovery",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail resume analysis",
+        "TeamRunDetail 재개 컴포넌트 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "resume"
+      ],
+      "updated_at": "2026-07-14",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / State 흐름"
+        },
+        {
+          "level": 3,
+          "text": "상태별 파생값 영향"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성과 소유권"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / Stories"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: 백엔드에 `interrupted` 상태와 명시적 `/resume` 계약을 먼저 추가한 뒤,   `TeamRunDetail`은 API를 직접 호출하지 않는 organism 경계를 유지하면서 `onR..."
+    },
+    {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-14-1548.md",
+      "title": "TeamRunDetail Retry Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-task-retry",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail retry analysis",
+        "실패한 팀 작업 재시도 UI 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "retry"
+      ],
+      "updated_at": "2026-07-14",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Retry Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API와 상태 흐름"
+        },
+        {
+          "level": 3,
+          "text": "현재 흐름"
+        },
+        {
+          "level": 3,
+          "text": "제안 Retry 흐름"
+        },
+        {
+          "level": 2,
+          "text": "테스트와 누락 시나리오"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: API 호출은 `GatewayApp`이 소유하고 `TeamRunDetail`은 비동기 callback의 진행 상태만 소유하는 기존 경계가 명확하다. 실패 Task 재시도도 `onRetryTask(..."
+    },
+    {
+      "path": "docs/component-inspector/index.md",
+      "title": "Component Inspector Reports",
+      "type": "report",
+      "domain": "component",
+      "feature": "component-inspector",
+      "status": "active",
+      "aliases": [
+        "component analysis reports"
+      ],
+      "tags": [
+        "component",
+        "analysis"
+      ],
+      "updated_at": "2026-07-14",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Component Inspector Reports"
+        }
+      ],
+      "excerpt": "- [GatewayApp — 2026-07-14 15:26](./GatewayApp/2026-07-14-1526.md) - [TeamRunDetail — 2026-07-14 13:16](./TeamRunDetail/2026-07-14-1316.md) - [TeamRunDetail Resume — 2026-07-14 14:26](./TeamRunDetail/2026-07-14-1426.m..."
+    },
+    {
+      "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway UI/UX Brief"
+        },
+        {
+          "level": 2,
+          "text": "One-Line Product Definition"
+        },
+        {
+          "level": 2,
+          "text": "Audience"
+        },
+        {
+          "level": 2,
+          "text": "Design Goal"
+        },
+        {
+          "level": 2,
+          "text": "Product Areas"
+        },
+        {
+          "level": 3,
+          "text": "1. Auth"
+        },
+        {
+          "level": 3,
+          "text": "2. App Shell"
+        },
+        {
+          "level": 3,
+          "text": "3. Chat"
+        },
+        {
+          "level": 3,
+          "text": "4. Jobs"
+        },
+        {
+          "level": 3,
+          "text": "5. Schedules"
+        },
+        {
+          "level": 3,
+          "text": "6. Capabilities"
+        },
+        {
+          "level": 3,
+          "text": "7. Artifacts and Storage"
+        },
+        {
+          "level": 3,
+          "text": "8. Capture UX"
+        },
+        {
+          "level": 3,
+          "text": "9. ffmpeg UX"
+        },
+        {
+          "level": 2,
+          "text": "Recommended Screens"
+        },
+        {
+          "level": 3,
+          "text": "Login"
+        },
+        {
+          "level": 3,
+          "text": "Chat"
+        },
+        {
+          "level": 3,
+          "text": "Jobs"
+        },
+        {
+          "level": 3,
+          "text": "Schedules"
+        },
+        {
+          "level": 3,
+          "text": "Capabilities"
+        },
+        {
+          "level": 3,
+          "text": "Artifacts"
+        },
+        {
+          "level": 3,
+          "text": "Settings"
+        },
+        {
+          "level": 2,
+          "text": "Tone and Visual Direction"
+        },
+        {
+          "level": 2,
+          "text": "Key UX Principle"
+        }
+      ],
+      "excerpt": "Personal Agent Gateway is a private local agent control console: a single user can access their local Codex CLI, local tools, scheduled jobs, captures, media processing, and generated artifacts through a secure browse..."
+    },
+    {
+      "path": "docs/knowledge/2026-07-08-full-access-security-operating-model.md",
+      "title": "Full Access Mode Security Operating Model",
+      "type": "knowledge",
+      "domain": "personal-agent-gateway",
+      "feature": "full-access-security",
+      "status": "active",
+      "aliases": [
+        "full access 보안",
+        "workspace 제한 없이 쓰는 보안 기준",
+        "shell 제한 없는 agent gateway 보안",
+        "approve deny 없는 보안 모델",
+        "외부에서 로컬 PC 수정 보안 점검"
+      ],
+      "tags": [
+        "security",
+        "full-access",
+        "otp",
+        "cloudflare-access",
+        "audit",
+        "agent-teams"
+      ],
+      "updated_at": "2026-07-08",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Full Access Mode Security Operating Model"
+        },
+        {
+          "level": 2,
+          "text": "제품 전제"
+        },
+        {
+          "level": 2,
+          "text": "권장 실행 모드"
+        },
+        {
+          "level": 2,
+          "text": "우선순위 보안 체크리스트"
+        },
+        {
+          "level": 3,
+          "text": "1. Cloudflare Access 앞단 적용"
+        },
+        {
+          "level": 3,
+          "text": "2. OTP + Session-Level Trust"
+        },
+        {
+          "level": 3,
+          "text": "3. Cookie 및 CSRF 보호"
+        },
+        {
+          "level": 3,
+          "text": "4. Gateway 전용 OS 사용자로 실행"
+        },
+        {
+          "level": 3,
+          "text": "5. Audit Log"
+        },
+        {
+          "level": 3,
+          "text": "6. Automatic Checkpoint 및 Diff"
+        },
+        {
+          "level": 3,
+          "text": "7. Secret File Denylist"
+        },
+        {
+          "level": 3,
+          "text": "8. Emergency Stop"
+        },
+        {
+          "level": 3,
+          "text": "9. Agent Teams 권한 해석"
+        },
+        {
+          "level": 2,
+          "text": "UX 방향"
+        },
+        {
+          "level": 2,
+          "text": "최소 보안 MVP"
+        },
+        {
+          "level": 2,
+          "text": "기존 제한형 설계와의 관계"
+        }
+      ],
+      "excerpt": "personal-agent-gateway는 외부 브라우저에서 로컬 PC의 agent를 실행해 파일 수정, shell 실행, 빌드, 배포까지 수행할 수 있는 개인용 control console이다."
+    },
+    {
+      "path": "docs/knowledge/persona-team-usage-guide.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Persona & Team Run 사용 가이드"
+        },
+        {
+          "level": 2,
+          "text": "1. 개념"
+        },
+        {
+          "level": 3,
+          "text": "Persona (페르소나)"
+        },
+        {
+          "level": 3,
+          "text": "Team Run (팀 실행)"
+        },
+        {
+          "level": 2,
+          "text": "2. 결과를 어디서 보나 (TeamRunDetail)"
+        },
+        {
+          "level": 2,
+          "text": "3. 따라 하기 시나리오"
+        },
+        {
+          "level": 1,
+          "text": "프로젝트 루트에서"
+        },
+        {
+          "level": 3,
+          "text": "STEP 1 — 페르소나 2개 만들기"
+        },
+        {
+          "level": 3,
+          "text": "STEP 2 — 계획만 뽑아보기 (planning_only)"
+        },
+        {
+          "level": 3,
+          "text": "STEP 3 — 실제로 굴려보기 (plan_and_execute)"
+        },
+        {
+          "level": 3,
+          "text": "STEP 4 — 실패 케이스 관찰(선택)"
+        },
+        {
+          "level": 2,
+          "text": "4. 자주 막히는 지점"
+        }
+      ],
+      "excerpt": "Personal Agent Gateway의 **Persona**와 **Team Run** 기능을 어떻게 쓰는지, 그리고 직접 따라 해볼 수 있는 시나리오를 정리한다. 동작 설명은 실제 코드(`personas.py`, `teams.py`, `team_runtime.py`, `TeamRunForm`)에 근거한다."
+    },
+    {
+      "path": "docs/plans/2026-07-10-chat-liveness-reasoning-interrupt.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "채팅 라이브니스·reasoning 보존·인터럽트 Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "파일 구조"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: 단일 정렬 comparator + rank 테이블"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: Timeline 렌더가 compareEntries 사용"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: 로컬 엔트리 createdAtMs 스탬프"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: reasoning 아이템 매핑 (entryFromSse)"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: reasoning 접이식 블록 렌더 + 스타일"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: 라이브 working 인디케이터 + 스타일"
+        },
+        {
+          "level": 2,
+          "text": "Task 7: run_state에 취소 가능한 task 등록"
+        },
+        {
+          "level": 2,
+          "text": "Task 8: model_client 취소 시 서브프로세스 정리"
+        },
+        {
+          "level": 2,
+          "text": "Task 9: /interrupt 엔드포인트 + chat_for_session 취소·발행"
+        },
+        {
+          "level": 2,
+          "text": "Task 10: interrupted 매핑 + 렌더 (프론트)"
+        },
+        {
+          "level": 2,
+          "text": "Task 11: 인터럽트 배선 (api + Esc + GatewayApp)"
+        },
+        {
+          "level": 2,
+          "text": "Task 12: 전체 검증"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/specs/2026-07-08-observability-audit-log-spec.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Observability and Audit Log Spec"
+        },
+        {
+          "level": 2,
+          "text": "1. 배경 / 문제"
+        },
+        {
+          "level": 2,
+          "text": "2. 목표 / 성공 기준"
+        },
+        {
+          "level": 2,
+          "text": "3. 비목표"
+        },
+        {
+          "level": 2,
+          "text": "4. Observability Layers"
+        },
+        {
+          "level": 3,
+          "text": "Layer 1: Local Audit Log"
+        },
+        {
+          "level": 3,
+          "text": "Layer 2: Structured Application Logs"
+        },
+        {
+          "level": 2,
+          "text": "5. Audit Event Model"
+        },
+        {
+          "level": 3,
+          "text": "`audit_events`"
+        },
+        {
+          "level": 2,
+          "text": "6. Event Type Taxonomy"
+        },
+        {
+          "level": 2,
+          "text": "7. Redaction Policy"
+        },
+        {
+          "level": 2,
+          "text": "8. Local Observability Configuration"
+        },
+        {
+          "level": 2,
+          "text": "9. API"
+        },
+        {
+          "level": 2,
+          "text": "10. UI Integration"
+        },
+        {
+          "level": 2,
+          "text": "11. Agent Teams Attribution"
+        },
+        {
+          "level": 2,
+          "text": "12. Verification"
+        },
+        {
+          "level": 2,
+          "text": "13. Open Questions"
+        }
+      ],
+      "excerpt": "- 작성일: 2026-07-08 - 대상: `personal-agent-gateway` - 범위: local audit log, structured app logs, Team/Persona attribution - 관련 문서:   - `docs/knowledge/2026-07-08-full-access-security-operating-model.md`   - `docs/specs/20..."
+    },
+    {
+      "path": "docs/specs/2026-07-08-persona-agent-teams-spec.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Persona-Based Agent Teams Spec"
+        },
+        {
+          "level": 2,
+          "text": "1. 배경 / 문제"
+        },
+        {
+          "level": 2,
+          "text": "2. 목표 / 성공 기준"
+        },
+        {
+          "level": 2,
+          "text": "3. 비목표"
+        },
+        {
+          "level": 2,
+          "text": "4. 핵심 개념"
+        },
+        {
+          "level": 3,
+          "text": "Persona"
+        },
+        {
+          "level": 3,
+          "text": "Agent Session"
+        },
+        {
+          "level": 3,
+          "text": "Team Run"
+        },
+        {
+          "level": 3,
+          "text": "Team Task"
+        },
+        {
+          "level": 3,
+          "text": "Team Message / Activity"
+        },
+        {
+          "level": 2,
+          "text": "5. Product Model"
+        },
+        {
+          "level": 3,
+          "text": "Persona fields"
+        },
+        {
+          "level": 3,
+          "text": "Team Run fields"
+        },
+        {
+          "level": 3,
+          "text": "Team Agent fields"
+        },
+        {
+          "level": 3,
+          "text": "Team Task fields"
+        },
+        {
+          "level": 3,
+          "text": "Team Message fields"
+        },
+        {
+          "level": 2,
+          "text": "6. API"
+        },
+        {
+          "level": 3,
+          "text": "Persona API"
+        },
+        {
+          "level": 3,
+          "text": "Team Run API"
+        },
+        {
+          "level": 2,
+          "text": "7. Event Contract"
+        },
+        {
+          "level": 2,
+          "text": "8. Persona Prompt Contract"
+        },
+        {
+          "level": 2,
+          "text": "9. UI / UX Integration"
+        },
+        {
+          "level": 3,
+          "text": "Agent Teams Home"
+        },
+        {
+          "level": 3,
+          "text": "New Team Run"
+        },
+        {
+          "level": 3,
+          "text": "Persona Library"
+        },
+        {
+          "level": 3,
+          "text": "Team Run Detail"
+        },
+        {
+          "level": 2,
+          "text": "10. Security / Full Access Relation"
+        },
+        {
+          "level": 2,
+          "text": "11. Implementation Phases"
+        },
+        {
+          "level": 3,
+          "text": "Phase 1: Data model + Persona CRUD"
+        },
+        {
+          "level": 3,
+          "text": "Phase 2: Team Run creation + read model"
+        },
+        {
+          "level": 3,
+          "text": "Phase 3: Leader planning"
+        },
+        {
+          "level": 3,
+          "text": "Phase 4: Worker execution"
+        },
+        {
+          "level": 3,
+          "text": "Phase 5: Team UI integration"
+        },
+        {
+          "level": 2,
+          "text": "12. Verification"
+        },
+        {
+          "level": 2,
+          "text": "13. Open Questions"
+        }
+      ],
+      "excerpt": "- 작성일: 2026-07-08 - 대상: `personal-agent-gateway` - 범위: persona library, team run, leader/worker agent sessions, task board, team activity stream - 관련 문서:   - `docs/knowledge/2026-07-08-full-access-security-operating-m..."
+    },
+    {
+      "path": "docs/specs/2026-07-09-session-scoped-chat-and-sse-spec.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Session-Scoped Chat and SSE Spec"
+        },
+        {
+          "level": 2,
+          "text": "1. 배경 / 문제"
+        },
+        {
+          "level": 2,
+          "text": "2. 근거 / 현재 코드에서 확인된 문제"
+        },
+        {
+          "level": 3,
+          "text": "2.1 Frontend live state is global"
+        },
+        {
+          "level": 3,
+          "text": "2.2 Backend running state is global"
+        },
+        {
+          "level": 3,
+          "text": "2.3 EventBus is memory-only and app-wide"
+        },
+        {
+          "level": 3,
+          "text": "2.4 Event ordering uses mixed clocks"
+        },
+        {
+          "level": 3,
+          "text": "2.5 Active-session centric APIs make state ownership ambiguous"
+        },
+        {
+          "level": 2,
+          "text": "3. 목표 / 성공 기준"
+        },
+        {
+          "level": 3,
+          "text": "Product goals"
+        },
+        {
+          "level": 3,
+          "text": "Engineering goals"
+        },
+        {
+          "level": 2,
+          "text": "4. 비목표"
+        },
+        {
+          "level": 2,
+          "text": "5. 핵심 결정"
+        },
+        {
+          "level": 3,
+          "text": "Decision 1: Session owns chat UI state"
+        },
+        {
+          "level": 3,
+          "text": "Decision 2: SSE events update session state by `session_id`"
+        },
+        {
+          "level": 3,
+          "text": "Decision 3: Runtime activity must be durable enough to restore UI"
+        },
+        {
+          "level": 3,
+          "text": "Decision 4: Server event id is the primary ordering key"
+        },
+        {
+          "level": 3,
+          "text": "Decision 5: Chat APIs should become session-explicit"
+        },
+        {
+          "level": 3,
+          "text": "Decision 6: Backend running state is session-scoped"
+        },
+        {
+          "level": 2,
+          "text": "6. Event Contract"
+        },
+        {
+          "level": 3,
+          "text": "6.1 Envelope"
+        },
+        {
+          "level": 3,
+          "text": "6.2 Required invariants"
+        },
+        {
+          "level": 3,
+          "text": "6.3 Reconciliation keys"
+        },
+        {
+          "level": 2,
+          "text": "7. Backend API Contract"
+        },
+        {
+          "level": 3,
+          "text": "7.1 Session history"
+        },
+        {
+          "level": 3,
+          "text": "7.2 Session activity"
+        },
+        {
+          "level": 3,
+          "text": "7.3 Session status"
+        },
+        {
+          "level": 3,
+          "text": "7.4 Session chat"
+        },
+        {
+          "level": 2,
+          "text": "8. Frontend State Contract"
+        },
+        {
+          "level": 3,
+          "text": "8.1 State shape"
+        },
+        {
+          "level": 3,
+          "text": "8.2 Loading a session"
+        },
+        {
+          "level": 3,
+          "text": "8.3 SSE handling"
+        },
+        {
+          "level": 3,
+          "text": "8.4 Optimistic user messages"
+        },
+        {
+          "level": 2,
+          "text": "9. Persistence Model"
+        },
+        {
+          "level": 3,
+          "text": "9.1 Why transcript alone is insufficient"
+        },
+        {
+          "level": 3,
+          "text": "9.2 Storage recommendation"
+        },
+        {
+          "level": 3,
+          "text": "9.3 Retention"
+        },
+        {
+          "level": 2,
+          "text": "10. UI Behavior Requirements"
+        },
+        {
+          "level": 3,
+          "text": "10.1 Chat transcript"
+        },
+        {
+          "level": 3,
+          "text": "10.2 SessionRail"
+        },
+        {
+          "level": 3,
+          "text": "10.3 Statusbar"
+        },
+        {
+          "level": 3,
+          "text": "10.4 Composer"
+        },
+        {
+          "level": 2,
+          "text": "11. Migration Strategy"
+        },
+        {
+          "level": 3,
+          "text": "Phase 1: Frontend session state isolation"
+        },
+        {
+          "level": 3,
+          "text": "Phase 2: Backend session-scoped running state"
+        },
+        {
+          "level": 3,
+          "text": "Phase 3: Session-explicit chat APIs"
+        },
+        {
+          "level": 3,
+          "text": "Phase 4: Durable session activity log"
+        },
+        {
+          "level": 3,
+          "text": "Phase 5: Ordering and reconciliation hardening"
+        },
+        {
+          "level": 2,
+          "text": "12. Verification"
+        },
+        {
+          "level": 3,
+          "text": "Backend tests"
+        },
+        {
+          "level": 3,
+          "text": "Frontend tests"
+        },
+        {
+          "level": 3,
+          "text": "Manual smoke"
+        },
+        {
+          "level": 2,
+          "text": "13. Risks / Tradeoffs"
+        },
+        {
+          "level": 3,
+          "text": "Risk: Persistent activity log duplicates transcript information"
+        },
+        {
+          "level": 3,
+          "text": "Risk: More state in frontend"
+        },
+        {
+          "level": 3,
+          "text": "Risk: Event schema migration may break existing tests"
+        },
+        {
+          "level": 2,
+          "text": "14. Acceptance Criteria"
+        },
+        {
+          "level": 2,
+          "text": "15. Open Questions"
+        }
+      ],
+      "excerpt": "- 작성일: 2026-07-09 - 대상: `personal-agent-gateway` - 범위: session-scoped chat state, durable live activity, SSE event contract, running status isolation, session history loading - 관련 문서:   - `docs/specs/completed_2026-07..."
+    },
+    {
+      "path": "docs/specs/2026-07-10-chat-liveness-reasoning-interrupt-spec.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "채팅 라이브니스·reasoning 보존·인터럽트 설계"
+        },
+        {
+          "level": 2,
+          "text": "1. 배경 / 문제"
+        },
+        {
+          "level": 2,
+          "text": "2. 현황 분석 (근거)"
+        },
+        {
+          "level": 2,
+          "text": "3. 목표 / 비목표"
+        },
+        {
+          "level": 2,
+          "text": "4. 설계"
+        },
+        {
+          "level": 3,
+          "text": "① 정렬 통일 — 단일 comparator"
+        },
+        {
+          "level": 3,
+          "text": "② reasoning 표시·보존"
+        },
+        {
+          "level": 3,
+          "text": "③ 라이브 인디케이터"
+        },
+        {
+          "level": 3,
+          "text": "④ esc 인터럽트 (프론트 + 백엔드)"
+        },
+        {
+          "level": 2,
+          "text": "5. 이벤트/데이터 스키마 변경"
+        },
+        {
+          "level": 2,
+          "text": "6. 테스트 전략"
+        },
+        {
+          "level": 2,
+          "text": "7. 파일별 변경 요약"
+        },
+        {
+          "level": 2,
+          "text": "8. 리스크 / 주의"
+        },
+        {
+          "level": 2,
+          "text": "9. 결정된 사항 (구현 중 검증)"
+        }
+      ],
+      "excerpt": "- 날짜: 2026-07-10 - 상태: Draft (사용자 검토 대기) - 범위: `frontend/` (React 정본) + `src/personal_agent_gateway/` (백엔드 API/런타임) - 관련 이전 spec: `completed_2026-07-07-live-activity-viewer-chat-redesign-spec.md`, `2026-07-09-session-..."
+    },
+    {
+      "path": "docs/specs/completed_2026-07-05-cloudflare-quick-tunnel-version-a-spec.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Web Gateway Version A Spec"
+        },
+        {
+          "level": 2,
+          "text": "Status"
+        },
+        {
+          "level": 2,
+          "text": "Objective"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 3,
+          "text": "Included"
+        },
+        {
+          "level": 3,
+          "text": "Excluded"
+        },
+        {
+          "level": 2,
+          "text": "Assumptions"
+        },
+        {
+          "level": 2,
+          "text": "Recommended Approach"
+        },
+        {
+          "level": 2,
+          "text": "Alternative Approaches"
+        },
+        {
+          "level": 3,
+          "text": "Hermes Runtime Reuse"
+        },
+        {
+          "level": 3,
+          "text": "Tailscale-Only Local Web UI"
+        },
+        {
+          "level": 2,
+          "text": "Architecture"
+        },
+        {
+          "level": 3,
+          "text": "Components"
+        },
+        {
+          "level": 4,
+          "text": "Web UI"
+        },
+        {
+          "level": 4,
+          "text": "Web Backend"
+        },
+        {
+          "level": 4,
+          "text": "Local Agent Runtime"
+        },
+        {
+          "level": 4,
+          "text": "Cloudflare Quick Tunnel"
+        },
+        {
+          "level": 2,
+          "text": "Security Model"
+        },
+        {
+          "level": 3,
+          "text": "Required Controls"
+        },
+        {
+          "level": 3,
+          "text": "Recommended Token Behavior"
+        },
+        {
+          "level": 3,
+          "text": "Residual Risks"
+        },
+        {
+          "level": 2,
+          "text": "Data Flow"
+        },
+        {
+          "level": 3,
+          "text": "Normal Chat"
+        },
+        {
+          "level": 3,
+          "text": "Shell Approval Flow"
+        },
+        {
+          "level": 2,
+          "text": "Session Model"
+        },
+        {
+          "level": 2,
+          "text": "Transcript Persistence"
+        },
+        {
+          "level": 2,
+          "text": "Configuration"
+        },
+        {
+          "level": 2,
+          "text": "Failure Handling"
+        },
+        {
+          "level": 2,
+          "text": "Testing Criteria"
+        },
+        {
+          "level": 3,
+          "text": "Local"
+        },
+        {
+          "level": 3,
+          "text": "Tunnel"
+        },
+        {
+          "level": 3,
+          "text": "Security"
+        },
+        {
+          "level": 2,
+          "text": "Implementation Plan Boundary"
+        },
+        {
+          "level": 2,
+          "text": "Fixed Decisions For Version A"
+        }
+      ],
+      "excerpt": "Ready for user review."
+    },
+    {
+      "path": "docs/specs/completed_2026-07-06-personal-agent-gateway-capabilities-technical-spec.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway Capabilities Technical Spec"
+        },
+        {
+          "level": 2,
+          "text": "Status"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Non-Goals"
+        },
+        {
+          "level": 2,
+          "text": "Recommended Stack"
+        },
+        {
+          "level": 3,
+          "text": "Frontend"
+        },
+        {
+          "level": 3,
+          "text": "Backend"
+        },
+        {
+          "level": 3,
+          "text": "Local Tools"
+        },
+        {
+          "level": 2,
+          "text": "Product Model"
+        },
+        {
+          "level": 3,
+          "text": "Capability"
+        },
+        {
+          "level": 3,
+          "text": "Job"
+        },
+        {
+          "level": 3,
+          "text": "Schedule"
+        },
+        {
+          "level": 3,
+          "text": "Artifact"
+        },
+        {
+          "level": 3,
+          "text": "Approval"
+        },
+        {
+          "level": 2,
+          "text": "Auth Scope"
+        },
+        {
+          "level": 2,
+          "text": "API Shape"
+        },
+        {
+          "level": 3,
+          "text": "Capabilities"
+        },
+        {
+          "level": 3,
+          "text": "Jobs"
+        },
+        {
+          "level": 3,
+          "text": "Schedules"
+        },
+        {
+          "level": 3,
+          "text": "Artifacts"
+        },
+        {
+          "level": 3,
+          "text": "Capture"
+        },
+        {
+          "level": 2,
+          "text": "Data Storage"
+        },
+        {
+          "level": 2,
+          "text": "Runner Design"
+        },
+        {
+          "level": 2,
+          "text": "Safety Rules"
+        },
+        {
+          "level": 2,
+          "text": "UI Sections"
+        },
+        {
+          "level": 2,
+          "text": "Implementation Phases"
+        },
+        {
+          "level": 3,
+          "text": "Phase 1: Auth and React Shell"
+        },
+        {
+          "level": 3,
+          "text": "Phase 2: Job Model and Visibility"
+        },
+        {
+          "level": 3,
+          "text": "Phase 3: Artifact Store"
+        },
+        {
+          "level": 3,
+          "text": "Phase 4: Capture and ffmpeg Capabilities"
+        },
+        {
+          "level": 3,
+          "text": "Phase 5: Schedules"
+        },
+        {
+          "level": 2,
+          "text": "Testing Strategy"
+        },
+        {
+          "level": 2,
+          "text": "Open Decisions"
+        }
+      ],
+      "excerpt": "Draft for product/design alignment."
+    },
+    {
+      "path": "docs/specs/completed_2026-07-07-live-activity-viewer-chat-redesign-spec.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Live Activity Viewer — Chat 화면 개편 Spec"
+        },
+        {
+          "level": 2,
+          "text": "1. 배경 / 문제"
+        },
+        {
+          "level": 2,
+          "text": "2. 목표 / 성공 기준"
+        },
+        {
+          "level": 2,
+          "text": "3. 데이터 모델"
+        },
+        {
+          "level": 3,
+          "text": "3.1 통합 타임라인"
+        },
+        {
+          "level": 3,
+          "text": "3.2 소스 매핑 (백엔드 변경 없음)"
+        },
+        {
+          "level": 3,
+          "text": "3.3 정합성(reconciliation)"
+        },
+        {
+          "level": 3,
+          "text": "3.4 파생 라이브 상태"
+        },
+        {
+          "level": 2,
+          "text": "4. 레이아웃"
+        },
+        {
+          "level": 3,
+          "text": "4.1 Chat (드로어 제거)"
+        },
+        {
+          "level": 3,
+          "text": "4.2 상단 상태 바"
+        },
+        {
+          "level": 2,
+          "text": "5. 컴포넌트 (styles.css + app.js)"
+        },
+        {
+          "level": 2,
+          "text": "6. 아티팩트 카드 (조건부)"
+        },
+        {
+          "level": 2,
+          "text": "7. 검증"
+        },
+        {
+          "level": 2,
+          "text": "8. 범위 (YAGNI)"
+        }
+      ],
+      "excerpt": "- 작성일: 2026-07-07 - 대상: `src/personal_agent_gateway/static/app.js`, `styles.css` - 디자인 출처: `Live Activity Viewer.dc.html`, `ActivityStream.dc.html` (claude.ai/design 프로젝트 \"UI/UX 기획서 기반 디자인\") - 범위: 프론트엔드 전용. 백엔드/API 변경..."
+    },
+    {
+      "path": "docs/specs/completed_2026-07-08-structured-content-rendering-spec.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "채팅 응답 구조화 포맷 렌더링 Spec"
+        },
+        {
+          "level": 2,
+          "text": "1. 배경 / 문제"
+        },
+        {
+          "level": 2,
+          "text": "2. 목표 / 성공 기준"
+        },
+        {
+          "level": 2,
+          "text": "3. 정적 서빙 (백엔드 최소 변경)"
+        },
+        {
+          "level": 2,
+          "text": "4. 렌더링 (app.js `renderMarkdown` 확장)"
+        },
+        {
+          "level": 3,
+          "text": "4.1 코드 블록"
+        },
+        {
+          "level": 3,
+          "text": "4.2 Mermaid (lazy)"
+        },
+        {
+          "level": 3,
+          "text": "4.3 표"
+        },
+        {
+          "level": 3,
+          "text": "4.4 확대 모달"
+        },
+        {
+          "level": 2,
+          "text": "5. 기술적 주의 (codebase 구조)"
+        },
+        {
+          "level": 2,
+          "text": "6. 검증"
+        },
+        {
+          "level": 2,
+          "text": "7. 범위 밖 (YAGNI)"
+        }
+      ],
+      "excerpt": "- 작성일: 2026-07-08 - 대상: `src/personal_agent_gateway/static/app.js`, `styles.css`, `index.html`, `app.py`(정적 마운트 1줄), `static/vendor/**` - 브랜치: feat/live-activity-viewer - 범위: 프론트 중심 + 최소 백엔드(정적 서빙 경로). **2차 AI 변환 없음.**"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-07-frontend-redesign-slice1.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Frontend Redesign Slice 1 Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 2,
+          "text": "Running & Verifying"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Neo-brutalist CSS + shell chrome"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: OTP Login + auth gating"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Chat screen (layout A) — sessions, transcript, composer"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Job Proposal (shell approval) in Chat"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Responsive adaptation"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-08-observability-audit-log.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Observability and Audit Log Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: Audit Events Schema"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: Redaction Helper"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: AuditLogService"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: Config and Structured Local Logging"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: Audit API"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: Audit Hooks for Auth, Chat, Jobs, and Codex Events"
+        },
+        {
+          "level": 2,
+          "text": "Task 7: Agent Teams Audit Attribution"
+        },
+        {
+          "level": 2,
+          "text": "Task 8: Audit Log UI (Vite React)"
+        },
+        {
+          "level": 2,
+          "text": "Task 9: Verification"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-08-persona-agent-teams-followups.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Persona Agent Teams — 후속 과제 (백엔드 Tasks 1–8 이후)"
+        },
+        {
+          "level": 2,
+          "text": "범위 메모"
+        },
+        {
+          "level": 2,
+          "text": "후속 과제"
+        },
+        {
+          "level": 3,
+          "text": "FU-1. 팀 상태머신 하드닝 (묶음 권장)"
+        },
+        {
+          "level": 3,
+          "text": "FU-2. `create_team_run` 트랜잭션화"
+        },
+        {
+          "level": 3,
+          "text": "FU-3. `TeamRuntime.start` 백그라운드화"
+        },
+        {
+          "level": 3,
+          "text": "FU-4. 멀티 백엔드 지원"
+        },
+        {
+          "level": 3,
+          "text": "FU-5. `plan_and_execute` 이벤트버스 커버리지 테스트"
+        },
+        {
+          "level": 3,
+          "text": "FU-6. 사소(정리성)"
+        },
+        {
+          "level": 2,
+          "text": "우선순위 제안"
+        }
+      ],
+      "excerpt": "- 작성일: 2026-07-08 - 출처: `feat/persona-agent-teams` 백엔드 구현(→ `main` `bcc96b5`로 머지)의 태스크별 리뷰 + 전체 브랜치 리뷰(opus)에서 도출한 **비차단(non-blocking) 후속 과제**. - 관련: `docs/superpowers/plans/completed_2026-07-08-persona-agent-teams.md..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-09-chat-path-artifact-registration.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Chat Path → Artifact Registration Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Backend — extension whitelist module + register endpoint"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Frontend — path detection + \"+등록\" button in the transcript"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Frontend — Artifacts viewer \"document\" support"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review"
+        },
+        {
+          "level": 2,
+          "text": "Execution Handoff"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-09-gateway-screens-jobs-schedules-artifacts-settings.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Gateway Screens (Jobs · Schedules · Artifacts · Settings) Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "Backend reference (already exists — do not rebuild)"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "Task A: Remove Capabilities from the sidebar"
+        },
+        {
+          "level": 3,
+          "text": "Task B: Settings screen (read-only)"
+        },
+        {
+          "level": 3,
+          "text": "Task C: Artifacts screen"
+        },
+        {
+          "level": 3,
+          "text": "Task D: Jobs screen"
+        },
+        {
+          "level": 3,
+          "text": "Task E: Backend `agent.instruct` capability + agent runner"
+        },
+        {
+          "level": 3,
+          "text": "Task F: Schedules screen (recurring instruction) — depends on Task E"
+        },
+        {
+          "level": 3,
+          "text": "Task G: Integration verification"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review"
+        },
+        {
+          "level": 2,
+          "text": "Execution Handoff"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-09-session-scoped-chat-and-sse.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Session-Scoped Chat and SSE Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Map"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Durable Session Activity Store"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Persist Chat Runtime Events Before SSE Fanout"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Session-Scoped Running State and Explicit Backend APIs"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Frontend API and Timeline Model for Session Activity"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Frontend Session-Owned Chat State"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: Session-Scoped Approval Endpoints and UI Calls"
+        },
+        {
+          "level": 3,
+          "text": "Task 7: Final Verification, Build, and Dev Server Restart"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-10-artifact-viewer-dedup-chat-view.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Artifact Viewer + Dedup + Chat \"보기\" Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Backend — dedup on register + delete endpoint"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Frontend — centered ArtifactModal (zoom/pan), grid thumbnails, delete, overflow fix"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Frontend — chat \"보기\" button + dedup-aware PathChip"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review"
+        },
+        {
+          "level": 2,
+          "text": "Execution Handoff"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-10-team-collaboration-and-reliability.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run: 동적 협업 메시징 + 실행 신뢰성 구현 계획"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "파일 구조"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: 데이터 모델 확장 (DB 마이그레이션 + teams.py)"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: TeamRunRegistry (실행 수명주기)"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: backend-aware 모델 팩토리 + config"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: team_runtime 재구조화 — 부분 실패 격리 + 종료 상태"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: 동적 메시징 라운드 (needs_info + 리더 중재 + resume + 예산/캡)"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: 리더 최종 종합 (synthesis)"
+        },
+        {
+          "level": 2,
+          "text": "Task 7: 백그라운드 실행 + 실제 취소 배선"
+        },
+        {
+          "level": 2,
+          "text": "Task 8: 프런트엔드 — 상태 배지 + 논블로킹 확인"
+        },
+        {
+          "level": 2,
+          "text": "Task 9: 통합 검증"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review 결과"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-13-team-run-ux-improvements.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run UX Improvements Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: Avatar in persona snapshot (backend)"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: Backfill avatar into existing agent snapshots (backend)"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: Leader cannot also be a member (frontend)"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: Drain loop in `_execute` (backend runtime)"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: Race-safe synthesize loop + `resume` (backend runtime)"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: `add_work` runtime method (leader decomposition)"
+        },
+        {
+          "level": 2,
+          "text": "Task 7: `add-work` API endpoint"
+        },
+        {
+          "level": 2,
+          "text": "Task 8: Add-work frontend (client + handler + input)"
+        },
+        {
+          "level": 2,
+          "text": "Task 9: Progress display — phase stepper, richer lanes, colored activity (frontend + CSS)"
+        },
+        {
+          "level": 2,
+          "text": "Task 10: Shared documents panel (frontend + CSS)"
+        },
+        {
+          "level": 2,
+          "text": "Final verification"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review Notes"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/archived_2026-07-07-live-status-sse-backlog.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Live Status SSE Backlog Archive"
+        },
+        {
+          "level": 2,
+          "text": "Archived Summary"
+        },
+        {
+          "level": 2,
+          "text": "Moved / Superseded"
+        },
+        {
+          "level": 2,
+          "text": "Remaining Active Work"
+        }
+      ],
+      "excerpt": "> 이전 backlog를 축약한 archive 문서다. 대부분의 내용은 완료된 live activity viewer 또는 신규 session-scoped SSE spec으로 이동했다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-05-personal-agent-web-gateway.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Web Gateway Completion Record"
+        },
+        {
+          "level": 2,
+          "text": "Result Summary"
+        },
+        {
+          "level": 2,
+          "text": "Final Status"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup Notes"
+        }
+      ],
+      "excerpt": "> 초기 gateway 구현 계획을 축약한 완료 기록이다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-06-local-backend-architecture-plan.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Local Backend Architecture Completion Record"
+        },
+        {
+          "level": 2,
+          "text": "Result Summary"
+        },
+        {
+          "level": 2,
+          "text": "Final Status"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup Notes"
+        }
+      ],
+      "excerpt": "> Local backend architecture 구현 계획을 축약한 완료 기록이다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-07-backend-api-gaps-plan.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Backend API Gaps Completion Record"
+        },
+        {
+          "level": 2,
+          "text": "Result Summary"
+        },
+        {
+          "level": 2,
+          "text": "Final Status"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup Notes"
+        }
+      ],
+      "excerpt": "> 완료된 구현 계획을 축약한 감사 기록이다. 상세 구현 절차와 오래된 TODO 목록은 제거했다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-07-live-activity-viewer-and-sse.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Live Activity Viewer and SSE Completion Record"
+        },
+        {
+          "level": 2,
+          "text": "Result Summary"
+        },
+        {
+          "level": 2,
+          "text": "Final Status"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Known Limitations"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup Notes"
+        }
+      ],
+      "excerpt": "> `2026-07-07-live-activity-stream-plan.md`와 `2026-07-07-live-activity-viewer.md`를 통합 축약한 완료 기록이다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-08-local-agent-registry-refactor.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Local Agent Registry Refactor Completion Record"
+        },
+        {
+          "level": 2,
+          "text": "Result Summary"
+        },
+        {
+          "level": 2,
+          "text": "Final Status"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup Notes"
+        }
+      ],
+      "excerpt": "> 완료된 구현 계획을 축약한 감사 기록이다. 세부 구현 스니펫과 오래된 task checklist는 제거했다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-08-persona-agent-teams.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Persona-Based Agent Teams Base Completion Record"
+        },
+        {
+          "level": 2,
+          "text": "Result Summary"
+        },
+        {
+          "level": 2,
+          "text": "Final Status"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Remaining Work"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup Notes"
+        }
+      ],
+      "excerpt": "> 완료된 base implementation 계획을 축약한 감사 기록이다. 후속 hardening 항목은 별도 active follow-up 문서에 유지한다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-08-structured-content-rendering.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Structured Content Rendering Completion Record"
+        },
+        {
+          "level": 2,
+          "text": "Result Summary"
+        },
+        {
+          "level": 2,
+          "text": "Final Status"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup Notes"
+        }
+      ],
+      "excerpt": "> 완료된 구현 계획을 축약한 감사 기록이다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-09-agent-model-options.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Agent Model Options Completion Record"
+        },
+        {
+          "level": 2,
+          "text": "Result Summary"
+        },
+        {
+          "level": 2,
+          "text": "Final Status"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup Notes"
+        }
+      ],
+      "excerpt": "> 완료된 구현 계획을 축약한 감사 기록이다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-09-cli-session-resume-bridge.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "CLI Session Resume Bridge Completion Record"
+        },
+        {
+          "level": 2,
+          "text": "Result Summary"
+        },
+        {
+          "level": 2,
+          "text": "Final Status"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup Notes"
+        }
+      ],
+      "excerpt": "> 완료된 구현 계획을 축약한 감사 기록이다."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-10-team-collaboration-and-reliability-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run: 동적 협업 메시징 + 실행 신뢰성 설계"
+        },
+        {
+          "level": 2,
+          "text": "배경"
+        },
+        {
+          "level": 2,
+          "text": "스코프"
+        },
+        {
+          "level": 2,
+          "text": "제약: codex는 one-shot"
+        },
+        {
+          "level": 2,
+          "text": "아키텍처 & 컴포넌트 경계"
+        },
+        {
+          "level": 2,
+          "text": "데이터 모델 변경"
+        },
+        {
+          "level": 2,
+          "text": "실행 흐름"
+        },
+        {
+          "level": 3,
+          "text": "1. Planning"
+        },
+        {
+          "level": 3,
+          "text": "2. 비실행 모드"
+        },
+        {
+          "level": 3,
+          "text": "3. Execute (순차, task별 라운드 루프)"
+        },
+        {
+          "level": 3,
+          "text": "4. 종합"
+        },
+        {
+          "level": 3,
+          "text": "5. 종료 상태"
+        },
+        {
+          "level": 3,
+          "text": "중재 방식(결정)"
+        },
+        {
+          "level": 3,
+          "text": "needs_info 프로토콜"
+        },
+        {
+          "level": 2,
+          "text": "신뢰성"
+        },
+        {
+          "level": 3,
+          "text": "백그라운드 실행"
+        },
+        {
+          "level": 3,
+          "text": "취소(실동작)"
+        },
+        {
+          "level": 3,
+          "text": "부분 실패 격리"
+        },
+        {
+          "level": 2,
+          "text": "backend-aware 실행"
+        },
+        {
+          "level": 2,
+          "text": "에러 처리 & 엣지 케이스"
+        },
+        {
+          "level": 2,
+          "text": "테스트 전략 (TDD)"
+        },
+        {
+          "level": 2,
+          "text": "구현 순서"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-10"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-13-team-run-ux-improvements-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run UX Improvements — Design"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Current State (verified against code)"
+        },
+        {
+          "level": 2,
+          "text": "Design"
+        },
+        {
+          "level": 3,
+          "text": "1. Avatar fix (backend)"
+        },
+        {
+          "level": 3,
+          "text": "2. Leader ≠ member (frontend)"
+        },
+        {
+          "level": 3,
+          "text": "3. Additional work mid-run + reopen (backend + frontend)"
+        },
+        {
+          "level": 3,
+          "text": "4. Progress display (frontend, `TeamRunDetail`)"
+        },
+        {
+          "level": 3,
+          "text": "5. Shared documents panel (frontend, `TeamRunDetail`)"
+        },
+        {
+          "level": 2,
+          "text": "Data Flow / SSE"
+        },
+        {
+          "level": 2,
+          "text": "Testing"
+        },
+        {
+          "level": 2,
+          "text": "Out of Scope"
+        }
+      ],
+      "excerpt": "- Date: 2026-07-13 - Scope: personal-agent-gateway Persona Agent Teams — the \"team run\" lifecycle UI and runtime - Status: approved for planning"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-14-team-run-interruption-recovery-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run 중단 감지와 사용자 재개 설계"
+        },
+        {
+          "level": 2,
+          "text": "배경"
+        },
+        {
+          "level": 2,
+          "text": "결정"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "비목표"
+        },
+        {
+          "level": 2,
+          "text": "상태 모델"
+        },
+        {
+          "level": 2,
+          "text": "중단 정규화"
+        },
+        {
+          "level": 2,
+          "text": "감지 흐름"
+        },
+        {
+          "level": 3,
+          "text": "비정상 종료 후 시작"
+        },
+        {
+          "level": 3,
+          "text": "정상 종료"
+        },
+        {
+          "level": 2,
+          "text": "Resume 흐름"
+        },
+        {
+          "level": 2,
+          "text": "UI"
+        },
+        {
+          "level": 2,
+          "text": "오류 처리"
+        },
+        {
+          "level": 2,
+          "text": "테스트 전략"
+        },
+        {
+          "level": 3,
+          "text": "서비스"
+        },
+        {
+          "level": 3,
+          "text": "레지스트리와 애플리케이션 수명주기"
+        },
+        {
+          "level": 3,
+          "text": "API와 런타임"
+        },
+        {
+          "level": 3,
+          "text": "프런트엔드"
+        },
+        {
+          "level": 3,
+          "text": "통합 검증"
+        },
+        {
+          "level": 2,
+          "text": "현재 Run 적용"
+        },
+        {
+          "level": 2,
+          "text": "재검토 조건"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-14"
+    },
+    {
+      "path": "docs/superpowers/specs/completed_2026-07-06-otp-setup-ui-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "OTP Setup UI Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 2,
+          "text": "API"
+        },
+        {
+          "level": 2,
+          "text": "UI Flow"
+        },
+        {
+          "level": 2,
+          "text": "Security"
+        },
+        {
+          "level": 2,
+          "text": "Tests"
+        }
+      ],
+      "excerpt": "Let the owner configure Google Authenticator-compatible TOTP from the existing browser UI instead of running a local Python snippet."
+    },
+    {
+      "path": "docs/superpowers/specs/completed_2026-07-07-frontend-redesign-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Frontend Redesign Design — Slice 1 (Shell + Login + Chat)"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Source of Truth"
+        },
+        {
+          "level": 2,
+          "text": "Ownership Boundary"
+        },
+        {
+          "level": 2,
+          "text": "Architecture"
+        },
+        {
+          "level": 2,
+          "text": "Screens in Slice 1"
+        },
+        {
+          "level": 2,
+          "text": "Responsive Adaptation"
+        },
+        {
+          "level": 2,
+          "text": "PLANNED Policy"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Out of Scope (Later Slices)"
+        },
+        {
+          "level": 2,
+          "text": "References"
+        }
+      ],
+      "excerpt": "**Date:** 2026-07-07 **Status:** Approved design (pre-plan) **Track:** Frontend / design (owns `src/personal_agent_gateway/static/**`)"
+    },
+    {
+      "path": "docs/superpowers/specs/completed_2026-07-08-local-agent-registry-refactor-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Local Agent Registry Refactor Design Completion Record"
+        },
+        {
+          "level": 2,
+          "text": "Result Summary"
+        },
+        {
+          "level": 2,
+          "text": "Decisions Preserved"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup Notes"
+        }
+      ],
+      "excerpt": "> pre-plan design 문서를 완료 상태로 축약한 기록이다."
+    }
+  ]
+}

@@ -8,6 +8,44 @@ const personas = [
   { id: "p2", name: "QA Tester", role: "Verification", responsibilities: [], constraints: ["No prod data"] }
 ];
 
+const agents = [
+  {
+    id: "codex",
+    label: "Codex CLI",
+    available: true,
+    version: "codex-cli 1.0",
+    default_model: "default",
+    models: ["default", "codex-max", "codex-fast"],
+    model_options: [
+      { id: "default", label: "Default", efforts: ["low", "high"], default_effort: "high" },
+      { id: "codex-max", label: "Codex Max", efforts: ["high", "max"], default_effort: "max" },
+      { id: "codex-fast", label: "Codex Fast", efforts: ["low", "medium"], default_effort: "medium" }
+    ],
+    defaults: { effort: "high", sandbox: "workspace-write", approval_policy: "never" },
+    options_schema: [
+      { name: "effort", kind: "select", choices: ["low", "medium", "high", "max"] },
+      { name: "sandbox", kind: "select", choices: ["read-only", "workspace-write"] },
+      { name: "approval_policy", kind: "select", choices: ["never", "on-request"] }
+    ]
+  },
+  {
+    id: "claude",
+    label: "Claude Code",
+    available: true,
+    default_model: "sonnet",
+    models: ["sonnet", "opus"],
+    model_options: [
+      { id: "sonnet", label: "Sonnet", efforts: ["low", "medium", "high"], default_effort: "medium" },
+      { id: "opus", label: "Opus", efforts: ["high", "max"], default_effort: "high" }
+    ],
+    defaults: { effort: "medium", permission_mode: "manual" },
+    options_schema: [
+      { name: "effort", kind: "select", choices: ["low", "medium", "high", "max"] },
+      { name: "permission_mode", kind: "select", choices: ["manual", "plan"] }
+    ]
+  }
+];
+
 describe("PersonaLibrary", () => {
   it("shows the selected persona's detail and switches when another row is clicked", async () => {
     render(<PersonaLibrary personas={personas} onCreate={vi.fn()} onSave={vi.fn()} />);
@@ -44,6 +82,44 @@ describe("PersonaLibrary", () => {
       responsibilities: ["Find channels", "Run experiments"],
       constraints: []
     }));
+  });
+
+  it("selects detected backend, model and model-specific options for a persona", async () => {
+    const onCreate = vi.fn();
+    render(<PersonaLibrary personas={personas} agents={agents} onCreate={onCreate} onSave={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /new persona/i }));
+    await userEvent.type(screen.getByLabelText("Name"), "Local Agent");
+    await userEvent.selectOptions(screen.getByLabelText("Backend"), "claude");
+
+    expect(screen.getByLabelText("Model")).toHaveValue("sonnet");
+    expect(screen.getByLabelText("effort")).toHaveValue("medium");
+    expect(screen.getByLabelText("permission mode")).toHaveValue("manual");
+
+    await userEvent.selectOptions(screen.getByLabelText("Model"), "opus");
+    expect(screen.getByLabelText("effort")).toHaveValue("high");
+    expect(screen.queryByRole("option", { name: "low" })).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("effort"), "max");
+    await userEvent.selectOptions(screen.getByLabelText("permission mode"), "plan");
+    await userEvent.click(screen.getByRole("button", { name: /create persona/i }));
+
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      default_backend: "claude",
+      default_model: "opus",
+      default_options: { effort: "max", permission_mode: "plan" }
+    }));
+  });
+
+  it("creates (not updates) the first persona when the library is empty", async () => {
+    const onCreate = vi.fn();
+    const onSave = vi.fn();
+    render(<PersonaLibrary personas={[]} onCreate={onCreate} onSave={onSave} />);
+
+    await userEvent.type(screen.getByLabelText("Name"), "박PM");
+    await userEvent.click(screen.getByRole("button", { name: /create persona/i }));
+
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ name: "박PM" }));
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it("saves edits to an existing persona", async () => {

@@ -1,3 +1,7 @@
+from pathlib import Path
+
+import pytest
+
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.teams import TeamRunService
@@ -28,6 +32,7 @@ def test_create_team_run_snapshots_personas(tmp_path):
 
     agents = teams.list_agents(run.id)
     assert run.status == "draft"
+    assert Path(run.workspace_root).is_dir()
     assert len(agents) == 2
     assert agents[0].persona_snapshot["name"] == "Tech Lead"
     assert agents[1].persona_snapshot["name"] == "QA Tester"
@@ -36,6 +41,78 @@ def test_create_team_run_snapshots_personas(tmp_path):
 
     unchanged = teams.list_agents(run.id)[1]
     assert unchanged.persona_snapshot["name"] == "QA Tester"
+
+
+def test_delete_team_run_removes_isolated_workspace_and_related_records(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    run = teams.create_team_run("temporary test run", leader.id, [], "planning_only", 1)
+    task = teams.create_task(run.id, "temporary task", "test only")
+    teams.append_message(run.id, None, None, "note", "temporary", {"task_id": task.id})
+    workspace = Path(run.workspace_root)
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "result.txt").write_text("temporary", encoding="utf-8")
+
+    teams.delete_team_run(run.id)
+
+    assert not workspace.exists()
+    with pytest.raises(KeyError):
+        teams.get_team_run(run.id)
+    assert teams._db.fetchone("select id from team_tasks where id = ?", (task.id,)) is None
+    assert teams._db.fetchone(
+        "select id from team_messages where team_run_id = ?", (run.id,)
+    ) is None
+
+
+def test_delete_team_run_allows_missing_workspace(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    run = teams.create_team_run("temporary test run", leader.id, [], "planning_only", 1)
+    Path(run.workspace_root).rmdir()
+
+    teams.delete_team_run(run.id)
+
+    with pytest.raises(KeyError):
+        teams.get_team_run(run.id)
+
+
+def test_delete_team_run_rejects_workspace_outside_configured_root(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    run = teams.create_team_run("temporary test run", leader.id, [], "planning_only", 1)
+    outside = tmp_path / "outside" / run.id
+    outside.mkdir(parents=True)
+    sentinel = outside / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    teams._db.execute(
+        "update team_runs set workspace_root = ? where id = ?",
+        (str(outside), run.id),
+    )
+
+    with pytest.raises(ValueError, match="outside the configured workspace root"):
+        teams.delete_team_run(run.id)
+
+    assert sentinel.exists()
+    assert teams.get_team_run(run.id).id == run.id
+
+
+def test_delete_team_run_keeps_record_when_workspace_removal_fails(tmp_path, monkeypatch):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    run = teams.create_team_run("temporary test run", leader.id, [], "planning_only", 1)
+    workspace = Path(run.workspace_root)
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    def fail_removal(_path):
+        raise OSError("workspace is locked")
+
+    monkeypatch.setattr("personal_agent_gateway.teams.shutil.rmtree", fail_removal)
+
+    with pytest.raises(OSError, match="workspace is locked"):
+        teams.delete_team_run(run.id)
+
+    assert workspace.exists()
+    assert teams.get_team_run(run.id).id == run.id
 
 
 def test_append_team_message(tmp_path):
@@ -118,6 +195,24 @@ def test_persona_snapshot_includes_avatar(tmp_path):
     assert agent.persona_snapshot["avatar"] == "person01"
 
 
+def test_persona_snapshot_includes_default_options(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona(
+        "L",
+        "lead",
+        "d",
+        [],
+        [],
+        default_options={"effort": "max", "sandbox": "read-only"},
+    )
+    run = teams.create_team_run("goal", leader.id, [], "planning_only", 1)
+
+    assert teams.list_agents(run.id)[0].persona_snapshot["default_options"] == {
+        "effort": "max",
+        "sandbox": "read-only",
+    }
+
+
 def test_backfill_agent_avatars_populates_missing(tmp_path):
     import json
     from personal_agent_gateway.db import Database
@@ -147,3 +242,85 @@ def test_backfill_agent_avatars_populates_missing(tmp_path):
     assert teams.list_agents(run.id)[0].persona_snapshot["avatar"] == "tech03"
     # Idempotent: a second pass changes nothing.
     assert teams.backfill_agent_avatars() == 0
+
+
+def test_interrupt_active_run_requeues_only_in_progress_work(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    completed = teams.create_task(run.id, "done", "already done", worker_agent.id)
+    interrupted = teams.create_task(run.id, "current", "was running", worker_agent.id)
+    teams.set_task_status(completed.id, "completed", result="kept result")
+    teams.set_task_status(interrupted.id, "in_progress")
+    teams.set_agent_session(worker_agent.id, "thread-123")
+    teams.set_agent_status(leader_agent.id, "running")
+    teams.set_agent_status(worker_agent.id, "running")
+    teams._db.execute(  # Simulate the assignment persisted by a running orchestrator.
+        "update team_agents set current_task_id = ? where id = ?",
+        (interrupted.id, worker_agent.id),
+    )
+    teams.set_run_status(run.id, "running")
+
+    recovered = teams.interrupt_active_runs()
+
+    assert [item.id for item in recovered] == [run.id]
+    updated_run = teams.get_team_run(run.id)
+    assert updated_run.status == "interrupted"
+    assert updated_run.finished_at is None
+    task_by_title = {task.title: task for task in teams.list_tasks(run.id)}
+    assert task_by_title["done"].status == "completed"
+    assert task_by_title["done"].result == "kept result"
+    assert task_by_title["current"].status == "pending"
+    assert task_by_title["current"].started_at is None
+    updated_worker = teams.get_agent(worker_agent.id)
+    assert updated_worker.status == "pending"
+    assert updated_worker.current_task_id is None
+    assert updated_worker.upstream_session_id == "thread-123"
+    assert [message.kind for message in teams.list_messages(run.id)].count("system_interrupted") == 1
+
+    assert teams.interrupt_active_runs() == []
+    assert [message.kind for message in teams.list_messages(run.id)].count("system_interrupted") == 1
+
+
+def test_retry_failed_task_requeues_only_selected_task_and_interrupts_run(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    completed = teams.create_task(run.id, "done", "kept")
+    failed = teams.create_task(run.id, "failed", "retry me")
+    teams.set_task_status(completed.id, "completed", result="kept result")
+    teams.set_task_status(failed.id, "failed", error_message="timed out")
+    teams.set_run_status(run.id, "completed_with_failures", summary="old summary")
+
+    updated_run, updated_task = teams.retry_failed_task(run.id, failed.id)
+
+    assert updated_run.status == "interrupted"
+    assert updated_run.summary is None
+    assert updated_run.error_message is None
+    assert updated_run.finished_at is None
+    assert updated_task.status == "pending"
+    assert updated_task.result is None
+    assert updated_task.error_message is None
+    assert updated_task.started_at is None
+    assert updated_task.finished_at is None
+    assert teams.list_tasks(run.id)[0].result == "kept result"
+    message = teams.list_messages(run.id)[-1]
+    assert message.kind == "system_task_retried"
+    assert message.metadata == {"task_id": failed.id, "previous_error": "timed out"}
+
+
+def test_retry_failed_task_rejects_nonfailed_task_and_nonterminal_run(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [], "plan_and_execute", 1)
+    task = teams.create_task(run.id, "pending", "not failed")
+
+    with pytest.raises(ValueError, match="failed terminal"):
+        teams.retry_failed_task(run.id, task.id)
+
+    teams.set_run_status(run.id, "failed", error_message="all failed")
+    with pytest.raises(ValueError, match="Only failed tasks"):
+        teams.retry_failed_task(run.id, task.id)

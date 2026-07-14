@@ -42,8 +42,9 @@ describe("TeamRunDetail", () => {
       />
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Add work" }));
     await userEvent.type(screen.getByLabelText("Additional work"), "also write docs");
-    await userEvent.click(screen.getByRole("button", { name: "추가 업무 요청" }));
+    await userEvent.click(screen.getByRole("button", { name: "Request work" }));
 
     expect(onAddWork).toHaveBeenCalledWith("also write docs");
   });
@@ -62,15 +63,16 @@ describe("TeamRunDetail", () => {
       />
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Add work" }));
     await userEvent.type(screen.getByLabelText("Additional work"), "also write docs");
-    await userEvent.click(screen.getByRole("button", { name: "추가 업무 요청" }));
+    await userEvent.click(screen.getByRole("button", { name: "Request work" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "추가 업무 요청" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Request work" })).toBeDisabled();
     });
   });
 
-  it("labels the add-work button for reopening a finished run", () => {
+  it("labels the add-work button for reopening a finished run", async () => {
     render(
       <TeamRunDetail
         onAddWork={vi.fn()}
@@ -82,7 +84,8 @@ describe("TeamRunDetail", () => {
         }}
       />
     );
-    expect(screen.getByRole("button", { name: "재개하며 요청" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Add work" }));
+    expect(screen.getByRole("button", { name: "Reopen & request" })).toBeInTheDocument();
   });
 
   it("marks the current phase in the stepper", () => {
@@ -100,7 +103,7 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("Planning").closest(".team-phase")).not.toHaveAttribute("aria-current");
   });
 
-  it("renders shared documents and handoff pairs", () => {
+  it("identifies task documents on the board and opens them from the task", async () => {
     const { container } = render(
       <TeamRunDetail
         detail={{
@@ -119,16 +122,93 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    // Note: the "Live Activity" timeline (Task 9) also renders every message's raw
-    // content, so these strings appear twice on the page. Scope queries to the new
-    // panels (`.team-docs` / `.team-handoffs`) to disambiguate instead of asserting
-    // on global uniqueness.
-    expect(screen.getByText("Shared Documents")).toBeInTheDocument();
-    const docsSection = container.querySelector(".team-docs");
-    expect(within(docsSection).getByText("API built")).toBeInTheDocument();
-    expect(within(docsSection).getByText("Build API")).toBeInTheDocument();
+    expect(screen.getByText("1 documents")).toBeInTheDocument();
+    expect(screen.getByText("DOCS 1")).toBeInTheDocument();
+    expect(screen.queryByText("Shared Documents")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open task Build API" }));
+    const taskDialog = screen.getByRole("dialog", { name: "Task details: Build API" });
+    expect(within(taskDialog).getByText("API built")).toBeInTheDocument();
+    expect(within(taskDialog).getByText("SHARED DOCUMENTS · 1")).toBeInTheDocument();
     const handoffsSection = container.querySelector(".team-handoffs");
     expect(within(handoffsSection).getByText("which schema?")).toBeInTheDocument();
     expect(within(handoffsSection).getByText("use schema X")).toBeInTheDocument();
+  });
+
+  it("only offers add work for started plan-and-execute runs", () => {
+    const { rerender } = render(
+      <TeamRunDetail
+        onAddWork={vi.fn()}
+        detail={{ run: { id: "r1", goal: "Design", status: "running", run_mode: "planning_only" }, agents: [], tasks: [], messages: [] }}
+      />
+    );
+    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+
+    rerender(
+      <TeamRunDetail
+        onAddWork={vi.fn()}
+        detail={{ run: { id: "r1", goal: "Design", status: "draft", run_mode: "plan_and_execute" }, agents: [], tasks: [], messages: [] }}
+      />
+    );
+    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+  });
+
+  it("offers manual resume for interrupted runs without marking a phase active", async () => {
+    const onResume = vi.fn(() => new Promise(() => {}));
+    const { container } = render(
+      <TeamRunDetail
+        onAddWork={vi.fn()}
+        onResume={onResume}
+        detail={{
+          run: { id: "r1", goal: "Design", status: "interrupted", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [{ id: "t1", title: "Continue UI", status: "pending" }],
+          messages: []
+        }}
+      />
+    );
+
+    expect(screen.getByText("Run interrupted")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+    expect(container.querySelector('[aria-current="step"]')).toBeNull();
+
+    const resume = screen.getByRole("button", { name: "Resume" });
+    await userEvent.click(resume);
+    expect(onResume).toHaveBeenCalledTimes(1);
+    expect(resume).toBeDisabled();
+  });
+
+  it("offers Retry only for a failed task in a failed terminal run", async () => {
+    const onRetryTask = vi.fn(() => new Promise(() => {}));
+    const { rerender } = render(
+      <TeamRunDetail
+        onRetryTask={onRetryTask}
+        detail={{
+          run: { id: "r1", goal: "Design", status: "completed_with_failures", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [{ id: "t1", title: "Run QA", status: "failed", error_message: "timed out" }],
+          messages: []
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Open task Run QA" }));
+    const retry = screen.getByRole("button", { name: "Retry failed task" });
+    await userEvent.click(retry);
+    expect(onRetryTask).toHaveBeenCalledWith("t1");
+    expect(retry).toBeDisabled();
+
+    rerender(
+      <TeamRunDetail
+        onRetryTask={vi.fn()}
+        detail={{
+          run: { id: "r1", goal: "Design", status: "completed", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [{ id: "t1", title: "Run QA", status: "failed" }],
+          messages: []
+        }}
+      />
+    );
+    expect(screen.queryByRole("button", { name: "Retry failed task" })).not.toBeInTheDocument();
   });
 });

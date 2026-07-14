@@ -789,6 +789,189 @@ describe("GatewayApp", () => {
     expect(screen.getByDisplayValue("Owns the plan")).toBeInTheDocument();
   });
 
+  it("shows operational metadata in the team-run list", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": {
+        team_runs: [{
+          id: "run-1",
+          goal: "Ship it",
+          status: "running",
+          run_mode: "plan_and_execute",
+          max_workers: 3,
+          updated_at: "2020-07-14T04:00:00Z",
+          workspace_root: "C:/very/long/workspace/run-1"
+        }]
+      }
+    });
+
+    render(<GatewayApp />);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+
+    const runButton = await screen.findByRole("button", { name: "Open team run Ship it" });
+    expect(runButton).toHaveTextContent("plan_and_execute");
+    expect(runButton).toHaveTextContent("WORKERS 3");
+    expect(runButton).toHaveTextContent("2020년 07월 14일 13시 00분 00초");
+    expect(screen.getByTitle("C:/very/long/workspace/run-1")).toBeInTheDocument();
+  });
+
+  it("submits additional work and refreshes the selected team run", async () => {
+    let detailCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": { team_runs: [{ id: "run-1", goal: "Ship it", status: "running", run_mode: "plan_and_execute" }] },
+      "GET /api/team-runs/run-1": () => {
+        detailCalls += 1;
+        return response({ team_run: { id: "run-1", goal: "Ship it", status: "running", run_mode: "plan_and_execute" } });
+      },
+      "GET /api/team-runs/run-1/agents": { agents: [] },
+      "GET /api/team-runs/run-1/tasks": { tasks: [] },
+      "GET /api/team-runs/run-1/messages": { messages: [] },
+      "POST /api/team-runs/run-1/add-work": { team_run: { id: "run-1", status: "running" } }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Add work" }));
+    await userEvent.type(screen.getByLabelText("Additional work"), "write release notes");
+    await userEvent.click(screen.getByRole("button", { name: "Request work" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/run-1/add-work",
+      expect.objectContaining({ body: JSON.stringify({ instruction: "write release notes" }) })
+    ));
+    await waitFor(() => expect(detailCalls).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByText("추가 업무를 전달했습니다")).toBeInTheDocument();
+  });
+
+  it("keeps the add-work dialog open when the request fails", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": { team_runs: [{ id: "run-1", goal: "Ship it", status: "running", run_mode: "plan_and_execute" }] },
+      "GET /api/team-runs/run-1": { team_run: { id: "run-1", goal: "Ship it", status: "running", run_mode: "plan_and_execute" } },
+      "GET /api/team-runs/run-1/agents": { agents: [] },
+      "GET /api/team-runs/run-1/tasks": { tasks: [] },
+      "GET /api/team-runs/run-1/messages": { messages: [] },
+      "POST /api/team-runs/run-1/add-work": () => response({}, false)
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Add work" }));
+    await userEvent.type(screen.getByLabelText("Additional work"), "write release notes");
+    await userEvent.click(screen.getByRole("button", { name: "Request work" }));
+
+    expect(await screen.findByText("Failed to add work")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Add work" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Additional work")).toHaveValue("write release notes");
+  });
+
+  it("confirms and resumes an interrupted team run, then refreshes detail and list", async () => {
+    let listCalls = 0;
+    let detailCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": () => {
+        listCalls += 1;
+        return response({ team_runs: [{ id: "run-1", goal: "Ship it", status: "interrupted", run_mode: "plan_and_execute" }] });
+      },
+      "GET /api/team-runs/run-1": () => {
+        detailCalls += 1;
+        return response({ team_run: { id: "run-1", goal: "Ship it", status: "interrupted", run_mode: "plan_and_execute" } });
+      },
+      "GET /api/team-runs/run-1/agents": { agents: [] },
+      "GET /api/team-runs/run-1/tasks": { tasks: [{ id: "t1", title: "Continue UI", status: "pending" }] },
+      "GET /api/team-runs/run-1/messages": { messages: [] },
+      "POST /api/team-runs/run-1/resume": { team_run: { id: "run-1", status: "interrupted" } }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Resume" }));
+    const dialog = await screen.findByRole("dialog", { name: "RESUME TEAM RUN" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Resume" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/run-1/resume",
+      expect.objectContaining({ method: "POST" })
+    ));
+    await waitFor(() => expect(detailCalls).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByText("팀 작업을 재개했습니다")).toBeInTheDocument();
+  });
+
+  it("confirms a failed task retry and refreshes detail and list", async () => {
+    let listCalls = 0;
+    let detailCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": () => {
+        listCalls += 1;
+        return response({ team_runs: [{ id: "run-1", goal: "Ship it", status: "completed_with_failures", run_mode: "plan_and_execute" }] });
+      },
+      "GET /api/team-runs/run-1": () => {
+        detailCalls += 1;
+        return response({ team_run: { id: "run-1", goal: "Ship it", status: "completed_with_failures", run_mode: "plan_and_execute" } });
+      },
+      "GET /api/team-runs/run-1/agents": { agents: [] },
+      "GET /api/team-runs/run-1/tasks": { tasks: [{ id: "t1", title: "Run QA", status: "failed", error_message: "timed out" }] },
+      "GET /api/team-runs/run-1/messages": { messages: [] },
+      "POST /api/team-runs/run-1/tasks/t1/retry": {
+        team_run: { id: "run-1", status: "interrupted" },
+        task: { id: "t1", status: "pending" }
+      }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open task Run QA" }));
+    await userEvent.click(screen.getByRole("button", { name: "Retry failed task" }));
+    const dialog = await screen.findByRole("dialog", { name: "RETRY FAILED TASK" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/run-1/tasks/t1/retry",
+      expect.objectContaining({ method: "POST" })
+    ));
+    await waitFor(() => expect(detailCalls).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByText("실패한 업무를 재시도 대기열에 추가했습니다")).toBeInTheDocument();
+  });
+
   it("creates and starts a team run, shows its detail, and refreshes on mixed team SSE events without adding chat entries", async () => {
     let taskCalls = 0;
     installFetch({

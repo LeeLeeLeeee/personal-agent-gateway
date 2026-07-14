@@ -54,7 +54,8 @@ class AppConfig(BaseModel):
     claude_permission_mode: str = "acceptEdits"
     codex_sandbox: str = "workspace-write"
     codex_approval_policy: str = "never"
-    codex_timeout_seconds: int = 600
+    codex_timeout_seconds: int = 3600
+    codex_idle_timeout_seconds: int = 600
     ffmpeg_binary: str = "ffmpeg"
     ffprobe_binary: str = "ffprobe"
     capture_binary: str = _default_capture_binary()
@@ -145,7 +146,10 @@ class AppConfig(BaseModel):
                 claude_permission_mode=env.get("AGENT_CLAUDE_PERMISSION_MODE") or "acceptEdits",
                 codex_sandbox=env.get("AGENT_CODEX_SANDBOX") or "workspace-write",
                 codex_approval_policy=env.get("AGENT_CODEX_APPROVAL_POLICY") or "never",
-                codex_timeout_seconds=int(env.get("AGENT_CODEX_TIMEOUT_SECONDS") or "600"),
+                codex_timeout_seconds=int(env.get("AGENT_CODEX_TIMEOUT_SECONDS") or "3600"),
+                codex_idle_timeout_seconds=int(
+                    env.get("AGENT_CODEX_IDLE_TIMEOUT_SECONDS") or "600"
+                ),
                 ffmpeg_binary=env.get("AGENT_FFMPEG_BIN") or "ffmpeg",
                 ffprobe_binary=env.get("AGENT_FFPROBE_BIN") or "ffprobe",
                 capture_binary=env.get("AGENT_CAPTURE_BIN") or _default_capture_binary(),
@@ -185,6 +189,7 @@ def load_config() -> AppConfig:
             "AGENT_CODEX_SANDBOX": os.getenv("AGENT_CODEX_SANDBOX"),
             "AGENT_CODEX_APPROVAL_POLICY": os.getenv("AGENT_CODEX_APPROVAL_POLICY"),
             "AGENT_CODEX_TIMEOUT_SECONDS": os.getenv("AGENT_CODEX_TIMEOUT_SECONDS"),
+            "AGENT_CODEX_IDLE_TIMEOUT_SECONDS": os.getenv("AGENT_CODEX_IDLE_TIMEOUT_SECONDS"),
             "AGENT_FFMPEG_BIN": os.getenv("AGENT_FFMPEG_BIN"),
             "AGENT_FFPROBE_BIN": os.getenv("AGENT_FFPROBE_BIN"),
             "AGENT_CAPTURE_BIN": os.getenv("AGENT_CAPTURE_BIN"),

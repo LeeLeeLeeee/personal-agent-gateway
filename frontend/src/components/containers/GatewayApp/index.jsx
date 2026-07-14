@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../api/client.js";
 import { entryFromSse, normalizeApproval, timelineFromHistory, timelineFromSession } from "../../../lib/timeline.js";
-import { nowHM } from "../../../lib/time.js";
+import { fmtDateTime, nowDateTime } from "../../../lib/time.js";
 import { AuthCard } from "../../molecules/AuthCard/index.jsx";
 import { AuthTemplate } from "../../templates/AuthTemplate/index.jsx";
 import { AppShell } from "../../templates/AppShell/index.jsx";
@@ -482,7 +482,7 @@ export function GatewayApp() {
           .map((message, index) => ({
             type: "agent",
             text: message.content,
-            time: nowHM(),
+            time: nowDateTime(),
             key: `fallback:${sessionId}:${data?.request_id || data?.last_event_id || "none"}:${index}`
           }))
         : [];
@@ -519,7 +519,7 @@ export function GatewayApp() {
       const stamped = stampSessionEntry(sessionId, state, {
         type: "user",
         text: message,
-        time: nowHM(),
+        time: nowDateTime(),
         key: userEntryKey
       });
       return {
@@ -813,17 +813,77 @@ export function GatewayApp() {
   }
 
   async function handleAddWork(instruction) {
-    if (!selectedTeamRunId || !instruction.trim()) return;
+    if (!selectedTeamRunId || !instruction.trim()) return false;
     try {
       const result = await api.addWork(selectedTeamRunId, instruction.trim());
       if (!result) {
         toast("Failed to add work", "error");
-        return;
+        return false;
       }
       setTeamRunDetail(await api.teamRunDetail(selectedTeamRunId));
       toast("추가 업무를 전달했습니다", "success");
+      return true;
     } catch (_error) {
       toast("Failed to add work", "error");
+      return false;
+    }
+  }
+
+  async function handleResumeTeamRun() {
+    if (!selectedTeamRunId) return false;
+    const accepted = await confirm({
+      title: "RESUME TEAM RUN",
+      message: "Resume pending work for this interrupted team run? Completed tasks will be kept.",
+      confirmLabel: "Resume"
+    });
+    if (!accepted) return false;
+    try {
+      const result = await api.resumeTeamRun(selectedTeamRunId);
+      if (!result) {
+        toast("Failed to resume team run", "error");
+        return false;
+      }
+      const [detail, runs] = await Promise.all([
+        api.teamRunDetail(selectedTeamRunId),
+        api.teamRuns()
+      ]);
+      setTeamRunDetail(detail);
+      setTeamRuns(runs);
+      toast("팀 작업을 재개했습니다", "success");
+      return true;
+    } catch (_error) {
+      toast("Failed to resume team run", "error");
+      return false;
+    }
+  }
+
+  async function handleRetryTeamTask(taskId) {
+    if (!selectedTeamRunId) return false;
+    const task = teamRunDetail?.tasks?.find((item) => item.id === taskId);
+    const accepted = await confirm({
+      title: "RETRY FAILED TASK",
+      message: "Queue “" + (task?.title || "this task")
+        + "” for retry? You will need to resume the team run afterward.",
+      confirmLabel: "Retry"
+    });
+    if (!accepted) return false;
+    try {
+      const result = await api.retryTeamTask(selectedTeamRunId, taskId);
+      if (!result) {
+        toast("Failed to retry task", "error");
+        return false;
+      }
+      const [detail, runs] = await Promise.all([
+        api.teamRunDetail(selectedTeamRunId),
+        api.teamRuns()
+      ]);
+      setTeamRunDetail(detail);
+      setTeamRuns(runs);
+      toast("실패한 업무를 재시도 대기열에 추가했습니다", "success");
+      return true;
+    } catch (_error) {
+      toast("Failed to retry task", "error");
+      return false;
     }
   }
 
@@ -910,6 +970,7 @@ export function GatewayApp() {
           <PersonaLibrary
             personas={personas}
             avatars={avatarChoices}
+            agents={agents}
             onCreate={handleCreatePersona}
             onSave={handleUpdatePersona}
             onDelete={handleDeletePersona}
@@ -928,7 +989,12 @@ export function GatewayApp() {
             >
               ← TEAM RUNS
             </a>
-            <TeamRunDetail detail={teamRunDetail} onAddWork={handleAddWork} />
+            <TeamRunDetail
+              detail={teamRunDetail}
+              onAddWork={handleAddWork}
+              onResume={handleResumeTeamRun}
+              onRetryTask={handleRetryTeamTask}
+            />
           </div>
         ) : creatingTeamRun ? (
           <div className="screen">
@@ -961,11 +1027,22 @@ export function GatewayApp() {
                   <button
                     type="button"
                     className="team-run-list-open"
+                    aria-label={`Open team run ${run.goal}`}
                     onClick={() => handleSelectTeamRun(run.id)}
                   >
-                    <span className="mono team-run-list-id">{run.id}</span>
-                    <StatusBadge kind={run.status} />
-                    <span className="headline team-run-list-goal">{run.goal}</span>
+                    <span className="team-run-list-primary">
+                      <span className="mono team-run-list-id">{run.id}</span>
+                      <StatusBadge kind={run.status} />
+                      <span className="headline team-run-list-goal">{run.goal}</span>
+                    </span>
+                    <span className="mono team-run-list-meta">
+                      <span>MODE <strong>{run.run_mode || "-"}</strong></span>
+                      <span>WORKERS <strong>{run.max_workers ?? "-"}</strong></span>
+                      <span>UPDATED <strong>{fmtDateTime(run.updated_at) || "-"}</strong></span>
+                      <span className="team-run-list-workspace" title={run.workspace_root || ""}>
+                        WORKSPACE <strong>{run.workspace_root || "-"}</strong>
+                      </span>
+                    </span>
                   </button>
                   <Button
                     variant="destructive"

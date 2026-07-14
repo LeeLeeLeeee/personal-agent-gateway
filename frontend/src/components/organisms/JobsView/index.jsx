@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { useToast } from "../../providers/UiProvider/index.jsx";
+import { fmtDateTime } from "../../../lib/time.js";
 
 const STATUS = [
   ["all", "All"],
@@ -20,14 +21,6 @@ const SOURCE = [
   ["schedule", "Schedule"],
   ["api", "API"]
 ];
-
-function fmtWhen(iso) {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (value) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 function eventLine(event) {
   return event.payload?.line || JSON.stringify(event.payload);
@@ -161,7 +154,7 @@ export function JobsView({ jobs = [], onLoadEvents }) {
                 <span className="mono jobs-cell-capability">{job.capability_id}</span>
                 <span className="mono jobs-cell-source">{job.source}</span>
                 <span><StatusBadge kind={job.status} /></span>
-                <span className="mono jobs-cell-time">{fmtWhen(job.finished_at || job.started_at || job.created_at)}</span>
+                <span className="mono jobs-cell-time">{fmtDateTime(job.finished_at || job.started_at || job.created_at)}</span>
               </button>
             ))}
           </div>

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { deriveLive } from "../../../lib/timeline.js";
-import { fmtElapsed, fmtTime } from "../../../lib/time.js";
+import { fmtDateTime, fmtElapsed } from "../../../lib/time.js";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 import { Composer } from "../../molecules/Composer/index.jsx";
@@ -11,7 +11,7 @@ import { Timeline } from "../Timeline/index.jsx";
 function ChatHeader({ sessions, locked }) {
   const active = (sessions || []).find((session) => session.is_active);
   const title = active?.title || "New session";
-  const started = active?.created_at ? fmtTime(active.created_at, false) : "";
+  const started = fmtDateTime(active?.created_at);
   return (
     <div className="chat-header">
       <span className="title">{title}</span>

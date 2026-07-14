@@ -96,24 +96,44 @@ class SessionRunRegistry:
 class TeamRunRegistry:
     def __init__(self) -> None:
         self._tasks: dict[str, asyncio.Task] = {}
+        self._cancel_reasons: dict[str, str] = {}
         self._lock = Lock()
 
     def register(self, team_run_id: str, task: asyncio.Task) -> None:
         with self._lock:
             self._tasks[team_run_id] = task
+            self._cancel_reasons.pop(team_run_id, None)
 
     def is_running(self, team_run_id: str) -> bool:
         with self._lock:
             return team_run_id in self._tasks
 
-    def cancel(self, team_run_id: str) -> bool:
+    def cancel(self, team_run_id: str, reason: str = "user") -> bool:
         with self._lock:
             task = self._tasks.get(team_run_id)
+            if task is not None:
+                self._cancel_reasons[team_run_id] = reason
         if task is None:
             return False
         task.cancel()
         return True
 
+    async def cancel_all(self, reason: str) -> list[str]:
+        with self._lock:
+            entries = list(self._tasks.items())
+            for team_run_id, _task in entries:
+                self._cancel_reasons[team_run_id] = reason
+        for _team_run_id, task in entries:
+            task.cancel()
+        if entries:
+            await asyncio.gather(*(task for _team_run_id, task in entries), return_exceptions=True)
+        return [team_run_id for team_run_id, _task in entries]
+
+    def cancel_reason(self, team_run_id: str) -> str | None:
+        with self._lock:
+            return self._cancel_reasons.get(team_run_id)
+
     def finish(self, team_run_id: str) -> None:
         with self._lock:
             self._tasks.pop(team_run_id, None)
+            self._cancel_reasons.pop(team_run_id, None)

@@ -9,6 +9,11 @@ const agents = [
     label: "Codex CLI",
     available: true,
     models: ["default", "gpt-5.5", "gpt-5.4"],
+    model_options: [
+      { id: "default", label: "Default", efforts: ["low", "medium", "high", "xhigh"], default_effort: "high" },
+      { id: "gpt-5.5", label: "GPT 5.5", efforts: ["low", "medium", "high", "xhigh", "max"], default_effort: "xhigh" },
+      { id: "gpt-5.4", label: "GPT 5.4", efforts: ["low", "medium", "high"], default_effort: "medium" }
+    ],
     default_model: "default",
     defaults: { effort: "high", sandbox: "workspace-write", approval_policy: "never" },
     options_schema: [
@@ -42,7 +47,7 @@ describe("AgentPicker (session config bar)", () => {
     expect(screen.queryByRole("textbox", { name: "Model" })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Model" }));
-    await userEvent.click(screen.getByRole("button", { name: "gpt-5.5" }));
+    await userEvent.click(screen.getByRole("button", { name: "GPT 5.5" }));
 
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ agent_id: "codex", model: "gpt-5.5" }));
   });
@@ -54,6 +59,25 @@ describe("AgentPicker (session config bar)", () => {
     await userEvent.click(screen.getByRole("button", { name: "effort xhigh" }));
 
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ options: { effort: "xhigh" } }));
+  });
+
+  it("uses model-specific effort choices and normalizes effort when the model changes", async () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <AgentPicker agents={agents} config={editable({ model: "gpt-5.5", options: { effort: "max" } })} onChange={onChange} />
+    );
+
+    expect(screen.getByRole("button", { name: "effort max" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Model" }));
+    await userEvent.click(screen.getByRole("button", { name: "GPT 5.4" }));
+
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      model: "gpt-5.4",
+      options: { effort: "medium" }
+    }));
+
+    rerender(<AgentPicker agents={agents} config={editable({ model: "gpt-5.4", options: { effort: "medium" } })} onChange={onChange} />);
+    expect(screen.queryByRole("button", { name: "effort max" })).not.toBeInTheDocument();
   });
 
   it("shows unavailable agents disabled with a reason and switches to an available one", async () => {
