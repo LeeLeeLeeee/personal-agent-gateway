@@ -4,7 +4,7 @@ const SEG_COLORS = {
   completed: "#008000", in_progress: "#FFA500", blocked: "#FF0000",
   failed: "#FF0000", pending: "#E8E8E8", canceled: "#808080"
 };
-const SEG_ORDER = ["completed", "in_progress", "blocked", "failed", "pending"];
+const SEG_ORDER = ["completed", "in_progress", "blocked", "failed", "canceled", "pending"];
 const ACTIVE = new Set(["running", "planning", "summarizing"]);
 
 function fmtElapsed(seconds) {

@@ -428,8 +428,12 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
             disabled={!doc.previewable || !onLoadDocument}
             onClick={async () => {
               if (!onLoadDocument) return;
-              const loaded = await onLoadDocument(doc.path);
-              setPreviewDoc(loaded || { ...doc, previewable: false, reason: "load failed" });
+              try {
+                const loaded = await onLoadDocument(doc.path);
+                setPreviewDoc(loaded || { ...doc, previewable: false, reason: "load failed" });
+              } catch (_error) {
+                setPreviewDoc({ ...doc, previewable: false, reason: "load failed" });
+              }
             }}
           >
             <span className="mono team-docs-name">{doc.path}</span>

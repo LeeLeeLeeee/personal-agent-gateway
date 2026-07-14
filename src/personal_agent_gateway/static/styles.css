@@ -2417,8 +2417,11 @@ p {
 .team-run-list-item {
     display: flex;
     align-items: stretch;
-    border: var(--bd);
-    background: var(--c-white);
+    gap: 10px;
+}
+.team-run-list-item .trc {
+    flex: 1;
+    min-width: 0;
 }
 .team-run-list-open {
     flex: 1;

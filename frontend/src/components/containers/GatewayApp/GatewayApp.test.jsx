@@ -824,6 +824,53 @@ describe("GatewayApp", () => {
     expect(runButton).toHaveTextContent("1 / 3 DONE");
   });
 
+  it("deletes a team run from the list after confirmation", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let teamRunsCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": () => {
+        teamRunsCalls += 1;
+        return response({
+          team_runs: teamRunsCalls > 1 ? [] : [{
+            id: "run-1",
+            goal: "Ship it",
+            status: "running",
+            run_mode: "plan_and_execute",
+            team_id: "t1",
+            leader_name: "Tech Lead",
+            members: [],
+            task_counts: {},
+            task_done: 0,
+            task_total: 1,
+            elapsed_seconds: 10
+          }]
+        });
+      },
+      "DELETE /api/team-runs/run-1": {}
+    });
+
+    render(<GatewayApp />);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await screen.findByText("Ship it");
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/run-1",
+      expect.objectContaining({ method: "DELETE" })
+    ));
+    await waitFor(() => expect(teamRunsCalls).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(screen.queryByText("Ship it")).not.toBeInTheDocument());
+    window.confirm.mockRestore();
+  });
+
   it("submits additional work and refreshes the selected team run", async () => {
     let detailCalls = 0;
     installFetch({

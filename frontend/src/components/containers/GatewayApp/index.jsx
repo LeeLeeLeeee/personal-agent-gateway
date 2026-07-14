@@ -929,6 +929,24 @@ export function GatewayApp() {
     }
   }
 
+  async function handleDeleteTeamRun(id) {
+    const ok = await confirm({
+      title: "DELETE TEAM RUN",
+      message: "Delete this team run? This cannot be undone.",
+      confirmLabel: "Delete",
+      danger: true
+    });
+    if (!ok) return;
+    const done = await api.deleteTeamRun(id);
+    if (!done) {
+      toast("Failed to delete team run", "error");
+      return;
+    }
+    if (id === selectedTeamRunId) setSelectedTeamRunId(null);
+    setTeamRuns(await api.teamRuns());
+    toast("Team run deleted", "success");
+  }
+
   function handleBackToTeamRuns() {
     setSelectedTeamRunId(null);
     setCreatingTeamRun(false);
@@ -1089,7 +1107,10 @@ export function GatewayApp() {
                   return true;
                 })
                 .map((run) => (
-                  <TeamRunCard key={run.id} run={run} onOpen={handleSelectTeamRun} />
+                  <div className="team-run-list-item" key={run.id}>
+                    <TeamRunCard run={run} onOpen={handleSelectTeamRun} />
+                    <Button variant="destructive" size="btn-sm" onClick={() => handleDeleteTeamRun(run.id)}>Delete</Button>
+                  </div>
                 ))}
             </div>
           </div>
