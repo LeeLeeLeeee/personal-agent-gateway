@@ -5,6 +5,7 @@ export function AppShell({
   children,
   screen,
   teamRunBadge,
+  hooksBadge = 0,
   status,
   environmentTitle,
   entries,
@@ -22,6 +23,7 @@ export function AppShell({
       <Sidebar
         screen={screen}
         teamRunBadge={teamRunBadge}
+        hooksBadge={hooksBadge}
         environmentTitle={environmentTitle}
         onScreenChange={onScreenChange}
       />

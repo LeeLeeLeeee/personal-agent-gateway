@@ -84,7 +84,8 @@ export function useSessionController({
   turnStartRef,
   lastConfigAttemptRef,
   setScreenError,
-  onTeamEvent
+  onTeamEvent,
+  onHookEvent
 }) {
   const [sessionConfigError, setSessionConfigError] = useState("");
   const [sseState, setSseState] = useState("idle");
@@ -114,6 +115,10 @@ export function useSessionController({
       }
       if (parsed.type?.startsWith("team.") && parsed.team_run_id) {
         onTeamEvent(parsed);
+        return;
+      }
+      if (parsed.type === "hook.run.updated") {
+        onHookEvent(parsed);
         return;
       }
       if (parsed.session_id) {
@@ -187,7 +192,7 @@ export function useSessionController({
       }));
     };
     return () => source.close();
-  }, [authenticated, activeSessionIdRef, busyRef, onTeamEvent, setSessionStateById, turnStartRef]);
+  }, [authenticated, activeSessionIdRef, busyRef, onTeamEvent, onHookEvent, setSessionStateById, turnStartRef]);
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;

@@ -1192,6 +1192,70 @@ describe("GatewayApp", () => {
     expect(screen.getByText("Failed goal")).toBeInTheDocument();
   });
 
+  it("loads the hooks screen and lists hooks from the API", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/hooks": { hooks: [{
+        id: "hook-1",
+        name: "Invoice Watcher",
+        enabled: true,
+        target_backend: "codex",
+        target_model: "default",
+        prompt_template: "Summarize {{subject}}",
+        filter: { folder: "INBOX" },
+        last_polled_at: null
+      }] }
+    });
+
+    render(<GatewayApp />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Hooks" }));
+    expect(await screen.findByRole("heading", { name: "Hooks" })).toBeInTheDocument();
+    expect(await screen.findByText("Invoice Watcher")).toBeInTheDocument();
+  });
+
+  it("shows a success toast and increments the Hooks nav badge on hook.run.updated SSE", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/hooks": { hooks: [{
+        id: "hook-1",
+        name: "Invoice Watcher",
+        enabled: true,
+        target_backend: "codex",
+        target_model: "default",
+        prompt_template: "Summarize {{subject}}",
+        filter: { folder: "INBOX" },
+        last_polled_at: null
+      }] }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+
+    await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit({ type: "hook.run.updated", hook_id: "hook-1", run_id: "run-1", status: "succeeded" });
+    });
+
+    const toastEl = await screen.findByRole("status");
+    expect(toastEl).toHaveClass("toast-success");
+
+    const hooksButton = screen.getByRole("button", { name: "Hooks" });
+    expect(within(hooksButton).getByText("1")).toBeInTheDocument();
+  });
+
   it("clears the selected team run detail when navigating away from the teams screen", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },

@@ -20,6 +20,7 @@ import { ArtifactsView } from "../../organisms/ArtifactsView/index.jsx";
 import { JobsView } from "../../organisms/JobsView/index.jsx";
 import { SchedulesView } from "../../organisms/SchedulesView/index.jsx";
 import { OperationsView } from "../../organisms/OperationsView/index.jsx";
+import { HooksView } from "../../organisms/HooksView/index.jsx";
 import { useConfirm, useToast } from "../../providers/UiProvider/index.jsx";
 
 function useForceTick(active) {
@@ -46,6 +47,13 @@ export function GatewayApp() {
   const [artifacts, setArtifacts] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [schedules, setSchedules] = useState([]);
+  const [hooks, setHooks] = useState([]);
+  const [hookRuns, setHookRuns] = useState([]);
+  const [openHookRunsId, setOpenHookRunsId] = useState(null);
+  const [hooksBadge, setHooksBadge] = useState(0);
+  const hooksRef = useRef([]);
+  const screenRef = useRef("chat");
+  const openHookRunsIdRef = useRef(null);
   const [focusedJobId, setFocusedJobId] = useState(null);
   const [focusedScheduleId, setFocusedScheduleId] = useState(null);
   const [operations, setOperations] = useState(null);
@@ -104,6 +112,25 @@ export function GatewayApp() {
     clearTeamRunView
   } = useTeamRunController({ toast, confirm, setScreenError });
 
+  useEffect(() => { hooksRef.current = hooks; }, [hooks]);
+  useEffect(() => { screenRef.current = screen; }, [screen]);
+  useEffect(() => { openHookRunsIdRef.current = openHookRunsId; }, [openHookRunsId]);
+
+  const handleHookEvent = useCallback(async (event) => {
+    const hook = hooksRef.current.find((item) => item.id === event.hook_id);
+    const name = hook?.name || event.hook_id;
+    if (event.status === "succeeded" || event.status === "failed") {
+      toast(
+        `Hook "${name}": ${event.status === "succeeded" ? "완료" : "실패"}`,
+        event.status === "succeeded" ? "success" : "error"
+      );
+      if (screenRef.current !== "hooks") setHooksBadge((count) => count + 1);
+    }
+    if (event.hook_id === openHookRunsIdRef.current) {
+      try { setHookRuns(await api.listHookRuns(event.hook_id)); } catch (_error) { /* ignore */ }
+    }
+  }, [toast]);
+
   const {
     sessionConfigError,
     sseState,
@@ -140,7 +167,8 @@ export function GatewayApp() {
     turnStartRef,
     lastConfigAttemptRef,
     setScreenError,
-    onTeamEvent: handleTeamEvent
+    onTeamEvent: handleTeamEvent,
+    onHookEvent: handleHookEvent
   });
 
   const loadOperations = useCallback(async () => {
@@ -196,6 +224,9 @@ export function GatewayApp() {
     } else if (screen === "schedules") {
       load(api.schedules(), setSchedules);
       load(api.settings(), setSettings);
+    } else if (screen === "hooks") {
+      load(api.listHooks(), setHooks);
+      setHooksBadge(0);
     } else if (screen === "operations") {
       loadOperations();
     }
@@ -358,6 +389,44 @@ export function GatewayApp() {
       toast("Failed to run schedule", "error");
     }
   }
+
+  async function handleCreateHook(body) {
+    try {
+      const created = await api.createHook(body);
+      if (!created) { toast("Failed to create hook", "error"); return; }
+      setHooks(await api.listHooks());
+      toast("Hook created", "success");
+    } catch (_error) { toast("Failed to create hook", "error"); }
+  }
+  async function handleToggleHook(id, enabled) {
+    try {
+      await api.updateHook(id, { enabled });
+      setHooks(await api.listHooks());
+    } catch (_error) { toast("Failed to update hook", "error"); }
+  }
+  async function handleDeleteHook(id) {
+    try {
+      const ok = await api.deleteHook(id);
+      if (!ok) { toast("Failed to delete hook", "error"); return; }
+      setHooks(await api.listHooks());
+      if (openHookRunsId === id) { setOpenHookRunsId(null); setHookRuns([]); }
+      toast("Hook deleted", "success");
+    } catch (_error) { toast("Failed to delete hook", "error"); }
+  }
+  async function handleRunHookNow(id) {
+    try {
+      await api.runHookNow(id);
+      setHooks(await api.listHooks());
+      if (openHookRunsId === id) setHookRuns(await api.listHookRuns(id));
+      toast("폴링을 실행했습니다", "success");
+    } catch (_error) { toast("Failed to run hook", "error"); }
+  }
+  async function handleOpenHookRuns(id) {
+    setOpenHookRunsId(id);
+    try { setHookRuns(await api.listHookRuns(id)); } catch (error) { setScreenError(error); }
+  }
+  function handleCloseHookRuns() { setOpenHookRunsId(null); setHookRuns([]); }
+  function handleTestHookConnection(body) { return api.testHookConnection(body); }
 
   async function handleRetryJob(id) {
     try {
@@ -528,6 +597,7 @@ export function GatewayApp() {
     <AppShell
       screen={screen}
       teamRunBadge={teamRunBadge}
+      hooksBadge={hooksBadge}
       status={status}
       environmentTitle={environmentTitle}
       entries={entries}
@@ -771,6 +841,22 @@ export function GatewayApp() {
             onLoadDetail={api.scheduleDetail}
             focusScheduleId={focusedScheduleId}
             onFocusHandled={() => setFocusedScheduleId(null)}
+          />
+        </div>
+      ) : screen === "hooks" ? (
+        <div className="screen">
+          <HooksView
+            hooks={hooks}
+            hookRuns={hookRuns}
+            agents={agents}
+            openHookRunsId={openHookRunsId}
+            onCreate={handleCreateHook}
+            onToggle={handleToggleHook}
+            onRunNow={handleRunHookNow}
+            onDelete={handleDeleteHook}
+            onOpenRuns={handleOpenHookRuns}
+            onCloseRuns={handleCloseHookRuns}
+            onTestConnection={handleTestHookConnection}
           />
         </div>
       ) : (
