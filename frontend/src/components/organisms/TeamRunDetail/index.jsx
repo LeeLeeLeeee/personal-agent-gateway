@@ -46,10 +46,40 @@ function findTask(tasks, id) {
   return tasks.find((task) => task.id === id) || null;
 }
 
+function documentLabel(path) {
+  const parts = String(path || "").split("/");
+  return { name: parts.pop() || path, parent: parts.join("/") };
+}
+
+function newestFirst(items) {
+  return [...items].sort((left, right) => {
+    const byTime = String(right.created_at || "").localeCompare(String(left.created_at || ""));
+    return byTime || String(right.id || "").localeCompare(String(left.id || ""));
+  });
+}
+
 function buildHandoffs(messages) {
   const queries = messages.filter((message) => message.kind === "query");
   const answers = messages.filter((message) => message.kind === "answer");
-  return queries.map((query, index) => ({ query, answer: answers[index] || null }));
+  return queries
+    .map((query, index) => ({ query, answer: answers[index] || null }))
+    .sort((left, right) => {
+      const leftMessage = left.answer || left.query;
+      const rightMessage = right.answer || right.query;
+      const byTime = String(rightMessage.created_at || "").localeCompare(
+        String(leftMessage.created_at || "")
+      );
+      return byTime || String(rightMessage.id || "").localeCompare(String(leftMessage.id || ""));
+    });
+}
+
+function currentWork(agent, task, runStatus) {
+  if (task) return task.title;
+  if (agent.role !== "leader") return "No active task";
+  if (runStatus === "planning") return "Planning tasks";
+  if (runStatus === "running") return "Coordinating agents";
+  if (runStatus === "summarizing") return "Summarizing results";
+  return "No active task";
 }
 
 function groupReportsByTask(messages) {
@@ -170,7 +200,9 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
   );
 }
 
-export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWork, onResume, onRetryTask }) {
+export function TeamRunDetail({
+  detail, documents = [], onLoadDocument, onAddWork, onResume, onRetryTask, onCancel
+}) {
   const [workInput, setWorkInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [resuming, setResuming] = useState(false);
@@ -179,6 +211,7 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
   const [activeTab, setActiveTab] = useState("activity");
+  const [canceling, setCanceling] = useState(false);
   const run = detail?.run;
 
   if (!run) {
@@ -189,7 +222,8 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
   const tasks = detail.tasks || [];
   const messages = detail.messages || [];
   const leader = findAgent(agents, run.leader_agent_id);
-  const reports = messages.filter((message) => message.kind === "agent_output");
+  const reports = newestFirst(messages.filter((message) => message.kind === "agent_output"));
+  const activity = newestFirst(messages);
   const handoffs = buildHandoffs(messages);
   const reportsByTask = groupReportsByTask(messages);
   const selectedTask = selectedTaskId ? findTask(tasks, selectedTaskId) : null;
@@ -206,6 +240,7 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
       && run.status !== "interrupted"
   );
   const canResume = Boolean(onResume && run.status === "interrupted");
+  const canCancel = Boolean(onCancel && ["planning", "running", "summarizing"].includes(run.status));
 
   return (
     <section className="team-run-detail" aria-label="Team run detail">
@@ -287,6 +322,23 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
             {resuming ? "Resuming..." : "Resume"}
           </Button>
         ) : null}
+        {canCancel ? (
+          <Button
+            size="btn-sm"
+            variant="destructive"
+            disabled={canceling}
+            onClick={async () => {
+              setCanceling(true);
+              try {
+                await onCancel();
+              } finally {
+                setCanceling(false);
+              }
+            }}
+          >
+            {canceling ? "Stopping..." : "Stop run"}
+          </Button>
+        ) : null}
         {canAddWork ? (
           <Button size="btn-sm" variant="primary" onClick={() => setWorkDialogOpen(true)}>Add work</Button>
         ) : null}
@@ -315,7 +367,7 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
                   <StatusBadge kind={agent.status} />
                   {agent.status === "running" ? <span className="mono team-lane-live">LIVE</span> : null}
                 </div>
-                <div className="team-lane-task">{currentTask ? currentTask.title : "No active task"}</div>
+                <div className="team-lane-task">{currentWork(agent, currentTask, run.status)}</div>
                 <div className="mono team-lane-snapshot">SNAPSHOT · {agent.backend}/{agent.model}</div>
               </div>
             </article>
@@ -414,7 +466,7 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
       {activeTab === "activity" ? (
         <div className="team-tab-panel" role="tabpanel" aria-label="Live activity">
           <div className="timeline">
-            {messages.map((message) => {
+            {activity.map((message) => {
               const sender = findAgent(agents, message.sender_agent_id);
               return (
                 <div className={`tl-row tl-kind-${message.kind}`} key={message.id}>
@@ -461,7 +513,9 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
       {activeTab === "documents" ? (
         <div className="team-tab-panel" role="tabpanel" aria-label="Documents">
           <div className="team-docs-list">
-            {documents.length ? documents.map((doc) => (
+            {documents.length ? documents.map((doc) => {
+              const label = documentLabel(doc.path);
+              return (
               <button
                 key={doc.path}
                 type="button"
@@ -478,10 +532,14 @@ export function TeamRunDetail({ detail, documents = [], onLoadDocument, onAddWor
                   }
                 }}
               >
-                <span className="mono team-docs-name">{doc.path}</span>
+                <span className="team-docs-label">
+                  <span className="mono team-docs-name">{label.name}</span>
+                  {label.parent ? <span className="mono team-docs-parent">{label.parent}</span> : null}
+                </span>
                 <span className="mono team-docs-kind">{doc.kind}</span>
               </button>
-            )) : <div className="team-task-empty mono">No documents in the workspace yet.</div>}
+              );
+            }) : <div className="team-task-empty mono">No documents in the workspace yet.</div>}
           </div>
         </div>
       ) : null}

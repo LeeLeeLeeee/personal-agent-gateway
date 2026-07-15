@@ -328,6 +328,12 @@ export const api = {
     const body = await jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/resume`, { method: "POST" }));
     return body?.team_run || null;
   },
+  async cancelTeamRun(id) {
+    const body = await jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }
+    ));
+    return body?.team_run || null;
+  },
   async retryTeamTask(runId, taskId) {
     const path = "/api/team-runs/" + encodeURIComponent(runId)
       + "/tasks/" + encodeURIComponent(taskId) + "/retry";

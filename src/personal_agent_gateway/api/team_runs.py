@@ -1,9 +1,12 @@
 import asyncio
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from personal_agent_gateway.api.dependencies import (
@@ -285,7 +288,7 @@ async def add_work(
 
 
 @router.post("/{team_run_id}/cancel")
-def cancel_team_run(
+async def cancel_team_run(
     request: Request,
     team_run_id: str,
     principal: SessionPrincipal = session_dependency,
@@ -296,7 +299,7 @@ def cancel_team_run(
         run = service.get_team_run(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
-    if registry.cancel(team_run_id):
+    if await registry.cancel_and_wait(team_run_id):
         run = service.get_team_run(team_run_id)
     elif run.status not in _TERMINAL:
         run = service.set_run_status(team_run_id, "canceled")
@@ -422,36 +425,24 @@ def list_team_documents(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     root = _resolved_workspace(run)
-    documents: list[dict[str, object]] = []
-    if root.is_dir():
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
-            kind = _doc_kind(path)
-            size = path.stat().st_size
-            documents.append(
-                {
-                    "path": path.relative_to(root).as_posix(),
-                    "size": size,
-                    "modified_at": _iso_mtime(path),
-                    "kind": kind,
-                    "previewable": kind != "binary" and size <= _MAX_PREVIEW_BYTES,
-                }
-            )
+    documents = _document_items(root)
     if cursor:
         try:
-            values = decode_cursor(cursor, 1)
+            values = decode_cursor(cursor, 2)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid cursor") from exc
-        if not isinstance(values[0], str):
+        if not isinstance(values[0], str) or not isinstance(values[1], str):
             raise HTTPException(status_code=400, detail="Invalid cursor")
-        documents = [item for item in documents if str(item["path"]) > values[0]]
+        documents = [
+            item for item in documents
+            if (str(item["modified_at"]), str(item["path"])) < (values[0], values[1])
+        ]
     selected = documents[: limit + 1]
     has_more = len(selected) > limit
     selected = selected[:limit]
     next_cursor = None
     if has_more and selected:
-        next_cursor = encode_cursor(selected[-1]["path"])
+        next_cursor = encode_cursor(selected[-1]["modified_at"], selected[-1]["path"])
     return {"documents": selected, "next_cursor": next_cursor}
 
 
@@ -468,9 +459,23 @@ def read_team_document(request: Request, team_run_id: str, path: str, _session: 
         raise HTTPException(status_code=400, detail="Invalid document path") from exc
     if not target.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
+    if not _is_visible_document(root, target):
+        raise HTTPException(status_code=404, detail="Document not found")
     kind = _doc_kind(target)
     size = target.stat().st_size
-    if kind == "binary" or size > _MAX_PREVIEW_BYTES:
+    if kind == "image":
+        encoded_run_id = quote(team_run_id, safe="")
+        encoded_path = quote(path, safe="")
+        return {
+            "path": path,
+            "kind": kind,
+            "content": None,
+            "previewable": True,
+            "preview_url": (
+                f"/api/team-runs/{encoded_run_id}/documents/image?path={encoded_path}"
+            ),
+        }
+    if kind == "binary" or _is_sensitive_document(target.name) or size > _MAX_PREVIEW_BYTES:
         return {"path": path, "kind": kind, "content": None, "previewable": False,
                 "reason": "binary or too large"}
     try:
@@ -481,8 +486,46 @@ def read_team_document(request: Request, team_run_id: str, path: str, _session: 
     return {"path": path, "kind": kind, "content": content, "previewable": True}
 
 
-_TEXT_EXTS = {".txt", ".log", ".csv", ".yaml", ".yml", ".toml", ".ini", ".env"}
-_CODE_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".sh", ".sql"}
+@router.get("/{team_run_id}/documents/image")
+def read_team_document_image(
+    request: Request, team_run_id: str, path: str, _session: None = session_dependency
+) -> FileResponse:
+    try:
+        run = request.app.state.team_run_service.get_team_run(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    root = _resolved_workspace(run)
+    try:
+        target = _safe_child(root, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid document path") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not _is_visible_document(root, target):
+        raise HTTPException(status_code=404, detail="Document not found")
+    media_type = _IMAGE_MIME_TYPES.get(target.suffix.lower())
+    if media_type is None:
+        raise HTTPException(status_code=415, detail="Unsupported image type")
+    return FileResponse(
+        target,
+        media_type=media_type,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+_TEXT_EXTS = {".txt", ".log", ".csv", ".yaml", ".yml", ".toml", ".ini"}
+_CODE_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".css", ".sh", ".sql"}
+_IMAGE_MIME_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+_IGNORED_DOCUMENT_DIRS = {
+    ".git", ".hg", ".svn", ".cache", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    ".venv", "venv", "__pycache__", "node_modules", "dist", "build", "coverage",
+}
 _MAX_PREVIEW_BYTES = 1_000_000
 
 
@@ -492,6 +535,10 @@ def _doc_kind(path: Path) -> str:
         return "md"
     if suffix == ".json":
         return "json"
+    if suffix == ".html":
+        return "html"
+    if suffix in _IMAGE_MIME_TYPES:
+        return "image"
     if suffix in _TEXT_EXTS:
         return "text"
     if suffix in _CODE_EXTS:
@@ -514,18 +561,70 @@ def _iso_mtime(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
 
 
+def _is_sensitive_document(name: str) -> bool:
+    lowered = name.lower()
+    return lowered == ".env" or lowered.startswith(".env.")
+
+
+def _is_visible_document(root: Path, path: Path) -> bool:
+    relative = path.relative_to(root)
+    return (
+        not _is_sensitive_document(relative.name)
+        and all(part.lower() not in _IGNORED_DOCUMENT_DIRS for part in relative.parts[:-1])
+    )
+
+
+def _document_items(root: Path) -> list[dict[str, object]]:
+    documents: list[dict[str, object]] = []
+    if not root.is_dir():
+        return documents
+    for current, dirs, files in os.walk(root):
+        dirs[:] = [name for name in dirs if name.lower() not in _IGNORED_DOCUMENT_DIRS]
+        for name in files:
+            if _is_sensitive_document(name):
+                continue
+            walked_path = Path(current) / name
+            relative = walked_path.relative_to(root).as_posix()
+            try:
+                path = _safe_child(root, relative)
+            except ValueError:
+                continue
+            kind = _doc_kind(path)
+            if kind == "binary":
+                continue
+            size = path.stat().st_size
+            if kind != "image":
+                if size > _MAX_PREVIEW_BYTES:
+                    continue
+                try:
+                    path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    continue
+            documents.append(
+                {
+                    "path": relative,
+                    "size": size,
+                    "modified_at": _iso_mtime(path),
+                    "kind": kind,
+                    "previewable": True,
+                }
+            )
+    return sorted(
+        documents,
+        key=lambda item: (str(item["modified_at"]), str(item["path"])),
+        reverse=True,
+    )
+
+
 def _document_summary(root: Path) -> dict[str, object]:
     count = 0
     size_bytes = 0
     kinds: dict[str, int] = {}
-    if root.is_dir():
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            count += 1
-            size_bytes += path.stat().st_size
-            kind = _doc_kind(path)
-            kinds[kind] = kinds.get(kind, 0) + 1
+    for item in _document_items(root):
+        count += 1
+        size_bytes += int(item["size"])
+        kind = str(item["kind"])
+        kinds[kind] = kinds.get(kind, 0) + 1
     return {"count": count, "size_bytes": size_bytes, "kinds": kinds}
 
 

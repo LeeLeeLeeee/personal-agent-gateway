@@ -135,6 +135,17 @@ class TeamRunRegistry:
         task.cancel()
         return True
 
+    async def cancel_and_wait(self, team_run_id: str, reason: str = "user") -> bool:
+        with self._lock:
+            task = self._tasks.get(team_run_id)
+            if task is not None:
+                self._cancel_reasons[team_run_id] = reason
+        if task is None:
+            return False
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return True
+
     async def cancel_all(self, reason: str) -> list[str]:
         with self._lock:
             entries = list(self._tasks.items())

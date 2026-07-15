@@ -5,6 +5,12 @@ function prettyJson(content) {
   catch { return content; }
 }
 
+function sandboxedHtml(content) {
+  const policy = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; "
+    + "font-src data:; form-action 'none'; base-uri 'none'";
+  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"></head><body>${content}</body></html>`;
+}
+
 export function DocumentPreview({ open, doc, onClose }) {
   if (!open || !doc) return null;
 
@@ -23,6 +29,15 @@ export function DocumentPreview({ open, doc, onClose }) {
             <MarkdownContent source={doc.content || ""} />
           ) : doc.kind === "json" ? (
             <pre className="doc-preview-pre">{prettyJson(doc.content || "")}</pre>
+          ) : doc.kind === "image" ? (
+            <img className="doc-preview-image" src={doc.preview_url} alt={doc.path} />
+          ) : doc.kind === "html" ? (
+            <iframe
+              className="doc-preview-frame"
+              title={`${doc.path} preview`}
+              sandbox=""
+              srcDoc={sandboxedHtml(doc.content || "")}
+            />
           ) : (
             <pre className="doc-preview-pre">{doc.content || ""}</pre>
           )}

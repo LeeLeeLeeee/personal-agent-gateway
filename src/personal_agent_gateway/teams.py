@@ -268,6 +268,14 @@ class TeamRunService:
                     "finished_at": run.finished_at,
                     "updated_at": run.updated_at,
                     "leader_name": leader.name if leader else None,
+                    "leader": (
+                        {
+                            "name": leader.name,
+                            "avatar": leader.persona_snapshot.get("avatar", ""),
+                            "initials": _initials(leader.name),
+                        }
+                        if leader else None
+                    ),
                     "members": [
                         {
                             "name": agent.name,
@@ -386,12 +394,16 @@ class TeamRunService:
             """
             update team_agents
             set status = ?,
+                current_task_id = case
+                    when ? in ('completed', 'failed', 'canceled') then null
+                    else current_task_id
+                end,
                 started_at = coalesce(?, started_at),
                 finished_at = coalesce(?, finished_at),
                 updated_at = ?
             where id = ?
             """,
-            (status, started_at, finished_at, _now(), agent_id),
+            (status, status, started_at, finished_at, _now(), agent_id),
         )
         return self._get_agent(agent_id)
 
@@ -554,6 +566,77 @@ class TeamRunService:
             (status, result, error_message, started_at, finished_at, _now(), task_id),
         )
         return self._get_task(task_id)
+
+    def start_task(self, task_id: str, agent_id: str) -> tuple[TeamTask, TeamAgent]:
+        now = _now()
+        with self._db.connection() as connection:
+            task = connection.execute(
+                "select team_run_id from team_tasks where id = ?", (task_id,)
+            ).fetchone()
+            agent = connection.execute(
+                "select team_run_id from team_agents where id = ?", (agent_id,)
+            ).fetchone()
+            if task is None or agent is None:
+                raise KeyError("Team task or agent not found")
+            if task["team_run_id"] != agent["team_run_id"]:
+                raise ValueError("Task and agent belong to different team runs")
+            connection.execute(
+                """
+                update team_tasks
+                set owner_agent_id = ?, status = 'in_progress', result = null,
+                    error_message = null, started_at = ?, finished_at = null, updated_at = ?
+                where id = ?
+                """,
+                (agent_id, now, now, task_id),
+            )
+            connection.execute(
+                """
+                update team_agents
+                set status = 'running', current_task_id = ?,
+                    started_at = coalesce(started_at, ?), finished_at = null, updated_at = ?
+                where id = ?
+                """,
+                (task_id, now, now, agent_id),
+            )
+        return self._get_task(task_id), self._get_agent(agent_id)
+
+    def finish_task(
+        self,
+        task_id: str,
+        agent_id: str,
+        status: Literal["completed", "failed", "canceled"],
+        result: str | None = None,
+        error_message: str | None = None,
+    ) -> tuple[TeamTask, TeamAgent]:
+        now = _now()
+        with self._db.connection() as connection:
+            task = connection.execute(
+                "select team_run_id, owner_agent_id from team_tasks where id = ?", (task_id,)
+            ).fetchone()
+            agent = connection.execute(
+                "select team_run_id from team_agents where id = ?", (agent_id,)
+            ).fetchone()
+            if task is None or agent is None:
+                raise KeyError("Team task or agent not found")
+            if task["team_run_id"] != agent["team_run_id"]:
+                raise ValueError("Task and agent belong to different team runs")
+            connection.execute(
+                """
+                update team_tasks
+                set status = ?, result = ?, error_message = ?, finished_at = ?, updated_at = ?
+                where id = ?
+                """,
+                (status, result, error_message, now, now, task_id),
+            )
+            connection.execute(
+                """
+                update team_agents
+                set status = ?, current_task_id = null, finished_at = ?, updated_at = ?
+                where id = ?
+                """,
+                (status, now, now, agent_id),
+            )
+        return self._get_task(task_id), self._get_agent(agent_id)
 
     def append_message(
         self,

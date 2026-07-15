@@ -379,7 +379,57 @@ async def test_cancel_settles_run_and_task(tmp_path):
         await task
 
     assert teams.get_team_run(run.id).status == "canceled"
-    assert teams.list_tasks(run.id)[0].status == "canceled"
+    canceled_task = teams.list_tasks(run.id)[0]
+    canceled_worker = [agent for agent in teams.list_agents(run.id) if agent.role == "member"][0]
+    assert canceled_task.status == "canceled"
+    assert canceled_task.owner_agent_id == canceled_worker.id
+    assert canceled_worker.current_task_id is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_publishes_task_and_agent_assignment_deltas(tmp_path):
+    import asyncio
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    plan = '[{"title":"Visible task","description":"d"}]'
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class GatedWorkerModel:
+        async def complete(self, _messages):
+            started.set()
+            await asyncio.wait_for(release.wait(), timeout=2)
+            return ModelResponse(content="done", tool_calls=[])
+
+    leader_model = ScriptedModel([plan, "summary"])
+    bus = EventBus()
+    runtime = TeamRuntime(
+        teams,
+        lambda agent: leader_model if agent.role == "leader" else GatedWorkerModel(),
+        bus,
+    )
+    running = asyncio.create_task(runtime.start(run.id))
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    task = teams.list_tasks(run.id)[0]
+    worker = [agent for agent in teams.list_agents(run.id) if agent.role == "member"][0]
+    assert teams.get_team_run(run.id).status == "running"
+    assert task.owner_agent_id == worker.id
+    assert worker.current_task_id == task.id
+    assigned = [event for event in bus.recent() if event["type"] == "team.task.updated"][-1]
+    assert assigned["task"]["owner_agent_id"] == worker.id
+    assert assigned["agent"]["current_task_id"] == task.id
+
+    release.set()
+    await running
+    event_types = [event["type"] for event in bus.recent()]
+    assert "team.run.executing" in event_types
+    assert "team.run.summarizing" in event_types
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,32 @@ import { Button } from "../../atoms/Button/index.jsx";
 
 const EMPTY = { name: "", description: "", leader_persona_id: "", member_persona_ids: [] };
 
+function initials(name) {
+  return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
+}
+
+function PersonaChoice({ persona, active, selectedLabel, onClick }) {
+  return (
+    <button type="button" aria-label={persona.name} aria-pressed={active}
+      className={`teams-persona${active ? " active" : ""}`} onClick={onClick}>
+      {persona.avatar ? (
+        <img className="teams-persona-avatar" src={`/static/avatars/${persona.avatar}.png`} alt="" />
+      ) : (
+        <span className="teams-persona-avatar teams-persona-initials mono" aria-hidden="true">
+          {initials(persona.name)}
+        </span>
+      )}
+      <span className="teams-persona-copy">
+        <span className="teams-persona-name">{persona.name}</span>
+        <span className="teams-persona-role">{persona.role || "ROLE NOT SET"}</span>
+      </span>
+      <span className="teams-persona-state mono" aria-hidden="true">
+        {active ? `✓ ${selectedLabel}` : "SELECT"}
+      </span>
+    </button>
+  );
+}
+
 export function TeamsView({ teams = [], personas = [], onCreate, onUpdate, onDelete }) {
   const [editingId, setEditingId] = useState(null); // null = none, "new" = create
   const [draft, setDraft] = useState(EMPTY);
@@ -35,6 +61,7 @@ export function TeamsView({ teams = [], personas = [], onCreate, onUpdate, onDel
     const result = editingId === "new" ? await onCreate(payload) : await onUpdate(editingId, payload);
     if (result) setEditingId(null);
   }
+  const selectedMemberCount = draft.member_persona_ids.filter((id) => id !== draft.leader_persona_id).length;
 
   return (
     <section className="teams-view" aria-label="Teams">
@@ -76,28 +103,28 @@ export function TeamsView({ teams = [], personas = [], onCreate, onUpdate, onDel
                   onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} />
               </label>
               <div className="teams-edit-field">
-                <span className="mono teams-edit-k">LEADER</span>
-                <div className="teams-persona-choices">
+                <div className="teams-edit-section-head">
+                  <span className="mono teams-edit-k">LEADER</span>
+                  <span className="mono teams-persona-count">1 REQUIRED</span>
+                </div>
+                <div className="teams-persona-choices" role="group" aria-label="Leader persona">
                   {personas.map((persona) => (
-                    <button key={persona.id} type="button"
-                      aria-pressed={draft.leader_persona_id === persona.id}
-                      className={`teams-persona${draft.leader_persona_id === persona.id ? " active" : ""}`}
-                      onClick={() => setDraft((d) => ({ ...d, leader_persona_id: persona.id }))}>
-                      {persona.name}
-                    </button>
+                    <PersonaChoice key={persona.id} persona={persona}
+                      active={draft.leader_persona_id === persona.id} selectedLabel="LEADER"
+                      onClick={() => setDraft((d) => ({ ...d, leader_persona_id: persona.id }))} />
                   ))}
                 </div>
               </div>
               <div className="teams-edit-field">
-                <span className="mono teams-edit-k">MEMBERS</span>
-                <div className="teams-persona-choices">
+                <div className="teams-edit-section-head">
+                  <span className="mono teams-edit-k">MEMBERS</span>
+                  <span className="mono teams-persona-count">{selectedMemberCount} SELECTED</span>
+                </div>
+                <div className="teams-persona-choices" role="group" aria-label="Member personas">
                   {personas.filter((p) => p.id !== draft.leader_persona_id).map((persona) => (
-                    <button key={persona.id} type="button"
-                      aria-pressed={draft.member_persona_ids.includes(persona.id)}
-                      className={`teams-persona${draft.member_persona_ids.includes(persona.id) ? " active" : ""}`}
-                      onClick={() => toggleMember(persona.id)}>
-                      {persona.name}
-                    </button>
+                    <PersonaChoice key={persona.id} persona={persona}
+                      active={draft.member_persona_ids.includes(persona.id)} selectedLabel="MEMBER"
+                      onClick={() => toggleMember(persona.id)} />
                   ))}
                 </div>
               </div>

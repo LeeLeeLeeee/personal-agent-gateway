@@ -45,18 +45,20 @@ describe("GatewayApp", () => {
   it("applies Team SSE entity deltas without requiring a full detail response", () => {
     const detail = {
       run: { id: "run-1", status: "running" },
-      agents: [],
+      agents: [{ id: "agent-1", status: "pending", current_task_id: null }],
       tasks: [{ id: "task-1", status: "pending" }],
       messages: []
     };
 
     const updated = applyTeamRunDelta(detail, {
       run: { id: "run-1", status: "summarizing" },
-      task: { id: "task-1", status: "completed" }
+      task: { id: "task-1", status: "completed" },
+      agent: { id: "agent-1", status: "running", current_task_id: "task-1" }
     });
 
     expect(updated.run.status).toBe("summarizing");
     expect(updated.tasks[0].status).toBe("completed");
+    expect(updated.agents[0]).toMatchObject({ status: "running", current_task_id: "task-1" });
   });
 
   it("boots authenticated users into the chat shell and preserves planned tabs", async () => {
@@ -992,6 +994,50 @@ describe("GatewayApp", () => {
     await waitFor(() => expect(detailCalls).toBeGreaterThanOrEqual(2));
     await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2));
     expect(await screen.findByText("팀 작업을 재개했습니다")).toBeInTheDocument();
+  });
+
+  it("confirms and stops an active team run, then refreshes detail and list", async () => {
+    let listCalls = 0;
+    let detailCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": () => {
+        listCalls += 1;
+        return response({ team_runs: [{ id: "run-1", goal: "Ship it", status: "running", run_mode: "plan_and_execute" }] });
+      },
+      "GET /api/team-runs/run-1": () => {
+        detailCalls += 1;
+        return response({ team_run: {
+          id: "run-1", goal: "Ship it", status: detailCalls > 1 ? "canceled" : "running", run_mode: "plan_and_execute"
+        } });
+      },
+      "GET /api/team-runs/run-1/agents": { agents: [] },
+      "GET /api/team-runs/run-1/tasks": { tasks: [] },
+      "GET /api/team-runs/run-1/messages": { messages: [] },
+      "POST /api/team-runs/run-1/cancel": { team_run: { id: "run-1", status: "canceled" } }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Stop run" }));
+    const dialog = await screen.findByRole("dialog", { name: "STOP TEAM RUN" });
+    expect(dialog).toHaveTextContent("documents and completed work are kept");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Stop run" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/run-1/cancel",
+      expect.objectContaining({ method: "POST" })
+    ));
+    await waitFor(() => expect(detailCalls).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByText("팀 작업을 중지했습니다")).toBeInTheDocument();
   });
 
   it("confirms a failed task retry and refreshes detail and list", async () => {

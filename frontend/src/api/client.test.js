@@ -217,6 +217,16 @@ describe("api client", () => {
     );
   });
 
+  it("cancels an active team run", async () => {
+    fetch.mockResolvedValueOnce(jsonResponse({ team_run: { id: "r1", status: "canceled" } }));
+
+    await expect(api.cancelTeamRun("r1")).resolves.toEqual({ id: "r1", status: "canceled" });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/r1/cancel",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
   it("queues a failed team task for retry", async () => {
     fetch.mockResolvedValueOnce(jsonResponse({
       team_run: { id: "r1", status: "interrupted" },

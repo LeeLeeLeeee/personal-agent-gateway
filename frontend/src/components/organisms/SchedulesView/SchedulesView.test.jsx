@@ -83,6 +83,6 @@ describe("SchedulesView", () => {
     expect(await screen.findByText("50%")).toBeInTheDocument();
     expect(screen.getByText("agent failed")).toBeInTheDocument();
     expect(screen.getByText("Asia/Seoul")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("Next run preview")).getAllByText(/일/)).toHaveLength(3);
+    expect(within(screen.getByLabelText("Next run preview")).getAllByText(/\d{2}시/)).toHaveLength(3);
   });
 });

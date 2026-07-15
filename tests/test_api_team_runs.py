@@ -1,4 +1,5 @@
 import asyncio
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -171,9 +172,99 @@ def test_list_team_runs_returns_enriched_fields(tmp_path: Path) -> None:
     run = next(r for r in body["team_runs"] if r["id"] == run_id)
 
     assert run["leader_name"] == "Tech Lead"
+    assert run["leader"] == {"name": "Tech Lead", "avatar": "", "initials": "TL"}
     assert "members" in run
     assert "task_counts" in run
     assert "elapsed_seconds" in run
+
+
+def test_documents_only_list_previewable_files_newest_first(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
+    run = client.post(
+        "/api/team-runs",
+        json={"team_id": team_id, "goal": "Preview documents"},
+    ).json()["team_run"]
+    workspace = Path(run["workspace_root"])
+    (workspace / "docs").mkdir()
+    (workspace / "node_modules" / "pkg").mkdir(parents=True)
+    (workspace / "old.md").write_text("old", encoding="utf-8")
+    (workspace / "docs" / "page.html").write_text("<h1>preview</h1>", encoding="utf-8")
+    (workspace / "new.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (workspace / ".env").write_text("TOKEN=secret", encoding="utf-8")
+    (workspace / "archive.zip").write_bytes(b"PK\x03\x04")
+    (workspace / "node_modules" / "pkg" / "README.md").write_text("dependency", encoding="utf-8")
+    os.utime(workspace / "old.md", (100, 100))
+    os.utime(workspace / "docs" / "page.html", (200, 200))
+    os.utime(workspace / "new.png", (300, 300))
+
+    response = client.get(f"/api/team-runs/{run['id']}/documents")
+
+    assert response.status_code == 200
+    documents = response.json()["documents"]
+    assert [(item["path"], item["kind"]) for item in documents] == [
+        ("new.png", "image"),
+        ("docs/page.html", "html"),
+        ("old.md", "md"),
+    ]
+    assert all(item["previewable"] for item in documents)
+    assert client.get(
+        f"/api/team-runs/{run['id']}/documents/content", params={"path": ".env"}
+    ).status_code == 404
+    assert client.get(
+        f"/api/team-runs/{run['id']}/documents/content",
+        params={"path": "node_modules/pkg/README.md"},
+    ).status_code == 404
+
+    first_page = client.get(
+        f"/api/team-runs/{run['id']}/documents", params={"limit": 2}
+    ).json()
+    second_page = client.get(
+        f"/api/team-runs/{run['id']}/documents",
+        params={"limit": 2, "cursor": first_page["next_cursor"]},
+    ).json()
+    assert [item["path"] for item in first_page["documents"] + second_page["documents"]] == [
+        "new.png", "docs/page.html", "old.md"
+    ]
+
+
+def test_html_and_image_documents_return_safe_preview_payloads(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
+    run = client.post(
+        "/api/team-runs", json={"team_id": team_id, "goal": "Preview content"}
+    ).json()["team_run"]
+    workspace = Path(run["workspace_root"])
+    (workspace / "page.html").write_text("<h1>Hello</h1>", encoding="utf-8")
+    (workspace / "image.webp").write_bytes(b"RIFFxxxxWEBP")
+    (workspace / "notes.txt").write_text("hello", encoding="utf-8")
+
+    html = client.get(
+        f"/api/team-runs/{run['id']}/documents/content", params={"path": "page.html"}
+    ).json()
+    image = client.get(
+        f"/api/team-runs/{run['id']}/documents/content", params={"path": "image.webp"}
+    ).json()
+    image_response = client.get(
+        f"/api/team-runs/{run['id']}/documents/image", params={"path": "image.webp"}
+    )
+    text_response = client.get(
+        f"/api/team-runs/{run['id']}/documents/image", params={"path": "notes.txt"}
+    )
+
+    assert html == {
+        "path": "page.html", "kind": "html", "content": "<h1>Hello</h1>", "previewable": True
+    }
+    assert image["kind"] == "image"
+    assert image["content"] is None
+    assert image["previewable"] is True
+    assert image["preview_url"].endswith("/documents/image?path=image.webp")
+    assert image_response.status_code == 200
+    assert image_response.headers["content-type"] == "image/webp"
+    assert image_response.headers["x-content-type-options"] == "nosniff"
+    assert text_response.status_code == 415
 
 
 def test_team_run_detail_aggregate_includes_documents_summary(tmp_path: Path) -> None:
@@ -701,6 +792,8 @@ async def test_cancel_endpoint_settles_blocked_run_as_canceled(tmp_path: Path) -
 
         cancel_resp = await client.post(f"/api/team-runs/{run_id}/cancel")
         assert cancel_resp.status_code == 200
+        assert cancel_resp.json()["team_run"]["status"] == "canceled"
+        assert registry.is_running(run_id) is False
 
         await _poll_until(lambda: not registry.is_running(run_id))
         assert registry.is_running(run_id) is False

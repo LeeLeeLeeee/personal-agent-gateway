@@ -2654,6 +2654,7 @@ p {
     margin-top: 8px;
     line-height: 1.4;
     min-height: 34px;
+    overflow-wrap: anywhere;
 }
 .team-lane-snapshot {
     font-size: 9px;
@@ -2722,6 +2723,12 @@ p {
     gap: 6px;
     margin-top: 7px;
 }
+.team-task-owner-profile {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+}
 .team-task-owner,
 .team-task-owner-avatar {
     width: 18px;
@@ -2734,6 +2741,15 @@ p {
     font-size: 8px;
     font-weight: 700;
     object-fit: cover;
+}
+.team-task-owner-name {
+    max-width: 96px;
+    overflow: hidden;
+    color: var(--c-dark);
+    font-size: 8px;
+    letter-spacing: .4px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .team-task-note {
     font-size: 9px;
@@ -3763,8 +3779,10 @@ p {
 .trc-goal { font-size: 19px; line-height: 1.15; text-transform: uppercase; }
 .trc-roster { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .trc-roster-k { font-size: 10px; color: #808080; letter-spacing: 1px; }
-.trc-leader { border: 2px solid #000; padding: 2px 7px; font-family: var(--font-mono); font-size: 11px; }
-.trc-members { display: flex; gap: 5px; }
+.trc-members { display: flex; gap: 7px; flex-wrap: wrap; }
+.trc-profile { display: inline-flex; align-items: center; gap: 6px; min-width: 0; border: 2px solid #000; padding: 2px 7px 2px 2px; }
+.trc-profile-empty { padding: 2px 7px; font-size: 11px; }
+.trc-profile-name { max-width: 140px; overflow: hidden; font-family: var(--font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .trc-member-avatar { width: 24px; height: 24px; border: 2px solid #000; object-fit: cover; display: block; }
 .trc-member-initials { display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; background: #E8E8E8; }
 .trc-progress { width: 280px; flex: none; padding: 16px 18px; display: flex; flex-direction: column; justify-content: center; }
@@ -3831,9 +3849,20 @@ p {
 .teams-edit-field { display: flex; flex-direction: column; gap: 6px; }
 .teams-edit-k { font-size: 10px; letter-spacing: 1px; color: #808080; }
 .teams-edit-field input { border: 3px solid #000; padding: 9px 12px; font-family: var(--font-mono); font-size: 13px; }
-.teams-persona-choices { display: flex; flex-wrap: wrap; gap: 8px; }
-.teams-persona { border: 2px solid #000; background: #fff; padding: 6px 11px; cursor: pointer; font-family: var(--font-mono); font-size: 12px; }
-.teams-persona.active { background: #000; color: #fff; }
+.teams-edit-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.teams-persona-count { color: var(--c-grey); font-size: 9px; letter-spacing: 1px; }
+.teams-persona-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.teams-persona { min-height: 82px; border: var(--bd-sm); background: var(--c-white); color: var(--c-black); padding: 10px; cursor: pointer; display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 10px; text-align: left; font-family: var(--font-mono); }
+.teams-persona:hover:not(.active) { background: var(--c-panel); }
+.teams-persona:focus-visible { outline: 3px solid var(--c-link); outline-offset: 2px; }
+.teams-persona.active { background: var(--c-black); color: var(--c-white); }
+.teams-persona-avatar { width: 48px; height: 48px; box-sizing: border-box; border: 2px solid currentColor; background: var(--c-panel); object-fit: cover; }
+.teams-persona-initials { display: grid; place-items: center; color: var(--c-black); font-size: 13px; font-weight: 700; }
+.teams-persona-copy { min-width: 0; }
+.teams-persona-name { display: block; overflow: hidden; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.teams-persona-role { display: block; overflow: hidden; margin-top: 4px; color: var(--c-dark); font-family: var(--font-body); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.teams-persona.active .teams-persona-role { color: var(--c-panel); }
+.teams-persona-state { align-self: start; border: 1px solid currentColor; padding: 2px 5px; font-size: 8px; letter-spacing: 1px; white-space: nowrap; }
 .teams-edit-actions { display: flex; justify-content: flex-end; gap: 10px; }
 
 /* ---- rules (global / persona baseline / team) ---- */
@@ -3878,12 +3907,16 @@ p {
 .doc-preview-body { padding: 16px; max-height: 70vh; overflow: auto; }
 .doc-preview-pre { font-family: var(--font-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; margin: 0; }
 .doc-preview-unavailable { color: #808080; padding: 20px; }
+.doc-preview-image { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.doc-preview-frame { display: block; width: 100%; min-height: 58vh; border: 2px solid var(--c-black); background: var(--c-white); }
 .team-docs-list { display: flex; flex-direction: column; border: 3px solid #000; }
 .team-docs-list-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: none; border-bottom: 1px solid #000; background: #fff; padding: 10px 14px; cursor: pointer; text-align: left; }
 .team-docs-list-row:last-child { border-bottom: none; }
 .team-docs-list-row:hover:not(:disabled) { background: #F0F0F0; }
 .team-docs-list-row:disabled { cursor: default; color: #808080; }
+.team-docs-label { display: flex; flex-direction: column; min-width: 0; }
 .team-docs-name { font-size: 12px; }
+.team-docs-parent { margin-top: 2px; color: var(--c-grey); font-size: 9px; letter-spacing: .5px; }
 .team-docs-kind { font-size: 10px; color: #808080; letter-spacing: 1px; }
 
 .team-detail-tabs { display: flex; align-items: stretch; border: 3px solid #000; margin-top: 26px; flex-wrap: wrap; }

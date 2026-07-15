@@ -26,11 +26,14 @@ export function TeamTaskCard({ task, owner, documentCount = 0, onOpen }) {
     >
       <div className="team-task-title">{task.title}</div>
       <div className="team-task-meta">
-        {avatar ? (
-          <img className="team-task-owner-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
-        ) : (
-          <span className="team-task-owner mono">{initials(owner?.name)}</span>
-        )}
+        <span className="team-task-owner-profile" title={owner?.name || "UNASSIGNED"}>
+          {avatar ? (
+            <img className="team-task-owner-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
+          ) : owner ? (
+            <span className="team-task-owner mono">{initials(owner.name)}</span>
+          ) : null}
+          <span className="team-task-owner-name mono">{owner?.name || "UNASSIGNED"}</span>
+        </span>
         {noteText ? (
           <span className={`team-task-note mono team-task-note-${task.status === "failed" ? "danger" : "warning"}`}>
             {noteText}

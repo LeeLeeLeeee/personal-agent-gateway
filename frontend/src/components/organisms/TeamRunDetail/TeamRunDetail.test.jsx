@@ -214,7 +214,7 @@ describe("TeamRunDetail", () => {
   });
 
   it("lists workspace documents and opens a preview", async () => {
-    const onLoadDocument = vi.fn(async () => ({ path: "notes.md", kind: "md", previewable: true, content: "# hi" }));
+    const onLoadDocument = vi.fn(async () => ({ path: "docs/notes.md", kind: "md", previewable: true, content: "# hi" }));
     render(
       <TeamRunDetail
         detail={{
@@ -223,13 +223,14 @@ describe("TeamRunDetail", () => {
           tasks: [],
           messages: []
         }}
-        documents={[{ path: "notes.md", kind: "md", previewable: true, size: 10 }]}
+        documents={[{ path: "docs/notes.md", kind: "md", previewable: true, size: 10 }]}
         onLoadDocument={onLoadDocument}
       />
     );
     await userEvent.click(screen.getByRole("tab", { name: /DOCUMENTS/ }));
     await userEvent.click(screen.getByText("notes.md"));
-    expect(onLoadDocument).toHaveBeenCalledWith("notes.md");
+    expect(screen.getByText("docs")).toBeInTheDocument();
+    expect(onLoadDocument).toHaveBeenCalledWith("docs/notes.md");
     expect(await screen.findByRole("heading", { name: "hi" })).toBeInTheDocument();
   });
 
@@ -256,5 +257,75 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("Feature built")).toBeInTheDocument();
     expect(screen.getByText("All shipped.")).toBeInTheDocument();
     expect(screen.queryByText("Planning started")).not.toBeInTheDocument();
+  });
+
+  it("orders results and activity newest first while keeping handoff pairs intact", async () => {
+    const { container } = render(
+      <TeamRunDetail detail={{
+        run: { id: "r1", goal: "Sort", status: "completed", run_mode: "plan_and_execute" },
+        agents: [
+          { id: "lead", name: "Lead", role: "leader", status: "completed" },
+          { id: "worker", name: "Worker", role: "member", status: "completed" }
+        ],
+        tasks: [],
+        messages: [
+          { id: "q1", kind: "query", sender_agent_id: "worker", content: "old question", created_at: "2026-07-15T01:00:00Z" },
+          { id: "a1", kind: "answer", sender_agent_id: "lead", content: "old answer", created_at: "2026-07-15T01:01:00Z" },
+          { id: "r1", kind: "agent_output", sender_agent_id: "worker", content: "old report", created_at: "2026-07-15T01:02:00Z" },
+          { id: "q2", kind: "query", sender_agent_id: "worker", content: "new question", created_at: "2026-07-15T02:00:00Z" },
+          { id: "a2", kind: "answer", sender_agent_id: "lead", content: "new answer", created_at: "2026-07-15T02:01:00Z" },
+          { id: "r2", kind: "agent_output", sender_agent_id: "worker", content: "new report", created_at: "2026-07-15T02:02:00Z" }
+        ]
+      }} />
+    );
+
+    expect([...container.querySelectorAll(".tl-detail")].map((node) => node.textContent)).toEqual([
+      "new report", "new answer", "new question", "old report", "old answer", "old question"
+    ]);
+
+    await userEvent.click(screen.getByRole("tab", { name: "RESULTS" }));
+    expect([...container.querySelectorAll(".team-agent-report-body")].map((node) => node.textContent)).toEqual([
+      "new report", "old report"
+    ]);
+
+    await userEvent.click(screen.getByRole("tab", { name: /SHARED \/ HANDOFFS/ }));
+    const handoffs = [...container.querySelectorAll(".team-handoff")];
+    expect(handoffs[0]).toHaveTextContent("new question");
+    expect(handoffs[0]).toHaveTextContent("new answer");
+    expect(handoffs[1]).toHaveTextContent("old question");
+    expect(handoffs[1]).toHaveTextContent("old answer");
+  });
+
+  it("shows assigned task names and a phase fallback for the leader", () => {
+    render(<TeamRunDetail detail={{
+      run: { id: "r1", goal: "Work", status: "running", run_mode: "plan_and_execute" },
+      agents: [
+        { id: "lead", name: "Lead", role: "leader", status: "running", current_task_id: null },
+        { id: "worker", name: "Worker", role: "member", status: "running", current_task_id: "t1" }
+      ],
+      tasks: [{ id: "t1", title: "Build API", status: "in_progress", owner_agent_id: "worker" }],
+      messages: []
+    }} />);
+
+    expect(screen.getByText("Coordinating agents")).toBeInTheDocument();
+    expect(screen.getAllByText("Build API").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Worker", { selector: ".team-task-owner-name" })).toBeInTheDocument();
+  });
+
+  it("offers Stop run only for active runs and disables it while canceling", async () => {
+    const onCancel = vi.fn(() => new Promise(() => {}));
+    const detail = {
+      run: { id: "r1", goal: "Work", status: "running", run_mode: "plan_and_execute" },
+      agents: [], tasks: [], messages: []
+    };
+    const { rerender } = render(<TeamRunDetail detail={detail} onCancel={onCancel} />);
+
+    const stop = screen.getByRole("button", { name: "Stop run" });
+    await userEvent.click(stop);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(stop).toBeDisabled();
+
+    rerender(<TeamRunDetail detail={{ ...detail, run: { ...detail.run, status: "completed" } }} onCancel={onCancel} />);
+    expect(screen.queryByRole("button", { name: "Stop run" })).not.toBeInTheDocument();
   });
 });

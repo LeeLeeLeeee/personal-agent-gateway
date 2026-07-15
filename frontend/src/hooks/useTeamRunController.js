@@ -11,7 +11,14 @@ export function applyTeamRunDelta(detail, event) {
       ? tasks.map((task) => task.id === event.task.id ? { ...task, ...event.task } : task)
       : [...tasks, event.task];
   }
-  return { ...detail, run, tasks };
+  let agents = detail.agents || [];
+  if (event.agent) {
+    const found = agents.some((agent) => agent.id === event.agent.id);
+    agents = found
+      ? agents.map((agent) => agent.id === event.agent.id ? { ...agent, ...event.agent } : agent)
+      : [...agents, event.agent];
+  }
+  return { ...detail, run, tasks, agents };
 }
 
 export function useTeamRunController({ toast, confirm, setScreenError }) {
@@ -51,7 +58,7 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
 
   const handleTeamEvent = useCallback((event) => {
     if (event.team_run_id !== selectedTeamRunIdRef.current) return;
-    const hasDelta = event.run || event.task;
+    const hasDelta = event.run || event.task || event.agent;
     if (hasDelta) {
       setTeamRunDetail((current) => applyTeamRunDelta(current, event));
     }
@@ -128,6 +135,35 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
       return true;
     } catch (_error) {
       toast("Failed to resume team run", "error");
+      return false;
+    }
+  }
+
+  async function handleCancelTeamRun() {
+    if (!selectedTeamRunId) return false;
+    const accepted = await confirm({
+      title: "STOP TEAM RUN",
+      message: "Stop the active processes? Existing documents and completed work are kept.",
+      confirmLabel: "Stop run",
+      danger: true
+    });
+    if (!accepted) return false;
+    try {
+      const result = await api.cancelTeamRun(selectedTeamRunId);
+      if (!result) {
+        toast("Failed to stop team run", "error");
+        return false;
+      }
+      const [detail, runs] = await Promise.all([
+        api.teamRunDetail(selectedTeamRunId),
+        api.teamRuns()
+      ]);
+      setTeamRunDetail(detail);
+      setTeamRuns(runs);
+      toast("팀 작업을 중지했습니다", "success");
+      return true;
+    } catch (_error) {
+      toast("Failed to stop team run", "error");
       return false;
     }
   }
@@ -211,6 +247,7 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     handleCreateTeamRun,
     handleAddWork,
     handleResumeTeamRun,
+    handleCancelTeamRun,
     handleRetryTeamTask,
     handleDeleteTeamRun,
     handleSelectTeamRun,

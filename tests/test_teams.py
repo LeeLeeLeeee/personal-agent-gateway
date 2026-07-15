@@ -58,6 +58,7 @@ def test_list_team_runs_enriched(tmp_path):
     enriched = teams.list_team_runs_enriched()
     row = next(r for r in enriched if r["id"] == run.id)
     assert row["leader_name"] == "Lead"
+    assert row["leader"] == {"name": "Lead", "avatar": "a01", "initials": "L"}
     assert {m["name"] for m in row["members"]} == {"Frontend Dev"}
     assert row["members"][0]["avatar"] == "a05"
     assert row["members"][0]["initials"] == "FD"
@@ -65,6 +66,32 @@ def test_list_team_runs_enriched(tmp_path):
     assert row["task_done"] == 1
     assert row["task_counts"]["completed"] == 1
     assert isinstance(row["elapsed_seconds"], (int, float))
+
+
+def test_task_assignment_updates_task_and_agent_lifecycle_together(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    member = personas.create_persona("Worker", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    worker = teams.list_agents(run.id)[1]
+    task = teams.create_task(run.id, "Build API", "d")
+
+    started_task, started_agent = teams.start_task(task.id, worker.id)
+
+    assert started_task.status == "in_progress"
+    assert started_task.owner_agent_id == worker.id
+    assert started_agent.status == "running"
+    assert started_agent.current_task_id == task.id
+
+    finished_task, finished_agent = teams.finish_task(
+        task.id, worker.id, "completed", result="done"
+    )
+
+    assert finished_task.status == "completed"
+    assert finished_task.owner_agent_id == worker.id
+    assert finished_task.result == "done"
+    assert finished_agent.status == "completed"
+    assert finished_agent.current_task_id is None
 
 
 def test_delete_team_run_removes_isolated_workspace_and_related_records(tmp_path):

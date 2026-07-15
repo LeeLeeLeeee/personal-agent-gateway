@@ -15,11 +15,23 @@ function fmtElapsed(seconds) {
   return `${h}:${m}:${s}`;
 }
 
-function Avatar({ member }) {
-  if (member.avatar) {
-    return <img className="trc-member-avatar" src={`/static/avatars/${member.avatar}.png`} alt="" />;
+function Profile({ profile, fallbackName = "" }) {
+  const name = profile?.name || fallbackName;
+  if (!name) return <span className="trc-profile trc-profile-empty mono">—</span>;
+  if (profile?.avatar) {
+    return (
+      <span className="trc-profile" title={name}>
+        <img className="trc-member-avatar" src={`/static/avatars/${profile.avatar}.png`} alt="" />
+        <span className="trc-profile-name">{name}</span>
+      </span>
+    );
   }
-  return <span className="trc-member-avatar trc-member-initials mono">{member.initials || "?"}</span>;
+  return (
+    <span className="trc-profile" title={name}>
+      <span className="trc-member-avatar trc-member-initials mono">{profile?.initials || "?"}</span>
+      <span className="trc-profile-name">{name}</span>
+    </span>
+  );
 }
 
 export function TeamRunCard({ run, onOpen }) {
@@ -46,10 +58,12 @@ export function TeamRunCard({ run, onOpen }) {
         <div className="headline trc-goal">{run.goal}</div>
         <div className="trc-roster">
           <span className="mono trc-roster-k">LEADER</span>
-          <span className="trc-leader">{run.leader_name || "—"}</span>
+          <Profile profile={run.leader} fallbackName={run.leader_name} />
           <span className="mono trc-roster-k">MEMBERS</span>
           <span className="trc-members">
-            {(run.members || []).map((member, index) => <Avatar key={index} member={member} />)}
+            {(run.members || []).map((member, index) => (
+              <Profile key={`${member.name}-${index}`} profile={member} />
+            ))}
           </span>
         </div>
       </div>

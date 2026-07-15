@@ -105,6 +105,7 @@ export function GatewayApp() {
     handleCreateTeamRun,
     handleAddWork,
     handleResumeTeamRun,
+    handleCancelTeamRun,
     handleRetryTeamTask,
     handleDeleteTeamRun,
     handleSelectTeamRun,
@@ -703,6 +704,7 @@ export function GatewayApp() {
               onLoadDocument={(path) => api.teamDocumentContent(selectedTeamRunId, path)}
               onAddWork={handleAddWork}
               onResume={handleResumeTeamRun}
+              onCancel={handleCancelTeamRun}
               onRetryTask={handleRetryTeamTask}
             />
           </div>

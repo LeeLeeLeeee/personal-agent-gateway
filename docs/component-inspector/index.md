@@ -14,6 +14,9 @@ updated_at: 2026-07-15
 
 # Component Inspector Reports
 
+- [TeamRunDetail PG-1 — 2026-07-15 16:39](./TeamRunDetail/2026-07-15-1639.md)
+- [TeamRunCard PG-1 Roster — 2026-07-15 16:39](./TeamRunCard/2026-07-15-1639.md)
+- [TeamsView Persona Card Selection — 2026-07-15 12:50](./TeamsView/2026-07-15-1250.md)
 - [JobsView Retry and Lineage — 2026-07-15 10:57](./JobsView/2026-07-15-1057.md)
 - [SchedulesView History and Preview — 2026-07-15 10:57](./SchedulesView/2026-07-15-1057.md)
 - [GatewayApp R1 Operability — 2026-07-15 10:24](./GatewayApp/2026-07-15-1024.md)

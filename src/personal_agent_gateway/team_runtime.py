@@ -118,6 +118,8 @@ class TeamRuntime:
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
                 return run
 
+            run = self._teams.set_run_status(run.id, "running")
+            await self._publish({"type": "team.run.executing", "team_run_id": run.id})
             return await self._execute_and_synthesize(run, leader, workers)
         except asyncio.CancelledError:
             if run is not None:
@@ -166,22 +168,36 @@ class TeamRuntime:
             task = pending[0]
             worker = workers[counter % len(workers)]
             counter += 1
-            self._teams.set_task_status(task.id, "in_progress")
-            self._teams.set_agent_status(worker.id, "running")
+            task, worker = self._teams.start_task(task.id, worker.id)
+            await self._publish(
+                {
+                    "type": "team.task.updated",
+                    "team_run_id": run.id,
+                    "task_id": task.id,
+                    "agent_id": worker.id,
+                }
+            )
             try:
                 result = await self._run_task(run, leader, worker, task)
                 self._teams.append_message(
                     run.id, worker.id, None, "agent_output", result, {"task_id": task.id}
                 )
-                self._teams.set_task_status(task.id, "completed", result=result)
-                self._teams.set_agent_status(worker.id, "completed")
+                task, worker = self._teams.finish_task(
+                    task.id, worker.id, "completed", result=result
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                self._teams.set_task_status(task.id, "failed", error_message=str(exc))
-                self._teams.set_agent_status(worker.id, "failed")
+                task, worker = self._teams.finish_task(
+                    task.id, worker.id, "failed", error_message=str(exc)
+                )
             await self._publish(
-                {"type": "team.task.updated", "team_run_id": run.id, "task_id": task.id}
+                {
+                    "type": "team.task.updated",
+                    "team_run_id": run.id,
+                    "task_id": task.id,
+                    "agent_id": worker.id,
+                }
             )
 
     async def _run_task(
@@ -273,9 +289,11 @@ class TeamRuntime:
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": "All tasks failed"})
                 return run
             run = self._teams.set_run_status(run.id, "summarizing")
+            await self._publish({"type": "team.run.summarizing", "team_run_id": run.id})
             summary = await self._leader_synthesis(run, leader, tasks)
             if any(task.status == "pending" for task in self._teams.list_tasks(run.id)):
                 run = self._teams.set_run_status(run.id, "running")
+                await self._publish({"type": "team.run.executing", "team_run_id": run.id})
                 continue
             run = self._teams.set_run_status(run.id, status, summary=summary)
             self._teams.set_agent_status(leader.id, "completed")
@@ -359,12 +377,15 @@ class TeamRuntime:
         return response.content
 
     def _settle_canceled(self, run: TeamRun) -> None:
+        for task in self._teams.list_tasks(run.id):
+            if task.status == "in_progress":
+                if task.owner_agent_id:
+                    self._teams.finish_task(task.id, task.owner_agent_id, "canceled")
+                else:
+                    self._teams.set_task_status(task.id, "canceled")
         for agent in self._teams.list_agents(run.id):
             if agent.status == "running":
                 self._teams.set_agent_status(agent.id, "canceled")
-        for task in self._teams.list_tasks(run.id):
-            if task.status == "in_progress":
-                self._teams.set_task_status(task.id, "canceled")
         self._teams.set_run_status(run.id, "canceled")
 
     async def _publish(self, event: dict[str, object]) -> None:
@@ -382,6 +403,12 @@ class TeamRuntime:
             if isinstance(task_id, str):
                 try:
                     enriched["task"] = _task_delta(self._teams.get_task(task_id))
+                except KeyError:
+                    pass
+            agent_id = event.get("agent_id")
+            if isinstance(agent_id, str):
+                try:
+                    enriched["agent"] = _agent_delta(self._teams.get_agent(agent_id))
                 except KeyError:
                     pass
             await self._event_bus.publish(enriched)
@@ -434,6 +461,18 @@ def _task_delta(task: TeamTask) -> dict[str, object]:
         "updated_at": task.updated_at,
         "started_at": task.started_at,
         "finished_at": task.finished_at,
+    }
+
+
+def _agent_delta(agent: TeamAgent) -> dict[str, object]:
+    return {
+        "id": agent.id,
+        "team_run_id": agent.team_run_id,
+        "status": agent.status,
+        "current_task_id": agent.current_task_id,
+        "started_at": agent.started_at,
+        "finished_at": agent.finished_at,
+        "updated_at": agent.updated_at,
     }
 
 
