@@ -20,6 +20,7 @@ from personal_agent_gateway.api import (
     auth_router,
     capabilities_router,
     health_router,
+    hooks_router,
     jobs_router,
     operations_router,
     personas_router,
@@ -47,6 +48,11 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.emergency_stop import EmergencyStopService
 from personal_agent_gateway.health import HealthService
+from personal_agent_gateway.hook_loop import HookLoop
+from personal_agent_gateway.hook_runner import HookRunner
+from personal_agent_gateway.hook_runs import HookRunService
+from personal_agent_gateway.hook_secrets import HookSecretStore
+from personal_agent_gateway.hooks import HookService
 from personal_agent_gateway.intake import IntakeGate
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
@@ -64,6 +70,7 @@ from personal_agent_gateway.schedules import ScheduleService
 from personal_agent_gateway.scheduler_loop import SchedulerLoop
 from personal_agent_gateway.security_settings import SecuritySettingsService
 from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
+from personal_agent_gateway.sources.email import ImapEmailAdapter
 from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
@@ -88,11 +95,16 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             sources=["manual", "schedule", "api"],
         ):
             await application.state.job_worker.enqueue(job.id)
+        application.state.hook_run_service.recover_interrupted_runs()
         await application.state.scheduler_loop.start()
+        await application.state.hook_runner.start()
+        await application.state.hook_loop.start()
         try:
             yield
         finally:
             await application.state.scheduler_loop.stop()
+            await application.state.hook_loop.stop()
+            await application.state.hook_runner.stop()
             team_run_ids = await application.state.team_run_registry.cancel_all(
                 reason="shutdown"
             )
@@ -194,6 +206,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(operations_router)
     app.include_router(artifacts_router)
     app.include_router(schedules_router)
+    app.include_router(hooks_router)
     app.include_router(agents_router)
     app.include_router(session_config_router)
     app.include_router(settings_router)
@@ -357,6 +370,19 @@ def _attach_local_services(
         job_worker,
         intake_gate=intake_gate,
     )
+    assert config.hooks_dir is not None
+    hook_secret_store = HookSecretStore(config.hooks_dir)
+    hook_service = HookService(
+        db, hook_secret_store, {"email": ImapEmailAdapter()}
+    )
+    hook_run_service = HookRunService(db)
+    hook_runner = HookRunner(hook_service, hook_run_service, runtime_factory, event_bus)
+    hook_loop = HookLoop(
+        hook_service,
+        hook_run_service,
+        hook_runner,
+        interval_seconds=config.hook_poll_interval_seconds,
+    )
     agent_registry = AgentRegistry(config)
     audit_service = AuditService(db, retention_days=config.audit_retention_days)
     security_settings = SecuritySettingsService(db, config.access_mode)
@@ -390,6 +416,10 @@ def _attach_local_services(
     app.state.team_run_service = team_run_service
     app.state.team_directory_service = team_directory_service
     app.state.rule_set_service = rule_set_service
+    app.state.hook_service = hook_service
+    app.state.hook_run_service = hook_run_service
+    app.state.hook_runner = hook_runner
+    app.state.hook_loop = hook_loop
     return runtime_factory
 
 
