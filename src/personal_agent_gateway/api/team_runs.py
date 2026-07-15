@@ -3,9 +3,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from personal_agent_gateway.api.dependencies import (
+    record_domain_audit,
+    require_intake_open,
+    session_dependency,
+)
+from personal_agent_gateway.auth_sessions import SessionPrincipal
+from personal_agent_gateway.pagination import decode_cursor, encode_cursor
 from personal_agent_gateway.teams import TeamAgent, TeamMessage, TeamRun, TeamTask
 
 
@@ -18,30 +25,35 @@ _TERMINAL = {"completed", "completed_with_failures", "failed", "canceled"}
 class CreateTeamRunRequest(BaseModel):
     team_id: str
     goal: str
-    run_mode: Literal["planning_only", "plan_and_execute", "review_only"] = "planning_only"
-    max_workers: int = 3
+    run_mode: Literal["planning_only", "plan_and_execute"] = "planning_only"
+    max_workers: Literal[1] = 1
 
 
 class AddWorkRequest(BaseModel):
     instruction: str
 
 
-def require_session(session: Annotated[str | None, Cookie(alias="agent_session")] = None) -> None:
-    if not session:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-
-session_dependency = Depends(require_session)
-
-
 @router.get("")
-def list_team_runs(request: Request, _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
-    return {"team_runs": request.app.state.team_run_service.list_team_runs_enriched()}
+def list_team_runs(
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    cursor: str | None = None,
+    _session: None = session_dependency,
+) -> dict[str, object]:
+    try:
+        runs, next_cursor = request.app.state.team_run_service.page_team_runs_enriched(
+            limit=limit, cursor=cursor
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+    return {"team_runs": runs, "next_cursor": next_cursor}
 
 
 @router.post("")
 def create_team_run(
-    request: Request, payload: CreateTeamRunRequest, _session: None = session_dependency
+    request: Request,
+    payload: CreateTeamRunRequest,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
     try:
         run = request.app.state.team_run_service.create_team_run_from_team(
@@ -54,6 +66,16 @@ def create_team_run(
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team not found") from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_created",
+        action="team_runs.create",
+        resource_type="team_run",
+        resource_id=run.id,
+        team_run_id=run.id,
+        metadata={"run_mode": run.run_mode, "team_id": run.team_id},
+    )
     return {"team_run": _team_run_payload(run)}
 
 
@@ -66,8 +88,43 @@ def get_team_run(request: Request, team_run_id: str, _session: None = session_de
     return {"team_run": _team_run_payload(run)}
 
 
+@router.get("/{team_run_id}/detail")
+def get_team_run_detail(
+    request: Request,
+    team_run_id: str,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    _session: None = session_dependency,
+) -> dict[str, object]:
+    service = request.app.state.team_run_service
+    try:
+        run = service.get_team_run(team_run_id)
+        agents = service.list_agents(team_run_id)
+        tasks = service.list_tasks(team_run_id)
+        messages = service.list_messages(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    selected_tasks = tasks[-limit:]
+    selected_messages = messages[-limit:]
+    return {
+        "team_run": _team_run_payload(run),
+        "agents": [_agent_payload(agent) for agent in agents],
+        "tasks": [_task_payload(task) for task in selected_tasks],
+        "messages": [_message_payload(message) for message in selected_messages],
+        "document_summary": _document_summary(_resolved_workspace(run)),
+        "truncated": {
+            "tasks": len(tasks) > len(selected_tasks),
+            "messages": len(messages) > len(selected_messages),
+        },
+    }
+
+
 @router.post("/{team_run_id}/start")
-async def start_team_run(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, object]:
+async def start_team_run(
+    request: Request,
+    team_run_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    require_intake_open(request)
     service = request.app.state.team_run_service
     registry = request.app.state.team_run_registry
     runtime = request.app.state.team_runtime
@@ -88,13 +145,25 @@ async def start_team_run(request: Request, team_run_id: str, _session: None = se
 
     task = asyncio.create_task(_run_and_finish())
     registry.register(team_run_id, task)
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_start_requested",
+        action="team_runs.start",
+        resource_type="team_run",
+        resource_id=team_run_id,
+        team_run_id=team_run_id,
+    )
     return {"team_run": _team_run_payload(run)}
 
 
 @router.post("/{team_run_id}/resume")
 async def resume_team_run(
-    request: Request, team_run_id: str, _session: None = session_dependency
+    request: Request,
+    team_run_id: str,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
+    require_intake_open(request)
     service = request.app.state.team_run_service
     registry = request.app.state.team_run_registry
     runtime = request.app.state.team_runtime
@@ -115,13 +184,26 @@ async def resume_team_run(
 
     task = asyncio.create_task(_resume_and_finish())
     registry.register(team_run_id, task)
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_resume_requested",
+        action="team_runs.resume",
+        resource_type="team_run",
+        resource_id=team_run_id,
+        team_run_id=team_run_id,
+    )
     return {"team_run": _team_run_payload(run)}
 
 
 @router.post("/{team_run_id}/tasks/{task_id}/retry")
 async def retry_team_task(
-    request: Request, team_run_id: str, task_id: str, _session: None = session_dependency
+    request: Request,
+    team_run_id: str,
+    task_id: str,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
+    require_intake_open(request)
     service = request.app.state.team_run_service
     registry = request.app.state.team_run_registry
     if registry.is_running(team_run_id):
@@ -133,15 +215,35 @@ async def retry_team_task(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await request.app.state.event_bus.publish(
-        {"type": "team.task.updated", "team_run_id": team_run_id, "task_id": task_id}
+        {
+            "type": "team.task.updated",
+            "team_run_id": team_run_id,
+            "task_id": task_id,
+            "task": _task_payload(task),
+        }
+    )
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.task_retry_requested",
+        action="team_runs.retry_task",
+        resource_type="team_task",
+        resource_id=task_id,
+        team_run_id=team_run_id,
+        team_task_id=task_id,
+        metadata={"status": task.status},
     )
     return {"team_run": _team_run_payload(run), "task": _task_payload(task)}
 
 
 @router.post("/{team_run_id}/add-work")
 async def add_work(
-    request: Request, team_run_id: str, payload: AddWorkRequest, _session: None = session_dependency
+    request: Request,
+    team_run_id: str,
+    payload: AddWorkRequest,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
+    require_intake_open(request)
     service = request.app.state.team_run_service
     registry = request.app.state.team_run_registry
     runtime = request.app.state.team_runtime
@@ -169,11 +271,25 @@ async def add_work(
         task = asyncio.create_task(_resume_and_finish())
         registry.register(team_run_id, task)
 
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.additional_work_requested",
+        action="team_runs.add_work",
+        resource_type="team_run",
+        resource_id=team_run_id,
+        team_run_id=team_run_id,
+        metadata={"instruction_length": len(payload.instruction)},
+    )
     return {"team_run": _team_run_payload(service.get_team_run(team_run_id))}
 
 
 @router.post("/{team_run_id}/cancel")
-def cancel_team_run(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, object]:
+def cancel_team_run(
+    request: Request,
+    team_run_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
     service = request.app.state.team_run_service
     registry = request.app.state.team_run_registry
     try:
@@ -181,14 +297,27 @@ def cancel_team_run(request: Request, team_run_id: str, _session: None = session
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     if registry.cancel(team_run_id):
-        return {"team_run": _team_run_payload(service.get_team_run(team_run_id))}
-    if run.status not in _TERMINAL:
+        run = service.get_team_run(team_run_id)
+    elif run.status not in _TERMINAL:
         run = service.set_run_status(team_run_id, "canceled")
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_canceled",
+        action="team_runs.cancel",
+        resource_type="team_run",
+        resource_id=team_run_id,
+        team_run_id=team_run_id,
+    )
     return {"team_run": _team_run_payload(run)}
 
 
 @router.delete("/{team_run_id}")
-def delete_team_run(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, object]:
+def delete_team_run(
+    request: Request,
+    team_run_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
     service = request.app.state.team_run_service
     registry = request.app.state.team_run_registry
     try:
@@ -201,38 +330,93 @@ def delete_team_run(request: Request, team_run_id: str, _session: None = session
         service.delete_team_run(team_run_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_deleted",
+        action="team_runs.delete",
+        resource_type="team_run",
+        resource_id=team_run_id,
+        team_run_id=team_run_id,
+        metadata={"workspace_deleted": True},
+    )
     return {"deleted": True}
 
 
 @router.get("/{team_run_id}/agents")
-def list_team_agents(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
+def list_team_agents(
+    request: Request,
+    team_run_id: str,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    cursor: str | None = None,
+    _session: None = session_dependency,
+) -> dict[str, object]:
     try:
         agents = request.app.state.team_run_service.list_agents(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
-    return {"agents": [_agent_payload(agent) for agent in agents]}
+    try:
+        selected, next_cursor = _page_entities(agents, limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+    return {
+        "agents": [_agent_payload(agent) for agent in selected],
+        "next_cursor": next_cursor,
+    }
 
 
 @router.get("/{team_run_id}/tasks")
-def list_team_tasks(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
+def list_team_tasks(
+    request: Request,
+    team_run_id: str,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    cursor: str | None = None,
+    _session: None = session_dependency,
+) -> dict[str, object]:
     try:
         tasks = request.app.state.team_run_service.list_tasks(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
-    return {"tasks": [_task_payload(task) for task in tasks]}
+    try:
+        selected, next_cursor = _page_entities(tasks, limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+    return {
+        "tasks": [_task_payload(task) for task in selected],
+        "next_cursor": next_cursor,
+    }
 
 
 @router.get("/{team_run_id}/messages")
-def list_team_messages(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
+def list_team_messages(
+    request: Request,
+    team_run_id: str,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    cursor: str | None = None,
+    _session: None = session_dependency,
+) -> dict[str, object]:
     try:
         messages = request.app.state.team_run_service.list_messages(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
-    return {"messages": [_message_payload(message) for message in messages]}
+    try:
+        selected, next_cursor = _page_entities(messages, limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+    return {
+        "messages": [_message_payload(message) for message in selected],
+        "next_cursor": next_cursor,
+    }
 
 
 @router.get("/{team_run_id}/documents")
-def list_team_documents(request: Request, team_run_id: str, _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
+def list_team_documents(
+    request: Request,
+    team_run_id: str,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    cursor: str | None = None,
+    _session: None = session_dependency,
+) -> dict[str, object]:
     try:
         run = request.app.state.team_run_service.get_team_run(team_run_id)
     except KeyError as exc:
@@ -254,7 +438,21 @@ def list_team_documents(request: Request, team_run_id: str, _session: None = ses
                     "previewable": kind != "binary" and size <= _MAX_PREVIEW_BYTES,
                 }
             )
-    return {"documents": documents}
+    if cursor:
+        try:
+            values = decode_cursor(cursor, 1)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+        if not isinstance(values[0], str):
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+        documents = [item for item in documents if str(item["path"]) > values[0]]
+    selected = documents[: limit + 1]
+    has_more = len(selected) > limit
+    selected = selected[:limit]
+    next_cursor = None
+    if has_more and selected:
+        next_cursor = encode_cursor(selected[-1]["path"])
+    return {"documents": selected, "next_cursor": next_cursor}
 
 
 @router.get("/{team_run_id}/documents/content")
@@ -316,6 +514,41 @@ def _iso_mtime(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
 
 
+def _document_summary(root: Path) -> dict[str, object]:
+    count = 0
+    size_bytes = 0
+    kinds: dict[str, int] = {}
+    if root.is_dir():
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            count += 1
+            size_bytes += path.stat().st_size
+            kind = _doc_kind(path)
+            kinds[kind] = kinds.get(kind, 0) + 1
+    return {"count": count, "size_bytes": size_bytes, "kinds": kinds}
+
+
+def _page_entities(items: list, limit: int, cursor: str | None) -> tuple[list, str | None]:
+    selected_items = sorted(items, key=lambda item: (item.created_at, item.id))
+    if cursor:
+        created_at, entity_id = decode_cursor(cursor, 2)
+        if not isinstance(created_at, str) or not isinstance(entity_id, str):
+            raise ValueError("Invalid cursor")
+        selected_items = [
+            item
+            for item in selected_items
+            if (item.created_at, item.id) > (created_at, entity_id)
+        ]
+    selected = selected_items[: limit + 1]
+    has_more = len(selected) > limit
+    selected = selected[:limit]
+    next_cursor = None
+    if has_more and selected:
+        next_cursor = encode_cursor(selected[-1].created_at, selected[-1].id)
+    return selected, next_cursor
+
+
 def _team_run_payload(run: TeamRun) -> dict[str, object]:
     return {
         "id": run.id,
@@ -323,7 +556,9 @@ def _team_run_payload(run: TeamRun) -> dict[str, object]:
         "status": run.status,
         "run_mode": run.run_mode,
         "leader_agent_id": run.leader_agent_id,
-        "max_workers": run.max_workers,
+        "max_workers": 1,
+        "configured_max_workers": run.max_workers,
+        "execution_mode": "sequential",
         "workspace_root": run.workspace_root,
         "team_id": run.team_id,
         "rules_snapshot": run.rules_snapshot,

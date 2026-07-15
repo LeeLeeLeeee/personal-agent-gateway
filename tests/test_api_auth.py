@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from personal_agent_gateway.app import create_app
@@ -41,7 +42,10 @@ def test_auth_login_with_otp_sets_session_cookie(tmp_path: Path) -> None:
     response = client.post("/api/auth/login", json={"otp": code})
 
     assert response.status_code == 200
-    assert response.cookies.get("agent_session") is not None
+    token = response.cookies.get("agent_session")
+    assert token is not None
+    assert client.app.state.auth_session_service.validate(token) is not None
+    assert client.get("/api/auth/status").json()["authenticated"] is True
 
 
 def test_auth_login_with_recovery_code_sets_session_cookie(tmp_path: Path) -> None:
@@ -73,13 +77,114 @@ def test_auth_login_rejects_reused_recovery_code(tmp_path: Path) -> None:
 
 
 def test_auth_logout_clears_cookie(tmp_path: Path) -> None:
-    client = TestClient(create_app(make_config(tmp_path)))
+    app = create_app(make_config(tmp_path))
+    client = TestClient(app)
+    token = app.state.auth_session_service.issue().token
+    client.cookies.set("agent_session", token)
 
     response = client.post("/api/auth/logout")
 
     assert response.status_code == 200
     assert "agent_session=" in response.headers["set-cookie"]
     assert "Max-Age=0" in response.headers["set-cookie"]
+    client.cookies.set("agent_session", token)
+    assert client.get("/api/settings").status_code == 401
+
+
+def test_owner_can_list_and_revoke_other_sessions(tmp_path: Path) -> None:
+    app = create_app(make_config(tmp_path))
+    current = app.state.auth_session_service.issue()
+    other = app.state.auth_session_service.issue()
+    client = TestClient(app)
+    client.cookies.set("agent_session", current.token)
+
+    response = client.get("/api/auth/sessions")
+
+    assert response.status_code == 200
+    sessions = response.json()["sessions"]
+    assert {item["id"] for item in sessions} == {current.principal.id, other.principal.id}
+    assert next(item for item in sessions if item["id"] == current.principal.id)["current"] is True
+    assert all("token" not in key for item in sessions for key in item)
+
+    revoked = client.delete(f"/api/auth/sessions/{other.principal.id}")
+    assert revoked.status_code == 200
+    assert app.state.auth_session_service.validate(other.token) is None
+    assert app.state.auth_session_service.validate(current.token) is not None
+
+
+def test_revoke_all_sessions_invalidates_current_cookie(tmp_path: Path) -> None:
+    app = create_app(make_config(tmp_path))
+    current = app.state.auth_session_service.issue()
+    app.state.auth_session_service.issue()
+    client = TestClient(app)
+    client.cookies.set("agent_session", current.token)
+
+    response = client.post("/api/auth/sessions/revoke-all")
+
+    assert response.status_code == 200
+    assert response.json()["revoked_count"] == 2
+    assert "Max-Age=0" in response.headers["set-cookie"]
+    client.cookies.set("agent_session", current.token)
+    assert client.get("/api/settings").status_code == 401
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/settings",
+        "/api/jobs",
+        "/api/schedules",
+        "/api/personas",
+        "/api/team-runs",
+        "/api/teams",
+        "/api/rules",
+        "/api/agents",
+        "/api/capabilities",
+        "/api/artifacts",
+    ],
+)
+def test_protected_apis_reject_forged_session_cookie(tmp_path: Path, path: str) -> None:
+    client = TestClient(create_app(make_config(tmp_path)))
+    client.cookies.set("agent_session", "forged-session")
+
+    response = client.get(path)
+
+    assert response.status_code == 401
+
+
+def test_auth_status_rejects_forged_session_cookie(tmp_path: Path) -> None:
+    client = TestClient(create_app(make_config(tmp_path)))
+    client.cookies.set("agent_session", "forged-session")
+
+    response = client.get("/api/auth/status")
+
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is False
+
+
+def test_state_change_rejects_cross_origin_request(tmp_path: Path) -> None:
+    app = create_app(make_config(tmp_path))
+    client = TestClient(app)
+    client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+
+    response = client.post(
+        "/api/reset",
+        headers={"Origin": "https://example.invalid"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_login_rate_limit_blocks_repeated_failures(tmp_path: Path) -> None:
+    client = TestClient(create_app(make_config(tmp_path)))
+
+    for _ in range(5):
+        assert client.post("/api/auth/login", json={"otp": "000000"}).status_code == 401
+
+    response = client.post("/api/auth/login", json={"otp": "000000"})
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"]
 
 
 def test_totp_setup_start_requires_web_token_cookie(tmp_path: Path) -> None:

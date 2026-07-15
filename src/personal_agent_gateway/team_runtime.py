@@ -369,7 +369,22 @@ class TeamRuntime:
 
     async def _publish(self, event: dict[str, object]) -> None:
         if self._event_bus is not None:
-            await self._event_bus.publish(event)
+            enriched = dict(event)
+            team_run_id = event.get("team_run_id")
+            if isinstance(team_run_id, str) and str(event.get("type", "")).startswith(
+                "team.run."
+            ):
+                try:
+                    enriched["run"] = _run_delta(self._teams.get_team_run(team_run_id))
+                except KeyError:
+                    pass
+            task_id = event.get("task_id")
+            if isinstance(task_id, str):
+                try:
+                    enriched["task"] = _task_delta(self._teams.get_task(task_id))
+                except KeyError:
+                    pass
+            await self._event_bus.publish(enriched)
 
 
 def _find_leader(agents: list[TeamAgent]) -> TeamAgent:
@@ -392,6 +407,34 @@ def _terminal_status(tasks: list[TeamTask]) -> str:
     if any(status == "failed" for status in statuses):
         return "completed_with_failures"
     return "completed"
+
+
+def _run_delta(run: TeamRun) -> dict[str, object]:
+    return {
+        "id": run.id,
+        "status": run.status,
+        "summary": run.summary,
+        "error_message": run.error_message,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "updated_at": run.updated_at,
+    }
+
+
+def _task_delta(task: TeamTask) -> dict[str, object]:
+    return {
+        "id": task.id,
+        "team_run_id": task.team_run_id,
+        "title": task.title,
+        "description": task.description,
+        "owner_agent_id": task.owner_agent_id,
+        "status": task.status,
+        "error_message": task.error_message,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+        "started_at": task.started_at,
+        "finished_at": task.finished_at,
+    }
 
 
 def _parse_task_plan(content: str) -> list[dict[str, str]]:

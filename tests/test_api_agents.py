@@ -38,7 +38,7 @@ def test_agents_returns_safe_catalog(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(agents_module, "detect_local_agent_capabilities", lambda _config: None)
     client = TestClient(create_app(make_config(tmp_path)))
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
     response = client.get("/api/agents")
 
@@ -90,7 +90,7 @@ def test_active_session_config_defaults_and_can_be_updated_while_empty(tmp_path:
     monkeypatch.setattr(agents_module, "probe_cli", lambda _binary: agents_module.CliProbeResult(True, None))
     monkeypatch.setattr(agents_module, "detect_local_agent_capabilities", lambda _config: None)
     client = TestClient(create_app(make_config(tmp_path)))
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
     default_response = client.get("/api/sessions/active/config")
 
@@ -133,7 +133,7 @@ def test_active_session_config_rejects_invalid_and_locked_updates(tmp_path: Path
     store.start_new()
     store.append("user", {"content": "already started"})
     client = TestClient(create_app(config))
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
     invalid_response = client.put(
         "/api/sessions/active/config",
@@ -157,7 +157,7 @@ def test_active_session_config_rejects_unavailable_agent_updates(tmp_path: Path,
         lambda binary: agents_module.CliProbeResult(binary == "codex-test", "not found on PATH"),
     )
     client = TestClient(create_app(make_config(tmp_path)))
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
     response = client.put(
         "/api/sessions/active/config",

@@ -1,11 +1,67 @@
+export class ApiError extends Error {
+  constructor({
+    status = 0,
+    code = "request_failed",
+    detail = "Request failed",
+    retryable = false,
+    correlationId = null
+  } = {}) {
+    super(typeof detail === "string" ? detail : JSON.stringify(detail));
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
+    this.retryable = retryable;
+    this.correlationId = correlationId;
+  }
+}
+
+export function apiErrorAction(error) {
+  if (!(error instanceof ApiError)) return "dismiss";
+  if (error.status === 401) return "relogin";
+  if (error.status === 400 || error.status === 422) return "fix_input";
+  if (error.status === 409) return "refresh";
+  if (error.retryable || error.status === 0 || error.status >= 500) return "retry";
+  return "dismiss";
+}
+
+async function fetch(input, init) {
+  try {
+    return await (init === undefined
+      ? globalThis.fetch(input)
+      : globalThis.fetch(input, init));
+  } catch (error) {
+    const timedOut = error?.name === "AbortError";
+    throw new ApiError({
+      status: 0,
+      code: timedOut ? "request_timeout" : "network_error",
+      detail: timedOut ? "Request timed out" : "Network request failed",
+      retryable: true
+    });
+  }
+}
+
 async function jsonOrNull(response) {
-  return response.ok ? response.json() : null;
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw apiErrorFromResponse(response, body);
+  return body;
 }
 
 async function jsonList(response, key) {
-  if (!response.ok) return [];
-  const body = await response.json();
+  const body = await jsonOrNull(response);
   return body[key] || [];
+}
+
+function apiErrorFromResponse(response, body) {
+  return new ApiError({
+    status: response.status || 0,
+    code: body?.code || `http_${response.status || 0}`,
+    detail: body?.detail || response.statusText || "Request failed",
+    retryable: body?.retryable ?? response.status >= 500,
+    correlationId: body?.correlation_id
+      || response.headers?.get?.("X-Correlation-ID")
+      || null
+  });
 }
 
 export const api = {
@@ -144,14 +200,63 @@ export const api = {
     const body = await jsonOrNull(await fetch("/api/settings"));
     return body?.settings || null;
   },
+  async authSessions() {
+    return jsonList(await fetch("/api/auth/sessions"), "sessions");
+  },
+  async revokeAuthSession(id) {
+    return jsonOrNull(await fetch(
+      `/api/auth/sessions/${encodeURIComponent(id)}`,
+      { method: "DELETE" }
+    ));
+  },
+  async revokeAllAuthSessions() {
+    return jsonOrNull(await fetch("/api/auth/sessions/revoke-all", { method: "POST" }));
+  },
+  async setAccessMode(mode, confirmFullAccess = false) {
+    const body = await jsonOrNull(await fetch("/api/settings/access-mode", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode, confirm_full_access: confirmFullAccess })
+    }));
+    return body?.access_mode || null;
+  },
   async jobs() {
     return jsonList(await fetch("/api/jobs"), "jobs");
   },
   async jobEvents(id) {
     return jsonList(await fetch(`/api/jobs/${encodeURIComponent(id)}/events`), "events");
   },
+  async operations() {
+    return jsonOrNull(await fetch("/api/operations"));
+  },
+  async emergencyStop() {
+    return jsonOrNull(await fetch("/api/operations/emergency-stop", { method: "POST" }));
+  },
+  async resumeIntake() {
+    return jsonOrNull(await fetch("/api/operations/resume-intake", { method: "POST" }));
+  },
+  async createBackup() {
+    const body = await jsonOrNull(await fetch("/api/operations/backups", { method: "POST" }));
+    return body?.backup || null;
+  },
+  async verifyBackup(id) {
+    return jsonOrNull(await fetch(
+      `/api/operations/backups/${encodeURIComponent(id)}/dry-run`,
+      { method: "POST" }
+    ));
+  },
+  async retryJob(id) {
+    const body = await jsonOrNull(await fetch(
+      `/api/jobs/${encodeURIComponent(id)}/retry`,
+      { method: "POST" }
+    ));
+    return body?.job || null;
+  },
   async schedules() {
     return jsonList(await fetch("/api/schedules"), "schedules");
+  },
+  async scheduleDetail(id) {
+    return jsonOrNull(await fetch(`/api/schedules/${encodeURIComponent(id)}`));
   },
   async createSchedule(payload) {
     const body = await jsonOrNull(await fetch("/api/schedules", {
@@ -244,13 +349,26 @@ export const api = {
     return jsonList(await fetch("/static/avatars/manifest.json"), "avatars");
   },
   async teamRunDetail(id) {
-    const [run, agents, tasks, messages] = await Promise.all([
-      jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}`)),
-      jsonList(await fetch(`/api/team-runs/${encodeURIComponent(id)}/agents`), "agents"),
-      jsonList(await fetch(`/api/team-runs/${encodeURIComponent(id)}/tasks`), "tasks"),
-      jsonList(await fetch(`/api/team-runs/${encodeURIComponent(id)}/messages`), "messages")
-    ]);
-    return { run: run?.team_run || null, agents, tasks, messages };
+    const encodedId = encodeURIComponent(id);
+    try {
+      const body = await jsonOrNull(await fetch(`/api/team-runs/${encodedId}/detail`));
+      return {
+        run: body?.team_run || null,
+        agents: body?.agents || [],
+        tasks: body?.tasks || [],
+        messages: body?.messages || [],
+        documentSummary: body?.document_summary || null
+      };
+    } catch (error) {
+      if (!(error instanceof ApiError) || ![0, 404].includes(error.status)) throw error;
+      const [run, agents, tasks, messages] = await Promise.all([
+        jsonOrNull(await fetch(`/api/team-runs/${encodedId}`)),
+        jsonList(await fetch(`/api/team-runs/${encodedId}/agents`), "agents"),
+        jsonList(await fetch(`/api/team-runs/${encodedId}/tasks`), "tasks"),
+        jsonList(await fetch(`/api/team-runs/${encodedId}/messages`), "messages")
+      ]);
+      return { run: run?.team_run || null, agents, tasks, messages, documentSummary: null };
+    }
   },
   async teams() {
     return jsonList(await fetch("/api/teams"), "teams");

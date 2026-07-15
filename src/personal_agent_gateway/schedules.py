@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from croniter import croniter
 
@@ -24,6 +25,19 @@ class Schedule:
     next_run_at: datetime
 
 
+@dataclass(frozen=True)
+class ScheduleDetail:
+    schedule: Schedule
+    jobs: list[Job]
+    total: int
+    succeeded: int
+    failed: int
+    canceled: int
+    success_rate: float | None
+    last_failure: Job | None
+    next_runs: list[datetime]
+
+
 class ScheduleService:
     def __init__(self, db: Database, capabilities: CapabilityRegistry) -> None:
         self._db = db
@@ -40,7 +54,8 @@ class ScheduleService:
     ) -> Schedule:
         self._capabilities.validate_input(capability_id, input_template_json)
         now = _normalize_now(now)
-        next_run_at = _next_run(cron_expression, now)
+        _timezone(timezone_name)
+        next_run_at = _next_run(cron_expression, now, timezone_name)
         schedule_id = uuid4().hex
         self._db.execute(
             """
@@ -94,7 +109,15 @@ class ScheduleService:
             set enabled = 1, next_run_at = ?, updated_at = ?
             where id = ?
             """,
-            (_next_run(schedule.cron_expression, now).isoformat(), now.isoformat(), schedule_id),
+            (
+                _next_run(
+                    schedule.cron_expression,
+                    now,
+                    schedule.timezone,
+                ).isoformat(),
+                now.isoformat(),
+                schedule_id,
+            ),
         )
         return self.get_schedule(schedule_id)
 
@@ -121,7 +144,11 @@ class ScheduleService:
         jobs: list[Job] = []
         for schedule in self._due_schedules(now):
             job = self._create_job_for_schedule(schedule, job_service)
-            next_run_at = _next_run(schedule.cron_expression, now)
+            next_run_at = _next_run(
+                schedule.cron_expression,
+                now,
+                schedule.timezone,
+            )
             self._db.execute(
                 """
                 update schedules
@@ -138,6 +165,54 @@ class ScheduleService:
             )
             jobs.append(job)
         return jobs
+
+    def next_runs(
+        self,
+        schedule_id: str,
+        *,
+        count: int = 3,
+        now: datetime | None = None,
+    ) -> list[datetime]:
+        schedule = self.get_schedule(schedule_id)
+        base = _normalize_now(now)
+        iterator = croniter(
+            schedule.cron_expression,
+            base.astimezone(_timezone(schedule.timezone)),
+        )
+        return [
+            iterator.get_next(datetime).astimezone(timezone.utc)
+            for _ in range(max(1, min(count, 20)))
+        ]
+
+    def detail(
+        self,
+        schedule_id: str,
+        job_service: JobService,
+        *,
+        now: datetime | None = None,
+    ) -> ScheduleDetail:
+        schedule = self.get_schedule(schedule_id)
+        jobs = job_service.list_jobs(source_schedule_id=schedule_id)
+        terminal = [
+            job
+            for job in jobs
+            if job.status in {"succeeded", "failed", "canceled"}
+        ]
+        succeeded = sum(job.status == "succeeded" for job in jobs)
+        failed = sum(job.status == "failed" for job in jobs)
+        canceled = sum(job.status == "canceled" for job in jobs)
+        last_failure = next((job for job in jobs if job.status == "failed"), None)
+        return ScheduleDetail(
+            schedule=schedule,
+            jobs=jobs,
+            total=len(jobs),
+            succeeded=succeeded,
+            failed=failed,
+            canceled=canceled,
+            success_rate=(succeeded / len(terminal)) if terminal else None,
+            last_failure=last_failure,
+            next_runs=self.next_runs(schedule_id, now=now),
+        )
 
     def _due_schedules(self, now: datetime) -> list[Schedule]:
         rows = self._db.fetchall(
@@ -182,8 +257,13 @@ def _schedule_from_row(row: object) -> Schedule:
     )
 
 
-def _next_run(cron_expression: str, base: datetime) -> datetime:
-    return croniter(cron_expression, base).get_next(datetime)
+def _next_run(cron_expression: str, base: datetime, timezone_name: str) -> datetime:
+    local_base = base.astimezone(_timezone(timezone_name))
+    return croniter(cron_expression, local_base).get_next(datetime).astimezone(timezone.utc)
+
+
+def _timezone(name: str) -> ZoneInfo:
+    return ZoneInfo(name)
 
 
 def _now() -> datetime:

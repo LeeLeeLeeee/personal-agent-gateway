@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { useToast } from "../../providers/UiProvider/index.jsx";
 import { fmtDateTime } from "../../../lib/time.js";
@@ -26,12 +26,22 @@ function eventLine(event) {
   return event.payload?.line || JSON.stringify(event.payload);
 }
 
-function JobDrawer({ job, events, onClose }) {
+function JobDrawer({ job, events, onClose, onRetry }) {
   const toast = useToast();
+  const [retrying, setRetrying] = useState(false);
 
   async function handleCopyCommand() {
     await navigator.clipboard.writeText(job.command_preview || "");
     toast("명령이 복사되었습니다", "success");
+  }
+
+  async function handleRetry() {
+    setRetrying(true);
+    try {
+      await onRetry(job.id);
+    } finally {
+      setRetrying(false);
+    }
   }
 
   return (
@@ -53,6 +63,12 @@ function JobDrawer({ job, events, onClose }) {
             <span className="settings-k mono">SOURCE</span>
             <span className="settings-v mono">{job.source}</span>
           </div>
+          {job.source_job_id ? (
+            <div className="settings-row">
+              <span className="settings-k mono">RETRY OF</span>
+              <span className="settings-v mono">{job.source_job_id}</span>
+            </div>
+          ) : null}
           <div className="settings-row">
             <span className="settings-k mono">INPUT</span>
             <span className="settings-v mono">{JSON.stringify(job.input)}</span>
@@ -76,13 +92,29 @@ function JobDrawer({ job, events, onClose }) {
 
         <div className="jobs-drawer-actions">
           <button type="button" className="btn btn-sm" onClick={handleCopyCommand}>Copy command</button>
+          {job.retryable && onRetry ? (
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              disabled={retrying}
+              onClick={handleRetry}
+            >
+              {retrying ? "Retrying…" : "Retry"}
+            </button>
+          ) : null}
         </div>
       </div>
     </aside>
   );
 }
 
-export function JobsView({ jobs = [], onLoadEvents }) {
+export function JobsView({
+  jobs = [],
+  onLoadEvents,
+  onRetry,
+  focusJobId = null,
+  onFocusHandled
+}) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
@@ -94,10 +126,26 @@ export function JobsView({ jobs = [], onLoadEvents }) {
   ));
   const selected = jobs.find((job) => job.id === selectedId) || null;
 
+  useEffect(() => {
+    if (!focusJobId) return;
+    setSelectedId(focusJobId);
+    setEvents([]);
+    onLoadEvents(focusJobId).then(setEvents);
+    onFocusHandled?.();
+  }, [focusJobId, onFocusHandled, onLoadEvents]);
+
   function selectJob(id) {
     setSelectedId(id);
     setEvents([]);
     onLoadEvents(id).then(setEvents);
+  }
+
+  async function retryJob(id) {
+    const retried = await onRetry(id);
+    if (!retried?.id) return;
+    setSelectedId(retried.id);
+    setEvents([]);
+    onLoadEvents(retried.id).then(setEvents);
   }
 
   return (
@@ -163,7 +211,14 @@ export function JobsView({ jobs = [], onLoadEvents }) {
         )}
       </div>
 
-      {selected ? <JobDrawer job={selected} events={events} onClose={() => setSelectedId(null)} /> : null}
+      {selected ? (
+        <JobDrawer
+          job={selected}
+          events={events}
+          onClose={() => setSelectedId(null)}
+          onRetry={onRetry ? retryJob : null}
+        />
+      ) : null}
     </div>
   );
 }

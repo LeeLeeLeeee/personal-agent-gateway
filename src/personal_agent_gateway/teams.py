@@ -7,6 +7,7 @@ from typing import Literal
 from uuid import uuid4
 
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.pagination import decode_cursor, encode_cursor
 from personal_agent_gateway.personas import Persona, PersonaService
 
 
@@ -194,23 +195,73 @@ class TeamRunService:
         ]
 
     def list_team_runs_enriched(self) -> list[dict[str, object]]:
-        runs = self.list_team_runs()
+        return self._enrich_runs(self.list_team_runs())
+
+    def page_team_runs_enriched(
+        self, limit: int = 100, cursor: str | None = None
+    ) -> tuple[list[dict[str, object]], str | None]:
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if cursor:
+            created_at, team_run_id = decode_cursor(cursor, 2)
+            if not isinstance(created_at, str) or not isinstance(team_run_id, str):
+                raise ValueError("Invalid cursor")
+            clauses.append("(created_at < ? or (created_at = ? and id < ?))")
+            parameters.extend((created_at, created_at, team_run_id))
+        where = f"where {' and '.join(clauses)}" if clauses else ""
+        normalized_limit = max(1, min(limit, 200))
+        rows = self._db.fetchall(
+            f"select * from team_runs {where} "
+            "order by created_at desc, id desc limit ?",
+            (*parameters, normalized_limit + 1),
+        )
+        has_more = len(rows) > normalized_limit
+        selected = rows[:normalized_limit]
+        runs = [_team_run_from_row(row) for row in selected]
+        next_cursor = None
+        if has_more and selected:
+            last = selected[-1]
+            next_cursor = encode_cursor(last["created_at"], last["id"])
+        return self._enrich_runs(runs), next_cursor
+
+    def _enrich_runs(self, runs: list[TeamRun]) -> list[dict[str, object]]:
+        if not runs:
+            return []
+        run_ids = [run.id for run in runs]
+        placeholders = ", ".join("?" for _ in run_ids)
+        agent_rows = self._db.fetchall(
+            f"select * from team_agents where team_run_id in ({placeholders}) "
+            "order by created_at asc, id asc",
+            run_ids,
+        )
+        count_rows = self._db.fetchall(
+            f"select team_run_id, status, count(*) as total from team_tasks "
+            f"where team_run_id in ({placeholders}) group by team_run_id, status",
+            run_ids,
+        )
+        agents_by_run: dict[str, list[TeamAgent]] = {run_id: [] for run_id in run_ids}
+        for row in agent_rows:
+            agent = _team_agent_from_row(row)
+            agents_by_run[agent.team_run_id].append(agent)
+        counts_by_run: dict[str, dict[str, int]] = {run_id: {} for run_id in run_ids}
+        for row in count_rows:
+            counts_by_run[row["team_run_id"]][row["status"]] = int(row["total"])
+
         result: list[dict[str, object]] = []
         for run in runs:
-            agents = self.list_agents(run.id)
-            tasks = self.list_tasks(run.id)
+            agents = agents_by_run[run.id]
             leader = next((a for a in agents if a.role == "leader"), None)
             members = [a for a in agents if a.role != "leader"]
-            counts: dict[str, int] = {}
-            for task in tasks:
-                counts[task.status] = counts.get(task.status, 0) + 1
+            counts = counts_by_run[run.id]
             result.append(
                 {
                     "id": run.id,
                     "goal": run.goal,
                     "status": run.status,
                     "run_mode": run.run_mode,
-                    "max_workers": run.max_workers,
+                    "max_workers": 1,
+                    "configured_max_workers": run.max_workers,
+                    "execution_mode": "sequential",
                     "team_id": run.team_id,
                     "created_at": run.created_at,
                     "started_at": run.started_at,
@@ -226,7 +277,7 @@ class TeamRunService:
                         for agent in members
                     ],
                     "task_counts": counts,
-                    "task_total": len(tasks),
+                    "task_total": sum(counts.values()),
                     "task_done": counts.get("completed", 0),
                     "elapsed_seconds": _elapsed_seconds(run.started_at, run.finished_at),
                 }
@@ -244,7 +295,7 @@ class TeamRunService:
 
     def interrupt_run(self, team_run_id: str, include_canceled: bool = False) -> TeamRun:
         now = _now()
-        with self._db.connect() as connection:
+        with self._db.connection() as connection:
             run = connection.execute(
                 "select status from team_runs where id = ?", (team_run_id,)
             ).fetchone()
@@ -322,7 +373,7 @@ class TeamRunService:
         return [
             _team_agent_from_row(row)
             for row in self._db.fetchall(
-                "select * from team_agents where team_run_id = ? order by created_at asc, rowid asc",
+                "select * from team_agents where team_run_id = ? order by created_at asc, id asc",
                 (team_run_id,),
             )
         ]
@@ -346,6 +397,9 @@ class TeamRunService:
 
     def get_agent(self, agent_id: str) -> TeamAgent:
         return self._get_agent(agent_id)
+
+    def get_task(self, task_id: str) -> TeamTask:
+        return self._get_task(task_id)
 
     def set_agent_session(self, agent_id: str, upstream_session_id: str | None) -> TeamAgent:
         self._get_agent(agent_id)
@@ -411,14 +465,14 @@ class TeamRunService:
         return [
             _team_task_from_row(row)
             for row in self._db.fetchall(
-                "select * from team_tasks where team_run_id = ? order by created_at asc, rowid asc",
+                "select * from team_tasks where team_run_id = ? order by created_at asc, id asc",
                 (team_run_id,),
             )
         ]
 
     def retry_failed_task(self, team_run_id: str, task_id: str) -> tuple[TeamRun, TeamTask]:
         now = _now()
-        with self._db.connect() as connection:
+        with self._db.connection() as connection:
             run = connection.execute(
                 "select status from team_runs where id = ?", (team_run_id,)
             ).fetchone()
@@ -538,7 +592,7 @@ class TeamRunService:
         return [
             _team_message_from_row(row)
             for row in self._db.fetchall(
-                "select * from team_messages where team_run_id = ? order by created_at asc, rowid asc",
+                "select * from team_messages where team_run_id = ? order by created_at asc, id asc",
                 (team_run_id,),
             )
         ]

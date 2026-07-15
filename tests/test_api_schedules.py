@@ -19,7 +19,10 @@ def make_config(tmp_path: Path) -> AppConfig:
 
 def authenticated_client(tmp_path: Path) -> TestClient:
     client = TestClient(create_app(make_config(tmp_path)))
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set(
+        "agent_session",
+        client.app.state.auth_session_service.issue().token,
+    )
     return client
 
 
@@ -81,6 +84,37 @@ def test_run_now_returns_schedule_job(tmp_path: Path) -> None:
     job = response.json()["job"]
     assert job["source"] == "schedule"
     assert job["capability_id"] == "ffmpeg.inspect"
+    events = client.app.state.audit_service.list(resource_type="schedule")
+    assert any(
+        event.action == "schedules.run_now" and event.resource_id == schedule_id
+        for event in events
+    )
+
+
+def test_schedule_detail_returns_history_stats_and_preview(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    schedule_id = create_schedule(client)
+    first = client.post(f"/api/schedules/{schedule_id}/run-now").json()["job"]
+    client.app.state.job_service.mark_running(first["id"])
+    client.app.state.job_service.mark_succeeded(first["id"])
+    second = client.post(f"/api/schedules/{schedule_id}/run-now").json()["job"]
+    client.app.state.job_service.mark_running(second["id"])
+    client.app.state.job_service.mark_failed(second["id"], "failed")
+
+    response = client.get(f"/api/schedules/{schedule_id}")
+
+    assert response.status_code == 200
+    detail = response.json()
+    assert [job["id"] for job in detail["jobs"]] == [second["id"], first["id"]]
+    assert detail["stats"] == {
+        "total": 2,
+        "succeeded": 1,
+        "failed": 1,
+        "canceled": 0,
+        "success_rate": 0.5,
+    }
+    assert detail["last_failure"]["id"] == second["id"]
+    assert len(detail["next_runs"]) == 3
 
 
 def test_delete_schedule_removes_it_from_list(tmp_path: Path) -> None:

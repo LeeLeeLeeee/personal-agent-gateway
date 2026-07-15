@@ -1,7 +1,13 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from personal_agent_gateway.api.jobs import _job_payload, session_dependency
+from personal_agent_gateway.api.dependencies import (
+    record_domain_audit,
+    require_intake_open,
+    session_dependency,
+)
+from personal_agent_gateway.api.jobs import _job_payload
+from personal_agent_gateway.auth_sessions import SessionPrincipal
 from personal_agent_gateway.schedules import Schedule
 
 
@@ -33,28 +39,75 @@ def list_schedules(
 def create_schedule(
     request: Request,
     payload: CreateScheduleRequest,
-    _session: None = session_dependency,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
-    schedule = request.app.state.schedule_service.create_schedule(
-        name=payload.name,
-        capability_id=payload.capability_id,
-        cron_expression=payload.cron_expression,
-        timezone_name=payload.timezone,
-        input_template_json=payload.input_template,
+    require_intake_open(request)
+    try:
+        schedule = request.app.state.schedule_service.create_schedule(
+            name=payload.name,
+            capability_id=payload.capability_id,
+            cron_expression=payload.cron_expression,
+            timezone_name=payload.timezone,
+            input_template_json=payload.input_template,
+        )
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid schedule") from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="automation.schedule_created",
+        action="schedules.create",
+        resource_type="schedule",
+        resource_id=schedule.id,
+        metadata={"enabled": schedule.enabled, "timezone": schedule.timezone},
     )
     return {"schedule": _schedule_payload(schedule)}
+
+
+@router.get("/{schedule_id}")
+def get_schedule_detail(
+    request: Request,
+    schedule_id: str,
+    _session: None = session_dependency,
+) -> dict[str, object]:
+    try:
+        detail = request.app.state.schedule_service.detail(
+            schedule_id,
+            request.app.state.job_service,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Schedule not found") from exc
+    return {
+        "schedule": _schedule_payload(detail.schedule),
+        "jobs": [_job_payload(job) for job in detail.jobs],
+        "stats": {
+            "total": detail.total,
+            "succeeded": detail.succeeded,
+            "failed": detail.failed,
+            "canceled": detail.canceled,
+            "success_rate": detail.success_rate,
+        },
+        "last_failure": (
+            _job_payload(detail.last_failure) if detail.last_failure is not None else None
+        ),
+        "next_runs": [value.isoformat() for value in detail.next_runs],
+    }
 
 
 @router.post("/{schedule_id}/pause")
 def pause_schedule(
     request: Request,
     schedule_id: str,
-    _session: None = session_dependency,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
     try:
         schedule = request.app.state.schedule_service.pause(schedule_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Schedule not found") from exc
+    record_domain_audit(
+        request, principal, event_type="automation.schedule_paused",
+        action="schedules.pause", resource_type="schedule", resource_id=schedule.id,
+    )
     return {"schedule": _schedule_payload(schedule)}
 
 
@@ -62,12 +115,17 @@ def pause_schedule(
 def resume_schedule(
     request: Request,
     schedule_id: str,
-    _session: None = session_dependency,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
+    require_intake_open(request)
     try:
         schedule = request.app.state.schedule_service.resume(schedule_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Schedule not found") from exc
+    record_domain_audit(
+        request, principal, event_type="automation.schedule_resumed",
+        action="schedules.resume", resource_type="schedule", resource_id=schedule.id,
+    )
     return {"schedule": _schedule_payload(schedule)}
 
 
@@ -75,8 +133,9 @@ def resume_schedule(
 async def run_schedule_now(
     request: Request,
     schedule_id: str,
-    _session: None = session_dependency,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
+    require_intake_open(request)
     try:
         job = request.app.state.schedule_service.run_now(
             schedule_id,
@@ -86,6 +145,16 @@ async def run_schedule_now(
         raise HTTPException(status_code=404, detail="Schedule not found") from exc
     if job.status == "queued":
         await request.app.state.job_worker.enqueue(job.id)
+    record_domain_audit(
+        request,
+        principal,
+        event_type="automation.schedule_run_requested",
+        action="schedules.run_now",
+        resource_type="schedule",
+        resource_id=schedule_id,
+        job_id=job.id,
+        metadata={"job_id": job.id, "status": job.status},
+    )
     return {"job": _job_payload(job)}
 
 
@@ -93,12 +162,16 @@ async def run_schedule_now(
 def delete_schedule(
     request: Request,
     schedule_id: str,
-    _session: None = session_dependency,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, bool]:
     try:
         request.app.state.schedule_service.delete(schedule_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Schedule not found") from exc
+    record_domain_audit(
+        request, principal, event_type="automation.schedule_deleted",
+        action="schedules.delete", resource_type="schedule", resource_id=schedule_id,
+    )
     return {"deleted": True}
 
 

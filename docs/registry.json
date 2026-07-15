@@ -1,7 +1,228 @@
 {
   "schema_version": 1,
-  "document_count": 44,
+  "document_count": 70,
   "documents": [
+    {
+      "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
+      "title": "Audit 보존과 민감 정보 제외 정책",
+      "type": "adr",
+      "domain": "personal-agent-gateway",
+      "feature": "audit-retention-redaction",
+      "status": "active",
+      "aliases": [
+        "audit 보존 정책",
+        "로그 redaction 정책",
+        "prompt 저장 여부"
+      ],
+      "tags": [
+        "audit",
+        "privacy",
+        "redaction"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Audit 보존과 민감 정보 제외 정책"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Decision"
+        },
+        {
+          "level": 2,
+          "text": "Alternatives"
+        },
+        {
+          "level": 3,
+          "text": "Prompt와 command 전체 저장"
+        },
+        {
+          "level": 3,
+          "text": "기존 transcript/job event 재사용"
+        },
+        {
+          "level": 2,
+          "text": "Consequences"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "Transcript, Job event, SSE는 각각 대화 재현·작업 표시·live 갱신 목적이며 사고 분석용 durable audit가 아니다. 2026-07-08 초안은 prompt 기록을 제안했지만 R1 RULE은 prompt/output/file 본문을 audit에 저장하지 않도록 정했다."
+    },
+    {
+      "path": "docs/adr/2026-07-15-auth-session-storage.md",
+      "title": "Gateway 인증 세션을 SQLite hash session으로 저장",
+      "type": "adr",
+      "domain": "personal-agent-gateway",
+      "feature": "auth-session-storage",
+      "status": "active",
+      "aliases": [
+        "PAG 인증 세션 결정",
+        "agent_session 저장 방식",
+        "D0-1 Auth session source of truth"
+      ],
+      "tags": [
+        "authentication",
+        "session",
+        "sqlite"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Gateway 인증 세션을 SQLite hash session으로 저장"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Decision"
+        },
+        {
+          "level": 2,
+          "text": "Alternatives"
+        },
+        {
+          "level": 3,
+          "text": "Signed stateless cookie"
+        },
+        {
+          "level": 3,
+          "text": "기존 AuthStore JSON에 session 추가"
+        },
+        {
+          "level": 2,
+          "text": "Consequences"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "현재 로그인은 random cookie를 발급하지만 서버는 이후 cookie 존재만 검사한다. 임의 cookie, 만료 cookie, logout 전에 복사한 cookie를 구분할 source of truth가 없다. R0은 absolute/idle expiry와 즉시 revoke를 함께 제공해야 한다."
+    },
+    {
+      "path": "docs/adr/2026-07-15-automation-lifecycle.md",
+      "title": "Gateway 자동화 lifecycle과 R0 실행 계약",
+      "type": "adr",
+      "domain": "personal-agent-gateway",
+      "feature": "automation-lifecycle",
+      "status": "active",
+      "aliases": [
+        "PAG Worker Scheduler lifecycle 결정",
+        "D0-2 D0-3 D0-4 자동화 결정",
+        "Chat Job mirror 정책"
+      ],
+      "tags": [
+        "worker",
+        "scheduler",
+        "lifecycle",
+        "team-run"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Gateway 자동화 lifecycle과 R0 실행 계약"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Decision"
+        },
+        {
+          "level": 2,
+          "text": "Alternatives"
+        },
+        {
+          "level": 3,
+          "text": "외부 queue 또는 multi-process worker"
+        },
+        {
+          "level": 3,
+          "text": "Chat approval을 즉시 Job worker로 통합"
+        },
+        {
+          "level": 3,
+          "text": "Review와 concurrency를 R0에서 구현"
+        },
+        {
+          "level": 2,
+          "text": "Consequences"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "`JobWorker`와 `SchedulerLoop`는 start/stop 구현이 있지만 app startup에 연결되지 않았다. Team Run UI는 실제로 동작하지 않는 Review mode와 `max_workers` 병렬 실행을 노출한다. Chat shell approval은 명령을 직접 실행하지만 동시에 별도 Job row를 생성해 Job worker 경로와 실행 소유권도 다르다."
+    },
+    {
+      "path": "docs/adr/2026-07-15-restricted-full-access-mode.md",
+      "title": "Restricted와 Full Access 실행 모드",
+      "type": "adr",
+      "domain": "personal-agent-gateway",
+      "feature": "access-mode",
+      "status": "active",
+      "aliases": [
+        "Restricted Full Access 정책",
+        "외부 파일 접근 정책",
+        "gateway 실행 권한 모드"
+      ],
+      "tags": [
+        "security",
+        "access-mode",
+        "artifacts"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Restricted와 Full Access 실행 모드"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Decision"
+        },
+        {
+          "level": 2,
+          "text": "Alternatives"
+        },
+        {
+          "level": 3,
+          "text": "Full Access 기본값"
+        },
+        {
+          "level": 3,
+          "text": "환경 변수 전용 read-only mode"
+        },
+        {
+          "level": 2,
+          "text": "Consequences"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "Gateway는 로컬 파일과 command를 다룰 수 있지만 현재 UI/API는 실제 접근 경계를 명시하지 않는다. 특히 Artifact 등록 API는 workspace 밖 absolute path도 허용해 로그인 session 탈취 시 피해 범위가 넓다."
+    },
     {
       "path": "docs/component-inspector/AgentPicker/2026-07-14-1626.md",
       "title": "AgentPicker Local CLI Capability Component Analysis",
@@ -136,6 +357,293 @@
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `refactor` - Verdict: 컨테이너 소유권은 적절하지만 날짜 표시가 컨테이너와 하위 화면에 중복돼 있다. 공통 순수 포맷터로 통합하는 것은 낮은 위험의 `pure helper 추출`이다."
     },
     {
+      "path": "docs/component-inspector/GatewayApp/2026-07-15-0948.md",
+      "title": "GatewayApp R0 Runtime Capability Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "gateway-app-r0-runtime-capability",
+      "status": "done",
+      "aliases": [
+        "GatewayApp R0 analysis",
+        "GatewayApp 런타임 capability 분석",
+        "TeamPicker Schedule Settings 계약 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "runtime-capability",
+        "api-state"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp R0 Runtime Capability Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "State / Effects"
+        },
+        {
+          "level": 3,
+          "text": "State 소유권"
+        },
+        {
+          "level": 3,
+          "text": "Memo와 ref"
+        },
+        {
+          "level": 3,
+          "text": "Effect 목록"
+        },
+        {
+          "level": 2,
+          "text": "외부 library primitive"
+        },
+        {
+          "level": 2,
+          "text": "Custom hook / 주입 action"
+        },
+        {
+          "level": 2,
+          "text": "API / State 흐름"
+        },
+        {
+          "level": 2,
+          "text": "주요 interaction 흐름"
+        },
+        {
+          "level": 3,
+          "text": "Bootstrap과 화면 전환"
+        },
+        {
+          "level": 3,
+          "text": "Team Run 생성"
+        },
+        {
+          "level": 3,
+          "text": "Schedule 생성/실행"
+        },
+        {
+          "level": 3,
+          "text": "Runtime Settings 표시"
+        },
+        {
+          "level": 2,
+          "text": "Tests / Stories"
+        },
+        {
+          "level": 3,
+          "text": "기존 coverage"
+        },
+        {
+          "level": 3,
+          "text": "R0-E에서 먼저 추가할 RED cases"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: R0-E는 `GatewayApp` 구조 분리 없이 backend settings 계약을 기존 화면에 전달하는 작은 변경으로 수행할 수 있다. - 핵심 발견: 실제 Team R..."
+    },
+    {
+      "path": "docs/component-inspector/GatewayApp/2026-07-15-1024.md",
+      "title": "GatewayApp R1 Operability Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "gateway-app-r1-operability",
+      "status": "done",
+      "aliases": [
+        "GatewayApp R1 analysis",
+        "GatewayApp 운영 화면 구조 분석",
+        "Operations Center 컴포넌트 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "refactor",
+        "operations",
+        "api-state"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp R1 Operability Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "State / Effects"
+        },
+        {
+          "level": 3,
+          "text": "State 소유권"
+        },
+        {
+          "level": 3,
+          "text": "Effect와 memo"
+        },
+        {
+          "level": 2,
+          "text": "외부 library primitive"
+        },
+        {
+          "level": 2,
+          "text": "Custom hook / selector / 주입 action"
+        },
+        {
+          "level": 2,
+          "text": "API / State 흐름"
+        },
+        {
+          "level": 2,
+          "text": "주요 interaction 흐름"
+        },
+        {
+          "level": 3,
+          "text": "Bootstrap / error 경계"
+        },
+        {
+          "level": 3,
+          "text": "Operations action"
+        },
+        {
+          "level": 3,
+          "text": "구조 분리 순서"
+        },
+        {
+          "level": 2,
+          "text": "Tests / Stories"
+        },
+        {
+          "level": 3,
+          "text": "기존 coverage"
+        },
+        {
+          "level": 3,
+          "text": "R1 RED cases"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 3,
+          "text": "책임 / ownership pass"
+        },
+        {
+          "level": 3,
+          "text": "code-level JSX / derivation pass"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `refactor`, `api-state`, `test` - Verdict: R1 기능은 현재 container에 직접 누적하지 않고, 먼저 공통 `ApiError` 계약과 Operations 화면을 추가한 뒤 기존 bootstr..."
+    },
+    {
+      "path": "docs/component-inspector/JobsView/2026-07-15-1057.md",
+      "title": "JobsView Retry and Lineage Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "jobs-retry-lineage",
+      "status": "done",
+      "aliases": [
+        "JobsView retry analysis"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "automation"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "JobsView Retry and Lineage Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "구조와 흐름"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/JobsView/index.jsx` (151 lines) - Modes: `understand`, `api-state`, `test` - Verdict: component ownership은 적절하다. `onRetry` callback과 lineage 표시만 추가하고 상태/endpoint orchestratio..."
+    },
+    {
       "path": "docs/component-inspector/PersonaLibrary/2026-07-14-1626.md",
       "title": "PersonaLibrary Local CLI Capability Component Analysis",
       "type": "report",
@@ -191,6 +699,50 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/PersonaLibrary/index.jsx` - Modes: `api-state`, `test` - Verdict: Persona의 `default_backend`와 `default_model`이 현재 free-text라 탐지된 catalog를 활용하지 않는다. `GatewayApp`이 이미 로드한 `agen..."
+    },
+    {
+      "path": "docs/component-inspector/SchedulesView/2026-07-15-1057.md",
+      "title": "SchedulesView History and Preview Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "schedule-history-preview",
+      "status": "done",
+      "aliases": [
+        "SchedulesView history analysis"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "automation"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "SchedulesView History and Preview Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "구조와 흐름"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/SchedulesView/index.jsx` (205 lines) - Modes: `understand`, `api-state`, `test` - Verdict: form/list ownership은 적절하다. Schedule detail drawer와 `onLoadDetail`만 추가하고 Job/Schedul..."
     },
     {
       "path": "docs/component-inspector/TeamRunDetail/2026-07-14-1316.md",
@@ -426,14 +978,14 @@
         "component",
         "analysis"
       ],
-      "updated_at": "2026-07-14",
+      "updated_at": "2026-07-15",
       "headings": [
         {
           "level": 1,
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [GatewayApp — 2026-07-14 15:26](./GatewayApp/2026-07-14-1526.md) - [TeamRunDetail — 2026-07-14 13:16](./TeamRunDetail/2026-07-14-1316.md) - [TeamRunDetail Resume — 2026-07-14 14:26](./TeamRunDetail/2026-07-14-1426.m..."
+      "excerpt": "- [JobsView Retry and Lineage — 2026-07-15 10:57](./JobsView/2026-07-15-1057.md) - [SchedulesView History and Preview — 2026-07-15 10:57](./SchedulesView/2026-07-15-1057.md) - [GatewayApp R1 Operability — 2026-07-15 1..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -546,6 +1098,106 @@
       "excerpt": "Personal Agent Gateway is a private local agent control console: a single user can access their local Codex CLI, local tools, scheduled jobs, captures, media processing, and generated artifacts through a secure browse..."
     },
     {
+      "path": "docs/flows/2026-07-15-backup-restore.md",
+      "title": "Backup과 Restore 검증 흐름",
+      "type": "flow",
+      "domain": "personal-agent-gateway",
+      "feature": "backup-restore",
+      "status": "active",
+      "aliases": [
+        "gateway 백업 복구",
+        "restore dry run",
+        "SQLite backup flow"
+      ],
+      "tags": [
+        "backup",
+        "restore",
+        "recovery"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Backup과 Restore 검증 흐름"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Entry Points"
+        },
+        {
+          "level": 2,
+          "text": "Flow"
+        },
+        {
+          "level": 2,
+          "text": "Edge Cases"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "SQLite online backup과 핵심 저장소 manifest를 새 timestamp directory에 만들고, restore 전에 checksum·schema version·누락·충돌을 dry-run으로 확인한다. 현재 live DB를 API에서 바로 교체하지 않는다."
+    },
+    {
+      "path": "docs/flows/2026-07-15-emergency-stop-and-resume.md",
+      "title": "Emergency Stop과 Intake 재개 흐름",
+      "type": "flow",
+      "domain": "personal-agent-gateway",
+      "feature": "emergency-stop",
+      "status": "active",
+      "aliases": [
+        "전체 작업 중단",
+        "kill switch 재개 절차",
+        "emergency stop flow"
+      ],
+      "tags": [
+        "operations",
+        "recovery",
+        "stop"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Emergency Stop과 Intake 재개 흐름"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Entry Points"
+        },
+        {
+          "level": 2,
+          "text": "Flow"
+        },
+        {
+          "level": 2,
+          "text": "Edge Cases"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "Gateway process는 유지하면서 새 실행 intake를 먼저 닫고 Chat, Team, Job을 순서대로 terminal 상태로 수렴시킨다. 자동 재개하지 않으며 소유자가 상태를 확인한 뒤 별도 action으로 intake를 연다."
+    },
+    {
       "path": "docs/knowledge/2026-07-08-full-access-security-operating-model.md",
       "title": "Full Access Mode Security Operating Model",
       "type": "knowledge",
@@ -635,6 +1287,149 @@
         }
       ],
       "excerpt": "personal-agent-gateway는 외부 브라우저에서 로컬 PC의 agent를 실행해 파일 수정, shell 실행, 빌드, 배포까지 수행할 수 있는 개인용 control console이다."
+    },
+    {
+      "path": "docs/knowledge/2026-07-15-operations-diagnostics-guide.md",
+      "title": "Personal Agent Gateway Operations 진단 가이드",
+      "type": "knowledge",
+      "domain": "personal-agent-gateway",
+      "feature": "operations-diagnostics",
+      "status": "active",
+      "aliases": [
+        "PAG 운영 가이드",
+        "emergency stop 사용법",
+        "backup verify 사용법",
+        "correlation id 확인법"
+      ],
+      "tags": [
+        "operations",
+        "diagnostics",
+        "recovery"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway Operations 진단 가이드"
+        },
+        {
+          "level": 2,
+          "text": "어디서 확인하는가"
+        },
+        {
+          "level": 2,
+          "text": "진단값 해석"
+        },
+        {
+          "level": 2,
+          "text": "실패 항목 복구"
+        },
+        {
+          "level": 2,
+          "text": "Emergency Stop과 재개"
+        },
+        {
+          "level": 2,
+          "text": "Backup과 Restore 검증"
+        },
+        {
+          "level": 2,
+          "text": "Audit 조회"
+        },
+        {
+          "level": 2,
+          "text": "운영 시 지키는 경계"
+        },
+        {
+          "level": 2,
+          "text": "관련 문서"
+        }
+      ],
+      "excerpt": "Sidebar의 **Operations**에서 서비스 준비 상태, 실행 상태, 중단·재개·재시도, backup을 확인한다. 인증 session과 Restricted/Full Access 전환은 **Settings**에서 관리한다."
+    },
+    {
+      "path": "docs/knowledge/2026-07-15-service-domain-map.md",
+      "title": "Personal Agent Gateway 서비스 도메인 지도",
+      "type": "knowledge",
+      "domain": "personal-agent-gateway",
+      "feature": "service-domain-map",
+      "status": "active",
+      "aliases": [
+        "서비스 도메인 구조",
+        "PAG 아키텍처 지도",
+        "프로젝트 전체 구조",
+        "기능별 코드 위치"
+      ],
+      "tags": [
+        "architecture",
+        "domain-map",
+        "maintenance",
+        "product"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway 서비스 도메인 지도"
+        },
+        {
+          "level": 2,
+          "text": "한눈에 보기"
+        },
+        {
+          "level": 2,
+          "text": "성숙도 표기"
+        },
+        {
+          "level": 2,
+          "text": "시스템 컨텍스트"
+        },
+        {
+          "level": 2,
+          "text": "도메인 인벤토리"
+        },
+        {
+          "level": 2,
+          "text": "도메인 의존성"
+        },
+        {
+          "level": 2,
+          "text": "데이터 소유권"
+        },
+        {
+          "level": 2,
+          "text": "핵심 흐름"
+        },
+        {
+          "level": 3,
+          "text": "Chat 실행"
+        },
+        {
+          "level": 3,
+          "text": "Team Run 실행"
+        },
+        {
+          "level": 3,
+          "text": "Automation의 현재 연결 상태"
+        },
+        {
+          "level": 2,
+          "text": "유지해야 할 핵심 계약"
+        },
+        {
+          "level": 2,
+          "text": "현재 가장 큰 교차 도메인 위험"
+        },
+        {
+          "level": 2,
+          "text": "이 지도를 사용하는 방법"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "Personal Agent Gateway는 **로컬 PC의 AI CLI와 자동화 도구를 원격 브라우저에서 제어하는 1인용 control console**이다. 제품은 세 실행 축으로 나뉜다."
     },
     {
       "path": "docs/knowledge/persona-team-usage-guide.md",
@@ -771,6 +1566,398 @@
         }
       ],
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/reports/2026-07-15-development-pm-maintainability-assessment.md",
+      "title": "Personal Agent Gateway 개발 PM 유지보수성 진단",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "development-pm-assessment",
+      "status": "active",
+      "aliases": [
+        "개발 PM 개선안",
+        "유지보수 성능 개선",
+        "기술 부채 우선순위",
+        "PAG 개발 진단"
+      ],
+      "tags": [
+        "development-pm",
+        "maintainability",
+        "performance",
+        "security",
+        "reliability"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway 개발 PM 유지보수성 진단"
+        },
+        {
+          "level": 2,
+          "text": "결론"
+        },
+        {
+          "level": 2,
+          "text": "기술 기반의 강점"
+        },
+        {
+          "level": 2,
+          "text": "위험 우선순위"
+        },
+        {
+          "level": 2,
+          "text": "Critical 근거 확인"
+        },
+        {
+          "level": 3,
+          "text": "Session 검증"
+        },
+        {
+          "level": 3,
+          "text": "Background lifecycle"
+        },
+        {
+          "level": 2,
+          "text": "유지보수 구조 개선"
+        },
+        {
+          "level": 3,
+          "text": "Backend 경계"
+        },
+        {
+          "level": 3,
+          "text": "Frontend 경계"
+        },
+        {
+          "level": 2,
+          "text": "성능 개선 계획"
+        },
+        {
+          "level": 3,
+          "text": "먼저 측정할 지표"
+        },
+        {
+          "level": 3,
+          "text": "개선 순서"
+        },
+        {
+          "level": 2,
+          "text": "신뢰성 및 운영 개선"
+        },
+        {
+          "level": 2,
+          "text": "테스트와 품질 게이트"
+        },
+        {
+          "level": 2,
+          "text": "권장 기술 의사결정"
+        },
+        {
+          "level": 3,
+          "text": "지금 결정"
+        },
+        {
+          "level": 3,
+          "text": "나중에 결정"
+        },
+        {
+          "level": 2,
+          "text": "개발 PM 완료 정의"
+        },
+        {
+          "level": 2,
+          "text": "관련 문서"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "현재 코드는 Chat과 Team Run의 복잡한 상태 복구를 테스트 가능한 서비스로 분리해 놓은 점이 강하다. 반면 **인증 session 검증**, **background worker lifecycle**, **제품 설명과 runtime 계약 일치**가 아직 기반 품질을 충족하지 못한다."
+    },
+    {
+      "path": "docs/reports/2026-07-15-product-pm-usability-opportunities.md",
+      "title": "Personal Agent Gateway 기획 PM 사용성·기능 기회 진단",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "product-pm-assessment",
+      "status": "active",
+      "aliases": [
+        "기획 PM 개선안",
+        "사용성 개선 기능 추가",
+        "PAG 제품 로드맵",
+        "사용자 여정 개선"
+      ],
+      "tags": [
+        "product-pm",
+        "usability",
+        "product-strategy",
+        "roadmap"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway 기획 PM 사용성·기능 기회 진단"
+        },
+        {
+          "level": 2,
+          "text": "결론"
+        },
+        {
+          "level": 2,
+          "text": "핵심 사용자와 상황"
+        },
+        {
+          "level": 3,
+          "text": "주 사용자"
+        },
+        {
+          "level": 3,
+          "text": "핵심 사용 상황"
+        },
+        {
+          "level": 2,
+          "text": "사용자 여정 지도"
+        },
+        {
+          "level": 2,
+          "text": "제품 약속과 실제 동작의 차이"
+        },
+        {
+          "level": 2,
+          "text": "도메인별 사용성 개선"
+        },
+        {
+          "level": 3,
+          "text": "1. Chat"
+        },
+        {
+          "level": 3,
+          "text": "2. Persona·Team·Rules"
+        },
+        {
+          "level": 3,
+          "text": "3. Team Run"
+        },
+        {
+          "level": 3,
+          "text": "4. Jobs·Schedules"
+        },
+        {
+          "level": 3,
+          "text": "5. Artifacts·Documents"
+        },
+        {
+          "level": 3,
+          "text": "6. Settings·운영"
+        },
+        {
+          "level": 2,
+          "text": "기능 기회 백로그"
+        },
+        {
+          "level": 2,
+          "text": "제품 정보 구조 제안"
+        },
+        {
+          "level": 2,
+          "text": "제품 지표"
+        },
+        {
+          "level": 3,
+          "text": "North-star 후보"
+        },
+        {
+          "level": 3,
+          "text": "핵심 보조 지표"
+        },
+        {
+          "level": 2,
+          "text": "검증이 필요한 제품 가설"
+        },
+        {
+          "level": 2,
+          "text": "출시 원칙"
+        },
+        {
+          "level": 2,
+          "text": "관련 문서"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "이 서비스의 차별점은 “AI와 채팅”이 아니라 **밖에서도 내 로컬 PC의 Agent에게 일을 맡기고, 진행·결과·복구를 한 화면에서 통제하는 것**이다."
+    },
+    {
+      "path": "docs/reports/2026-07-15-r0-trust-foundation-implementation.md",
+      "title": "Personal Agent Gateway R0 신뢰 기반 구현 보고서",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "r0-trust-foundation",
+      "status": "active",
+      "aliases": [
+        "PAG R0 구현 결과",
+        "인증 lifecycle UI 계약 구현 보고서"
+      ],
+      "tags": [
+        "authentication",
+        "lifecycle",
+        "reliability",
+        "implementation"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway R0 신뢰 기반 구현 보고서"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Changes"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "[R0 실행 플랜](../todo/2026-07-15-r0-trust-foundation-execution-plan.md)의 여섯 변경 묶음을 완료했다. 서버 검증 session, Worker/Scheduler lifespan, background failure isolation, runtime capability 기반 UI, 핵심 회귀 test와 CI gate가 현재 코드에 연결돼 있다."
+    },
+    {
+      "path": "docs/reports/2026-07-15-r1-operability-implementation.md",
+      "title": "Personal Agent Gateway R1 운영 가능성 구현 보고서",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "r1-operability",
+      "status": "done",
+      "aliases": [
+        "PAG R1 구현 결과",
+        "NEXT Release Gate 보고서",
+        "운영 복구 성능 구현 보고서"
+      ],
+      "tags": [
+        "implementation",
+        "operations",
+        "recovery",
+        "performance"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway R1 운영 가능성 구현 보고서"
+        },
+        {
+          "level": 2,
+          "text": "결론"
+        },
+        {
+          "level": 2,
+          "text": "구현 결과"
+        },
+        {
+          "level": 2,
+          "text": "주요 계약"
+        },
+        {
+          "level": 2,
+          "text": "성능 결과"
+        },
+        {
+          "level": 2,
+          "text": "구조 결과"
+        },
+        {
+          "level": 2,
+          "text": "최종 검증"
+        },
+        {
+          "level": 1,
+          "text": "407 passed"
+        },
+        {
+          "level": 1,
+          "text": "All checks passed"
+        },
+        {
+          "level": 1,
+          "text": "29 files, 190 passed"
+        },
+        {
+          "level": 1,
+          "text": "production build passed"
+        },
+        {
+          "level": 2,
+          "text": "운영 제한과 다음 Gate"
+        },
+        {
+          "level": 2,
+          "text": "관련 문서"
+        }
+      ],
+      "excerpt": "R1-A부터 R1-G까지 구현하고 NEXT Release Gate를 통과했다. 운영자는 한 화면에서 DB, Worker, Scheduler, CLI, intake, cookie, tunnel 보고 상태와 workspace 쓰기 가능 여부를 확인하고, 실행 중단·재개·재시도·backup 검증·원래 상세 화면 이동을 수행할 수 있다."
+    },
+    {
+      "path": "docs/reports/2026-07-15-read-performance-baseline.md",
+      "title": "R1 읽기 성능 기준선과 budget",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "read-performance",
+      "status": "active",
+      "aliases": [],
+      "tags": [
+        "performance",
+        "pagination",
+        "sqlite"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "R1 읽기 성능 기준선과 budget"
+        },
+        {
+          "level": 2,
+          "text": "결론"
+        },
+        {
+          "level": 2,
+          "text": "D1-5 budget"
+        },
+        {
+          "level": 2,
+          "text": "측정표"
+        },
+        {
+          "level": 2,
+          "text": "Query plan 확인"
+        },
+        {
+          "level": 2,
+          "text": "적용 사항"
+        },
+        {
+          "level": 2,
+          "text": "보존 기준"
+        },
+        {
+          "level": 2,
+          "text": "제한과 후속"
+        }
+      ],
+      "excerpt": "Windows 11, Python 3.13.13 로컬 환경의 임시 fixture에서 1,000개 Session 목록 p95는 JSONL 전체 스캔 133.899ms에서 SQLite metadata index 3.257ms로 줄었다. 기본 페이지는 Session·Job·Artifact·Team Run 100개, event·Team detail·document 200개로 제한했다."
     },
     {
       "path": "docs/specs/2026-07-08-observability-audit-log-spec.md",
@@ -2279,6 +3466,216 @@
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
     },
     {
+      "path": "docs/superpowers/plans/2026-07-14-agent-teams-backend.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Agent Teams — 백엔드 기반 Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "파일 구조"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: DB 스키마 + 마이그레이션"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: RuleSetService (규칙 세트 CRUD + 시드)"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: TeamService (팀 로스터 CRUD)"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: 팀 기반 실행 생성 + 규칙 스냅샷"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: 런타임 규칙 프롬프트 주입"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: 목록 enrich (리더·멤버·Task 카운트·elapsed)"
+        },
+        {
+          "level": 2,
+          "text": "Task 7: 워크스페이스 문서 조회 API"
+        },
+        {
+          "level": 1,
+          "text": "Reuse the same app/client/run creation helper style as tests/test_api_team_runs.py."
+        },
+        {
+          "level": 2,
+          "text": "Task 8: 라우터 신설 · 앱 wiring · 팀 기반 실행 생성 API"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review (backend)"
+        },
+        {
+          "level": 2,
+          "text": "검증 (백엔드 완료 시)"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-14-agent-teams-frontend.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Agent Teams — 프런트엔드 화면 Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "파일 구조"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: API 클라이언트 확장"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: 사이드바 내비게이션 (Teams · Rules)"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: Team Runs 목록 (TeamRunCard + 상태 필터)"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: 팀 기반 New Team Run 흐름"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: Teams 관리 화면 (CRUD + 로스터)"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: Rules 화면"
+        },
+        {
+          "level": 2,
+          "text": "Task 7: Team Run 상세 — DOCUMENTS 탭 + 문서 프리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Task 8: 통합 빌드 + 회귀 확인"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review (frontend)"
+        },
+        {
+          "level": 2,
+          "text": "검증 (프런트 완료 시)"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-15-event-hooks.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Event Hooks Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "이 계획의 범위"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: DB 스키마 (hooks, hook_runs)"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: HookSecretStore (파일 기반 비밀 저장)"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: HookRunService (실행 기록 + 상태 전이)"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: SourceAdapter 인터페이스 + ImapEmailAdapter"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: HookService (CRUD + 폴링 조율)"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: AgentRuntimeFactory.create_headless_runtime"
+        },
+        {
+          "level": 3,
+          "text": "Task 7: HookRunner (queued run 순차 실행)"
+        },
+        {
+          "level": 3,
+          "text": "Task 8: HookLoop (폴링 루프)"
+        },
+        {
+          "level": 3,
+          "text": "Task 9: config 추가 (poll interval, hooks 디렉토리)"
+        },
+        {
+          "level": 3,
+          "text": "Task 10: api/hooks.py + 앱 배선"
+        },
+        {
+          "level": 2,
+          "text": "후속 계획 (이 계획 밖)"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review 결과"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
       "path": "docs/superpowers/plans/archived_2026-07-07-live-status-sse-backlog.md",
       "title": "",
       "type": "",
@@ -2787,6 +4184,140 @@
       "excerpt": "- Date: 2026-07-13 - Scope: personal-agent-gateway Persona Agent Teams — the \"team run\" lifecycle UI and runtime - Status: approved for planning"
     },
     {
+      "path": "docs/superpowers/specs/2026-07-14-agent-teams-rules-and-teams-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Agent Teams: 팀 엔티티 · 규칙(Rules) · 목록/상세/규칙 화면 설계"
+        },
+        {
+          "level": 2,
+          "text": "배경"
+        },
+        {
+          "level": 2,
+          "text": "결정 요약"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "비목표"
+        },
+        {
+          "level": 2,
+          "text": "데이터 모델"
+        },
+        {
+          "level": 3,
+          "text": "`teams`"
+        },
+        {
+          "level": 3,
+          "text": "`rule_sets`"
+        },
+        {
+          "level": 3,
+          "text": "`team_runs` 추가 컬럼"
+        },
+        {
+          "level": 3,
+          "text": "규칙 스냅샷 형태"
+        },
+        {
+          "level": 2,
+          "text": "런타임: 규칙 주입"
+        },
+        {
+          "level": 2,
+          "text": "API"
+        },
+        {
+          "level": 3,
+          "text": "Teams"
+        },
+        {
+          "level": 3,
+          "text": "Rules"
+        },
+        {
+          "level": 3,
+          "text": "Team runs"
+        },
+        {
+          "level": 3,
+          "text": "Documents"
+        },
+        {
+          "level": 2,
+          "text": "화면"
+        },
+        {
+          "level": 3,
+          "text": "1) Team Runs 목록 (디자인 A)"
+        },
+        {
+          "level": 3,
+          "text": "2) New team run 흐름 (기존 폼 동작 교체)"
+        },
+        {
+          "level": 3,
+          "text": "3) Team Run 상세 (디자인 D)"
+        },
+        {
+          "level": 3,
+          "text": "4) Rules 화면 (디자인 E)"
+        },
+        {
+          "level": 3,
+          "text": "5) Teams 화면 (신규, 디자인 없음)"
+        },
+        {
+          "level": 2,
+          "text": "프런트엔드 구조"
+        },
+        {
+          "level": 2,
+          "text": "API 클라이언트/이벤트"
+        },
+        {
+          "level": 2,
+          "text": "테스트 전략"
+        },
+        {
+          "level": 3,
+          "text": "백엔드"
+        },
+        {
+          "level": 3,
+          "text": "프런트엔드"
+        },
+        {
+          "level": 3,
+          "text": "통합 검증"
+        },
+        {
+          "level": 2,
+          "text": "마이그레이션/레거시"
+        },
+        {
+          "level": 2,
+          "text": "재검토 조건"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-14"
+    },
+    {
       "path": "docs/superpowers/specs/2026-07-14-team-run-interruption-recovery-design.md",
       "title": "",
       "type": "",
@@ -2883,6 +4414,76 @@
         }
       ],
       "excerpt": "작성일: 2026-07-14"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-15-event-hooks-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Event Hooks 설계 (이메일 첫 어댑터)"
+        },
+        {
+          "level": 2,
+          "text": "1. 배경과 목적"
+        },
+        {
+          "level": 3,
+          "text": "확정된 결정 (브레인스토밍 결과)"
+        },
+        {
+          "level": 3,
+          "text": "범위 밖 (YAGNI)"
+        },
+        {
+          "level": 2,
+          "text": "2. 구성요소"
+        },
+        {
+          "level": 2,
+          "text": "3. 데이터 모델"
+        },
+        {
+          "level": 3,
+          "text": "신규 설정 (config.py)"
+        },
+        {
+          "level": 2,
+          "text": "4. 실행 흐름"
+        },
+        {
+          "level": 2,
+          "text": "5. 이메일 어댑터"
+        },
+        {
+          "level": 2,
+          "text": "6. 보안"
+        },
+        {
+          "level": 2,
+          "text": "7. 오류 처리"
+        },
+        {
+          "level": 2,
+          "text": "8. API 표면 (api/hooks.py)"
+        },
+        {
+          "level": 2,
+          "text": "9. 테스트 전략"
+        },
+        {
+          "level": 2,
+          "text": "10. 근거 파일"
+        }
+      ],
+      "excerpt": "- 작성일: 2026-07-15 - 상태: 설계 확정, 구현 대기 - 관련 도메인: Automation(Jobs/Schedules) 인접, Chat 실행 재사용"
     },
     {
       "path": "docs/superpowers/specs/completed_2026-07-06-otp-setup-ui-design.md",
@@ -3017,6 +4618,998 @@
         }
       ],
       "excerpt": "> pre-plan design 문서를 완료 상태로 축약한 기록이다."
+    },
+    {
+      "path": "docs/todo/2026-07-15-r0-trust-foundation-execution-plan.md",
+      "title": "Personal Agent Gateway R0 신뢰 기반 실행 플랜",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "r0-trust-foundation",
+      "status": "done",
+      "aliases": [
+        "PAG R0 실행 계획",
+        "인증 worker scheduler 수정 계획",
+        "신뢰성 릴리스 계획",
+        "NOW 단계 구현 순서"
+      ],
+      "tags": [
+        "execution-plan",
+        "authentication",
+        "lifecycle",
+        "reliability"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway R0 신뢰 기반 실행 플랜"
+        },
+        {
+          "level": 2,
+          "text": "배경"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "RULES"
+        },
+        {
+          "level": 2,
+          "text": "실행 전 결정"
+        },
+        {
+          "level": 3,
+          "text": "D0-1 권고 근거"
+        },
+        {
+          "level": 3,
+          "text": "D0-4 안전 경계"
+        },
+        {
+          "level": 2,
+          "text": "Architecture Review"
+        },
+        {
+          "level": 3,
+          "text": "Current Structural Risks"
+        },
+        {
+          "level": 3,
+          "text": "SOLID Review"
+        },
+        {
+          "level": 4,
+          "text": "Finding: TOTP credential과 login session은 수명이 다른 책임이다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: Worker/Scheduler에는 새 추상화보다 lifecycle 연결이 필요하다"
+        },
+        {
+          "level": 3,
+          "text": "Design Pattern Candidates"
+        },
+        {
+          "level": 3,
+          "text": "Dependency Direction"
+        },
+        {
+          "level": 3,
+          "text": "Test Strategy Alignment"
+        },
+        {
+          "level": 2,
+          "text": "변경 묶음"
+        },
+        {
+          "level": 2,
+          "text": "R0-A. Session schema와 service"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R0-B. Auth API와 protected dependency 전환"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R0-C. Worker/Scheduler app lifecycle"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R0-D. Background failure isolation"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R0-E. Runtime capability와 UI 계약 정합"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R0-F. 핵심 E2E와 CI Gate"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "필수 시나리오"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "실행 결과"
+        },
+        {
+          "level": 2,
+          "text": "통합 체크리스트"
+        },
+        {
+          "level": 2,
+          "text": "Docs 승격"
+        },
+        {
+          "level": 2,
+          "text": "관련 문서"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-15   상태: SUCCESS"
+    },
+    {
+      "path": "docs/todo/2026-07-15-r1-operability-execution-plan.md",
+      "title": "Personal Agent Gateway R1 운영 가능성 실행 플랜",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "r1-operability",
+      "status": "done",
+      "aliases": [
+        "PAG R1 실행 계획",
+        "운영 관측 복구 수정 계획",
+        "Operations Center 구현 순서",
+        "NEXT 단계 구현 계획"
+      ],
+      "tags": [
+        "execution-plan",
+        "operations",
+        "observability",
+        "recovery"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway R1 운영 가능성 실행 플랜"
+        },
+        {
+          "level": 2,
+          "text": "배경"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "RULES"
+        },
+        {
+          "level": 2,
+          "text": "진입 Gate와 실행 전 결정"
+        },
+        {
+          "level": 3,
+          "text": "진입 Gate"
+        },
+        {
+          "level": 3,
+          "text": "결정 항목"
+        },
+        {
+          "level": 2,
+          "text": "Architecture Review"
+        },
+        {
+          "level": 3,
+          "text": "Current Structural Risks"
+        },
+        {
+          "level": 3,
+          "text": "SOLID Review"
+        },
+        {
+          "level": 4,
+          "text": "Finding: Health는 domain service의 상태를 복제하지 않아야 한다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: Emergency Stop은 명령 bus보다 명시적 orchestrator가 적합하다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: 오류 보존은 frontend 공통 adapter로 수렴해야 한다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: 구조 분리는 안정된 계약을 따라야 한다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: R1-G는 기능 추가와 controller 이동을 같은 변경으로 묶지 않아야 한다"
+        },
+        {
+          "level": 3,
+          "text": "Design Pattern Decisions"
+        },
+        {
+          "level": 3,
+          "text": "Dependency Direction"
+        },
+        {
+          "level": 3,
+          "text": "Test Strategy Alignment"
+        },
+        {
+          "level": 3,
+          "text": "Plan Changes Applied"
+        },
+        {
+          "level": 2,
+          "text": "변경 묶음"
+        },
+        {
+          "level": 2,
+          "text": "R1-A. Versioned migration과 Security Operations"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R1-B. Health, correlation, logging, Audit"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R1-C. Emergency Stop과 Backup/Restore"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R1-D. Automation history와 Retry"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R1-E. ApiError와 Operations Center"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R1-F. Read 성능 baseline과 개선"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R1-G. 점진적 구조 분리"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "NEXT Release Gate"
+        },
+        {
+          "level": 2,
+          "text": "통합 체크리스트"
+        },
+        {
+          "level": 2,
+          "text": "Docs 승격"
+        },
+        {
+          "level": 2,
+          "text": "관련 문서"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-15   상태: SUCCESS"
+    },
+    {
+      "path": "docs/todo/2026-07-15-r2-product-expansion-execution-plan.md",
+      "title": "Personal Agent Gateway R2 제품 확장 실행 플랜",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "r2-product-expansion",
+      "status": "paused",
+      "aliases": [
+        "PAG R2 실행 계획",
+        "결과 알림 템플릿 검색 수정 계획",
+        "Review concurrency 구현 순서",
+        "LATER 단계 구현 계획"
+      ],
+      "tags": [
+        "execution-plan",
+        "product-expansion",
+        "result-package",
+        "workflow"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway R2 제품 확장 실행 플랜"
+        },
+        {
+          "level": 2,
+          "text": "배경"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "RULES"
+        },
+        {
+          "level": 2,
+          "text": "진입 Gate와 실행 전 결정"
+        },
+        {
+          "level": 3,
+          "text": "진입 Gate"
+        },
+        {
+          "level": 3,
+          "text": "결정 항목"
+        },
+        {
+          "level": 2,
+          "text": "Architecture Review"
+        },
+        {
+          "level": 3,
+          "text": "Current Structural Risks"
+        },
+        {
+          "level": 3,
+          "text": "SOLID Review"
+        },
+        {
+          "level": 4,
+          "text": "Finding: Result package는 새 저장소가 아니라 read model이어야 한다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: 알림 변형은 작은 Adapter 경계가 정당화된다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: 실제 실행 variant가 생기는 시점에 Strategy를 도입한다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: 병렬성은 executor 기능보다 자원 정책이다"
+        },
+        {
+          "level": 3,
+          "text": "Design Pattern Decisions"
+        },
+        {
+          "level": 3,
+          "text": "Dependency Direction"
+        },
+        {
+          "level": 3,
+          "text": "Test Strategy Alignment"
+        },
+        {
+          "level": 2,
+          "text": "변경 묶음"
+        },
+        {
+          "level": 2,
+          "text": "R2-A. Run result package, deep link, delete preview"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R2-B. Completion notification"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R2-C. Reusable work template"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R2-D. Global search와 local-only metrics"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R2-E. 실제 Review workflow"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "R2-F. Bounded concurrency"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
+        },
+        {
+          "level": 2,
+          "text": "LATER Release Gate"
+        },
+        {
+          "level": 2,
+          "text": "통합 체크리스트"
+        },
+        {
+          "level": 2,
+          "text": "Docs 승격"
+        },
+        {
+          "level": 2,
+          "text": "관련 문서"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-15   상태: paused — R1 NEXT Release Gate 통과, 실제 사용 근거 확보 전 실행 금지"
+    },
+    {
+      "path": "docs/todo/2026-07-15-service-improvement-roadmap.md",
+      "title": "Personal Agent Gateway 통합 서비스 개선 로드맵",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "service-improvement-roadmap",
+      "status": "active",
+      "aliases": [
+        "PAG 개선 백로그",
+        "개발 기획 통합 로드맵",
+        "유지보수 기능 개선 계획",
+        "다음 개발 우선순위"
+      ],
+      "tags": [
+        "roadmap",
+        "development-pm",
+        "product-pm",
+        "backlog"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway 통합 서비스 개선 로드맵"
+        },
+        {
+          "level": 2,
+          "text": "현재 상태"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "실행 플랜 문서"
+        },
+        {
+          "level": 2,
+          "text": "Architecture Review"
+        },
+        {
+          "level": 3,
+          "text": "Current Structural Risks"
+        },
+        {
+          "level": 3,
+          "text": "SOLID Review"
+        },
+        {
+          "level": 4,
+          "text": "Finding: 인증 principal이 하나의 정책 소유자를 가져야 한다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: lifecycle은 새 manager가 아니라 composition root가 소유한다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: 구조 분리는 계약 안정화 뒤에 수행한다"
+        },
+        {
+          "level": 3,
+          "text": "Design Pattern Candidates"
+        },
+        {
+          "level": 3,
+          "text": "Dependency Direction"
+        },
+        {
+          "level": 3,
+          "text": "Test Strategy Alignment"
+        },
+        {
+          "level": 3,
+          "text": "Plan Changes Applied"
+        },
+        {
+          "level": 2,
+          "text": "우선순위 원칙"
+        },
+        {
+          "level": 2,
+          "text": "의존성 지도"
+        },
+        {
+          "level": 2,
+          "text": "NOW — 신뢰 기반 복구"
+        },
+        {
+          "level": 3,
+          "text": "R0-1. Server-validated session"
+        },
+        {
+          "level": 3,
+          "text": "R0-2. JobWorker와 SchedulerLoop app lifecycle 연결"
+        },
+        {
+          "level": 3,
+          "text": "R0-3. Background failure isolation"
+        },
+        {
+          "level": 3,
+          "text": "R0-4. 제품 문구와 runtime 계약 정합"
+        },
+        {
+          "level": 3,
+          "text": "R0-5. 핵심 여정 E2E reliability gate"
+        },
+        {
+          "level": 2,
+          "text": "NOW Release Gate"
+        },
+        {
+          "level": 2,
+          "text": "NEXT — 운영 가능성과 결과 판단"
+        },
+        {
+          "level": 3,
+          "text": "R1-1. Security operations"
+        },
+        {
+          "level": 3,
+          "text": "R1-2. Automation history와 Retry"
+        },
+        {
+          "level": 3,
+          "text": "R1-3. Health, audit, emergency stop, backup"
+        },
+        {
+          "level": 3,
+          "text": "R1-4. Operations Center와 actionable errors"
+        },
+        {
+          "level": 3,
+          "text": "R1-5. Read performance baseline과 개선"
+        },
+        {
+          "level": 3,
+          "text": "R1-6. 점진적 구조 분리"
+        },
+        {
+          "level": 2,
+          "text": "NEXT Release Gate"
+        },
+        {
+          "level": 2,
+          "text": "LATER — 반복 사용과 확장"
+        },
+        {
+          "level": 3,
+          "text": "R2-1. 실제 Review flow와 bounded concurrency"
+        },
+        {
+          "level": 3,
+          "text": "R2-2. 완료 알림"
+        },
+        {
+          "level": 3,
+          "text": "R2-3. Reusable work template"
+        },
+        {
+          "level": 3,
+          "text": "R2-4. Result package와 global search"
+        },
+        {
+          "level": 3,
+          "text": "R2-5. Local-only product metrics"
+        },
+        {
+          "level": 2,
+          "text": "통합 체크리스트"
+        },
+        {
+          "level": 2,
+          "text": "PM 운영 방식"
+        },
+        {
+          "level": 3,
+          "text": "주간 backlog review"
+        },
+        {
+          "level": 3,
+          "text": "항목별 Definition of Ready"
+        },
+        {
+          "level": 3,
+          "text": "항목별 Definition of Done"
+        },
+        {
+          "level": 2,
+          "text": "재검토 조건"
+        },
+        {
+          "level": 2,
+          "text": "관련 문서"
+        }
+      ],
+      "excerpt": "- **SUCCESS**: 서비스 도메인, 사용자 여정, 유지보수·성능·보안 위험을 코드와 기존 문서 기준으로 정리했다. - **SUCCESS**: R0 신뢰 기반 구현과 NOW Release Gate를 완료했다. - **SUCCESS**: R1 운영 가능성 구현과 NEXT Release Gate를 완료했다. - **PAUSED**: R2는 5~10회 실제 사용 근거가 확보될 때까지 범..."
     }
   ]
 }

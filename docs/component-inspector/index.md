@@ -9,11 +9,15 @@ aliases:
 tags:
   - component
   - analysis
-updated_at: 2026-07-14
+updated_at: 2026-07-15
 ---
 
 # Component Inspector Reports
 
+- [JobsView Retry and Lineage — 2026-07-15 10:57](./JobsView/2026-07-15-1057.md)
+- [SchedulesView History and Preview — 2026-07-15 10:57](./SchedulesView/2026-07-15-1057.md)
+- [GatewayApp R1 Operability — 2026-07-15 10:24](./GatewayApp/2026-07-15-1024.md)
+- [GatewayApp R0 Runtime Capability — 2026-07-15 09:48](./GatewayApp/2026-07-15-0948.md)
 - [GatewayApp — 2026-07-14 15:26](./GatewayApp/2026-07-14-1526.md)
 - [TeamRunDetail — 2026-07-14 13:16](./TeamRunDetail/2026-07-14-1316.md)
 - [TeamRunDetail Resume — 2026-07-14 14:26](./TeamRunDetail/2026-07-14-1426.md)

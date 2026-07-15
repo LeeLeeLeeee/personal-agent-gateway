@@ -108,6 +108,28 @@ def test_attach_task_ignores_mismatched_request_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_cancel_all_cancels_every_attached_task() -> None:
+    registry = SessionRunRegistry()
+
+    async def wait_forever() -> None:
+        await asyncio.Event().wait()
+
+    tasks = []
+    for index in range(2):
+        session_id = f"session-{index}"
+        request_id = f"request-{index}"
+        registry.start(session_id, request_id)
+        task = asyncio.create_task(wait_forever())
+        tasks.append(task)
+        registry.attach_task(session_id, request_id, task)
+
+    canceled = await registry.cancel_all()
+
+    assert canceled == ["session-0", "session-1"]
+    assert all(task.cancelled() for task in tasks)
+
+
+@pytest.mark.asyncio
 async def test_register_cancel_finish():
     registry = TeamRunRegistry()
 

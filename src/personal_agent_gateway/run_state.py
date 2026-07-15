@@ -73,6 +73,23 @@ class SessionRunRegistry:
         entry[1].cancel()
         return True
 
+    async def cancel_all(self) -> list[str]:
+        with self._lock:
+            entries = [
+                (session_id, request_id, task)
+                for session_id, (request_id, task) in self._tasks.items()
+            ]
+        for _session_id, _request_id, task in entries:
+            task.cancel()
+        if entries:
+            await asyncio.gather(
+                *(task for _session_id, _request_id, task in entries),
+                return_exceptions=True,
+            )
+        for session_id, request_id, _task in entries:
+            self.finish(session_id, request_id)
+        return [session_id for session_id, _request_id, _task in entries]
+
     def is_running(self, session_id: str | None) -> bool:
         with self._lock:
             return isinstance(session_id, str) and session_id in self._running

@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from personal_agent_gateway.capabilities import CapabilityRegistry
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.pagination import decode_cursor, encode_cursor
 
 
 JobSource = Literal["chat", "manual", "schedule", "api"]
@@ -36,6 +37,7 @@ class Job:
     approval_id: str | None
     source_session_id: str | None = None
     source_schedule_id: str | None = None
+    source_job_id: str | None = None
     created_at: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
@@ -63,6 +65,7 @@ class JobService:
         input_json: dict[str, object],
         source_session_id: str | None = None,
         source_schedule_id: str | None = None,
+        source_job_id: str | None = None,
         command_preview: str | None = None,
     ) -> Job:
         self._capabilities.validate_input(capability_id, input_json)
@@ -76,10 +79,11 @@ class JobService:
             """
             insert into jobs (
                 id, capability_id, source, source_session_id, source_schedule_id,
+                source_job_id,
                 title, status, input_json, command_preview, approval_id,
                 created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -87,6 +91,7 @@ class JobService:
                 source,
                 source_session_id,
                 source_schedule_id,
+                source_job_id,
                 title,
                 status,
                 json.dumps(input_json, sort_keys=True),
@@ -120,6 +125,7 @@ class JobService:
         statuses: list[str] | None = None,
         sources: list[str] | None = None,
         capability_ids: list[str] | None = None,
+        source_schedule_id: str | None = None,
     ) -> list[Job]:
         filters = {
             "status": statuses or [],
@@ -134,6 +140,9 @@ class JobService:
             placeholders = ", ".join("?" for _ in values)
             clauses.append(f"{column} in ({placeholders})")
             parameters.extend(values)
+        if source_schedule_id is not None:
+            clauses.append("source_schedule_id = ?")
+            parameters.append(source_schedule_id)
         where_clause = f"where {' and '.join(clauses)}" if clauses else ""
         return [
             _job_from_row(row)
@@ -142,6 +151,53 @@ class JobService:
                 parameters,
             )
         ]
+
+    def page_jobs(
+        self,
+        statuses: list[str] | None = None,
+        sources: list[str] | None = None,
+        capability_ids: list[str] | None = None,
+        source_schedule_id: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> tuple[list[Job], str | None]:
+        filters = {
+            "status": statuses or [],
+            "source": sources or [],
+            "capability_id": capability_ids or [],
+        }
+        clauses: list[str] = []
+        parameters: list[object] = []
+        for column, values in filters.items():
+            if not values:
+                continue
+            placeholders = ", ".join("?" for _ in values)
+            clauses.append(f"{column} in ({placeholders})")
+            parameters.extend(values)
+        if source_schedule_id is not None:
+            clauses.append("source_schedule_id = ?")
+            parameters.append(source_schedule_id)
+        if cursor:
+            created_at, job_id = decode_cursor(cursor, 2)
+            if not isinstance(created_at, str) or not isinstance(job_id, str):
+                raise ValueError("Invalid cursor")
+            clauses.append("(created_at < ? or (created_at = ? and id < ?))")
+            parameters.extend((created_at, created_at, job_id))
+        where_clause = f"where {' and '.join(clauses)}" if clauses else ""
+        normalized_limit = max(1, min(limit, 200))
+        rows = self._db.fetchall(
+            f"select * from jobs {where_clause} "
+            "order by created_at desc, id desc limit ?",
+            (*parameters, normalized_limit + 1),
+        )
+        has_more = len(rows) > normalized_limit
+        selected = rows[:normalized_limit]
+        jobs = [_job_from_row(row) for row in selected]
+        next_cursor = None
+        if has_more and selected:
+            last = selected[-1]
+            next_cursor = encode_cursor(last["created_at"], last["id"])
+        return jobs, next_cursor
 
     def list_events(self, job_id: str) -> list[JobEvent]:
         self.get_job(job_id)
@@ -153,11 +209,40 @@ class JobService:
             )
         ]
 
+    def page_events(
+        self, job_id: str, limit: int = 200, cursor: str | None = None
+    ) -> tuple[list[JobEvent], str | None]:
+        self.get_job(job_id)
+        clauses = ["job_id = ?"]
+        parameters: list[object] = [job_id]
+        if cursor:
+            created_at, event_id = decode_cursor(cursor, 2)
+            if not isinstance(created_at, str) or not isinstance(event_id, str):
+                raise ValueError("Invalid cursor")
+            clauses.append("(created_at < ? or (created_at = ? and id < ?))")
+            parameters.extend((created_at, created_at, event_id))
+        normalized_limit = max(1, min(limit, 500))
+        rows = self._db.fetchall(
+            f"select * from job_events where {' and '.join(clauses)} "
+            "order by created_at desc, id desc limit ?",
+            (*parameters, normalized_limit + 1),
+        )
+        has_more = len(rows) > normalized_limit
+        selected = rows[:normalized_limit]
+        events = [_job_event_from_row(row) for row in reversed(selected)]
+        next_cursor = None
+        if has_more and selected:
+            last = selected[-1]
+            next_cursor = encode_cursor(last["created_at"], last["id"])
+        return events, next_cursor
+
     def runner_type_for(self, job: Job) -> str:
         return self._capabilities.get(job.capability_id).runner_type
 
     def approve_job(self, job_id: str) -> Job:
         job = self.get_job(job_id)
+        if job.source == "chat":
+            raise JobStatusError("Chat jobs are history records and cannot be worker-approved")
         if job.status != "waiting_approval":
             raise JobStatusError(f"Cannot transition {job.status} to queued")
         now = _now()
@@ -171,6 +256,8 @@ class JobService:
 
     def deny_job(self, job_id: str) -> Job:
         job = self.get_job(job_id)
+        if job.source == "chat":
+            raise JobStatusError("Chat jobs are history records and cannot be worker-denied")
         if job.status != "waiting_approval":
             raise JobStatusError(f"Cannot transition {job.status} to canceled")
         now = _now()
@@ -181,6 +268,53 @@ class JobService:
         self._set_status(job.id, "canceled")
         self.append_event(job.id, "denied", {"approval_id": job.approval_id})
         return self.get_job(job.id)
+
+    def retry_job(self, job_id: str) -> Job:
+        job = self.get_job(job_id)
+        if job.source == "chat":
+            raise JobStatusError("Chat jobs are history records and cannot be retried")
+        if job.status not in {"failed", "canceled"}:
+            raise JobStatusError("Only failed or canceled jobs can be retried")
+        retried = self.create_job(
+            capability_id=job.capability_id,
+            source=job.source,
+            title=job.title,
+            input_json=json.loads(json.dumps(job.input_json)),
+            source_session_id=job.source_session_id,
+            source_schedule_id=job.source_schedule_id,
+            source_job_id=job.source_job_id or job.id,
+            command_preview=job.command_preview,
+        )
+        self.append_event(
+            retried.id,
+            "retried",
+            {"source_job_id": retried.source_job_id},
+        )
+        self.append_event(job.id, "retry_created", {"job_id": retried.id})
+        return retried
+
+    def cancel_job(self, job_id: str, message: str) -> Job:
+        job = self.get_job(job_id)
+        if job.status not in {"queued", "running"}:
+            raise JobStatusError(f"Cannot transition {job.status} to canceled")
+        self._set_status(
+            job.id,
+            "canceled",
+            finished_at=_now(),
+            error_message=message,
+        )
+        self.append_event(job.id, "canceled", {"message": message})
+        return self.get_job(job.id)
+
+    def cancel_active(self, message: str) -> list[str]:
+        canceled: list[str] = []
+        for job in self.list_jobs(statuses=["queued", "running"]):
+            try:
+                self.cancel_job(job.id, message)
+            except JobStatusError:
+                continue
+            canceled.append(job.id)
+        return canceled
 
     def mark_running(self, job_id: str) -> Job:
         job = self.get_job(job_id)
@@ -259,6 +393,7 @@ def _job_from_row(row: object) -> Job:
         source=row["source"],
         source_session_id=row["source_session_id"],
         source_schedule_id=row["source_schedule_id"],
+        source_job_id=row["source_job_id"],
         title=row["title"],
         status=row["status"],
         input_json=json.loads(row["input_json"]),

@@ -26,7 +26,10 @@ def authenticated_client(tmp_path: Path) -> TestClient:
         probe=lambda _binary: CliProbeResult(True, None),
     )
     client = TestClient(app)
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set(
+        "agent_session",
+        client.app.state.auth_session_service.issue().token,
+    )
     return client
 
 

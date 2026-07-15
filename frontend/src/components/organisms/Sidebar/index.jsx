@@ -5,6 +5,7 @@ export const NAV = [
   { key: "jobs", label: "Jobs" },
   { key: "schedules", label: "Schedules" },
   { key: "artifacts", label: "Artifacts" },
+  { key: "operations", label: "Operations" },
   { key: "settings", label: "Settings" }
 ];
 

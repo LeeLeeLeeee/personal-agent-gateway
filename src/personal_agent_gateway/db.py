@@ -1,9 +1,26 @@
 import sqlite3
+from contextlib import contextmanager
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Sequence
 
+from personal_agent_gateway.migrations import run_migrations
+
 
 SCHEMA_SQL = """
+create table if not exists auth_sessions (
+    id text primary key,
+    token_hash text not null unique,
+    created_at text not null,
+    last_seen_at text not null,
+    absolute_expires_at text not null,
+    idle_expires_at text not null,
+    revoked_at text
+);
+
+create index if not exists idx_auth_sessions_token_hash
+on auth_sessions(token_hash);
+
 create table if not exists jobs (
     id text primary key,
     capability_id text not null,
@@ -212,13 +229,29 @@ class Database:
         connection.execute("pragma journal_mode = wal")
         return connection
 
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        connection = self.connect()
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def initialize(self) -> None:
-        with self.connect() as connection:
+        with self.connection() as connection:
             connection.executescript(SCHEMA_SQL)
-            _migrate(connection)
+            run_migrations(connection)
+
+    def schema_version(self) -> int:
+        row = self.fetchone("select max(version) as version from schema_migrations")
+        return int(row["version"] or 0) if row is not None else 0
 
     def execute(self, sql: str, parameters: Sequence[object] = ()) -> None:
-        with self.connect() as connection:
+        with self.connection() as connection:
             connection.execute(sql, parameters)
 
     def fetchone(
@@ -226,7 +259,7 @@ class Database:
         sql: str,
         parameters: Sequence[object] = (),
     ) -> sqlite3.Row | None:
-        with self.connect() as connection:
+        with self.connection() as connection:
             return connection.execute(sql, parameters).fetchone()
 
     def fetchall(
@@ -234,53 +267,5 @@ class Database:
         sql: str,
         parameters: Sequence[object] = (),
     ) -> list[sqlite3.Row]:
-        with self.connect() as connection:
+        with self.connection() as connection:
             return list(connection.execute(sql, parameters).fetchall())
-
-
-def _migrate(connection: sqlite3.Connection) -> None:
-    """Additive column migrations for databases created before a column existed.
-
-    ``create table if not exists`` never alters an existing table, so columns
-    added to SCHEMA_SQL after a table already shipped must be backfilled here.
-    """
-    persona_columns = {
-        row["name"] for row in connection.execute("pragma table_info(personas)")
-    }
-    if "avatar" not in persona_columns:
-        connection.execute(
-            "alter table personas add column avatar text not null default ''"
-        )
-    if "default_options_json" not in persona_columns:
-        connection.execute(
-            "alter table personas add column default_options_json text not null default '{}'"
-        )
-    team_run_columns = {
-        row["name"] for row in connection.execute("pragma table_info(team_runs)")
-    }
-    if "rounds_budget" not in team_run_columns:
-        connection.execute(
-            "alter table team_runs add column rounds_budget integer not null default 8"
-        )
-    if "rounds_used" not in team_run_columns:
-        connection.execute(
-            "alter table team_runs add column rounds_used integer not null default 0"
-        )
-    team_agent_columns = {
-        row["name"] for row in connection.execute("pragma table_info(team_agents)")
-    }
-    if "reinvocations" not in team_agent_columns:
-        connection.execute(
-            "alter table team_agents add column reinvocations integer not null default 0"
-        )
-    if "upstream_session_id" not in team_agent_columns:
-        connection.execute(
-            "alter table team_agents add column upstream_session_id text"
-        )
-    team_run_columns_v2 = {
-        row["name"] for row in connection.execute("pragma table_info(team_runs)")
-    }
-    if "team_id" not in team_run_columns_v2:
-        connection.execute("alter table team_runs add column team_id text")
-    if "rules_snapshot_json" not in team_run_columns_v2:
-        connection.execute("alter table team_runs add column rules_snapshot_json text")

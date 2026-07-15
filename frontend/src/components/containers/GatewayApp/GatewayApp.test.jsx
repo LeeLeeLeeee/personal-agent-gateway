@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GatewayApp } from "./index.jsx";
+import { GatewayApp, applyTeamRunDelta } from "./index.jsx";
 import { UiProvider } from "../../providers/UiProvider/index.jsx";
 
 function response(body, ok = true) {
@@ -40,6 +40,23 @@ const sessions = [{
 describe("GatewayApp", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("applies Team SSE entity deltas without requiring a full detail response", () => {
+    const detail = {
+      run: { id: "run-1", status: "running" },
+      agents: [],
+      tasks: [{ id: "task-1", status: "pending" }],
+      messages: []
+    };
+
+    const updated = applyTeamRunDelta(detail, {
+      run: { id: "run-1", status: "summarizing" },
+      task: { id: "task-1", status: "completed" }
+    });
+
+    expect(updated.run.status).toBe("summarizing");
+    expect(updated.tasks[0].status).toBe("completed");
   });
 
   it("boots authenticated users into the chat shell and preserves planned tabs", async () => {
@@ -1046,7 +1063,7 @@ describe("GatewayApp", () => {
           status: "running",
           run_mode: "planning_only",
           leader_agent_id: "a1",
-          max_workers: 3
+          max_workers: 1
         }
       },
       "GET /api/team-runs/run-1/agents": {

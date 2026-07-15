@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from personal_agent_gateway.db import Database
 from personal_agent_gateway.transcript import TranscriptStore
 
 
@@ -221,3 +222,53 @@ def test_search_sessions_matches_transcript_payload_text(tmp_path: Path) -> None
 
     assert [result.id for result in results] == [first_id]
     assert results[0].title == "find the billing regression"
+
+
+def test_metadata_index_lists_and_pages_without_reloading_transcript_bodies(
+    tmp_path: Path, monkeypatch
+) -> None:
+    session_dir = tmp_path / "sessions"
+    store = TranscriptStore(session_dir)
+    first_id = store.start_new()
+    store.append("user", {"content": "first indexed session"})
+    second_id = store.reset()
+    store.append("user", {"content": "second indexed session"})
+    third_id = store.reset()
+    store.append("user", {"content": "third indexed session"})
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    store.attach_database(db)
+
+    monkeypatch.setattr(
+        store,
+        "_load",
+        lambda _session_id: (_ for _ in ()).throw(AssertionError("body scan")),
+    )
+    first_page, cursor = store.page_sessions(limit=2)
+    second_page, next_cursor = store.page_sessions(limit=2, cursor=cursor)
+
+    assert [session.id for session in first_page] == [third_id, second_id]
+    assert [session.id for session in second_page] == [first_id]
+    assert cursor is not None
+    assert next_cursor is None
+    assert store.search_sessions("second")[0].id == second_id
+
+
+def test_metadata_index_updates_after_append_rename_and_delete(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    store = TranscriptStore(tmp_path / "sessions", db)
+    session_id = store.start_new()
+
+    store.append("user", {"content": "initial title"})
+    store.append("assistant", {"content": "answer"})
+    store.set_title(session_id, "renamed title")
+
+    summary = store.list_sessions()[0]
+    assert summary.title == "renamed title"
+    assert summary.message_count == 2
+    assert store.delete(session_id) is True
+    assert db.fetchone(
+        "select id from transcript_metadata where id = ?", (session_id,)
+    ) is None

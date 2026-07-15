@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "./client.js";
+import { ApiError, api, apiErrorAction } from "./client.js";
 
 function jsonResponse(body, ok = true) {
   return Promise.resolve({ ok, json: () => Promise.resolve(body) });
@@ -39,6 +39,46 @@ describe("api client", () => {
     await expect(api.artifacts()).resolves.toEqual([{ id: "a1" }]);
   });
 
+  it("supports job retry and schedule detail endpoints", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ job: { id: "j2", source_job_id: "j1" } }))
+      .mockResolvedValueOnce(jsonResponse({ schedule: { id: "s1" }, jobs: [], next_runs: [] }));
+
+    await expect(api.retryJob("job 1")).resolves.toEqual({ id: "j2", source_job_id: "j1" });
+    await expect(api.scheduleDetail("schedule 1")).resolves.toEqual({
+      schedule: { id: "s1" },
+      jobs: [],
+      next_runs: []
+    });
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/jobs/job%201/retry",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/schedules/schedule%201");
+  });
+
+  it("supports security settings and auth-session revocation", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ sessions: [{ id: "s1", current: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ access_mode: "full_access" }))
+      .mockResolvedValueOnce(jsonResponse({ revoked: true, session_id: "s2" }))
+      .mockResolvedValueOnce(jsonResponse({ revoked_count: 2 }));
+
+    await expect(api.authSessions()).resolves.toEqual([{ id: "s1", current: true }]);
+    await expect(api.setAccessMode("full_access", true)).resolves.toBe("full_access");
+    await expect(api.revokeAuthSession("s2")).resolves.toEqual({ revoked: true, session_id: "s2" });
+    await expect(api.revokeAllAuthSessions()).resolves.toEqual({ revoked_count: 2 });
+
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/settings/access-mode", expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ mode: "full_access", confirm_full_access: true })
+    }));
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/auth/sessions/s2", { method: "DELETE" });
+    expect(fetch).toHaveBeenNthCalledWith(4, "/api/auth/sessions/revoke-all", { method: "POST" });
+  });
+
   it("supports agent registry and active session config endpoints", async () => {
     fetch
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: "codex" }] }))
@@ -76,35 +116,95 @@ describe("api client", () => {
     expect(fetch).toHaveBeenNthCalledWith(5, "/api/team-runs/r2/start", expect.objectContaining({ method: "POST" }));
   });
 
-  it("adds work and combines the four team-run detail responses", async () => {
+  it("adds work and reads the aggregate team-run detail response", async () => {
     fetch
       .mockResolvedValueOnce(jsonResponse({ team_run: { id: "r1", status: "running" } }))
-      .mockResolvedValueOnce(jsonResponse({ team_run: { id: "r1", goal: "Ship" } }))
-      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: "a1" }] }))
-      .mockResolvedValueOnce(jsonResponse({ tasks: [{ id: "t1" }] }))
-      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: "m1" }] }));
+      .mockResolvedValueOnce(jsonResponse({
+        team_run: { id: "r1", goal: "Ship" },
+        agents: [{ id: "a1" }],
+        tasks: [{ id: "t1" }],
+        messages: [{ id: "m1" }],
+        document_summary: { count: 2 }
+      }));
 
     await expect(api.addWork("r1", "write docs")).resolves.toEqual({ team_run: { id: "r1", status: "running" } });
     await expect(api.teamRunDetail("r1")).resolves.toEqual({
       run: { id: "r1", goal: "Ship" },
       agents: [{ id: "a1" }],
       tasks: [{ id: "t1" }],
-      messages: [{ id: "m1" }]
+      messages: [{ id: "m1" }],
+      documentSummary: { count: 2 }
     });
 
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/team-runs/r1/add-work", expect.objectContaining({
       method: "POST",
       body: JSON.stringify({ instruction: "write docs" })
     }));
-    expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1");
-    expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1/agents");
-    expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1/tasks");
-    expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1/messages");
+    expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1/detail");
   });
 
-  it("returns null when adding work fails", async () => {
-    fetch.mockResolvedValueOnce(jsonResponse({}, false));
-    await expect(api.addWork("r1", "write docs")).resolves.toBeNull();
+  it("preserves non-2xx details and correlation IDs as ApiError", async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      statusText: "Conflict",
+      headers: { get: () => "corr-409" },
+      json: async () => ({
+        code: "run_conflict",
+        detail: "Team run already running",
+        retryable: false,
+        correlation_id: "corr-body"
+      })
+    });
+
+    let error;
+    try {
+      await api.addWork("r1", "write docs");
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 409,
+      code: "run_conflict",
+      detail: "Team run already running",
+      retryable: false,
+      correlationId: "corr-body"
+    });
+    expect(apiErrorAction(error)).toBe("refresh");
+  });
+
+  it.each([
+    [400, "fix_input"],
+    [401, "relogin"],
+    [500, "retry"]
+  ])("maps status %s to a distinct UI action", async (status, action) => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status,
+      statusText: "Error",
+      headers: { get: () => null },
+      json: async () => ({
+        code: `http_${status}`,
+        detail: `status ${status}`,
+        retryable: status >= 500,
+        correlation_id: `corr-${status}`
+      })
+    });
+
+    await expect(api.jobs()).rejects.toMatchObject({ status, correlationId: `corr-${status}` });
+    expect(apiErrorAction(new ApiError({ status, retryable: status >= 500 }))).toBe(action);
+  });
+
+  it("normalizes aborted requests as retryable timeout errors", async () => {
+    fetch.mockRejectedValueOnce(new DOMException("timed out", "AbortError"));
+
+    await expect(api.jobs()).rejects.toMatchObject({
+      status: 0,
+      code: "request_timeout",
+      retryable: true
+    });
   });
 
   it("resumes an interrupted team run", async () => {

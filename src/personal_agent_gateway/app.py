@@ -1,22 +1,27 @@
-import asyncio
 import json
+import logging
+import re
+import traceback
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
 from uuid import uuid4
 
 import uvicorn
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel
 
 from personal_agent_gateway.api import (
     agents_router,
     artifacts_router,
+    audit_router,
     auth_router,
     capabilities_router,
+    health_router,
     jobs_router,
+    operations_router,
     personas_router,
     rules_router,
     schedules_router,
@@ -27,46 +32,92 @@ from personal_agent_gateway.api import (
 )
 from personal_agent_gateway.artifacts import ArtifactStore
 from personal_agent_gateway.agents import AgentRegistry
+from personal_agent_gateway.api.auth import LoginRateLimiter
+from personal_agent_gateway.api.chat_sessions import (
+    ChatSessionContext,
+    create_chat_sessions_router,
+)
+from personal_agent_gateway.audit import AuditService
+from personal_agent_gateway.auth_sessions import AuthSessionService
 from personal_agent_gateway.auth_store import AuthStore
+from personal_agent_gateway.backup import BackupService
 from personal_agent_gateway.capabilities import CapabilityRegistry
 from personal_agent_gateway.config import AppConfig, load_config
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
+from personal_agent_gateway.emergency_stop import EmergencyStopService
+from personal_agent_gateway.health import HealthService
+from personal_agent_gateway.intake import IntakeGate
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelClient, ModelClient
 from personal_agent_gateway.personas import PersonaService
-from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
+from personal_agent_gateway.runtime import AgentRuntime
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.rule_sets import RuleSetService
-from personal_agent_gateway.run_state import SessionAlreadyRunningError, SessionRunRegistry, TeamRunRegistry
+from personal_agent_gateway.run_state import SessionRunRegistry, TeamRunRegistry
 from personal_agent_gateway.runners.agent import AgentRunner
 from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
+from personal_agent_gateway.scheduler_loop import SchedulerLoop
+from personal_agent_gateway.security_settings import SecuritySettingsService
 from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
-from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
 from personal_agent_gateway.transcript import TranscriptStore
 
 
-class ChatRequest(BaseModel):
-    message: str
-
-
-class RenameRequest(BaseModel):
-    title: str
+_LOGGER = logging.getLogger("personal_agent_gateway.errors")
+_CORRELATION_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 
 def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = None) -> FastAPI:
     app_config = config or load_config()
     transcript = TranscriptStore(app_config.session_dir)
-    app = FastAPI()
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        application.state.team_run_service.interrupt_active_runs()
+        application.state.job_service.recover_interrupted_jobs()
+        await application.state.job_worker.start()
+        for job in application.state.job_service.list_jobs(
+            statuses=["queued"],
+            sources=["manual", "schedule", "api"],
+        ):
+            await application.state.job_worker.enqueue(job.id)
+        await application.state.scheduler_loop.start()
+        try:
+            yield
+        finally:
+            await application.state.scheduler_loop.stop()
+            team_run_ids = await application.state.team_run_registry.cancel_all(
+                reason="shutdown"
+            )
+            for team_run_id in team_run_ids:
+                application.state.team_run_service.interrupt_run(
+                    team_run_id,
+                    include_canceled=True,
+                )
+            await application.state.job_worker.stop()
+
+    app = FastAPI(lifespan=lifespan)
+
+    @app.middleware("http")
+    async def correlation_middleware(request: Request, call_next):
+        supplied = request.headers.get("x-correlation-id", "")
+        correlation_id = supplied if _CORRELATION_ID.fullmatch(supplied) else uuid4().hex
+        request.state.correlation_id = correlation_id
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            response = _internal_error_response(request, exc)
+        response.headers["X-Correlation-ID"] = correlation_id
+        return response
+
     app.state.transcript_store = transcript
-    session_dependency = Depends(_require_agent_session)
     package_dir = Path(__file__).parent
     static_dir = package_dir / "static"
     frontend_assets_dir = package_dir / "frontend_dist" / "assets"
@@ -77,7 +128,26 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.state.run_registry = run_registry
     app.state.team_run_registry = team_run_registry
     runtime_factory = _attach_local_services(app, app_config, transcript, event_bus)
-    app.state.team_run_service.interrupt_active_runs()
+    assert app_config.backup_root is not None
+    assert app_config.auth_dir is not None
+    assert app_config.artifact_root is not None
+    app.state.emergency_stop_service = EmergencyStopService(
+        intake_gate=app.state.intake_gate,
+        session_runs=run_registry,
+        team_runs=team_run_registry,
+        team_run_service=app.state.team_run_service,
+        job_worker=app.state.job_worker,
+        audit=app.state.audit_service,
+    )
+    app.state.backup_service = BackupService(
+        database=app.state.database,
+        backup_root=app_config.backup_root,
+        auth_dir=app_config.auth_dir,
+        session_dir=app_config.session_dir,
+        artifact_root=app_config.artifact_root,
+        workspace_root=app_config.workspace_root,
+        intake_gate=app.state.intake_gate,
+    )
     app.state.team_runtime = TeamRuntime(
         app.state.team_run_service,
         _team_model_factory(app_config),
@@ -85,12 +155,6 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     )
     app.state.team_run_service.backfill_agent_avatars()
 
-    async def interrupt_team_runs_on_shutdown() -> None:
-        team_run_ids = await team_run_registry.cancel_all(reason="shutdown")
-        for team_run_id in team_run_ids:
-            app.state.team_run_service.interrupt_run(team_run_id, include_canceled=True)
-
-    app.router.add_event_handler("shutdown", interrupt_team_runs_on_shutdown)
     injected_runtime = runtime
     if injected_runtime is not None and hasattr(injected_runtime, "attach_event_bus"):
         injected_runtime.attach_event_bus(app.state.session_activity_publisher)
@@ -100,11 +164,6 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             return injected_runtime
         return runtime_factory.create_runtime_for_active_session()
 
-    def require_session_id(session_id: str) -> str:
-        if not transcript.exists(session_id):
-            raise HTTPException(status_code=404, detail="Session not found")
-        return session_id
-
     def runtime_for_session(session_id: str) -> AgentRuntime:
         if injected_runtime is not None:
             if hasattr(injected_runtime, "for_session"):
@@ -112,41 +171,27 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             return injected_runtime
         return runtime_factory.create_runtime_for_session(session_id)
 
-    async def chat_for_session(session_id: str, message: str) -> dict[str, object]:
-        request_id = uuid4().hex
-        try:
-            started = run_registry.start_if_exists(session_id, request_id, lambda: transcript.exists(session_id))
-        except SessionAlreadyRunningError as exc:
-            raise HTTPException(status_code=409, detail="Session is already running") from exc
-        if not started:
-            raise HTTPException(status_code=404, detail="Session not found")
-        run_registry.attach_task(session_id, request_id, asyncio.current_task())
-        try:
-            result = await runtime_for_session(session_id).handle_user_message(message)
-            return {
-                **_runtime_response(result),
-                "session_id": session_id,
-                "request_id": request_id,
-                "last_event_id": _last_session_event_id(event_bus.recent(), session_id),
-            }
-        except asyncio.CancelledError:
-            await app.state.session_activity_publisher.publish(
-                {"type": "runtime.interrupted", "session_id": session_id}
-            )
-            return {
-                "messages": [],
-                "pending_approval": False,
-                "session_id": session_id,
-                "request_id": request_id,
-                "last_event_id": _last_session_event_id(event_bus.recent(), session_id),
-                "interrupted": True,
-            }
-        finally:
-            run_registry.finish(session_id, request_id)
+    chat_sessions_router = create_chat_sessions_router(
+        ChatSessionContext(
+            config=app_config,
+            transcript=transcript,
+            event_bus=event_bus,
+            run_registry=run_registry,
+            active_runtime=active_runtime,
+            runtime_for_session=runtime_for_session,
+            activity_service=app.state.session_activity_service,
+            activity_publisher=app.state.session_activity_publisher,
+            intake_gate=app.state.intake_gate,
+        )
+    )
 
     app.include_router(auth_router)
+    app.include_router(chat_sessions_router)
+    app.include_router(health_router)
+    app.include_router(audit_router)
     app.include_router(capabilities_router)
     app.include_router(jobs_router)
+    app.include_router(operations_router)
     app.include_router(artifacts_router)
     app.include_router(schedules_router)
     app.include_router(agents_router)
@@ -157,12 +202,37 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(teams_router)
     app.include_router(rules_router)
 
-    @app.exception_handler(Exception)
-    async def internal_error_handler(_request: Request, _exc: Exception) -> JSONResponse:
+    @app.exception_handler(HTTPException)
+    async def http_error_handler(request: Request, exc: HTTPException) -> JSONResponse:
         return JSONResponse(
-            status_code=500,
-            content={"detail": "Internal Server Error"},
+            status_code=exc.status_code,
+            headers=exc.headers,
+            content=_error_payload(
+                request,
+                code=f"http_{exc.status_code}",
+                detail=exc.detail,
+                retryable=_retryable_status(exc.status_code),
+            ),
         )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content=_error_payload(
+                request,
+                code="validation_error",
+                detail=exc.errors(),
+                retryable=False,
+            ),
+        )
+
+    @app.exception_handler(Exception)
+    async def internal_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        return _internal_error_response(request, exc)
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -176,236 +246,63 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     def styles() -> FileResponse:
         return FileResponse(static_dir / "styles.css", media_type="text/css")
 
-    @app.get("/api/history")
-    def history(_session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
-        return {"events": [_event_payload(event) for event in transcript.load_active()]}
-
-    @app.get("/api/status")
-    def status(_session: None = session_dependency) -> dict[str, object]:
-        session_id = transcript.active_id()
-        if session_id is None:
-            session_config = {
-                "session_id": None,
-                "agent_id": "codex",
-                "model": "default",
-                "options": {},
-                "editable": True,
-                "source": "default",
-                "updated_at": None,
-            }
-            events = []
-            provider = app_config.model_provider
-            model = app_config.model
-        else:
-            effective_config = SessionAgentConfigService(transcript).effective_config(session_id)
-            session_config = effective_config.model_dump(mode="json")
-            events = transcript.load(session_id)
-            if effective_config.source == "explicit":
-                provider = effective_config.agent_id
-                model = effective_config.model
-            else:
-                provider = app_config.model_provider
-                model = app_config.model
-        return {
-            "provider": provider,
-            "model": model,
-            "workspace_root": str(app_config.workspace_root),
-            "environment_title": app_config.environment_title or None,
-            "session_id": session_id,
-            "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
-            "pending_approval": _pending_shell_approval(events) or False,
-            "session_status": _session_status(events, session_id, run_registry),
-            "cookie_secure": app_config.cookie_secure,
-            "session_config": session_config,
-        }
-
-    @app.get("/api/events")
-    async def events(
-        request: Request,
-        _session: None = session_dependency,
-    ) -> StreamingResponse:
-        last_event_id = request.headers.get("last-event-id")
-        subscriber = event_bus.subscribe(last_event_id=last_event_id)
-        return StreamingResponse(
-            _sse_events(request, event_bus, subscriber),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    @app.get("/api/sessions")
-    def sessions(_session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
-        return {
-            "sessions": [
-                _session_payload(session, run_registry)
-                for session in transcript.list_sessions()
-            ]
-        }
-
-    @app.get("/api/sessions/search")
-    def search_sessions(q: str = "", _session: None = session_dependency) -> dict[str, list[dict[str, object]]]:
-        return {
-            "sessions": [
-                _session_payload(session, run_registry)
-                for session in transcript.search_sessions(q)
-            ]
-        }
-
-    @app.get("/api/sessions/{session_id}/history")
-    def session_history(session_id: str, _session: None = session_dependency) -> dict[str, object]:
-        require_session_id(session_id)
-        return {
-            "session_id": session_id,
-            "events": [_event_payload(event) for event in transcript.load(session_id)],
-        }
-
-    @app.get("/api/sessions/{session_id}/activity")
-    def session_activity(session_id: str, _session: None = session_dependency) -> dict[str, object]:
-        require_session_id(session_id)
-        return {
-            "session_id": session_id,
-            "events": [
-                event.to_event_payload()
-                for event in app.state.session_activity_service.list(session_id)
-            ],
-        }
-
-    @app.get("/api/sessions/{session_id}/status")
-    def session_status(session_id: str, _session: None = session_dependency) -> dict[str, object]:
-        require_session_id(session_id)
-        events = transcript.load(session_id)
-        activity_events = app.state.session_activity_service.list(session_id)
-        effective_config = SessionAgentConfigService(transcript).effective_config(session_id)
-        return {
-            "session_id": session_id,
-            "status": _session_status(events, session_id, run_registry),
-            "pending_approval": _pending_shell_approval(events) or False,
-            "message_count": sum(1 for event in events if event.kind in {"user", "assistant"}),
-            "last_event_id": _last_session_event_id(event_bus.recent(), session_id),
-            "last_activity_id": _last_activity_event_id(activity_events),
-            "session_config": effective_config.model_dump(mode="json"),
-        }
-
-    @app.post("/api/sessions/{session_id}/chat")
-    async def session_chat(
-        session_id: str,
-        request: ChatRequest,
-        _session: None = session_dependency,
-    ) -> dict[str, object]:
-        require_session_id(session_id)
-        return await chat_for_session(session_id, request.message)
-
-    @app.post("/api/sessions/{session_id}/interrupt")
-    async def interrupt_session(
-        session_id: str,
-        _session: None = session_dependency,
-    ) -> dict[str, object]:
-        require_session_id(session_id)
-        if not run_registry.interrupt(session_id):
-            raise HTTPException(status_code=409, detail="Session is not running")
-        return {"session_id": session_id, "interrupting": True}
-
-    @app.post("/api/sessions/{session_id}/activate")
-    def activate_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:
-        if not transcript.activate(session_id):
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {"session_id": session_id, "events": [_event_payload(event) for event in transcript.load_active()]}
-
-    @app.post("/api/sessions/{session_id}/title")
-    def rename_session(
-        session_id: str, payload: RenameRequest, _session: None = session_dependency
-    ) -> dict[str, object]:
-        title = payload.title.strip()
-        if not title:
-            raise HTTPException(status_code=400, detail="Title is required")
-        if not transcript.set_title(session_id, title[:120]):
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {"session_id": session_id, "title": title[:120]}
-
-    @app.delete("/api/sessions/{session_id}")
-    def delete_session(session_id: str, _session: None = session_dependency) -> dict[str, object]:
-        try:
-            deleted = run_registry.delete_if_idle(session_id, lambda: transcript.delete(session_id))
-        except SessionAlreadyRunningError:
-            raise HTTPException(status_code=409, detail="Session is running")
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Session not found")
-        app.state.session_activity_service.delete_session(session_id)
-        return {"deleted": True, "active_session_id": transcript.active_id()}
-
-    @app.post("/api/chat")
-    async def chat(
-        request: ChatRequest,
-        _session: None = session_dependency,
-    ) -> dict[str, object]:
-        session_id = transcript.active_id() or transcript.start_new()
-        response = await chat_for_session(session_id, request.message)
-        return _compat_chat_response(response)
-
-    @app.post("/api/sessions/{session_id}/approvals/{approval_id}/approve")
-    async def session_approve(
-        session_id: str,
-        approval_id: str,
-        _session: None = session_dependency,
-    ) -> dict[str, object]:
-        require_session_id(session_id)
-        request_id = uuid4().hex
-        try:
-            started = run_registry.start_if_exists(session_id, request_id, lambda: transcript.exists(session_id))
-        except SessionAlreadyRunningError as exc:
-            raise HTTPException(status_code=409, detail="Session is already running") from exc
-        if not started:
-            raise HTTPException(status_code=404, detail="Session not found")
-        try:
-            result = await runtime_for_session(session_id).approve(approval_id)
-            return {**_runtime_response(result), "session_id": session_id, "request_id": request_id}
-        finally:
-            run_registry.finish(session_id, request_id)
-
-    @app.post("/api/sessions/{session_id}/approvals/{approval_id}/deny")
-    async def session_deny(
-        session_id: str,
-        approval_id: str,
-        _session: None = session_dependency,
-    ) -> dict[str, object]:
-        require_session_id(session_id)
-        request_id = uuid4().hex
-        try:
-            started = run_registry.start_if_exists(session_id, request_id, lambda: transcript.exists(session_id))
-        except SessionAlreadyRunningError as exc:
-            raise HTTPException(status_code=409, detail="Session is already running") from exc
-        if not started:
-            raise HTTPException(status_code=404, detail="Session not found")
-        try:
-            result = await runtime_for_session(session_id).deny(approval_id)
-            return {**_runtime_response(result), "session_id": session_id, "request_id": request_id}
-        finally:
-            run_registry.finish(session_id, request_id)
-
-    @app.post("/api/approvals/{approval_id}/approve")
-    async def approve(approval_id: str, _session: None = session_dependency) -> dict[str, object]:
-        session_id = transcript.active_id()
-        if session_id is not None:
-            return _compat_chat_response(await session_approve(session_id, approval_id, _session))
-        return _runtime_response(await active_runtime().approve(approval_id))
-
-    @app.post("/api/approvals/{approval_id}/deny")
-    async def deny(approval_id: str, _session: None = session_dependency) -> dict[str, object]:
-        session_id = transcript.active_id()
-        if session_id is not None:
-            return _compat_chat_response(await session_deny(session_id, approval_id, _session))
-        return _runtime_response(await active_runtime().deny(approval_id))
-
-    @app.post("/api/reset")
-    def reset(_session: None = session_dependency) -> dict[str, object]:
-        session_id = transcript.reset()
-        return {"events": [], "session_id": session_id}
-
     app.mount("/static/vendor", StaticFiles(directory=static_dir / "vendor"), name="vendor")
     app.mount("/static/avatars", StaticFiles(directory=static_dir / "avatars"), name="avatars")
     if frontend_assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=frontend_assets_dir), name="frontend_assets")
 
     return app
+
+
+def _error_payload(
+    request: Request,
+    *,
+    code: str,
+    detail: object,
+    retryable: bool,
+) -> dict[str, object]:
+    return {
+        "code": code,
+        "detail": detail,
+        "retryable": retryable,
+        "correlation_id": getattr(request.state, "correlation_id", None),
+    }
+
+
+def _retryable_status(status_code: int) -> bool:
+    return status_code in {408, 425, 429} or status_code >= 500
+
+
+def _internal_error_response(request: Request, exc: Exception) -> JSONResponse:
+    correlation_id = getattr(request.state, "correlation_id", None)
+    stack = [
+        {
+            "file": Path(frame.filename).name,
+            "line": frame.lineno,
+            "function": frame.name,
+        }
+        for frame in traceback.extract_tb(exc.__traceback__)[-20:]
+    ]
+    _LOGGER.error(
+        json.dumps(
+            {
+                "event": "request.failed",
+                "correlation_id": correlation_id,
+                "exception_type": type(exc).__name__,
+                "stack": stack,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return JSONResponse(
+        status_code=500,
+        content=_error_payload(
+            request,
+            code="internal_error",
+            detail="Internal Server Error",
+            retryable=True,
+        ),
+    )
 
 
 def _attach_local_services(
@@ -417,6 +314,12 @@ def _attach_local_services(
     assert config.auth_dir is not None
     db = Database(config.app_db_path)
     db.initialize()
+    transcript.attach_database(db)
+    auth_session_service = AuthSessionService(
+        db,
+        absolute_ttl_seconds=config.auth_session_absolute_seconds,
+        idle_ttl_seconds=config.auth_session_idle_seconds,
+    )
     session_activity_service = SessionActivityService(db)
     session_activity_publisher = SessionActivityPublisher(session_activity_service, event_bus)
     persona_service = PersonaService(db)
@@ -447,14 +350,40 @@ def _attach_local_services(
             "agent": AgentRunner(runtime_factory),
         },
     )
+    intake_gate = IntakeGate()
+    scheduler_loop = SchedulerLoop(
+        schedule_service,
+        job_service,
+        job_worker,
+        intake_gate=intake_gate,
+    )
+    agent_registry = AgentRegistry(config)
+    audit_service = AuditService(db, retention_days=config.audit_retention_days)
+    security_settings = SecuritySettingsService(db, config.access_mode)
+    health_service = HealthService(
+        db,
+        job_worker,
+        scheduler_loop,
+        agent_registry,
+        config.model_provider,
+        intake_gate,
+    )
     app.state.app_config = config
-    app.state.agent_registry = AgentRegistry(config)
+    app.state.database = db
+    app.state.agent_registry = agent_registry
     app.state.auth_store = AuthStore(config.auth_dir)
+    app.state.auth_session_service = auth_session_service
+    app.state.login_rate_limiter = LoginRateLimiter()
+    app.state.audit_service = audit_service
+    app.state.security_settings = security_settings
+    app.state.intake_gate = intake_gate
+    app.state.health_service = health_service
     app.state.capability_registry = registry
     app.state.job_service = job_service
     app.state.schedule_service = schedule_service
     app.state.artifact_store = artifact_store
     app.state.job_worker = job_worker
+    app.state.scheduler_loop = scheduler_loop
     app.state.persona_service = persona_service
     app.state.session_activity_publisher = session_activity_publisher
     app.state.session_activity_service = session_activity_service
@@ -507,121 +436,11 @@ def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], ModelClient]
     return team_model_factory
 
 
-async def _sse_events(
-    request: Request,
-    event_bus: EventBus,
-    subscriber: asyncio.Queue[dict[str, object]],
-):
-    try:
-        yield ": connected\n\n"
-        while not await request.is_disconnected():
-            try:
-                event = await asyncio.wait_for(subscriber.get(), timeout=15)
-            except TimeoutError:
-                yield ": heartbeat\n\n"
-                continue
-            event_id = event.get("id")
-            yield f"id: {event_id}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-    finally:
-        event_bus.unsubscribe(subscriber)
-
-
-def _event_payload(event: BaseModel) -> dict[str, object]:
-    payload = event.model_dump(mode="json")
-    return {str(key): value for key, value in payload.items()}
-
-
-def _runtime_response(result: RuntimeResult) -> dict[str, object]:
-    return {
-        "messages": result.messages,
-        "pending_approval": result.pending_approval,
-    }
-
-
-def _compat_chat_response(payload: dict[str, object]) -> dict[str, object]:
-    return {
-        "messages": payload["messages"],
-        "pending_approval": payload["pending_approval"],
-    }
-
-
-def _session_payload(session: BaseModel, run_registry: SessionRunRegistry) -> dict[str, object]:
-    payload = session.model_dump(mode="json")
-    payload["status"] = run_registry.status(
-        str(payload["id"]),
-        payload.get("status") == "waiting_approval",
-        payload.get("status") == "failed",
-    )
-    return {str(key): value for key, value in payload.items()}
-
-
-def _session_status(
-    events: list[object],
-    session_id: str | None,
-    run_registry: SessionRunRegistry,
-) -> str:
-    return run_registry.status(
-        session_id,
-        _has_pending_shell_approval(events),
-        bool(events and getattr(events[-1], "kind", "") == "runtime_error"),
-    )
-
-
-def _last_activity_event_id(events: list[object]) -> int | None:
-    if not events:
-        return None
-    return int(getattr(events[-1], "id"))
-
-
-def _last_session_event_id(events: list[dict[str, object]], session_id: str) -> int | None:
-    for event in reversed(events):
-        if event.get("session_id") == session_id:
-            return int(event["id"])
-    return None
-
-
-def _has_pending_shell_approval(events: list[object]) -> bool:
-    return _pending_shell_approval(events) is not None
-
-
-def _pending_shell_approval(events: list[object]) -> dict[str, object] | None:
-    pending_by_tool_id: set[str] = set()
-    pending_by_tool_id_payload: dict[str, dict[str, object]] = {}
-    for event in events:
-        kind = getattr(event, "kind", "")
-        payload = getattr(event, "payload", {})
-        if kind == "tool_request" and payload.get("name") == "shell.run":
-            tool_id = str(payload.get("id", ""))
-            pending_by_tool_id.add(tool_id)
-            pending_by_tool_id_payload[tool_id] = payload
-        elif kind in {"tool_result", "tool_denial"}:
-            tool_id = str(payload.get("id", ""))
-            pending_by_tool_id.discard(tool_id)
-            pending_by_tool_id_payload.pop(tool_id, None)
-    if not pending_by_tool_id:
-        return None
-    tool_id = next(reversed(tuple(pending_by_tool_id)))
-    payload = pending_by_tool_id_payload.get(tool_id, {})
-    arguments = payload.get("arguments")
-    command = arguments.get("command") if isinstance(arguments, dict) else None
-    approval_id = payload.get("approval_id")
-    if not isinstance(approval_id, str) or not isinstance(command, str):
-        return None
-    return {"id": approval_id, "command": command}
-
-
 def _select_frontend_index(package_dir: Path) -> Path:
     vite_index = package_dir / "frontend_dist" / "index.html"
     if vite_index.exists():
         return vite_index
     return package_dir / "static" / "index.html"
-
-
-def _require_agent_session(
-    session: Annotated[str | None, Cookie(alias="agent_session")] = None,
-) -> None:
-    if not session:
-        raise HTTPException(status_code=401, detail="OTP login required")
 
 
 __all__ = ["create_app", "main"]

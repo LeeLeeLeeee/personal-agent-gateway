@@ -20,7 +20,10 @@ def make_config(tmp_path: Path) -> AppConfig:
 
 def authenticated_client(tmp_path: Path) -> TestClient:
     client = TestClient(create_app(make_config(tmp_path)))
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set(
+        "agent_session",
+        client.app.state.auth_session_service.issue().token,
+    )
     return client
 
 

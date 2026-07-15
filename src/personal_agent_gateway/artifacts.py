@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.pagination import decode_cursor, encode_cursor
 
 
 class ArtifactPathError(Exception):
@@ -101,6 +102,32 @@ class ArtifactStore:
             _artifact_from_row(row)
             for row in self._db.fetchall("select * from artifacts order by created_at desc")
         ]
+
+    def page(
+        self, limit: int = 100, cursor: str | None = None
+    ) -> tuple[list[Artifact], str | None]:
+        parameters: list[object] = []
+        where = ""
+        if cursor:
+            created_at, artifact_id = decode_cursor(cursor, 2)
+            if not isinstance(created_at, str) or not isinstance(artifact_id, str):
+                raise ValueError("Invalid cursor")
+            where = "where created_at < ? or (created_at = ? and id < ?)"
+            parameters.extend((created_at, created_at, artifact_id))
+        normalized_limit = max(1, min(limit, 200))
+        rows = self._db.fetchall(
+            f"select * from artifacts {where} "
+            "order by created_at desc, id desc limit ?",
+            (*parameters, normalized_limit + 1),
+        )
+        has_more = len(rows) > normalized_limit
+        selected = rows[:normalized_limit]
+        artifacts = [_artifact_from_row(row) for row in selected]
+        next_cursor = None
+        if has_more and selected:
+            last = selected[-1]
+            next_cursor = encode_cursor(last["created_at"], last["id"])
+        return artifacts, next_cursor
 
     def find_by_source_path(self, source_path: str) -> Artifact | None:
         for artifact in self.list():

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -6,6 +8,7 @@ from pydantic import BaseModel
 
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
+from personal_agent_gateway.pagination import decode_cursor, encode_cursor
 
 
 class SessionActivityEvent(BaseModel):
@@ -93,6 +96,37 @@ class SessionActivityService:
             (session_id,),
         )
         return [_event_from_row(row) for row in rows]
+
+    def page(
+        self, session_id: str, limit: int = 200, cursor: str | None = None
+    ) -> tuple[list[SessionActivityEvent], str | None]:
+        normalized_limit = max(1, min(limit, 500))
+        parameters: list[object] = [session_id]
+        cursor_clause = ""
+        if cursor:
+            values = decode_cursor(cursor, 1)
+            if not isinstance(values[0], int):
+                raise ValueError("Invalid cursor")
+            cursor_clause = "and event_seq < ?"
+            parameters.append(values[0])
+        rows = self._db.fetchall(
+            f"""
+            select id, session_id, event_seq, event_type, source, payload_json,
+                   transcript_event_id, created_at
+            from session_activity_events
+            where session_id = ? {cursor_clause}
+            order by event_seq desc
+            limit ?
+            """,
+            (*parameters, normalized_limit + 1),
+        )
+        has_more = len(rows) > normalized_limit
+        selected = list(reversed(rows[:normalized_limit]))
+        events = [_event_from_row(row) for row in selected]
+        next_cursor = None
+        if has_more and selected:
+            next_cursor = encode_cursor(selected[0]["event_seq"])
+        return events, next_cursor
 
     def delete_session(self, session_id: str) -> None:
         self._db.execute(

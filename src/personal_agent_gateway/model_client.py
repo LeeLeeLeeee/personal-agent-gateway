@@ -178,9 +178,14 @@ class CodexModelClient:
         if process.stdin is None or process.stdout is None or process.stderr is None:
             raise RuntimeError("Codex process pipes were not available")
 
-        process.stdin.write(prompt)
-        await process.stdin.drain()
-        process.stdin.close()
+        try:
+            process.stdin.write(prompt)
+            await process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            # A CLI may exit after emitting a result before consuming stdin.
+            pass
+        finally:
+            process.stdin.close()
 
         stderr_task = asyncio.create_task(process.stderr.read())
         try:

@@ -161,6 +161,29 @@ def test_session_activity_persists_across_service_instances(tmp_path: Path) -> N
     assert [event.event_seq for event in events] == [1]
 
 
+def test_session_activity_pages_latest_events_without_duplicates(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    service = SessionActivityService(db)
+    for index in range(5):
+        service.record(
+            session_id="session-a",
+            event_type="runtime.event",
+            source="runtime",
+            payload={"index": index},
+        )
+
+    first, cursor = service.page("session-a", limit=2)
+    second, next_cursor = service.page("session-a", limit=2, cursor=cursor)
+    third, final_cursor = service.page("session-a", limit=2, cursor=next_cursor)
+
+    assert [event.event_seq for event in first] == [4, 5]
+    assert [event.event_seq for event in second] == [2, 3]
+    assert [event.event_seq for event in third] == [1]
+    assert len({event.id for event in first + second + third}) == 5
+    assert final_cursor is None
+
+
 def test_session_activity_publisher_persists_before_fanout(tmp_path: Path) -> None:
     db = Database(tmp_path / "app.db")
     db.initialize()

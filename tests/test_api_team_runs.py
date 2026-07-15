@@ -26,7 +26,7 @@ def make_config(tmp_path: Path) -> AppConfig:
 
 def authenticated_client(tmp_path: Path) -> TestClient:
     client = TestClient(create_app(make_config(tmp_path)))
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
     return client
 
 
@@ -131,7 +131,7 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
             "team_id": team_id,
             "goal": "Design Agent Teams",
             "run_mode": "planning_only",
-            "max_workers": 2,
+            "max_workers": 1,
         },
     )
 
@@ -139,6 +139,11 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
     run = response.json()["team_run"]
     assert run["goal"] == "Design Agent Teams"
     assert run["status"] == "draft"
+    events = client.app.state.audit_service.list(resource_type="team_run")
+    assert any(
+        event.action == "team_runs.create" and event.resource_id == run["id"]
+        for event in events
+    )
 
     agents = client.get(f"/api/team-runs/{run['id']}/agents").json()["agents"]
     assert [agent["name"] for agent in agents] == ["Tech Lead", "QA Tester"]
@@ -158,7 +163,7 @@ def test_list_team_runs_returns_enriched_fields(tmp_path: Path) -> None:
             "team_id": team_id,
             "goal": "Design Agent Teams",
             "run_mode": "planning_only",
-            "max_workers": 2,
+            "max_workers": 1,
         },
     ).json()["team_run"]["id"]
 
@@ -169,6 +174,97 @@ def test_list_team_runs_returns_enriched_fields(tmp_path: Path) -> None:
     assert "members" in run
     assert "task_counts" in run
     assert "elapsed_seconds" in run
+
+
+def test_team_run_detail_aggregate_includes_documents_summary(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    team_id = create_team(client, leader_id, [member_id])
+    run = client.post(
+        "/api/team-runs",
+        json={"team_id": team_id, "goal": "Aggregate detail"},
+    ).json()["team_run"]
+    workspace = Path(run["workspace_root"])
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "notes.md").write_text("hello", encoding="utf-8")
+
+    response = client.get(f"/api/team-runs/{run['id']}/detail")
+
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["team_run"]["id"] == run["id"]
+    assert len(detail["agents"]) == 2
+    assert detail["tasks"] == []
+    assert detail["messages"] == []
+    assert detail["document_summary"] == {
+        "count": 1,
+        "size_bytes": 5,
+        "kinds": {"md": 1},
+    }
+
+
+def test_team_run_list_uses_stable_cursor_pages(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
+    created_ids = {
+        client.post(
+            "/api/team-runs",
+            json={"team_id": team_id, "goal": f"Run {index}"},
+        ).json()["team_run"]["id"]
+        for index in range(3)
+    }
+
+    first = client.get("/api/team-runs", params={"limit": 2}).json()
+    second = client.get(
+        "/api/team-runs",
+        params={"limit": 2, "cursor": first["next_cursor"]},
+    ).json()
+
+    returned_ids = {
+        run["id"] for run in first["team_runs"] + second["team_runs"]
+    }
+    assert returned_ids == created_ids
+    assert second["next_cursor"] is None
+
+
+def test_create_team_run_rejects_unimplemented_review_mode(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
+
+    response = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Review the workspace",
+            "run_mode": "review_only",
+            "max_workers": 1,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_team_run_rejects_concurrency_above_effective_limit(
+    tmp_path: Path,
+) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
+
+    response = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Ship sequentially",
+            "run_mode": "plan_and_execute",
+            "max_workers": 2,
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_delete_team_run_removes_it(tmp_path: Path) -> None:
@@ -347,7 +443,7 @@ async def test_start_returns_before_orchestration_completes(tmp_path: Path) -> N
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        client.cookies.set("agent_session", "test-session")
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
         leader_id = await _async_create_persona(client, "Tech Lead")
         team_id = await _async_create_team(client, leader_id)
         created = (
@@ -433,7 +529,8 @@ def test_create_app_marks_stale_active_run_interrupted(tmp_path: Path) -> None:
 
     restarted_app = create_app(config)
 
-    recovered = restarted_app.state.team_run_service.get_team_run(run.id)
+    with TestClient(restarted_app):
+        recovered = restarted_app.state.team_run_service.get_team_run(run.id)
     assert recovered.status == "interrupted"
     assert restarted_app.state.team_run_service.list_tasks(run.id)[0].status == "pending"
 
@@ -471,7 +568,7 @@ async def test_resume_interrupted_run_registers_background_task_and_blocks_dupli
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        client.cookies.set("agent_session", "test-session")
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
         leader_id = await _async_create_persona(client, "Lead")
         member_id = await _async_create_persona(client, "Worker")
         team_id = await _async_create_team(client, leader_id, [member_id])
@@ -523,7 +620,7 @@ def test_shutdown_marks_registered_run_interrupted(tmp_path: Path) -> None:
     _inject_gated_team_runtime(app, gate)
 
     with TestClient(app) as client:
-        client.cookies.set("agent_session", "test-session")
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
         response = client.post(f"/api/team-runs/{run.id}/resume")
         assert response.status_code == 200
         assert app.state.team_run_registry.is_running(run.id) is True
@@ -540,7 +637,7 @@ async def test_add_work_reopens_terminal_run(tmp_path: Path) -> None:
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        client.cookies.set("agent_session", "test-session")
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
         leader_id = await _async_create_persona(client, "Lead")
         member_id = await _async_create_persona(client, "Worker")
         team_id = await _async_create_team(client, leader_id, [member_id])
@@ -581,7 +678,7 @@ async def test_cancel_endpoint_settles_blocked_run_as_canceled(tmp_path: Path) -
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        client.cookies.set("agent_session", "test-session")
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
         leader_id = await _async_create_persona(client, "Tech Lead")
         team_id = await _async_create_team(client, leader_id)
         created = (

@@ -31,6 +31,40 @@ def test_database_uses_row_factory_and_foreign_keys(tmp_path: Path) -> None:
     assert row["foreign_keys"] == 1
 
 
+def test_database_helpers_close_connections(tmp_path: Path, monkeypatch) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    original_connect = db.connect
+    tracked = []
+
+    class TrackingConnection:
+        def __init__(self, connection) -> None:
+            self.connection = connection
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            self.connection.close()
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+    def tracking_connect():
+        connection = TrackingConnection(original_connect())
+        tracked.append(connection)
+        return connection
+
+    monkeypatch.setattr(db, "connect", tracking_connect)
+
+    db.execute("insert into runtime_settings values (?, ?, ?)", ("key", "value", "now"))
+    db.fetchone("select * from runtime_settings")
+    db.fetchall("select * from runtime_settings")
+    db.initialize()
+
+    assert tracked
+    assert all(connection.closed for connection in tracked)
+
+
 def test_database_initializes_agent_team_tables(tmp_path: Path) -> None:
     db = Database(tmp_path / "app.db")
     db.initialize()

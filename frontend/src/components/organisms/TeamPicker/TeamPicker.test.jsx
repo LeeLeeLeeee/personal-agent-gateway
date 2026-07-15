@@ -17,8 +17,19 @@ describe("TeamPicker", () => {
     await userEvent.type(screen.getByLabelText(/goal/i), "ship it");
     await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
     expect(onStart).toHaveBeenCalledWith(expect.objectContaining({
-      team_id: "t1", goal: "ship it", run_mode: "planning_only"
+      team_id: "t1", goal: "ship it", run_mode: "planning_only", max_workers: 1
     }));
+  });
+
+  it("shows only implemented run modes and sequential execution", () => {
+    render(<TeamPicker teams={teams} onStart={vi.fn()} runtime={{
+      team_review_supported: false,
+      team_execution_mode: "sequential"
+    }} />);
+
+    expect(screen.queryByRole("button", { name: /review only/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /increase workers/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/sequential/i).length).toBeGreaterThan(0);
   });
 
   it("prompts to create a team when none exist", () => {

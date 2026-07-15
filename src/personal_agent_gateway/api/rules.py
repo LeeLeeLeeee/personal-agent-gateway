@@ -1,8 +1,7 @@
-from typing import Annotated
-
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from personal_agent_gateway.api.dependencies import session_dependency
 from personal_agent_gateway.rule_sets import RuleSet
 
 router = APIRouter(tags=["rules"])
@@ -16,14 +15,6 @@ class RuleItem(BaseModel):
 class RuleSetRequest(BaseModel):
     personality: str = ""
     rules: list[RuleItem] = []
-
-
-def require_session(session: Annotated[str | None, Cookie(alias="agent_session")] = None) -> None:
-    if not session:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-
-session_dependency = Depends(require_session)
 
 
 @router.get("/api/rules")

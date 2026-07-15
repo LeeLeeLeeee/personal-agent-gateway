@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from personal_agent_gateway.agents import AgentDescriptor, AgentOption
-from personal_agent_gateway.api.jobs import session_dependency
+from personal_agent_gateway.api.dependencies import session_dependency
 from personal_agent_gateway.session_config import SessionAgentConfigService
 
 

@@ -6,6 +6,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from personal_agent_gateway.db import Database
+from personal_agent_gateway.pagination import decode_cursor, encode_cursor
+
 TranscriptKind = Literal[
     "user",
     "assistant",
@@ -44,14 +47,22 @@ class SessionSummary(BaseModel):
 
 
 class TranscriptStore:
-    def __init__(self, session_dir: Path) -> None:
+    def __init__(self, session_dir: Path, database: Database | None = None) -> None:
         self._session_dir = session_dir
+        self._database = database
+        if database is not None:
+            self._rebuild_metadata_index()
+
+    def attach_database(self, database: Database) -> None:
+        self._database = database
+        self._rebuild_metadata_index()
 
     def start_new(self) -> str:
         transcript_id = uuid4().hex
         self._session_dir.mkdir(parents=True, exist_ok=True)
         self._transcript_path(transcript_id).touch(exist_ok=True)
         self._write_active(transcript_id)
+        self._refresh_metadata(transcript_id)
         return transcript_id
 
     def active_id(self) -> str | None:
@@ -62,16 +73,68 @@ class TranscriptStore:
 
     def list_sessions(self) -> list[SessionSummary]:
         active_id = self._read_active_id()
+        if self._database is not None:
+            rows = self._database.fetchall(
+                "select * from transcript_metadata order by updated_at desc, id desc"
+            )
+            return [_metadata_summary(row, active_id) for row in rows]
         sessions = [
             self._session_summary(transcript_id, active_id)
             for transcript_id in self._known_session_ids(active_id)
         ]
         return sorted(sessions, key=lambda session: session.updated_at, reverse=True)
 
+    def page_sessions(
+        self,
+        limit: int = 100,
+        cursor: str | None = None,
+        query: str | None = None,
+    ) -> tuple[list[SessionSummary], str | None]:
+        normalized_limit = max(1, min(limit, 200))
+        if self._database is None:
+            sessions = self.search_sessions(query) if query else self.list_sessions()
+            return sessions[:normalized_limit], None
+
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if query:
+            clauses.append("lower(title) like ?")
+            parameters.append(f"%{query.strip().lower()}%")
+        if cursor:
+            updated_at, transcript_id = decode_cursor(cursor, 2)
+            if not isinstance(updated_at, str) or not isinstance(transcript_id, str):
+                raise ValueError("Invalid cursor")
+            clauses.append("(updated_at < ? or (updated_at = ? and id < ?))")
+            parameters.extend((updated_at, updated_at, transcript_id))
+        where = f"where {' and '.join(clauses)}" if clauses else ""
+        rows = self._database.fetchall(
+            f"select * from transcript_metadata {where} "
+            "order by updated_at desc, id desc limit ?",
+            (*parameters, normalized_limit + 1),
+        )
+        has_more = len(rows) > normalized_limit
+        selected = rows[:normalized_limit]
+        active_id = self._read_active_id()
+        sessions = [_metadata_summary(row, active_id) for row in selected]
+        next_cursor = None
+        if has_more and selected:
+            last = selected[-1]
+            next_cursor = encode_cursor(last["updated_at"], last["id"])
+        return sessions, next_cursor
+
     def search_sessions(self, query: str) -> list[SessionSummary]:
         normalized_query = query.strip().lower()
         if not normalized_query:
             return []
+
+        if self._database is not None:
+            rows = self._database.fetchall(
+                "select * from transcript_metadata where lower(title) like ? "
+                "order by updated_at desc, id desc",
+                (f"%{normalized_query}%",),
+            )
+            active_id = self._read_active_id()
+            return [_metadata_summary(row, active_id) for row in rows]
 
         active_id = self._read_active_id()
         matched_sessions: list[SessionSummary] = []
@@ -103,6 +166,7 @@ class TranscriptStore:
         )
         with self._transcript_path(transcript_id).open("a", encoding="utf-8") as transcript_file:
             transcript_file.write(f"{event.model_dump_json()}\n")
+        self._index_event(event)
         return True
 
     def delete(self, transcript_id: str) -> bool:
@@ -112,6 +176,10 @@ class TranscriptStore:
             return False
 
         transcript_path.unlink()
+        if self._database is not None:
+            self._database.execute(
+                "delete from transcript_metadata where id = ?", (transcript_id,)
+            )
         if active_id != transcript_id:
             return True
 
@@ -146,6 +214,7 @@ class TranscriptStore:
         self._session_dir.mkdir(parents=True, exist_ok=True)
         with self._transcript_path(transcript_id).open("a", encoding="utf-8") as transcript_file:
             transcript_file.write(f"{event.model_dump_json()}\n")
+        self._index_event(event)
         return event
 
     def load_active(self) -> list[TranscriptEvent]:
@@ -157,6 +226,21 @@ class TranscriptStore:
 
     def load(self, transcript_id: str) -> list[TranscriptEvent]:
         return self._load(transcript_id)
+
+    def page_events(
+        self, transcript_id: str, limit: int = 500, cursor: str | None = None
+    ) -> tuple[list[TranscriptEvent], str | None]:
+        events = self._load(transcript_id)
+        end = len(events)
+        if cursor:
+            values = decode_cursor(cursor, 1)
+            if not isinstance(values[0], int) or values[0] < 0 or values[0] > end:
+                raise ValueError("Invalid cursor")
+            end = values[0]
+        normalized_limit = max(1, min(limit, 1000))
+        start = max(0, end - normalized_limit)
+        next_cursor = encode_cursor(start) if start > 0 else None
+        return events[start:end], next_cursor
 
     def reset(self) -> str:
         return self.start_new()
@@ -221,6 +305,102 @@ class TranscriptStore:
             editable=_is_session_editable(events),
         )
 
+    def _rebuild_metadata_index(self) -> None:
+        if self._database is None:
+            return
+        active_id = self._read_active_id()
+        session_ids = self._known_session_ids(active_id)
+        with self._database.connection() as connection:
+            if session_ids:
+                placeholders = ", ".join("?" for _ in session_ids)
+                connection.execute(
+                    f"delete from transcript_metadata where id not in ({placeholders})",
+                    session_ids,
+                )
+            else:
+                connection.execute("delete from transcript_metadata")
+            for transcript_id in session_ids:
+                summary = self._session_summary(transcript_id, active_id)
+                pending = _pending_shell_approval_ids(self._load(transcript_id))
+                _upsert_metadata(connection, summary, pending)
+
+    def _refresh_metadata(self, transcript_id: str) -> None:
+        if self._database is None:
+            return
+        summary = self._session_summary(transcript_id, self._read_active_id())
+        pending = _pending_shell_approval_ids(self._load(transcript_id))
+        with self._database.connection() as connection:
+            _upsert_metadata(connection, summary, pending)
+
+    def _index_event(self, event: TranscriptEvent) -> None:
+        if self._database is None:
+            return
+        row = self._database.fetchone(
+            "select * from transcript_metadata where id = ?", (event.transcript_id,)
+        )
+        if row is None:
+            self._refresh_metadata(event.transcript_id)
+            return
+
+        pending = set(json.loads(row["pending_approval_ids_json"]))
+        tool_id = str(event.payload.get("id", ""))
+        if event.kind == "tool_request" and event.payload.get("name") == "shell.run":
+            pending.add(tool_id)
+        elif event.kind in {"tool_result", "tool_denial"}:
+            pending.discard(tool_id)
+
+        title = str(row["title"])
+        if event.kind == "session_rename":
+            value = event.payload.get("title")
+            if isinstance(value, str) and value.strip():
+                title = _compact_title(value)
+        elif event.kind == "user" and title == "Untitled session":
+            value = event.payload.get("content") or event.payload.get("message")
+            if isinstance(value, str) and value.strip():
+                title = _compact_title(value)
+
+        agent_id = str(row["agent_id"])
+        model = str(row["model"])
+        options = json.loads(row["options_json"])
+        if event.kind == "session_config_set":
+            value = event.payload.get("agent_id")
+            agent_id = value if isinstance(value, str) else "codex"
+            value = event.payload.get("model")
+            model = value if isinstance(value, str) else "default"
+            value = event.payload.get("options")
+            options = dict(value) if isinstance(value, dict) else {}
+
+        status: SessionStatus
+        if event.kind == "runtime_error":
+            status = "failed"
+        elif pending:
+            status = "waiting_approval"
+        else:
+            status = "idle"
+        self._database.execute(
+            """
+            update transcript_metadata
+            set title = ?, updated_at = ?, message_count = ?, status = ?,
+                agent_id = ?, model = ?, options_json = ?, editable = ?,
+                pending_approval_ids_json = ?
+            where id = ?
+            """,
+            (
+                title,
+                event.created_at.isoformat(),
+                int(row["message_count"]) + int(event.kind in {"user", "assistant"}),
+                status,
+                agent_id,
+                model,
+                json.dumps(options, ensure_ascii=False, sort_keys=True),
+                int(bool(row["editable"]) and event.kind in {
+                    "session_config_set", "session_rename", "agent_session_link"
+                }),
+                json.dumps(sorted(pending)),
+                event.transcript_id,
+            ),
+        )
+
 
 def _created_at(events: list[TranscriptEvent], transcript_path: Path) -> datetime:
     if events:
@@ -283,6 +463,10 @@ def _is_session_editable(events: list[TranscriptEvent]) -> bool:
 
 
 def _has_pending_shell_approval(events: list[TranscriptEvent]) -> bool:
+    return bool(_pending_shell_approval_ids(events))
+
+
+def _pending_shell_approval_ids(events: list[TranscriptEvent]) -> set[str]:
     pending_by_tool_id: set[str] = set()
     for event in events:
         payload = event.payload
@@ -290,4 +474,55 @@ def _has_pending_shell_approval(events: list[TranscriptEvent]) -> bool:
             pending_by_tool_id.add(str(payload.get("id", "")))
         elif event.kind in {"tool_result", "tool_denial"}:
             pending_by_tool_id.discard(str(payload.get("id", "")))
-    return bool(pending_by_tool_id)
+    return pending_by_tool_id
+
+
+def _upsert_metadata(connection, summary: SessionSummary, pending: set[str]) -> None:
+    connection.execute(
+        """
+        insert into transcript_metadata (
+            id, title, created_at, updated_at, message_count, status,
+            agent_id, model, options_json, editable, pending_approval_ids_json
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        on conflict(id) do update set
+            title = excluded.title,
+            created_at = excluded.created_at,
+            updated_at = excluded.updated_at,
+            message_count = excluded.message_count,
+            status = excluded.status,
+            agent_id = excluded.agent_id,
+            model = excluded.model,
+            options_json = excluded.options_json,
+            editable = excluded.editable,
+            pending_approval_ids_json = excluded.pending_approval_ids_json
+        """,
+        (
+            summary.id,
+            summary.title,
+            summary.created_at.isoformat(),
+            summary.updated_at.isoformat(),
+            summary.message_count,
+            summary.status,
+            summary.agent_id,
+            summary.model,
+            json.dumps(summary.options, ensure_ascii=False, sort_keys=True),
+            int(summary.editable),
+            json.dumps(sorted(pending)),
+        ),
+    )
+
+
+def _metadata_summary(row: object, active_id: str | None) -> SessionSummary:
+    return SessionSummary(
+        id=row["id"],
+        title=row["title"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+        message_count=int(row["message_count"]),
+        status=row["status"],
+        is_active=row["id"] == active_id,
+        agent_id=row["agent_id"],
+        model=row["model"],
+        options=json.loads(row["options_json"]),
+        editable=bool(row["editable"]),
+    )

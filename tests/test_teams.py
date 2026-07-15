@@ -4,6 +4,8 @@ import pytest
 
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.personas import PersonaService
+from personal_agent_gateway.rule_sets import RuleSetService
+from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.teams import TeamRunService
 
 
@@ -346,10 +348,6 @@ def test_retry_failed_task_rejects_nonfailed_task_and_nonterminal_run(tmp_path):
     teams.set_run_status(run.id, "failed", error_message="all failed")
     with pytest.raises(ValueError, match="Only failed tasks"):
         teams.retry_failed_task(run.id, task.id)
-
-
-from personal_agent_gateway.rule_sets import RuleSetService
-from personal_agent_gateway.team_directory import TeamService
 
 
 def test_create_team_run_from_team_snapshots_roster_and_rules(tmp_path):

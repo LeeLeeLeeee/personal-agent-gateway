@@ -1,12 +1,15 @@
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from personal_agent_gateway.artifacts import Artifact
 from personal_agent_gateway.artifacts import ArtifactPathError
-from personal_agent_gateway.api.jobs import session_dependency
+from personal_agent_gateway.api.dependencies import record_domain_audit, session_dependency
+from personal_agent_gateway.auth_sessions import SessionPrincipal
 from personal_agent_gateway.artifact_types import (
     artifact_type_for,
     is_registrable,
@@ -26,21 +29,36 @@ class RegisterArtifactRequest(BaseModel):
 @router.get("")
 def list_artifacts(
     request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    cursor: str | None = None,
     _session: None = session_dependency,
-) -> dict[str, list[dict[str, object]]]:
-    return {"artifacts": [_artifact_payload(item) for item in request.app.state.artifact_store.list()]}
+) -> dict[str, object]:
+    try:
+        artifacts, next_cursor = request.app.state.artifact_store.page(
+            limit=limit, cursor=cursor
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+    return {
+        "artifacts": [_artifact_payload(item) for item in artifacts],
+        "next_cursor": next_cursor,
+    }
 
 
 @router.post("/register")
 def register_artifact(
     request: Request,
     payload: RegisterArtifactRequest,
-    _session: None = session_dependency,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
-    # Localhost personal tool: any readable path the agent reports may be registered.
-    # Relative paths resolve against the workspace; absolute paths resolve as-is.
     workspace_root = request.app.state.app_config.workspace_root.resolve()
     candidate = (workspace_root / payload.path).resolve()
+    outside_workspace = not candidate.is_relative_to(workspace_root)
+    if outside_workspace and request.app.state.security_settings.access_mode == "restricted":
+        raise HTTPException(
+            status_code=403,
+            detail="Restricted mode blocks files outside the workspace",
+        )
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     if not is_registrable(candidate.name):
@@ -62,6 +80,20 @@ def register_artifact(
         source_session_id=payload.session_id,
         metadata={"source_path": source_path, "original_path": payload.path},
     )
+    if outside_workspace:
+        request.app.state.audit_service.record(
+            event_type="artifact.external_path.registered",
+            action="artifact.register",
+            status="succeeded",
+            actor_type="owner",
+            actor_id=principal.id,
+            session_id=principal.id,
+            artifact_id=artifact.id,
+            correlation_id=getattr(request.state, "correlation_id", None),
+            resource_type="artifact",
+            resource_id=artifact.id,
+            metadata={"outside_workspace": True},
+        )
     return {"artifact": _artifact_payload(artifact)}
 
 
@@ -81,12 +113,21 @@ def get_artifact(
 def delete_artifact(
     request: Request,
     artifact_id: str,
-    _session: None = session_dependency,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
     try:
         request.app.state.artifact_store.delete(artifact_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Artifact not found") from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="artifact.deleted",
+        action="artifact.delete",
+        resource_type="artifact",
+        resource_id=artifact_id,
+        artifact_id=artifact_id,
+    )
     return {"deleted": True}
 
 

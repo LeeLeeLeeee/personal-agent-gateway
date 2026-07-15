@@ -9,5 +9,6 @@ describe("Sidebar", () => {
     expect(screen.getByText("Teams")).toBeInTheDocument();
     expect(screen.getByText("Personas")).toBeInTheDocument();
     expect(screen.getByText("Rules")).toBeInTheDocument();
+    expect(screen.getByText("Operations")).toBeInTheDocument();
   });
 });

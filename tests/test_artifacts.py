@@ -91,3 +91,28 @@ def test_find_by_source_path_and_delete(tmp_path: Path) -> None:
     import pytest
     with pytest.raises(KeyError):
         store.get(created.id)
+
+
+def test_artifacts_cursor_pages_are_stable(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+    created = [
+        store.register_bytes(
+            artifact_type="text",
+            title=f"{index}.txt",
+            relative_path=f"files/{index}.txt",
+            content=str(index).encode(),
+            mime_type="text/plain",
+        )
+        for index in range(5)
+    ]
+
+    first, cursor = store.page(limit=2)
+    second, next_cursor = store.page(limit=2, cursor=cursor)
+    third, final_cursor = store.page(limit=2, cursor=next_cursor)
+
+    ids = [artifact.id for artifact in first + second + third]
+    assert set(ids) == {artifact.id for artifact in created}
+    assert len(ids) == len(set(ids))
+    assert final_cursor is None

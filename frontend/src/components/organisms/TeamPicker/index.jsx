@@ -3,20 +3,24 @@ import { Button } from "../../atoms/Button/index.jsx";
 
 const RUN_MODES = [
   { value: "planning_only", label: "PLANNING ONLY", desc: "Leader decomposes the goal and drafts tasks. Nothing executes." },
-  { value: "plan_and_execute", label: "PLAN + EXECUTE", desc: "Leader plans, then members execute their tasks and report back." },
-  { value: "review_only", label: "REVIEW ONLY", desc: "Members review existing work against their persona and report findings." }
+  { value: "plan_and_execute", label: "PLAN + EXECUTE", desc: "Leader plans, then members execute their tasks and report back." }
 ];
+
+const REVIEW_MODE = {
+  value: "review_only",
+  label: "REVIEW ONLY",
+  desc: "Members review existing work against their persona and report findings."
+};
 
 function Avatar({ person }) {
   if (person?.avatar) return <img className="tp-avatar" src={`/static/avatars/${person.avatar}.png`} alt="" />;
   return <span className="tp-avatar tp-avatar-initials mono">{(person?.name || "?").slice(0, 2).toUpperCase()}</span>;
 }
 
-export function TeamPicker({ teams = [], onStart }) {
+export function TeamPicker({ teams = [], onStart, runtime = null }) {
   const [teamId, setTeamId] = useState("");
   const [goal, setGoal] = useState("");
   const [runMode, setRunMode] = useState("planning_only");
-  const [maxWorkers, setMaxWorkers] = useState(3);
 
   useEffect(() => {
     if (!teamId && teams.length) setTeamId(teams[0].id);
@@ -27,12 +31,14 @@ export function TeamPicker({ teams = [], onStart }) {
   }
 
   const team = teams.find((t) => t.id === teamId) || teams[0];
-  const activeMode = RUN_MODES.find((m) => m.value === runMode) || RUN_MODES[0];
+  const supportedModes = runtime?.team_review_supported ? [...RUN_MODES, REVIEW_MODE] : RUN_MODES;
+  const activeMode = supportedModes.find((m) => m.value === runMode) || supportedModes[0];
+  const executionMode = (runtime?.team_execution_mode || "sequential").toUpperCase();
 
   return (
-    <form className="tp" aria-label="New team run" onSubmit={(event) => {
+      <form className="tp" aria-label="New team run" onSubmit={(event) => {
       event.preventDefault();
-      onStart({ team_id: team.id, goal: goal.trim(), run_mode: runMode, max_workers: Number(maxWorkers) || 1 });
+      onStart({ team_id: team.id, goal: goal.trim(), run_mode: activeMode.value, max_workers: 1 });
     }}>
       <div className="tp-form">
         <div className="tp-field">
@@ -86,7 +92,7 @@ export function TeamPicker({ teams = [], onStart }) {
           <div className="tp-field">
             <span className="tp-label">Run mode</span>
             <div className="tp-mode" role="group" aria-label="Run mode">
-              {RUN_MODES.map((mode) => (
+              {supportedModes.map((mode) => (
                 <button key={mode.value} type="button" aria-pressed={runMode === mode.value}
                   className={`tp-mode-btn${runMode === mode.value ? " active" : ""}`}
                   onClick={() => setRunMode(mode.value)}>{mode.label}</button>
@@ -95,11 +101,9 @@ export function TeamPicker({ teams = [], onStart }) {
             <div className="tp-mode-desc">{activeMode.desc}</div>
           </div>
           <div className="tp-field">
-            <span className="tp-label">Max workers</span>
+            <span className="tp-label">Execution</span>
             <div className="tp-workers">
-              <button type="button" aria-label="Decrease workers" onClick={() => setMaxWorkers((v) => Math.max(1, v - 1))}>−</button>
-              <div className="tp-workers-val" aria-label="Max workers">{maxWorkers}</div>
-              <button type="button" aria-label="Increase workers" onClick={() => setMaxWorkers((v) => Math.min(8, v + 1))}>+</button>
+              <div className="tp-workers-val">1 · {executionMode}</div>
             </div>
           </div>
         </div>
@@ -112,7 +116,7 @@ export function TeamPicker({ teams = [], onStart }) {
             <div className="k">TEAM</div><div>{team.name}</div>
             <div className="k">MEMBERS</div><div>{(team.members || []).length} agents</div>
             <div className="k">MODE</div><div>{activeMode.label}</div>
-            <div className="k">WORKERS</div><div>max {maxWorkers} concurrent</div>
+            <div className="k">WORKERS</div><div>1 · {executionMode}</div>
           </div>
           <div className="tp-preview-action">
             <Button type="submit" variant="primary" size="btn-lg">Start team run</Button>

@@ -7,7 +7,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import personal_agent_gateway.app as app_module
-from personal_agent_gateway.app import _select_frontend_index, _sse_events, create_app, main
+from personal_agent_gateway.api.chat_sessions import _sse_events
+from personal_agent_gateway.app import _select_frontend_index, create_app, main
 from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.config import AppConfig
@@ -86,7 +87,7 @@ def make_config(tmp_path: Path) -> AppConfig:
 
 def auth_client(config: AppConfig, runtime: AgentRuntime | FakeRuntime) -> TestClient:
     client = TestClient(create_app(config=config, runtime=runtime))
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
     return client
 
 
@@ -245,7 +246,10 @@ def test_status_returns_safe_runtime_metadata(tmp_path: Path) -> None:
     assert payload["session_config"]["options"] == {}
     assert payload["session_config"]["editable"] is True
     assert payload["session_config"]["updated_at"] is None
-    assert client.get("/api/sessions").json() == {"sessions": []}
+    assert client.get("/api/sessions").json() == {
+        "sessions": [],
+        "next_cursor": None,
+    }
     assert "secret-token" not in response.text
 
 
@@ -418,7 +422,11 @@ def test_session_explicit_history_status_and_activity_do_not_activate_session(tm
     assert status.json()["session_id"] == first_id
     assert status.json()["status"] == "idle"
     assert activity.status_code == 200
-    assert activity.json() == {"session_id": first_id, "events": []}
+    assert activity.json() == {
+        "session_id": first_id,
+        "events": [],
+        "next_cursor": None,
+    }
     assert store.active_id() == second_id
 
 
@@ -483,7 +491,8 @@ def test_delete_running_session_returns_409_and_preserves_session(tmp_path: Path
     response = client.delete(f"/api/sessions/{session_id}")
 
     assert response.status_code == 409
-    assert response.json() == {"detail": "Session is running"}
+    assert response.json()["detail"] == "Session is running"
+    assert response.json()["code"] == "http_409"
     assert store.exists(session_id) is True
     assert len(activity_service.list(session_id)) == 1
 
@@ -498,7 +507,8 @@ def test_session_chat_rejects_second_active_run_for_same_session(tmp_path: Path)
     response = client.post(f"/api/sessions/{session_id}/chat", json={"message": "overlap"})
 
     assert response.status_code == 409
-    assert response.json() == {"detail": "Session is already running"}
+    assert response.json()["detail"] == "Session is already running"
+    assert response.json()["code"] == "http_409"
     assert store.load(session_id) == []
 
 
@@ -554,7 +564,7 @@ async def test_interrupt_cancels_in_flight_chat_end_to_end(tmp_path: Path) -> No
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        client.cookies.set("agent_session", "test-session")
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
 
         chat_task = asyncio.ensure_future(
             client.post(f"/api/sessions/{session_id}/chat", json={"message": "hello"})
@@ -626,7 +636,8 @@ def test_activate_missing_session_returns_404(tmp_path: Path) -> None:
     response = client.post("/api/sessions/missing/activate")
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "Session not found"}
+    assert response.json()["detail"] == "Session not found"
+    assert response.json()["code"] == "http_404"
 
 
 def test_chat_returns_runtime_output(tmp_path: Path) -> None:
@@ -810,7 +821,7 @@ def test_chat_passes_codex_effort_from_session_config(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
     client = TestClient(create_app(make_config(tmp_path)))
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
     client.put(
         "/api/sessions/active/config",
@@ -983,7 +994,10 @@ def test_reset_returns_empty_events_and_resets_history(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()["events"] == []
     assert response.json()["session_id"]
-    assert client.get("/api/history").json() == {"events": []}
+    assert client.get("/api/history").json() == {
+        "events": [],
+        "next_cursor": None,
+    }
 
 
 def test_reset_invalidates_real_runtime_pending_approval(tmp_path: Path) -> None:
@@ -1069,6 +1083,14 @@ def test_session_scoped_approval_endpoints_use_path_session_in_injected_runtime_
     assert response.json()["pending_approval"] is None
     assert transcript.active_id() == session_b
     assert (config.workspace_root / "ran.txt").read_text(encoding="utf-8") == "ran"
+    approval_events = client.app.state.audit_service.list(resource_type="approval")
+    assert any(
+        event.action == "chat.approvals.approve"
+        and event.resource_id == pending["id"]
+        and event.session_id == session_a
+        and event.status == "success"
+        for event in approval_events
+    )
 
 
 def test_session_scoped_deny_endpoints_use_path_session_in_injected_runtime_mode(tmp_path: Path) -> None:
@@ -1224,13 +1246,15 @@ def test_runtime_errors_return_json_without_stack_trace(tmp_path: Path) -> None:
         create_app(config=config, runtime=BrokenRuntime()),
         raise_server_exceptions=False,
     )
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
     response = client.post("/api/chat", json={"message": "boom"})
 
     assert response.status_code == 500
     assert response.headers["content-type"] == "application/json"
-    assert response.json() == {"detail": "Internal Server Error"}
+    assert response.json()["detail"] == "Internal Server Error"
+    assert response.json()["code"] == "internal_error"
+    assert response.json()["correlation_id"]
     assert "stack trace details" not in response.text
 
 

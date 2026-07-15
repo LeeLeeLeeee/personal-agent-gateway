@@ -20,7 +20,10 @@ def make_config(tmp_path: Path) -> AppConfig:
 
 def authenticated_client(tmp_path: Path) -> TestClient:
     client = TestClient(create_app(make_config(tmp_path)))
-    client.cookies.set("agent_session", "test-session")
+    client.cookies.set(
+        "agent_session",
+        client.app.state.auth_session_service.issue().token,
+    )
     return client
 
 
@@ -124,9 +127,9 @@ def test_register_artifact_copies_workspace_file(tmp_path: Path) -> None:
     assert content.content == b"img-bytes"
 
 
-def test_register_artifact_allows_absolute_path_outside_workspace(tmp_path: Path) -> None:
-    # Localhost personal tool: registration is allowed from any readable path the
-    # agent reports, not only the workspace (workspace containment intentionally dropped).
+def test_register_artifact_rejects_absolute_path_outside_workspace_in_restricted_mode(
+    tmp_path: Path,
+) -> None:
     client = authenticated_client(tmp_path)
     outside = tmp_path / "capture.png"
     outside.write_bytes(b"img")
@@ -136,14 +139,25 @@ def test_register_artifact_allows_absolute_path_outside_workspace(tmp_path: Path
         json={"path": str(outside)},
     )
 
+    assert response.status_code == 403
+
+
+def test_register_artifact_audits_absolute_path_in_full_access_mode(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    outside = tmp_path / "capture.png"
+    outside.write_bytes(b"img")
+    client.app.state.security_settings.set_access_mode("full_access")
+
+    response = client.post(
+        "/api/artifacts/register",
+        json={"path": str(outside)},
+        headers={"X-Correlation-ID": "corr-artifact"},
+    )
+
     assert response.status_code == 200
-    artifact = response.json()["artifact"]
-    assert artifact["type"] == "image"
-    assert artifact["title"] == "capture.png"
-    # copied into the store, original left in place
-    assert outside.exists()
-    content = client.get(f"/api/artifacts/{artifact['id']}/content")
-    assert content.content == b"img"
+    assert response.json()["artifact"]["title"] == "capture.png"
+    events = client.app.state.audit_service.list(correlation_id="corr-artifact")
+    assert any(event.event_type == "artifact.external_path.registered" for event in events)
 
 
 def test_register_artifact_rejects_directory_path(tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { useConfirm } from "../../providers/UiProvider/index.jsx";
 import { buildCron, describeCron } from "../../../lib/cron.js";
@@ -14,7 +14,7 @@ const WEEKDAYS = [
   [0, "Sunday"], [1, "Monday"], [2, "Tuesday"], [3, "Wednesday"], [4, "Thursday"], [5, "Friday"], [6, "Saturday"]
 ];
 
-function ScheduleForm({ onCreate }) {
+function ScheduleForm({ onCreate, disabled }) {
   const [name, setName] = useState("");
   const [instruction, setInstruction] = useState("");
   const [mode, setMode] = useState("daily");
@@ -30,7 +30,7 @@ function ScheduleForm({ onCreate }) {
 
   function submit(event) {
     event.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || disabled) return;
     onCreate({
       name: name.trim(),
       capability_id: "agent.instruct",
@@ -128,13 +128,13 @@ function ScheduleForm({ onCreate }) {
 
         <div className="schedule-policy mono">Auto-approve · runs the local agent</div>
 
-        <button type="submit" className="btn btn-primary btn-lg schedule-submit" disabled={!canSubmit}>Create schedule</button>
+        <button type="submit" className="btn btn-primary btn-lg schedule-submit" disabled={!canSubmit || disabled}>Create schedule</button>
       </div>
     </form>
   );
 }
 
-function ScheduleRow({ schedule, onPause, onResume, onDelete, onRunNow }) {
+function ScheduleRow({ schedule, onPause, onResume, onDelete, onRunNow, onOpenDetail, automationReady, automationUnavailableReason }) {
   const confirm = useConfirm();
 
   async function handleDelete() {
@@ -161,24 +161,149 @@ function ScheduleRow({ schedule, onPause, onResume, onDelete, onRunNow }) {
         </div>
       </div>
       <div className="schedule-row-actions">
+        <button
+          type="button"
+          className="btn btn-sm"
+          disabled={!onOpenDetail}
+          aria-label={`History for ${schedule.name}`}
+          onClick={() => onOpenDetail?.(schedule.id)}
+        >
+          History
+        </button>
         {schedule.enabled ? (
           <button type="button" className="btn btn-sm" onClick={() => onPause(schedule.id)}>Pause</button>
         ) : (
           <button type="button" className="btn btn-sm" onClick={() => onResume(schedule.id)}>Resume</button>
         )}
-        <button type="button" className="btn btn-sm" onClick={() => onRunNow(schedule.id)}>Run now</button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          disabled={!automationReady}
+          title={automationReady ? undefined : automationUnavailableReason}
+          onClick={() => onRunNow(schedule.id)}
+        >
+          Run now
+        </button>
         <button type="button" className="btn btn-sm btn-destructive" onClick={handleDelete}>Delete</button>
       </div>
     </div>
   );
 }
 
-export function SchedulesView({ schedules = [], onCreate, onPause, onResume, onDelete, onRunNow }) {
+function ScheduleDetail({ detail, onClose }) {
+  const successRate = detail.stats?.success_rate;
+  return (
+    <aside className="schedule-detail" aria-label="Schedule detail">
+      <div className="jobs-drawer-head">
+        <span className="mono">SCHEDULE HISTORY</span>
+        <button type="button" className="jobs-drawer-close" aria-label="Close history" onClick={onClose}>✕</button>
+      </div>
+      <div className="jobs-drawer-body">
+        <div className="jobs-drawer-title">{detail.schedule?.name}</div>
+        <div className="settings-block jobs-drawer-meta">
+          <div className="settings-row">
+            <span className="settings-k mono">TIMEZONE</span>
+            <span className="settings-v mono">{detail.schedule?.timezone || "—"}</span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-k mono">RUNS</span>
+            <span className="settings-v mono">{detail.stats?.total ?? 0}</span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-k mono">SUCCESS RATE</span>
+            <span className="settings-v mono">
+              {successRate == null ? "—" : `${Math.round(successRate * 100)}%`}
+            </span>
+          </div>
+        </div>
+
+        {detail.last_failure?.error_message ? (
+          <div className="jobs-drawer-error mono">{detail.last_failure.error_message}</div>
+        ) : null}
+
+        <div className="mono jobs-drawer-label schedule-detail-label">NEXT 3 RUNS</div>
+        <div className="console" aria-label="Next run preview">
+          {(detail.next_runs || []).map((value) => (
+            <div className="cmd-line" key={value}>{fmtDateTime(value)}</div>
+          ))}
+        </div>
+
+        <div className="mono jobs-drawer-label schedule-detail-label">JOB HISTORY</div>
+        <div className="schedule-history-list">
+          {(detail.jobs || []).map((job) => (
+            <div className="settings-row" key={job.id}>
+              <span className="settings-k mono">{job.id}</span>
+              <StatusBadge kind={job.status} />
+            </div>
+          ))}
+          {!detail.jobs?.length ? <div className="mono schedule-policy">No runs yet.</div> : null}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+export function SchedulesView({
+  schedules = [],
+  automationReady = false,
+  automationUnavailableReason = "Automation is not ready",
+  onCreate,
+  onPause,
+  onResume,
+  onDelete,
+  onRunNow,
+  onLoadDetail,
+  focusScheduleId = null,
+  onFocusHandled
+}) {
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+
+  useEffect(() => {
+    if (!focusScheduleId || !onLoadDetail) return;
+    let active = true;
+    setDetailLoading(true);
+    setDetailError("");
+    onLoadDetail(focusScheduleId)
+      .then((loaded) => {
+        if (active) setDetail(loaded);
+      })
+      .catch(() => {
+        if (active) {
+          setDetail(null);
+          setDetailError("Schedule history could not be loaded.");
+        }
+      })
+      .finally(() => {
+        if (active) setDetailLoading(false);
+      });
+    onFocusHandled?.();
+    return () => {
+      active = false;
+    };
+  }, [focusScheduleId, onFocusHandled, onLoadDetail]);
+
+  async function openDetail(id) {
+    setDetailLoading(true);
+    setDetailError("");
+    try {
+      const loaded = await onLoadDetail(id);
+      setDetail(loaded);
+    } catch (_error) {
+      setDetail(null);
+      setDetailError("Schedule history could not be loaded.");
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
   return (
     <div className="schedules-view">
       <div className="schedules-main">
         <h1 className="headline">Schedules</h1>
         <div className="schedules-sub mono">{schedules.length} shown</div>
+        {!automationReady ? <div className="schedule-policy mono" role="status">{automationUnavailableReason}</div> : null}
         {schedules.length ? (
           <div className="schedule-list">
             {schedules.map((schedule) => (
@@ -189,15 +314,21 @@ export function SchedulesView({ schedules = [], onCreate, onPause, onResume, onD
                 onResume={onResume}
                 onDelete={onDelete}
                 onRunNow={onRunNow}
+                onOpenDetail={onLoadDetail ? openDetail : null}
+                automationReady={automationReady}
+                automationUnavailableReason={automationUnavailableReason}
               />
             ))}
           </div>
         ) : (
           <div className="planned">NO SCHEDULES</div>
         )}
+        {detailLoading ? <div className="planned">LOADING HISTORY</div> : null}
+        {detailError ? <div className="jobs-drawer-error mono">{detailError}</div> : null}
+        {detail ? <ScheduleDetail detail={detail} onClose={() => setDetail(null)} /> : null}
       </div>
 
-      <ScheduleForm onCreate={onCreate} />
+      <ScheduleForm onCreate={onCreate} disabled={!automationReady} />
     </div>
   );
 }

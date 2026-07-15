@@ -6,7 +6,7 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
-from personal_agent_gateway.team_runtime import TeamRuntime
+from personal_agent_gateway.team_runtime import TeamRuntime, _rules_block
 from personal_agent_gateway.teams import TeamRunService
 
 
@@ -593,9 +593,6 @@ async def test_add_work_creates_pending_tasks_from_instruction(tmp_path):
         "Extra B": "pending",
     }
     assert any(m.kind == "plan_note" for m in teams.list_messages(run.id))
-
-
-from personal_agent_gateway.team_runtime import _rules_block
 
 
 def test_rules_block_empty_when_no_snapshot():

@@ -63,6 +63,17 @@ def test_load_config_derives_local_data_paths(
     tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("AGENT_WEB_TOKEN", raising=False)
+    for name in (
+        "AGENT_APP_DB_PATH",
+        "AGENT_ARTIFACT_ROOT",
+        "AGENT_TEMP_DIR",
+        "AGENT_AUTH_DIR",
+        "AGENT_FFMPEG_BIN",
+        "AGENT_FFPROBE_BIN",
+        "AGENT_CAPTURE_BIN",
+        "AGENT_JOB_WORKER_CONCURRENCY",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AGENT_WORKSPACE_ROOT", str(tmp_path / "workspace"))
     monkeypatch.setenv("AGENT_SESSION_DIR", str(tmp_path / "data" / "sessions"))
 

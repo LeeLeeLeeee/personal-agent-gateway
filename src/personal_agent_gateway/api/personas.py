@@ -1,8 +1,7 @@
-from typing import Annotated
-
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from personal_agent_gateway.api.dependencies import session_dependency
 from personal_agent_gateway.personas import Persona
 
 
@@ -31,14 +30,6 @@ class PersonaUpdateRequest(BaseModel):
     default_model: str | None = None
     default_options: dict[str, object] | None = None
     avatar: str | None = None
-
-
-def require_session(session: Annotated[str | None, Cookie(alias="agent_session")] = None) -> None:
-    if not session:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-
-session_dependency = Depends(require_session)
 
 
 @router.get("")

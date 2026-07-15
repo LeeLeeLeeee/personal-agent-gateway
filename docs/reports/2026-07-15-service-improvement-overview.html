@@ -1,0 +1,2819 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Personal Agent Gateway의 서비스 도메인, 개발·기획 PM 진단, 통합 개선 로드맵을 한 화면에 정리한 보고서">
+  <title>Personal Agent Gateway 서비스 개선 통합 리포트</title>
+  <script type="application/json" id="gdoc-meta">
+  {
+    "type": "overview",
+    "title": "Personal Agent Gateway 서비스 개선 통합 리포트",
+    "tags": ["personal-agent-gateway", "development-pm", "product-pm", "roadmap"],
+    "category": "software",
+    "createdAt": "2026-07-15T00:00:00+09:00",
+    "visibility": "private",
+    "path": "personal-agent-gateway/reports/service-improvement-overview"
+  }
+  </script>
+  <style>
+    :root,
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #111418;
+      --panel: #181e24;
+      --panel-2: #202832;
+      --panel-3: #28333e;
+      --text: #eef3f7;
+      --body: #c8d2dc;
+      --muted: #a8b5c2;
+      --line: #34414e;
+      --line-strong: #526272;
+      --accent: #73c8ff;
+      --accent-2: #8be0b3;
+      --danger: #ff8e88;
+      --warning: #ffd079;
+      --info: #aebdff;
+      --code-bg: #0b1117;
+      --code-text: #f0f7ff;
+      --shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
+      --diagram-text: #eef3f7;
+      --diagram-node: #202832;
+      --diagram-line: #a8b5c2;
+      --diagram-label-bg: #181e24;
+      --critical-bg: #3a1f23;
+      --high-bg: #3a2d1d;
+      --medium-bg: #1f3040;
+      --success-bg: #173529;
+    }
+
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f5f7fa;
+      --panel: #ffffff;
+      --panel-2: #edf3f7;
+      --panel-3: #e3edf3;
+      --text: #1c252d;
+      --body: #43515e;
+      --muted: #5d6b78;
+      --line: #d8e1e8;
+      --line-strong: #aebdca;
+      --accent: #075e94;
+      --accent-2: #087b55;
+      --danger: #a72d2a;
+      --warning: #7e5610;
+      --info: #3a50a4;
+      --code-bg: #101820;
+      --code-text: #f1f7ff;
+      --shadow: 0 16px 42px rgba(32, 49, 64, 0.11);
+      --diagram-text: #1c252d;
+      --diagram-node: #edf3f7;
+      --diagram-line: #43515e;
+      --diagram-label-bg: #ffffff;
+      --critical-bg: #ffebe9;
+      --high-bg: #fff3dd;
+      --medium-bg: #e8f2fa;
+      --success-bg: #e5f6ed;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 76px;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", Roboto, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.62;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    button,
+    a {
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button:focus-visible,
+    a:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4 {
+      margin: 0;
+      color: var(--text);
+      line-height: 1.24;
+      letter-spacing: -0.025em;
+    }
+
+    h2 {
+      font-size: clamp(1.45rem, 2.2vw, 2rem);
+    }
+
+    h3 {
+      font-size: 1.08rem;
+    }
+
+    p {
+      margin: 0;
+      color: var(--body);
+    }
+
+    ul,
+    ol {
+      margin: 0;
+      padding-left: 1.25rem;
+      color: var(--body);
+    }
+
+    li + li {
+      margin-top: 0.38rem;
+    }
+
+    strong {
+      color: var(--text);
+    }
+
+    code,
+    pre,
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    :not(pre) > code {
+      padding: 0.08rem 0.36rem;
+      border: 1px solid var(--line);
+      border-radius: 0.32rem;
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 0.86em;
+      overflow-wrap: anywhere;
+    }
+
+    .topbar {
+      position: sticky;
+      z-index: 20;
+      top: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 58px;
+      padding: 0.6rem clamp(1rem, 3vw, 2rem);
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      min-width: 0;
+      font-weight: 760;
+      letter-spacing: -0.02em;
+    }
+
+    .brand__mark {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--text);
+      color: var(--bg);
+      font: 800 0.78rem/1 ui-monospace, monospace;
+    }
+
+    .brand__text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .topbar__actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .control {
+      min-height: 36px;
+      padding: 0.45rem 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--body);
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .control:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    .shell {
+      width: min(1480px, 100%);
+      margin: 0 auto;
+      padding: 2rem clamp(1rem, 3vw, 2rem) 5rem;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 228px minmax(0, 1fr);
+      gap: clamp(1.2rem, 3vw, 2.5rem);
+      align-items: start;
+    }
+
+    .toc {
+      position: sticky;
+      top: 82px;
+      max-height: calc(100vh - 102px);
+      overflow-y: auto;
+      padding: 0.8rem;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+    }
+
+    .toc__label {
+      padding: 0.2rem 0.62rem 0.65rem;
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    .toc a {
+      display: block;
+      padding: 0.48rem 0.62rem;
+      border-radius: 7px;
+      color: var(--body);
+      font-size: 0.82rem;
+      line-height: 1.3;
+    }
+
+    .toc a:hover,
+    .toc a.is-active {
+      background: var(--panel-2);
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .toc a.is-active {
+      box-shadow: inset 3px 0 0 var(--accent);
+      color: var(--accent);
+      font-weight: 750;
+    }
+
+    .main {
+      min-width: 0;
+    }
+
+    .hero,
+    .section {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(1.5rem, 4vw, 3rem);
+      margin-bottom: 1rem;
+    }
+
+    .hero::after {
+      position: absolute;
+      top: -130px;
+      right: -90px;
+      width: 330px;
+      height: 330px;
+      border-radius: 50%;
+      background: radial-gradient(circle, color-mix(in srgb, var(--accent) 24%, transparent), transparent 66%);
+      content: "";
+      pointer-events: none;
+    }
+
+    .eyebrow,
+    .section__kicker {
+      color: var(--accent);
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    .hero h1 {
+      max-width: 820px;
+      margin-top: 0.65rem;
+      font-size: clamp(2rem, 5vw, 4rem);
+      line-height: 1.04;
+    }
+
+    .hero__lead {
+      max-width: 780px;
+      margin-top: 1rem;
+      color: var(--body);
+      font-size: clamp(1rem, 1.7vw, 1.22rem);
+    }
+
+    .hero__meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      margin-top: 1.35rem;
+    }
+
+    .chip,
+    .status,
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 750;
+      line-height: 1.25;
+    }
+
+    .chip {
+      padding: 0.42rem 0.7rem;
+      background: var(--panel-2);
+      color: var(--body);
+    }
+
+    .status,
+    .tag {
+      padding: 0.23rem 0.55rem;
+    }
+
+    .status--critical,
+    .tag--critical {
+      border-color: color-mix(in srgb, var(--danger) 50%, var(--line));
+      background: var(--critical-bg);
+      color: var(--danger);
+    }
+
+    .status--high,
+    .tag--high {
+      border-color: color-mix(in srgb, var(--warning) 45%, var(--line));
+      background: var(--high-bg);
+      color: var(--warning);
+    }
+
+    .status--medium,
+    .tag--medium {
+      background: var(--medium-bg);
+      color: var(--accent);
+    }
+
+    .status--good,
+    .tag--good {
+      background: var(--success-bg);
+      color: var(--accent-2);
+    }
+
+    .tag--fact {
+      background: var(--medium-bg);
+      color: var(--accent);
+    }
+
+    .tag--analysis {
+      background: var(--panel-3);
+      color: var(--body);
+    }
+
+    .tag--recommendation {
+      background: var(--success-bg);
+      color: var(--accent-2);
+    }
+
+    .decision-grid,
+    .signal-grid,
+    .card-grid,
+    .two-col,
+    .three-col,
+    .expand__grid {
+      display: grid;
+      gap: 0.85rem;
+    }
+
+    .decision-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin: 1rem 0;
+    }
+
+    .decision {
+      padding: 1.1rem 1.2rem;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+    }
+
+    .decision__label,
+    .signal__label,
+    .card__label {
+      color: var(--muted);
+      font-size: 0.69rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .decision__value {
+      margin-top: 0.35rem;
+      color: var(--text);
+      font-size: 1rem;
+      font-weight: 720;
+    }
+
+    .decision--danger {
+      box-shadow: inset 4px 0 0 var(--danger);
+    }
+
+    .decision--accent {
+      box-shadow: inset 4px 0 0 var(--accent);
+    }
+
+    .signal-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      margin-bottom: 1rem;
+    }
+
+    .signal {
+      min-height: 112px;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+    }
+
+    .signal__value {
+      margin-top: 0.25rem;
+      color: var(--text);
+      font-size: clamp(1.55rem, 3vw, 2.2rem);
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .signal__note {
+      margin-top: 0.48rem;
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.35;
+    }
+
+    .section {
+      padding: clamp(1.25rem, 3vw, 2rem);
+      margin-top: 1rem;
+      scroll-margin-top: 76px;
+    }
+
+    .section__head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1.3rem;
+    }
+
+    .section__title {
+      margin-top: 0.28rem;
+    }
+
+    .section__lead {
+      max-width: 760px;
+      margin-top: 0.55rem;
+      color: var(--body);
+    }
+
+    .subsection {
+      margin-top: 1.6rem;
+    }
+
+    .subsection:first-child {
+      margin-top: 0;
+    }
+
+    .subsection > h3 {
+      margin-bottom: 0.72rem;
+    }
+
+    .callout {
+      padding: 1rem 1.15rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+
+    .callout--key {
+      border-left: 4px solid var(--accent);
+    }
+
+    .callout--danger {
+      border-left: 4px solid var(--danger);
+      background: var(--critical-bg);
+    }
+
+    .callout__title {
+      margin-bottom: 0.4rem;
+      color: var(--text);
+      font-weight: 760;
+    }
+
+    .story {
+      margin-bottom: 1rem;
+      padding: 0.85rem 1rem;
+      border: 1px dashed var(--line-strong);
+      border-radius: 10px;
+      color: var(--body);
+      font-size: 0.86rem;
+    }
+
+    .story strong {
+      color: var(--accent);
+    }
+
+    .card-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .two-col {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .three-col {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .card {
+      min-width: 0;
+      padding: 1rem 1.05rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+
+    .card h3,
+    .card h4 {
+      margin-top: 0.3rem;
+      margin-bottom: 0.45rem;
+    }
+
+    .card p,
+    .card li {
+      font-size: 0.88rem;
+    }
+
+    .card ul {
+      margin-top: 0.6rem;
+    }
+
+    .card--chat {
+      box-shadow: inset 0 3px 0 var(--accent);
+    }
+
+    .card--team {
+      box-shadow: inset 0 3px 0 var(--accent-2);
+    }
+
+    .card--auto {
+      box-shadow: inset 0 3px 0 var(--danger);
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+
+    table {
+      width: 100%;
+      min-width: 760px;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+
+    th,
+    td {
+      padding: 0.78rem 0.85rem;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tbody tr:hover td {
+      background: color-mix(in srgb, var(--panel-2) 62%, transparent);
+    }
+
+    td {
+      color: var(--body);
+    }
+
+    td strong {
+      color: var(--text);
+    }
+
+    .architecture {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-2);
+    }
+
+    .diagram-visual {
+      width: 100%;
+      margin: 0;
+      overflow-x: auto;
+    }
+
+    .diagram-visual svg {
+      display: block;
+      width: 100%;
+      min-width: 760px;
+      height: auto;
+    }
+
+    .diagram-visual .node {
+      fill: var(--diagram-node);
+      stroke: var(--diagram-line);
+      stroke-width: 1.5;
+    }
+
+    .diagram-visual .node--accent {
+      stroke: var(--accent);
+      stroke-width: 2.5;
+    }
+
+    .diagram-visual .node--danger {
+      stroke: var(--danger);
+      stroke-width: 2.5;
+      stroke-dasharray: 7 5;
+    }
+
+    .diagram-visual .edge {
+      fill: none;
+      stroke: var(--diagram-line);
+      stroke-width: 2;
+      marker-end: url(#arrowhead);
+    }
+
+    .diagram-visual .edge--broken {
+      stroke: var(--danger);
+      stroke-dasharray: 7 5;
+    }
+
+    .diagram-visual text {
+      fill: var(--diagram-text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      text-anchor: middle;
+    }
+
+    .diagram-visual .small {
+      fill: var(--muted);
+      font-size: 11px;
+    }
+
+    .diagram-caption {
+      margin-top: 0.75rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .flow-lane {
+      display: flex;
+      align-items: stretch;
+      gap: 0.45rem;
+      overflow-x: auto;
+      padding: 0.8rem 0 0.35rem;
+    }
+
+    .flow-node {
+      display: flex;
+      min-width: 132px;
+      min-height: 70px;
+      flex: 1 0 132px;
+      align-items: center;
+      justify-content: center;
+      padding: 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      color: var(--text);
+      font-size: 0.8rem;
+      font-weight: 720;
+      text-align: center;
+    }
+
+    .flow-arrow {
+      display: grid;
+      flex: 0 0 24px;
+      place-items: center;
+      color: var(--accent);
+      font-size: 1.25rem;
+    }
+
+    .flow-node--broken {
+      border-style: dashed;
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+
+    .claim-list {
+      display: grid;
+      gap: 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .claim {
+      display: grid;
+      grid-template-columns: 110px minmax(0, 1fr);
+      gap: 1rem;
+      align-items: start;
+      padding: 0.8rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .claim__body {
+      color: var(--body);
+    }
+
+    .code-example {
+      position: relative;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--code-bg);
+    }
+
+    .code-context {
+      min-height: 42px;
+      margin: 0;
+      padding: 0.72rem 6.5rem 0.6rem 0.9rem;
+      border-bottom: 1px solid #27323d;
+      color: #9fb2c2;
+      font-size: 0.75rem;
+      font-weight: 750;
+    }
+
+    .code-copy {
+      position: absolute;
+      top: 0.45rem;
+      right: 0.5rem;
+      padding: 0.35rem 0.58rem;
+      border: 1px solid #3b4c59;
+      border-radius: 7px;
+      background: #17212a;
+      color: #dce8f0;
+      font: inherit;
+      font-size: 0.7rem;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    pre {
+      max-width: 100%;
+      margin: 0;
+      padding: 1rem;
+      overflow-x: auto;
+      background: var(--code-bg);
+      color: var(--code-text);
+      font-size: 0.78rem;
+      line-height: 1.58;
+      white-space: pre;
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+    }
+
+    .tok-kw {
+      color: #ff9bd2;
+    }
+
+    .tok-fn {
+      color: #8fd7ff;
+    }
+
+    .tok-str {
+      color: #b8e986;
+    }
+
+    .tok-type {
+      color: #ffd48a;
+    }
+
+    .code-explanation {
+      padding: 0.75rem 0.9rem;
+      border-top: 1px solid #27323d;
+      background: #121b23;
+      color: #b6c6d2;
+      font-size: 0.78rem;
+    }
+
+    .myth-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.8rem;
+    }
+
+    .myth {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+
+    .myth__row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .myth__cell {
+      padding: 0.9rem;
+      background: var(--panel-2);
+      color: var(--body);
+      font-size: 0.84rem;
+    }
+
+    .myth__cell + .myth__cell {
+      border-left: 1px solid var(--line);
+    }
+
+    .myth__label {
+      display: block;
+      margin-bottom: 0.35rem;
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .myth__label--wrong {
+      color: var(--danger);
+    }
+
+    .myth__label--right {
+      color: var(--accent-2);
+    }
+
+    .roadmap-line {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      gap: 0.7rem;
+      align-items: center;
+      margin: 1rem 0 1.5rem;
+    }
+
+    .roadmap-phase {
+      min-height: 108px;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+
+    .roadmap-phase strong {
+      display: block;
+      font-size: 1.02rem;
+    }
+
+    .roadmap-phase span {
+      display: block;
+      margin-top: 0.35rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .roadmap-arrow {
+      color: var(--accent);
+      font-size: 1.5rem;
+    }
+
+    .work-item {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+
+    .work-item__head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.55rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .work-item__id {
+      color: var(--accent);
+      font-family: ui-monospace, monospace;
+      font-size: 0.8rem;
+      font-weight: 800;
+    }
+
+    .work-item h3 {
+      flex: 1;
+    }
+
+    .work-item p,
+    .work-item li {
+      font-size: 0.86rem;
+    }
+
+    .work-item details {
+      margin-top: 0.75rem;
+      border-top: 1px solid var(--line);
+    }
+
+    summary {
+      padding-top: 0.7rem;
+      color: var(--accent);
+      font-weight: 720;
+      cursor: pointer;
+    }
+
+    details[open] summary {
+      margin-bottom: 0.55rem;
+    }
+
+    .checklist {
+      display: grid;
+      gap: 0.6rem;
+      padding: 0;
+      list-style: none;
+    }
+
+    .checklist li {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 0.55rem;
+      align-items: start;
+      margin: 0;
+      color: var(--body);
+    }
+
+    .check {
+      display: grid;
+      width: 20px;
+      height: 20px;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 5px;
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 800;
+    }
+
+    .check--done {
+      border-color: var(--accent-2);
+      background: var(--success-bg);
+      color: var(--accent-2);
+    }
+
+    .ia {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.8rem;
+    }
+
+    .ia__group {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+
+    .ia__group h3 {
+      color: var(--accent);
+      font-family: ui-monospace, monospace;
+      font-size: 0.88rem;
+      letter-spacing: 0.06em;
+    }
+
+    .ia__group ul {
+      margin-top: 0.55rem;
+      padding-left: 1rem;
+      font-size: 0.85rem;
+    }
+
+    .glossary {
+      display: grid;
+      gap: 0;
+    }
+
+    .term {
+      display: grid;
+      grid-template-columns: 180px minmax(0, 1fr);
+      gap: 1rem;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .term:last-child {
+      border-bottom: 0;
+    }
+
+    .term__name {
+      color: var(--text);
+      font-weight: 750;
+    }
+
+    .term__definition {
+      color: var(--body);
+    }
+
+    .refs {
+      margin: 0;
+      padding-left: 1.3rem;
+    }
+
+    .refs li {
+      padding: 0.45rem 0;
+      color: var(--body);
+      overflow-wrap: anywhere;
+    }
+
+    .expand__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .expand__card {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: 0.7rem;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+
+    .expand__head {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .expand__icon {
+      font-size: 1.2rem;
+    }
+
+    .expand__label {
+      color: var(--text);
+      font-weight: 760;
+    }
+
+    .expand__prompt {
+      flex: 1;
+      color: var(--body);
+      font-size: 0.86rem;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .expand__actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.38rem;
+    }
+
+    .expand__btn {
+      padding: 0.35rem 0.58rem;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--body);
+      font: inherit;
+      font-size: 0.72rem;
+      font-weight: 720;
+      cursor: pointer;
+    }
+
+    .expand__btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .foot {
+      width: min(1480px, 100%);
+      margin: 1rem auto 0;
+      padding: 0 2rem 3rem;
+      color: var(--muted);
+      font-size: 0.76rem;
+      text-align: center;
+    }
+
+    @media (max-width: 1100px) {
+      .signal-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .card-grid,
+      .three-col {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 860px) {
+      html {
+        scroll-padding-top: 68px;
+      }
+
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .toc {
+        position: static;
+        max-height: none;
+        display: flex;
+        gap: 0.3rem;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+
+      .toc__label {
+        display: none;
+      }
+
+      .toc a {
+        flex: 0 0 auto;
+      }
+
+      .decision-grid,
+      .two-col,
+      .myth-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .roadmap-line {
+        grid-template-columns: 1fr;
+      }
+
+      .roadmap-arrow {
+        transform: rotate(90deg);
+        text-align: center;
+      }
+    }
+
+    @media (max-width: 620px) {
+      body {
+        font-size: 14px;
+      }
+
+      .topbar {
+        padding-inline: 0.8rem;
+      }
+
+      .brand__text {
+        max-width: 190px;
+      }
+
+      .brand {
+        flex: 1;
+      }
+
+      #theme-toggle {
+        width: 38px;
+        min-width: 38px;
+        padding: 0;
+        overflow: hidden;
+        font-size: 0;
+      }
+
+      #theme-toggle::before {
+        content: "◐";
+        font-size: 1rem;
+      }
+
+      .control--print {
+        display: none;
+      }
+
+      .shell {
+        padding-inline: 0.7rem;
+        padding-top: 1rem;
+      }
+
+      .hero,
+      .section {
+        border-radius: 14px;
+      }
+
+      .signal-grid,
+      .card-grid,
+      .three-col,
+      .ia,
+      .expand__grid {
+        grid-template-columns: 1fr;
+      }
+
+      .claim,
+      .term {
+        grid-template-columns: 1fr;
+        gap: 0.4rem;
+      }
+
+      .myth__row {
+        grid-template-columns: 1fr;
+      }
+
+      .myth__cell + .myth__cell {
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+    }
+
+    @media print {
+      :root,
+      :root[data-theme="dark"],
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --bg: #ffffff;
+        --panel: #ffffff;
+        --panel-2: #f4f6f8;
+        --panel-3: #e9edf1;
+        --text: #111111;
+        --body: #333333;
+        --muted: #555555;
+        --line: #cccccc;
+        --line-strong: #999999;
+        --accent: #075e94;
+        --accent-2: #087b55;
+        --danger: #99211e;
+        --warning: #7e5610;
+        --shadow: none;
+      }
+
+      body {
+        background: #ffffff;
+      }
+
+      .topbar,
+      .toc,
+      .expand__actions {
+        display: none;
+      }
+
+      .shell {
+        width: 100%;
+        padding: 0;
+      }
+
+      .layout {
+        display: block;
+      }
+
+      .hero,
+      .section,
+      .signal,
+      .decision {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+
+      .section {
+        margin-top: 0.5rem;
+      }
+
+      .diagram-visual svg {
+        min-width: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true">PAG</span>
+      <span class="brand__text">SERVICE IMPROVEMENT REPORT</span>
+    </div>
+    <div class="topbar__actions">
+      <button class="control" id="theme-toggle" type="button" aria-label="색상 테마 전환">테마: 시스템</button>
+      <button class="control control--print" id="print-report" type="button">인쇄</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <div class="layout">
+      <nav class="toc" aria-label="보고서 목차">
+        <div class="toc__label">Navigate</div>
+        <a href="#top">결론과 핵심 신호</a>
+        <a href="#identity">제품·도메인 지도</a>
+        <a href="#flows">실행 흐름</a>
+        <a href="#evidence">확인된 근거</a>
+        <a href="#development">개발 PM 진단</a>
+        <a href="#product">기획 PM 진단</a>
+        <a href="#roadmap">통합 로드맵</a>
+        <a href="#operations">PM 운영·지표</a>
+        <a href="#verify">검증·한계</a>
+        <a href="#glossary">용어 정리</a>
+        <a href="#references">참고 자료</a>
+        <a href="#expand">AI로 더 파보기</a>
+      </nav>
+
+      <main class="main" id="top">
+        <header class="hero">
+          <div class="eyebrow">Architecture · Development PM · Product PM · Roadmap</div>
+          <h1>Personal Agent Gateway<br>서비스 개선 통합 리포트</h1>
+          <p class="hero__lead">
+            로컬 Agent를 원격에서 안전하게 맡기고, 진행·결과·복구를 신뢰할 수 있게 만들기 위한
+            전체 도메인 지도와 개발·기획 우선순위를 한 화면에 모았습니다.
+          </p>
+          <div class="hero__meta">
+            <span class="chip">기준일 2026-07-15</span>
+            <span class="chip">대상 개발 PM · 기획 PM · 구현 담당자</span>
+            <span class="chip">상태 분석 완료 · 구현 미착수</span>
+            <span class="chip">근거 로컬 코드 · 테스트 · 격리 진단</span>
+          </div>
+        </header>
+
+        <div class="decision-grid" aria-label="의사결정 요약">
+          <article class="decision decision--accent">
+            <div class="decision__label">핵심 권고</div>
+            <div class="decision__value">R0-1~R0-5를 하나의 “신뢰성 릴리스”로 묶어 순서대로 완료</div>
+          </article>
+          <article class="decision decision--danger">
+            <div class="decision__label">가장 큰 위험</div>
+            <div class="decision__value">임의의 non-empty session cookie가 protected API를 통과</div>
+          </article>
+          <article class="decision">
+            <div class="decision__label">신뢰도</div>
+            <div class="decision__value">높음 — source code와 격리된 임시 app 관찰로 교차 확인</div>
+          </article>
+          <article class="decision">
+            <div class="decision__label">지금 필요한 결정</div>
+            <div class="decision__value">Session 방식 · single-process 복구 정책 · Review/Concurrency 단기 노출</div>
+          </article>
+        </div>
+
+        <div class="signal-grid" aria-label="핵심 수치">
+          <article class="signal">
+            <div class="signal__label">Service domains</div>
+            <div class="signal__value">10</div>
+            <div class="signal__note">사용자 가치와 source of truth 기준</div>
+          </article>
+          <article class="signal">
+            <div class="signal__label">Execution axes</div>
+            <div class="signal__value">3</div>
+            <div class="signal__note">Chat · Team Run · Automation</div>
+          </article>
+          <article class="signal">
+            <div class="signal__label">Primary gaps</div>
+            <div class="signal__value">3</div>
+            <div class="signal__note">인증 · lifecycle · 제품 계약</div>
+          </article>
+          <article class="signal">
+            <div class="signal__label">Backend tests</div>
+            <div class="signal__value">338</div>
+            <div class="signal__note">pytest collect-only 기준</div>
+          </article>
+          <article class="signal">
+            <div class="signal__label">Roadmap phases</div>
+            <div class="signal__value">3</div>
+            <div class="signal__note">NOW → NEXT → LATER</div>
+          </article>
+        </div>
+
+        <section class="section" aria-labelledby="summary-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">30-second summary</div>
+              <h2 class="section__title" id="summary-title">새 기능보다 신뢰 기반이 먼저입니다</h2>
+              <p class="section__lead">
+                Chat과 Team Run은 실제 실행 경로가 연결돼 있지만, 인증 session과 Automation lifecycle,
+                UI-runtime 계약은 제품이 약속하는 수준을 충족하지 못합니다.
+              </p>
+            </div>
+            <span class="status status--critical">ACTION REQUIRED</span>
+          </div>
+          <div class="story">
+            <strong>이야기 구조:</strong> 제품의 정체성과 실행 축 → 도메인과 실제 실행 흐름 → 끊긴 계약의 근거
+            → 개발·기획 개선안 → 하나의 실행 로드맵 순으로 읽습니다.
+          </div>
+          <div class="callout callout--key">
+            <div class="callout__title">권장 실행 순서</div>
+            <p>
+              <strong>유효 session 검증</strong> → <strong>Worker/Scheduler lifecycle</strong> →
+              <strong>background 오류 격리</strong> → <strong>UI/runtime 계약 정합</strong> →
+              <strong>핵심 E2E reliability gate</strong>
+            </p>
+          </div>
+        </section>
+
+        <section class="section" id="identity" aria-labelledby="identity-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">Application identity</div>
+              <h2 class="section__title" id="identity-title">제품과 도메인 지도</h2>
+              <p class="section__lead">
+                Personal Agent Gateway는 로컬 PC의 Codex·Claude CLI와 자동화 도구를 외부 브라우저에서
+                제어하는 1인용 control console입니다.
+              </p>
+            </div>
+            <span class="status status--good">LOCAL-FIRST</span>
+          </div>
+
+          <div class="three-col">
+            <article class="card card--chat">
+              <div class="card__label">Execution axis 01</div>
+              <h3>Chat</h3>
+              <p>한 Agent에게 세션 단위 작업을 맡기고 live activity, 승인, 중단, 결과를 관리합니다.</p>
+            </article>
+            <article class="card card--team">
+              <div class="card__label">Execution axis 02</div>
+              <h3>Team Run</h3>
+              <p>Persona·Team·Rules snapshot으로 복합 목표를 계획하고 task별 실행과 최종 종합을 관리합니다.</p>
+            </article>
+            <article class="card card--auto">
+              <div class="card__label">Execution axis 03</div>
+              <h3>Automation</h3>
+              <p>Capability를 Job으로 실행하고 Schedule과 Artifact로 반복 결과를 관리합니다. 현재 lifecycle이 끊겨 있습니다.</p>
+            </article>
+          </div>
+
+          <div class="subsection">
+            <h3>시스템 컨텍스트</h3>
+            <div class="architecture">
+              <figure class="diagram-visual" data-diagram-id="D-ARCH">
+                <svg viewBox="0 0 980 455" role="img" aria-labelledby="arch-svg-title arch-svg-desc">
+                  <title id="arch-svg-title">Personal Agent Gateway 시스템 구조</title>
+                  <desc id="arch-svg-desc">사용자와 브라우저에서 FastAPI Gateway로 진입하고 Chat, Team Run, Automation으로 분기해 CLI, 도구, 저장소와 연결되는 구조. Automation lifecycle 연결은 끊긴 상태로 표시한다.</desc>
+                  <defs>
+                    <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                      <path d="M0,0 L10,4 L0,8 Z" fill="var(--diagram-line)"></path>
+                    </marker>
+                  </defs>
+
+                  <path class="edge" d="M125 116 H205"></path>
+                  <path class="edge" d="M345 116 H405"></path>
+                  <path class="edge" d="M545 116 C585 116 575 55 620 55"></path>
+                  <path class="edge" d="M545 116 H620"></path>
+                  <path class="edge edge--broken" d="M545 116 C585 116 575 212 620 212"></path>
+                  <path class="edge" d="M760 55 H825"></path>
+                  <path class="edge" d="M760 116 H825"></path>
+                  <path class="edge edge--broken" d="M760 212 H825"></path>
+                  <path class="edge" d="M690 82 V314"></path>
+                  <path class="edge" d="M690 143 V314"></path>
+                  <path class="edge edge--broken" d="M690 239 V314"></path>
+                  <path class="edge" d="M895 143 V314"></path>
+
+                  <rect class="node" x="20" y="80" width="105" height="72" rx="12"></rect>
+                  <text x="72" y="109">사용자</text>
+                  <text class="small" x="72" y="130">local / remote</text>
+
+                  <rect class="node node--accent" x="205" y="80" width="140" height="72" rx="12"></rect>
+                  <text x="275" y="109">React Console</text>
+                  <text class="small" x="275" y="130">browser UI</text>
+
+                  <rect class="node node--accent" x="405" y="80" width="140" height="72" rx="12"></rect>
+                  <text x="475" y="109">FastAPI</text>
+                  <text class="small" x="475" y="130">Gateway / APIs</text>
+
+                  <rect class="node" x="620" y="20" width="140" height="70" rx="12"></rect>
+                  <text x="690" y="49">Chat Runtime</text>
+                  <text class="small" x="690" y="69">session + SSE</text>
+
+                  <rect class="node" x="620" y="102" width="140" height="70" rx="12"></rect>
+                  <text x="690" y="131">Team Runtime</text>
+                  <text class="small" x="690" y="151">plan + task + synthesis</text>
+
+                  <rect class="node node--danger" x="620" y="184" width="140" height="70" rx="12"></rect>
+                  <text x="690" y="213">Jobs / Schedules</text>
+                  <text class="small" x="690" y="233">lifecycle disconnected</text>
+
+                  <rect class="node" x="825" y="20" width="140" height="70" rx="12"></rect>
+                  <text x="895" y="49">Codex / Claude</text>
+                  <text class="small" x="895" y="69">local CLI</text>
+
+                  <rect class="node" x="825" y="102" width="140" height="70" rx="12"></rect>
+                  <text x="895" y="131">Workspace</text>
+                  <text class="small" x="895" y="151">files / documents</text>
+
+                  <rect class="node node--danger" x="825" y="184" width="140" height="70" rx="12"></rect>
+                  <text x="895" y="213">Tool Runners</text>
+                  <text class="small" x="895" y="233">shell / media / agent</text>
+
+                  <rect class="node" x="430" y="314" width="165" height="76" rx="12"></rect>
+                  <text x="512" y="345">JSONL Transcript</text>
+                  <text class="small" x="512" y="367">conversation replay</text>
+
+                  <rect class="node" x="615" y="314" width="150" height="76" rx="12"></rect>
+                  <text x="690" y="345">SQLite</text>
+                  <text class="small" x="690" y="367">state / metadata</text>
+
+                  <rect class="node" x="790" y="314" width="175" height="76" rx="12"></rect>
+                  <text x="877" y="345">Artifacts / Auth</text>
+                  <text class="small" x="877" y="367">files + credentials</text>
+
+                  <text class="small" x="693" y="425">점선·붉은 경계 = 클래스/UI는 있으나 앱 실행 경로가 완성되지 않은 영역</text>
+                </svg>
+              </figure>
+              <p class="diagram-caption">
+                Chat과 Team Run은 UI → API → runtime → CLI/저장까지 연결됩니다. Automation은 Job/Schedule 생성 뒤
+                queue consumer와 due loop로 이어지는 app lifecycle이 빠져 있습니다.
+              </p>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>10개 도메인 인벤토리</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>도메인</th>
+                    <th>사용자 가치</th>
+                    <th>주요 소유권 / 저장소</th>
+                    <th>성숙도</th>
+                    <th>핵심 보완점</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>인증·접근 제어</strong></td>
+                    <td>OTP 이후 로컬 실행 보호</td>
+                    <td>Auth files · cookie · API dependencies</td>
+                    <td><span class="status status--high">부분 구현</span></td>
+                    <td>발급 session 저장·검증·만료·폐기</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Agent catalog·설정</strong></td>
+                    <td>model·effort·권한 선택</td>
+                    <td>local capability · transcript config</td>
+                    <td><span class="status status--good">운영 가능</span></td>
+                    <td>탐지 갱신과 구체적 실패 진단</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Chat session·activity</strong></td>
+                    <td>대화·중단·승인·SSE</td>
+                    <td>JSONL · SQLite activity · memory registry</td>
+                    <td><span class="status status--good">운영 가능</span></td>
+                    <td>전량 읽기 제거와 pagination</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Persona·Team·Rules</strong></td>
+                    <td>역할과 정책 재사용</td>
+                    <td>SQLite · run snapshot</td>
+                    <td><span class="status status--good">운영 가능</span></td>
+                    <td>prompt 지시와 권한 강제 구분</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Team Run</strong></td>
+                    <td>계획·실행·종합·재개</td>
+                    <td>SQLite · run workspace · memory registry</td>
+                    <td><span class="status status--critical">계약 불일치</span></td>
+                    <td>Review/Concurrency 실제 동작 정합</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Capability·Job</strong></td>
+                    <td>상태 기반 도구 실행</td>
+                    <td>SQLite · runners · artifact files</td>
+                    <td><span class="status status--critical">설계 단계</span></td>
+                    <td>JobWorker startup 연결</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Schedule</strong></td>
+                    <td>반복 작업과 Run now</td>
+                    <td>SQLite</td>
+                    <td><span class="status status--critical">설계 단계</span></td>
+                    <td>SchedulerLoop startup 연결</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Artifact·Document</strong></td>
+                    <td>결과 탐색·미리보기·다운로드</td>
+                    <td>artifact root · workspace · SQLite metadata</td>
+                    <td><span class="status status--good">운영 가능</span></td>
+                    <td>전량 scan과 보관·삭제 정책</td>
+                  </tr>
+                  <tr>
+                    <td><strong>운영·관측·복구</strong></td>
+                    <td>진단·추적·중단·백업</td>
+                    <td>stdout · SQLite WAL · config</td>
+                    <td><span class="status status--high">부분 구현</span></td>
+                    <td>health·audit·emergency stop·backup</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Web console</strong></td>
+                    <td>모든 도메인 탐색·조작</td>
+                    <td>GatewayApp · browser state</td>
+                    <td><span class="status status--high">부분 구현</span></td>
+                    <td>집중된 상태/fetch/SSE와 오류 유실</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="subsection two-col">
+            <div class="card">
+              <div class="card__label">State contracts</div>
+              <h3>유지해야 할 실행 계약</h3>
+              <ul>
+                <li>Chat·Team 동일 ID의 중복 실행을 차단합니다.</li>
+                <li>Team Run은 Persona·Rules·model을 시작 시점 snapshot으로 고정합니다.</li>
+                <li>재시작 시 active Team은 <code>interrupted</code>로 수렴하고 사용자 Resume을 기다립니다.</li>
+                <li>workspace·artifact·document의 path escape를 차단합니다.</li>
+              </ul>
+            </div>
+            <div class="card">
+              <div class="card__label">Data ownership</div>
+              <h3>데이터와 삭제·복구</h3>
+              <ul>
+                <li>Transcript는 대화 재현, activity는 진행 기록, audit는 보안 근거로 분리합니다.</li>
+                <li>Session 삭제는 JSONL·activity를, Team Run 삭제는 관계 row·전용 workspace를 함께 제거합니다.</li>
+                <li>Job/Schedule은 SQLite에 남지만 실행 lifecycle이 현재 빠져 있습니다.</li>
+                <li>Artifact register는 Full Access 성격상 workspace 밖 readable file도 허용합니다.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="flows" aria-labelledby="flows-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">Behavior walkthroughs</div>
+              <h2 class="section__title" id="flows-title">실제 실행 흐름과 끊긴 지점</h2>
+              <p class="section__lead">기능 이름이 아니라 사용자 행동이 어디까지 도달하는지를 기준으로 봅니다.</p>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <div class="work-item">
+              <div class="work-item__head">
+                <span class="work-item__id">FLOW-CHAT</span>
+                <h3>Chat — 실행·저장·SSE까지 연결</h3>
+                <span class="status status--good">CONNECTED</span>
+              </div>
+              <div class="flow-lane" aria-label="Chat 실행 흐름">
+                <div class="flow-node">사용자 메시지</div><div class="flow-arrow">→</div>
+                <div class="flow-node">Protected API</div><div class="flow-arrow">→</div>
+                <div class="flow-node">RunRegistry<br>중복 차단</div><div class="flow-arrow">→</div>
+                <div class="flow-node">Agent Runtime</div><div class="flow-arrow">→</div>
+                <div class="flow-node">Codex / Claude</div><div class="flow-arrow">→</div>
+                <div class="flow-node">Transcript + Activity + SSE</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <div class="work-item">
+              <div class="work-item__head">
+                <span class="work-item__id">FLOW-TEAM</span>
+                <h3>Team Run — 연결됐지만 Review·Concurrency 계약 불일치</h3>
+                <span class="status status--high">PARTIAL</span>
+              </div>
+              <div class="flow-lane" aria-label="Team Run 실행 흐름">
+                <div class="flow-node">Run + Snapshot</div><div class="flow-arrow">→</div>
+                <div class="flow-node">Leader Planning</div><div class="flow-arrow">→</div>
+                <div class="flow-node">Pending Task<br>순차 실행</div><div class="flow-arrow">→</div>
+                <div class="flow-node">Leader Synthesis</div><div class="flow-arrow">→</div>
+                <div class="flow-node">Terminal + SSE</div><div class="flow-arrow">→</div>
+                <div class="flow-node">Detail 4 API + Document Scan</div>
+              </div>
+              <p style="margin-top:0.7rem;">
+                <code>max_workers</code> 값과 무관하게 task는 순차 실행됩니다.
+                <code>review_only</code>는 member review를 실행하지 않고 planning 뒤 종료합니다.
+              </p>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <div class="work-item">
+              <div class="work-item__head">
+                <span class="work-item__id">FLOW-AUTO</span>
+                <h3>Automation — Job 생성 뒤 runner로 이어지지 않음</h3>
+                <span class="status status--critical">DISCONNECTED</span>
+              </div>
+              <div class="flow-lane" aria-label="Automation 실행 단절">
+                <div class="flow-node">Schedule / Run now</div><div class="flow-arrow">→</div>
+                <div class="flow-node flow-node--broken">SchedulerLoop<br>미기동</div><div class="flow-arrow">⇢</div>
+                <div class="flow-node">Job: queued</div><div class="flow-arrow">→</div>
+                <div class="flow-node flow-node--broken">JobWorker<br>미기동</div><div class="flow-arrow">⇢</div>
+                <div class="flow-node">Runner</div><div class="flow-arrow">→</div>
+                <div class="flow-node">Result / Artifact</div>
+              </div>
+              <p style="margin-top:0.7rem;">
+                클래스와 UI가 존재해도 app startup에서 <code>start()</code>되지 않으면 제품 기능은 실행되지 않습니다.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="evidence" aria-labelledby="evidence-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">Observed local evidence</div>
+              <h2 class="section__title" id="evidence-title">확인된 근거</h2>
+              <p class="section__lead">사실·관찰·분석을 분리했습니다. 아래 A 등급은 현재 저장소 source 또는 격리 진단으로 직접 확인했습니다.</p>
+            </div>
+            <span class="status status--good">PRIMARY EVIDENCE</span>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>발견 사항</th>
+                  <th>유형</th>
+                  <th>근거</th>
+                  <th>신뢰도</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>임의 non-empty cookie로 <code>/api/settings</code> 200</strong></td>
+                  <td><span class="tag tag--fact">관찰 사실</span></td>
+                  <td>격리된 임시 app: no cookie 401 / forged cookie 200</td>
+                  <td><span class="status status--good">A · 직접 관찰</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Auth dependency는 cookie 비어 있음만 검사</strong></td>
+                  <td><span class="tag tag--fact">코드 사실</span></td>
+                  <td><code>app.py::_require_agent_session</code></td>
+                  <td><span class="status status--good">A · source</span></td>
+                </tr>
+                <tr>
+                  <td><strong>App startup 뒤 JobWorker task가 <code>None</code></strong></td>
+                  <td><span class="tag tag--fact">관찰 사실</span></td>
+                  <td>격리된 임시 app</td>
+                  <td><span class="status status--good">A · 직접 관찰</span></td>
+                </tr>
+                <tr>
+                  <td><strong>SchedulerLoop가 app에 생성되지 않음</strong></td>
+                  <td><span class="tag tag--fact">코드+관찰</span></td>
+                  <td>repository search / app state</td>
+                  <td><span class="status status--good">A · 교차 확인</span></td>
+                </tr>
+                <tr>
+                  <td><strong><code>run_one()</code> 예외가 worker loop 밖으로 전파 가능</strong></td>
+                  <td><span class="tag tag--fact">코드 사실</span></td>
+                  <td><code>job_worker.py::_run_loop</code></td>
+                  <td><span class="status status--good">A · source</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Team task loop는 순차 실행</strong></td>
+                  <td><span class="tag tag--fact">코드 사실</span></td>
+                  <td><code>team_runtime.py</code></td>
+                  <td><span class="status status--good">A · source</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Backend 338 tests collected</strong></td>
+                  <td><span class="tag tag--fact">명령 결과</span></td>
+                  <td><code>python -m pytest --collect-only -q</code></td>
+                  <td><span class="status status--good">A · local command</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Frontend 상태·fetch·SSE 집중과 오류 축약</strong></td>
+                  <td><span class="tag tag--fact">코드 사실</span></td>
+                  <td><code>GatewayApp</code> / <code>api/client.js</code></td>
+                  <td><span class="status status--good">A · source</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="subsection">
+            <h3>대표 코드 근거</h3>
+            <div class="card-grid">
+              <figure class="code-example" data-code-example-id="C-AUTH">
+                <figcaption class="code-context">src/personal_agent_gateway/app.py · session dependency</figcaption>
+                <button class="code-copy" type="button" data-copy-code="C-AUTH">코드 복사</button>
+                <pre><code class="language-python"><span class="tok-kw">def</span> <span class="tok-fn">_require_agent_session</span>(
+    session: Annotated[str | None, Cookie(alias=<span class="tok-str">"agent_session"</span>)] = None,
+) -&gt; None:
+    <span class="tok-kw">if</span> not session:
+        <span class="tok-kw">raise</span> HTTPException(
+            status_code=401,
+            detail=<span class="tok-str">"OTP login required"</span>,
+        )</code></pre>
+                <p class="code-explanation">발급·서명·만료·revoke 확인 없이 값의 존재만 신뢰합니다.</p>
+              </figure>
+
+              <figure class="code-example" data-code-example-id="C-LIFECYCLE">
+                <figcaption class="code-context">src/personal_agent_gateway/app.py · JobWorker composition</figcaption>
+                <button class="code-copy" type="button" data-copy-code="C-LIFECYCLE">코드 복사</button>
+                <pre><code class="language-python">job_worker = <span class="tok-type">JobWorker</span>(
+    job_service,
+    artifact_store,
+    runners,
+)
+app.state.job_worker = job_worker
+
+<span class="tok-kw"># startup에서 job_worker.start() 없음</span>
+<span class="tok-kw"># SchedulerLoop 생성도 없음</span></code></pre>
+                <p class="code-explanation">객체는 composition에 존재하지만 실제 queue consumer lifecycle은 시작되지 않습니다.</p>
+              </figure>
+
+              <figure class="code-example" data-code-example-id="C-WORKER">
+                <figcaption class="code-context">src/personal_agent_gateway/job_worker.py · worker loop</figcaption>
+                <button class="code-copy" type="button" data-copy-code="C-WORKER">코드 복사</button>
+                <pre><code class="language-python"><span class="tok-kw">async def</span> <span class="tok-fn">_run_loop</span>(self) -&gt; None:
+    <span class="tok-kw">while</span> True:
+        job_id = <span class="tok-kw">await</span> self._queue.get()
+        <span class="tok-kw">try</span>:
+            <span class="tok-kw">await</span> self.run_one(job_id)
+        <span class="tok-kw">finally</span>:
+            self._queue.task_done()</code></pre>
+                <p class="code-explanation"><code>run_one()</code> 실패를 job 단위로 흡수하지 않아 worker task 자체가 끝날 수 있습니다.</p>
+              </figure>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="development" aria-labelledby="development-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">Development PM</div>
+              <h2 class="section__title" id="development-title">유지보수·신뢰성·성능 진단</h2>
+              <p class="section__lead">새 아키텍처를 덧씌우기보다 현재 강점을 유지하면서 깨진 경계부터 복구합니다.</p>
+            </div>
+          </div>
+
+          <div class="subsection two-col">
+            <div class="card">
+              <div class="card__label">Strengths</div>
+              <h3>유지할 기술 기반</h3>
+              <ul>
+                <li>Service와 model client 주입으로 fake 기반 상태 전이 테스트가 가능합니다.</li>
+                <li>Chat·Team memory registry가 동일 실행 중복 진입을 차단합니다.</li>
+                <li>Team stale 상태를 <code>interrupted</code>로 복구하고 사용자 Resume을 요구합니다.</li>
+                <li>Persona·Rules·model options를 Run snapshot으로 고정합니다.</li>
+                <li>Path containment, SQLite foreign key와 WAL을 적용했습니다.</li>
+                <li>Backend 338개 테스트와 frontend 화면 테스트가 존재합니다.</li>
+              </ul>
+            </div>
+            <div class="card">
+              <div class="card__label">Technical direction</div>
+              <h3>개선 원칙</h3>
+              <ul>
+                <li>대규모 ORM 또는 frontend state library 교체는 지금 하지 않습니다.</li>
+                <li>인증·lifecycle·계약을 먼저 고친 뒤 반복되는 경계만 추출합니다.</li>
+                <li>구조 분리는 기존 test를 전후 행동 계약으로 삼아 작은 단계로 진행합니다.</li>
+                <li>성능은 fixture와 p50/p95를 먼저 정한 뒤 pagination·index를 적용합니다.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>DEV-01~12 위험 우선순위</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>등급</th>
+                    <th>관찰된 위험</th>
+                    <th>영향</th>
+                    <th>권장 방향</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>DEV-01</strong></td>
+                    <td><span class="tag tag--critical">Critical</span></td>
+                    <td>Session cookie 존재만 확인</td>
+                    <td>임의 cookie로 로컬 실행 API 접근 가능</td>
+                    <td>Server-validated/signed session, expiry, revoke, rate limit</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-02</strong></td>
+                    <td><span class="tag tag--critical">Critical</span></td>
+                    <td>Worker/Scheduler 미기동</td>
+                    <td>Queued Job·due Schedule이 실행되지 않음</td>
+                    <td>FastAPI lifespan start/stop/recovery</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-03</strong></td>
+                    <td><span class="tag tag--high">High</span></td>
+                    <td>Review/Concurrency 계약 불일치</td>
+                    <td>결과·시간·비용 기대가 실제와 다름</td>
+                    <td>단기 숨김/정정 또는 실제 구현</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-04</strong></td>
+                    <td><span class="tag tag--high">High</span></td>
+                    <td>Runner 예외가 worker loop 종료 가능</td>
+                    <td>한 실패 이후 모든 Job 정지 가능</td>
+                    <td>Per-job 실패 전이와 loop 생존</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-05</strong></td>
+                    <td><span class="tag tag--high">High</span></td>
+                    <td>전역 예외 기록·durable audit 없음</td>
+                    <td>원격 실패 재현과 사고 범위 판단 곤란</td>
+                    <td>Request ID, structured log, audit, redaction</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-06</strong></td>
+                    <td><span class="tag tag--high">High</span></td>
+                    <td>CSRF/Origin, revoke, emergency stop, checkpoint 부재</td>
+                    <td>탈취·실수 피해 중단과 복구 곤란</td>
+                    <td>Security operating model MVP를 release gate로</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-07</strong></td>
+                    <td><span class="tag tag--medium">Medium</span></td>
+                    <td>Session/list/history 전량 읽기</td>
+                    <td>데이터 증가 시 sidebar·검색 비용 증가</td>
+                    <td>Metadata index, cursor, retention</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-08</strong></td>
+                    <td><span class="tag tag--medium">Medium</span></td>
+                    <td>Team SSE마다 다중 API·workspace 재scan</td>
+                    <td>Task/file 증가 시 요청 폭증</td>
+                    <td>Aggregate read model, delta, debounce/cache</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-09</strong></td>
+                    <td><span class="tag tag--medium">Medium</span></td>
+                    <td><code>GatewayApp</code>와 <code>app.py</code> 책임 집중</td>
+                    <td>회귀 범위와 리뷰 비용 증가</td>
+                    <td>Controller hook과 chat router 점진 추출</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-10</strong></td>
+                    <td><span class="tag tag--medium">Medium</span></td>
+                    <td>API 오류를 null/[]와 generic toast로 축약</td>
+                    <td>복구 UX·디버깅 악화</td>
+                    <td>Typed error envelope과 상태별 UX</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-11</strong></td>
+                    <td><span class="tag tag--medium">Medium</span></td>
+                    <td>Schema version과 주요 index 부족</td>
+                    <td>Migration·데이터 증가 대응 곤란</td>
+                    <td>Versioned migration, query-plan index</td>
+                  </tr>
+                  <tr>
+                    <td><strong>DEV-12</strong></td>
+                    <td><span class="tag tag--medium">Medium</span></td>
+                    <td>Workspace 밖 Artifact 등록 가능</td>
+                    <td>인증 실패 시 로컬 노출 범위 확대</td>
+                    <td>Restricted/Full mode와 audit 연결</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>점진적 구조 분리</h3>
+            <div class="two-col">
+              <article class="card">
+                <div class="card__label">Backend</div>
+                <ol>
+                  <li>공통 <code>SessionPrincipal</code> dependency</li>
+                  <li><code>app.py</code>에서 Chat router 분리</li>
+                  <li><code>schema_migrations</code> 기반 순차 migration</li>
+                  <li>Pagination 대상 query contract 고정</li>
+                </ol>
+              </article>
+              <article class="card">
+                <div class="card__label">Frontend</div>
+                <ol>
+                  <li><code>useGatewayBootstrap</code></li>
+                  <li><code>useSessionController</code></li>
+                  <li><code>useTeamRunController</code></li>
+                  <li>화면별 query hook과 공통 <code>ApiError</code></li>
+                </ol>
+              </article>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>성능 개선 순서와 측정 fixture</h3>
+            <div class="two-col">
+              <div class="card">
+                <div class="card__label">Sequence</div>
+                <ol>
+                  <li>List/history/activity cursor와 기본 limit</li>
+                  <li>Transcript metadata index</li>
+                  <li>Team detail aggregate read model</li>
+                  <li>SSE delta, terminal/reconnect full refetch</li>
+                  <li>Query plan 기반 FK/status/time index</li>
+                  <li>Activity/Job event retention</li>
+                </ol>
+              </div>
+              <div class="card">
+                <div class="card__label">Fixtures</div>
+                <ul>
+                  <li>Session 10 / 100 / 1,000개</li>
+                  <li>Event 100 / 1,000 / 10,000개</li>
+                  <li>Team task 10 / 100개</li>
+                  <li>Document 100 / 1,000개</li>
+                  <li>Jobs·Artifacts·Runs 1,000개</li>
+                  <li>Gateway overhead와 CLI duration 분리</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>흔한 오해를 먼저 제거</h3>
+            <div class="myth-grid">
+              <article class="myth">
+                <div class="myth__row">
+                  <div class="myth__cell">
+                    <span class="myth__label myth__label--wrong">✗ 오해</span>
+                    테스트가 338개이므로 lifecycle도 검증됐을 것이다.
+                  </div>
+                  <div class="myth__cell">
+                    <span class="myth__label myth__label--right">✓ 실제</span>
+                    Service test가 많아도 app composition/startup 단절은 별도 lifespan E2E가 없으면 놓칠 수 있습니다.
+                  </div>
+                </div>
+              </article>
+              <article class="myth">
+                <div class="myth__row">
+                  <div class="myth__cell">
+                    <span class="myth__label myth__label--wrong">✗ 오해</span>
+                    JobWorker와 SchedulerLoop 클래스가 있으므로 자동화는 동작한다.
+                  </div>
+                  <div class="myth__cell">
+                    <span class="myth__label myth__label--right">✓ 실제</span>
+                    App lifespan이 start/stop을 소유하고 liveness를 검증해야 제품 기능입니다.
+                  </div>
+                </div>
+              </article>
+              <article class="myth">
+                <div class="myth__row">
+                  <div class="myth__cell">
+                    <span class="myth__label myth__label--wrong">✗ 오해</span>
+                    Rules의 REQUIRED는 OS 권한처럼 행동을 강제한다.
+                  </div>
+                  <div class="myth__cell">
+                    <span class="myth__label myth__label--right">✓ 실제</span>
+                    REQUIRED는 prompt instruction priority이며 permission boundary와 다릅니다.
+                  </div>
+                </div>
+              </article>
+              <article class="myth">
+                <div class="myth__row">
+                  <div class="myth__cell">
+                    <span class="myth__label myth__label--wrong">✗ 오해</span>
+                    UI에 Max workers가 있으므로 task가 병렬 실행된다.
+                  </div>
+                  <div class="myth__cell">
+                    <span class="myth__label myth__label--right">✓ 실제</span>
+                    현재 runtime은 task를 순차 처리하므로 문구를 바꾸거나 bounded concurrency를 구현해야 합니다.
+                  </div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="product" aria-labelledby="product-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">Product PM</div>
+              <h2 class="section__title" id="product-title">사용성·기능 기회 진단</h2>
+              <p class="section__lead">
+                차별점은 “AI 채팅”이 아니라 밖에서도 내 로컬 Agent에게 일을 맡기고
+                진행·결과·복구를 한 화면에서 통제하는 것입니다.
+              </p>
+            </div>
+          </div>
+
+          <div class="callout callout--key">
+            <div class="callout__title">제품이 즉시 답해야 할 다섯 질문</div>
+            <p>
+              지금 무엇이 실행 중인가? · 왜 멈췄고 무엇을 해야 하는가? · 어떤 설정과 Agent가 수행했는가? ·
+              무엇이 바뀌었고 결과는 어디 있는가? · 어떻게 다시 실행하거나 반복하는가?
+            </p>
+          </div>
+
+          <div class="subsection">
+            <h3>핵심 사용 상황</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>상황</th>
+                    <th>현재 강점</th>
+                    <th>주요 마찰</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td><strong>빠른 단일 작업</strong></td><td>Chat과 실시간 결과</td><td>Generic 실패 안내</td></tr>
+                  <tr><td><strong>역할 기반 복합 작업</strong></td><td>Team snapshot과 task 결과</td><td>설정/실행 분리, Review/Concurrency 오해</td></tr>
+                  <tr><td><strong>장시간 실행</strong></td><td>Background task 일부 지원</td><td>통합 현황과 외부 알림 부재</td></tr>
+                  <tr><td><strong>반복 예약</strong></td><td>UI/API 존재</td><td>Worker/Scheduler 미기동</td></tr>
+                  <tr><td><strong>결과 검토</strong></td><td>Documents/Artifacts 존재</td><td>분리된 결과와 diff 부재</td></tr>
+                  <tr><td><strong>문제 대응</strong></td><td>Team Resume/Retry</td><td>전역 Stop, audit, 명확한 원인 부재</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>제품 약속과 실제 동작의 차이</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>제품 문구</th>
+                    <th>실제</th>
+                    <th>즉시 조치</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td><strong>REVIEW ONLY</strong></td><td>Planning 뒤 완료, member review 없음</td><td>숨김 또는 PLAN REVIEW로 정정</td></tr>
+                  <tr><td><strong>Max workers / concurrent</strong></td><td>Task 순차 실행</td><td>Sequential 표시 또는 bounded concurrency</td></tr>
+                  <tr><td><strong>Schedule NEXT / Run now</strong></td><td>자동·queued 실행 단절</td><td>Health 전까지 beta/disabled</td></tr>
+                  <tr><td><strong>TUNNEL: LOCAL ONLY</strong></td><td>Optional Tunnel 지원</td><td>실제 bind/tunnel/access 진단 표시</td></tr>
+                  <tr><td><strong>Rules REQUIRED</strong></td><td>Prompt의 강한 지시</td><td>Instruction priority로 설명</td></tr>
+                  <tr><td><strong>AUTHENTICATED</strong></td><td>Server-side session 검증 없음</td><td>인증 기반 완성 후 만료 표시</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>화면군별 개선</h3>
+            <div class="card-grid">
+              <article class="card">
+                <div class="card__label">Chat</div>
+                <ul>
+                  <li>Agent/model 고정 설명</li>
+                  <li>400/401/409/timeout/model exit별 CTA</li>
+                  <li>Global running indicator와 Stop</li>
+                  <li>Changed files·artifact 요약</li>
+                  <li>Title/content/model/status/date 검색</li>
+                </ul>
+              </article>
+              <article class="card">
+                <div class="card__label">Persona · Team · Rules</div>
+                <ul>
+                  <li>Guided setup과 starter template</li>
+                  <li>Team 카드에서 바로 Run</li>
+                  <li>사용 관계와 최근 성공 이력</li>
+                  <li>Rules 효력·snapshot 시점 설명</li>
+                </ul>
+              </article>
+              <article class="card">
+                <div class="card__label">Team Run</div>
+                <ul>
+                  <li>진행 task·실패·경과·최근 이벤트</li>
+                  <li>상태별 Stop/Resume/Retry/Add work</li>
+                  <li>Run configuration snapshot</li>
+                  <li>Task-document-artifact 연결</li>
+                  <li>완료/부분 실패/미검증 분리</li>
+                </ul>
+              </article>
+              <article class="card">
+                <div class="card__label">Jobs · Schedules</div>
+                <ul>
+                  <li>Health 기반 생성 차단</li>
+                  <li>다음 3회와 timezone preview</li>
+                  <li>실행 이력·성공률·마지막 오류</li>
+                  <li>Live Job detail과 Retry</li>
+                </ul>
+              </article>
+              <article class="card">
+                <div class="card__label">Artifacts · Documents</div>
+                <ul>
+                  <li>등록 자산과 workspace 파일 구분</li>
+                  <li>Task source 연결·일괄 등록</li>
+                  <li>Run/session/task/agent 검색</li>
+                  <li>Before/after diff와 검증 결과</li>
+                  <li>삭제 영향 preview</li>
+                </ul>
+              </article>
+              <article class="card">
+                <div class="card__label">Settings · Operations</div>
+                <ul>
+                  <li>CLI/DB/worker/scheduler/tunnel diagnostics</li>
+                  <li>복사 가능한 해결 명령</li>
+                  <li>Backup/export와 restore dry-run</li>
+                  <li>Session revoke와 emergency stop</li>
+                </ul>
+              </article>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>PM-01~10 기능 기회</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>우선</th>
+                    <th>기회</th>
+                    <th>최소 제품</th>
+                    <th>성공 신호</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td><strong>PM-01</strong></td><td>P1</td><td>Operations Center</td><td>모든 실행 상태와 복구 action 통합</td><td>발견 시간·클릭 감소</td></tr>
+                  <tr><td><strong>PM-02</strong></td><td>P1</td><td>Guided first-run</td><td>환경 진단→starter Team→첫 Run</td><td>첫 유효 Run 완료율 증가</td></tr>
+                  <tr><td><strong>PM-03</strong></td><td><span class="tag tag--critical">P0</span></td><td>Actionable errors</td><td>오류 분류·원인·복구 CTA</td><td>같은 오류 반복 감소</td></tr>
+                  <tr><td><strong>PM-04</strong></td><td>P1</td><td>Completion notification</td><td>Browser 또는 opt-in webhook</td><td>결과 확인 지연 감소</td></tr>
+                  <tr><td><strong>PM-05</strong></td><td>P1</td><td>Run result package</td><td>Summary/task/files/verification/artifacts</td><td>결과 판단 시간 감소</td></tr>
+                  <tr><td><strong>PM-06</strong></td><td>P2</td><td>Work template</td><td>Team+mode+goal+checklist 저장</td><td>반복 Run 생성 시간 감소</td></tr>
+                  <tr><td><strong>PM-07</strong></td><td>P2</td><td>Review workflow</td><td>Target+reviewers+severity 계약</td><td>검토 재현성 증가</td></tr>
+                  <tr><td><strong>PM-08</strong></td><td>P1</td><td>Automation history</td><td>History/success/next/retry</td><td>예약 신뢰성 증가</td></tr>
+                  <tr><td><strong>PM-09</strong></td><td>P1</td><td>Local activity metrics</td><td>내용 없는 상태·시간·횟수 집계</td><td>데이터 기반 PM review</td></tr>
+                  <tr><td><strong>PM-10</strong></td><td>P2</td><td>Global search</td><td>Source/type/status/date 통합 검색</td><td>결과 도달 시간 감소</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>일을 맡기고 확인하는 정보 구조</h3>
+            <div class="ia">
+              <article class="ia__group">
+                <h3>WORK</h3>
+                <ul>
+                  <li>Chat</li>
+                  <li>Team Runs</li>
+                  <li>Automations</li>
+                  <li>Operations</li>
+                </ul>
+              </article>
+              <article class="ia__group">
+                <h3>LIBRARY</h3>
+                <ul>
+                  <li>Teams</li>
+                  <li>Personas</li>
+                  <li>Rules</li>
+                  <li>Artifacts</li>
+                </ul>
+              </article>
+              <article class="ia__group">
+                <h3>SYSTEM</h3>
+                <ul>
+                  <li>Settings &amp; Diagnostics</li>
+                  <li>URL route / deep link</li>
+                  <li>Refresh · share · back</li>
+                </ul>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="roadmap" aria-labelledby="roadmap-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">Integrated execution roadmap</div>
+              <h2 class="section__title" id="roadmap-title">개발 PM과 기획 PM의 공통 실행 순서</h2>
+              <p class="section__lead">NOW gate를 통과하기 전 NEXT를 시작하지 않습니다. LATER는 실제 사용 근거가 생긴 뒤 엽니다.</p>
+            </div>
+          </div>
+
+          <div class="roadmap-line" aria-label="로드맵 단계">
+            <div class="roadmap-phase">
+              <strong>NOW</strong>
+              <span>인증·lifecycle·계약·E2E<br>신뢰 기반 복구</span>
+            </div>
+            <div class="roadmap-arrow">→</div>
+            <div class="roadmap-phase">
+              <strong>NEXT</strong>
+              <span>운영·복구·결과 판단·성능<br>운영 가능성 완성</span>
+            </div>
+            <div class="roadmap-arrow">→</div>
+            <div class="roadmap-phase">
+              <strong>LATER</strong>
+              <span>Review·알림·템플릿·검색<br>반복 사용과 확장</span>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>NOW — 신뢰 기반 복구</h3>
+            <div class="card-grid">
+              <article class="work-item">
+                <div class="work-item__head">
+                  <span class="work-item__id">R0-1</span>
+                  <h3>Server-validated session</h3>
+                  <span class="chip">M</span>
+                </div>
+                <p>Session store 또는 signed session, idle/absolute expiry, logout/revoke, rate limit, 공통 dependency.</p>
+                <details>
+                  <summary>완료 기준</summary>
+                  <ul>
+                    <li>Forged/expired/revoked cookie는 모든 protected API에서 401</li>
+                    <li>Logout 즉시 무효, idle/absolute 만료 UI</li>
+                    <li>Login rate-limit test와 Origin/CSRF 정책</li>
+                  </ul>
+                </details>
+              </article>
+              <article class="work-item">
+                <div class="work-item__head">
+                  <span class="work-item__id">R0-2</span>
+                  <h3>Worker/Scheduler lifecycle</h3>
+                  <span class="chip">M</span>
+                </div>
+                <p>FastAPI lifespan start/stop, queued recovery, due claim, configured concurrency 정책.</p>
+                <details>
+                  <summary>완료 기준</summary>
+                  <ul>
+                    <li>Lifespan 안 alive, 종료 뒤 stopped</li>
+                    <li>Job queued→running→terminal</li>
+                    <li>Due schedule 단일 Job과 restart 정책 test</li>
+                  </ul>
+                </details>
+              </article>
+              <article class="work-item">
+                <div class="work-item__head">
+                  <span class="work-item__id">R0-3</span>
+                  <h3>Background failure isolation</h3>
+                  <span class="chip">S</span>
+                </div>
+                <p>Per-job try/except, failed event, loop liveness, cancellation 구분, redaction.</p>
+                <details>
+                  <summary>완료 기준</summary>
+                  <ul>
+                    <li>실패 Job 뒤 다음 queued Job 정상 실행</li>
+                    <li>Cancel/shutdown과 genuine failure 구분</li>
+                    <li>Secret 없는 structured error</li>
+                  </ul>
+                </details>
+              </article>
+              <article class="work-item">
+                <div class="work-item__head">
+                  <span class="work-item__id">R0-4</span>
+                  <h3>UI-runtime 계약 정합</h3>
+                  <span class="chip">S</span>
+                </div>
+                <p>Runtime capability flag와 validation, 미지원 기능 hide/disable, 실제 동작을 설명하는 label.</p>
+                <details>
+                  <summary>완료 기준</summary>
+                  <ul>
+                    <li>Review·worker·Schedule·Tunnel 상태가 실제와 일치</li>
+                    <li>Backend/frontend contract test 통과</li>
+                    <li>Unhealthy 자동화가 실행 가능해 보이지 않음</li>
+                  </ul>
+                </details>
+              </article>
+              <article class="work-item">
+                <div class="work-item__head">
+                  <span class="work-item__id">R0-5</span>
+                  <h3>핵심 E2E reliability gate</h3>
+                  <span class="chip">M</span>
+                </div>
+                <p>Tmp data와 fake CLI/runner를 사용해 UI/API에서 실제 terminal result까지 검증합니다.</p>
+                <details>
+                  <summary>필수 시나리오</summary>
+                  <ul>
+                    <li>OTP→Chat→SSE→결과</li>
+                    <li>Team→task→summary→document</li>
+                    <li>Schedule→Job→runner→artifact</li>
+                    <li>Restart→interrupted→Resume</li>
+                    <li>Auth/model/runner 오류→복구 CTA</li>
+                  </ul>
+                </details>
+              </article>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <div class="callout callout--danger">
+              <div class="callout__title">NOW Release Gate — 전부 통과해야 NEXT 시작</div>
+              <ul class="checklist">
+                <li><span class="check"></span><span>임의 session cookie 접근 차단</span></li>
+                <li><span class="check"></span><span>Worker와 Scheduler 실제 기동</span></li>
+                <li><span class="check"></span><span>Background exception 뒤 다음 작업 실행</span></li>
+                <li><span class="check"></span><span>UI와 runtime mode/concurrency 계약 일치</span></li>
+                <li><span class="check"></span><span>Chat·Team·Automation 핵심 E2E 통과</span></li>
+                <li><span class="check"></span><span>Backend/frontend/lint/build CI 필수화</span></li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>NEXT — 운영 가능성과 결과 판단</h3>
+            <div class="card-grid">
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R1-1</span><h3>Security operations</h3></div><p>Session 목록/revoke, cookie·tunnel 진단, Restricted/Full Access mode와 외부 path 정책.</p></article>
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R1-2</span><h3>Automation history &amp; Retry</h3></div><p>Schedule 이력·성공률·다음 실행·timezone preview·input 보존 Retry.</p></article>
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R1-3</span><h3>Health · Audit · Stop · Backup</h3></div><p>Live/ready, append-only audit, 전체 정지, SQLite/auth/artifact restore dry-run.</p></article>
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R1-4</span><h3>Operations Center</h3></div><p>Running/waiting/interrupted/failed 통합 상태와 Stop·Resume·Retry·actionable error.</p></article>
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R1-5</span><h3>Read performance</h3></div><p>Cursor, metadata index, aggregate detail, SSE delta, query-plan index, retention.</p></article>
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R1-6</span><h3>점진 구조 분리</h3></div><p>Auth principal, chat router, bootstrap/session/team controller hook을 작은 단계로 추출.</p></article>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <h3>NEXT Release Gate</h3>
+            <ul class="checklist">
+              <li><span class="check"></span><span>DB·Worker·Scheduler·CLI 준비 상태를 한 화면에서 확인</span></li>
+              <li><span class="check"></span><span>실패 실행에 원인과 복구 action 존재</span></li>
+              <li><span class="check"></span><span>위험 실행이 audit actor/session/run/task와 연결</span></li>
+              <li><span class="check"></span><span>Emergency stop과 backup/restore 검증</span></li>
+              <li><span class="check"></span><span>합의된 fixture의 성능 budget 통과</span></li>
+              <li><span class="check"></span><span>구조 분리 전후 행동 회귀 없음</span></li>
+            </ul>
+          </div>
+
+          <div class="subsection">
+            <h3>LATER — 반복 사용과 확장</h3>
+            <div class="card-grid">
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R2-1</span><h3>Review + bounded concurrency</h3></div><p>Target path/artifact/diff, finding severity, semaphore, workspace 충돌과 비용 상한.</p></article>
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R2-2</span><h3>완료 알림</h3></div><p>Browser 또는 opt-in webhook, 민감 정보 제외, terminal 상태별 action link.</p></article>
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R2-3</span><h3>Reusable work template</h3></div><p>Team·mode·goal·output checklist를 저장하고 성공 Run에서 템플릿 생성.</p></article>
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R2-4</span><h3>Result package + search</h3></div><p>Summary·tasks·files·verification·artifacts index와 source/status/date/agent 검색.</p></article>
+              <article class="work-item"><div class="work-item__head"><span class="work-item__id">R2-5</span><h3>Local-only metrics</h3></div><p>Content 없이 ID·status·duration·recovery·count만 집계하고 보관·삭제를 제어.</p></article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="operations" aria-labelledby="operations-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">PM operating model</div>
+              <h2 class="section__title" id="operations-title">성공 지표와 완료 기준</h2>
+              <p class="section__lead">개발 완료와 사용자 성공을 같은 backlog 항목에서 함께 관리합니다.</p>
+            </div>
+          </div>
+
+          <div class="callout callout--key">
+            <div class="callout__title">North-star 후보</div>
+            <p><strong>사용자 수동 복구 없이 검증 가능한 결과로 끝난 작업 비율</strong></p>
+          </div>
+
+          <div class="subsection">
+            <h3>보조 지표</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>지표</th>
+                    <th>정의</th>
+                    <th>개선 목적</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td><strong>Work success rate</strong></td><td>Terminal success 또는 accepted partial success 비율</td><td>실행 신뢰성</td></tr>
+                  <tr><td><strong>Time to first useful result</strong></td><td>시작부터 첫 assistant/task result</td><td>체감 속도</td></tr>
+                  <tr><td><strong>Recovery success rate</strong></td><td>Failed/interrupted 후 Resume/Retry 성공 비율</td><td>복구 UX</td></tr>
+                  <tr><td><strong>Schedule reliability</strong></td><td>예정 실행 중 허용 지연 안 시작·완료 비율</td><td>무인 자동화 신뢰</td></tr>
+                  <tr><td><strong>Result inspection time</strong></td><td>Terminal부터 artifact/document 확인까지</td><td>결과 탐색성</td></tr>
+                  <tr><td><strong>Configuration correction rate</strong></td><td>시작 직후 취소·재생성·설정 변경 비율</td><td>설정 이해도</td></tr>
+                  <tr><td><strong>Error recurrence</strong></td><td>같은 환경에서 동일 오류 분류 반복 비율</td><td>안내 품질</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="margin-top:0.7rem;">Prompt·파일·command 내용은 수집하지 않고 ID·status·duration·category·count만 로컬 집계합니다.</p>
+          </div>
+
+          <div class="subsection two-col">
+            <article class="card">
+              <div class="card__label">Definition of Ready</div>
+              <ul class="checklist">
+                <li><span class="check"></span><span>사용자 문제와 영향 도메인이 명확함</span></li>
+                <li><span class="check"></span><span>Source of truth와 lifecycle owner가 정해짐</span></li>
+                <li><span class="check"></span><span>Failure/cancel/restart 동작이 정의됨</span></li>
+                <li><span class="check"></span><span>보안·데이터 경계와 UI 문구가 합의됨</span></li>
+                <li><span class="check"></span><span>Fake 검증과 실제 smoke 검증 방법이 있음</span></li>
+              </ul>
+            </article>
+            <article class="card">
+              <div class="card__label">Definition of Done</div>
+              <ul class="checklist">
+                <li><span class="check"></span><span>API/runtime/UI가 같은 계약을 사용</span></li>
+                <li><span class="check"></span><span>정상·오류·중단·재시작 test 존재</span></li>
+                <li><span class="check"></span><span>Observability와 사용자 복구 action 존재</span></li>
+                <li><span class="check"></span><span>성능 상한 또는 pagination/retention 정책</span></li>
+                <li><span class="check"></span><span>운영 문서와 registry 갱신</span></li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="subsection">
+            <h3>주간 backlog review</h3>
+            <ol>
+              <li>Critical/High incident와 contract gap을 먼저 확인합니다.</li>
+              <li>Local-only 지표와 실제 사용 기록으로 사용자 마찰을 확인합니다.</li>
+              <li>한 항목에 개발 완료 기준과 사용자 성공 기준을 함께 적습니다.</li>
+              <li>실행하지 않는 UI와 사용하지 않는 config가 생기지 않았는지 확인합니다.</li>
+              <li>완료 항목은 knowledge/flow/ADR로 승격합니다.</li>
+            </ol>
+          </div>
+        </section>
+
+        <section class="section" id="verify" aria-labelledby="verify-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">Verification &amp; limitations</div>
+              <h2 class="section__title" id="verify-title">검증·한계·전환 조건</h2>
+              <p class="section__lead">이 보고서가 무엇을 확인했고, 무엇은 아직 측정해야 하는지 구분합니다.</p>
+            </div>
+          </div>
+
+          <div class="three-col">
+            <article class="card">
+              <div class="card__label">Verified</div>
+              <h3>확인한 것</h3>
+              <ul>
+                <li>로컬 source와 기존 테스트 구조</li>
+                <li>Forged cookie와 app lifecycle 격리 진단</li>
+                <li>Backend 338 tests collection</li>
+                <li>도메인/위험/기회/로드맵 ID 보존</li>
+              </ul>
+            </article>
+            <article class="card">
+              <div class="card__label">Limitations</div>
+              <h3>아직 확정하지 않은 것</h3>
+              <ul>
+                <li>실제 p50/p95 성능 수치</li>
+                <li>제품 가설의 사용 기록 검증</li>
+                <li>R0 구현 이후의 실제 운영 안정성</li>
+                <li>이번 문서 작업에서는 앱 테스트 재실행 안 함</li>
+              </ul>
+            </article>
+            <article class="card">
+              <div class="card__label">Revisit when</div>
+              <h3>전제를 다시 볼 조건</h3>
+              <ul>
+                <li>둘 이상의 사용자·PC·process</li>
+                <li>같은 workspace 병렬 수정</li>
+                <li>Hosted storage·webhook이 기본 기능</li>
+                <li>Local data가 합의 성능 fixture 초과</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="subsection">
+            <h3>실행 전 의사결정 체크리스트</h3>
+            <ul class="checklist">
+              <li><span class="check check--done">✓</span><span><strong>완료:</strong> 서비스 도메인과 교차 위험 baseline 작성</span></li>
+              <li><span class="check"></span><span><strong>결정:</strong> SQLite session store vs signed cookie + revocation</span></li>
+              <li><span class="check"></span><span><strong>결정:</strong> Single-process Job/Schedule restart·queued 복구 정책</span></li>
+              <li><span class="check"></span><span><strong>결정:</strong> Review/Concurrency 단기 숨김·정정 vs 즉시 구현</span></li>
+              <li><span class="check"></span><span><strong>결정:</strong> Restricted/Full Access mode 제품 분리</span></li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="section" id="glossary" aria-labelledby="glossary-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">Shared language</div>
+              <h2 class="section__title" id="glossary-title">개발·기획 공통 용어</h2>
+            </div>
+          </div>
+          <div class="glossary">
+            <div class="term"><div class="term__name">Source of truth</div><div class="term__definition">특정 상태를 최종적으로 신뢰하고 변경하는 저장 위치 또는 서비스.</div></div>
+            <div class="term"><div class="term__name">App lifecycle</div><div class="term__definition">Gateway startup부터 request serve, background component 기동, graceful shutdown까지의 수명주기.</div></div>
+            <div class="term"><div class="term__name">Snapshot</div><div class="term__definition">Run 시작 당시 Persona·Rules·model 설정을 복사해 이후 설정 변경과 분리한 실행 계약.</div></div>
+            <div class="term"><div class="term__name">Actionable error</div><div class="term__definition">오류 유형·원인·다음 행동·데이터 보존 여부를 함께 알려주는 실패 표현.</div></div>
+            <div class="term"><div class="term__name">Cursor pagination</div><div class="term__definition">전체 목록 대신 마지막 위치를 기준으로 다음 묶음을 안정적으로 조회하는 방식.</div></div>
+            <div class="term"><div class="term__name">Release gate</div><div class="term__definition">다음 단계로 넘어가기 전에 반드시 통과해야 하는 테스트·운영·제품 계약의 묶음.</div></div>
+          </div>
+        </section>
+
+        <section class="section" id="references" aria-labelledby="references-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">Local references</div>
+              <h2 class="section__title" id="references-title">원본 산출물과 근거</h2>
+              <p class="section__lead">HTML은 아래 네 문서의 핵심 내용을 통합한 탐색용 뷰입니다. 세부 근거는 원본에서 계속 유지합니다.</p>
+            </div>
+          </div>
+          <ol class="refs">
+            <li><a href="../knowledge/2026-07-15-service-domain-map.md">서비스 도메인 지도</a> — 도메인·데이터·실행 흐름</li>
+            <li><a href="2026-07-15-development-pm-maintainability-assessment.md">개발 PM 유지보수성 진단</a> — DEV-01~12와 기술 개선</li>
+            <li><a href="2026-07-15-product-pm-usability-opportunities.md">기획 PM 사용성·기능 기회</a> — 사용자 여정과 PM-01~10</li>
+            <li><a href="../todo/2026-07-15-service-improvement-roadmap.md">통합 서비스 개선 로드맵</a> — R0/R1/R2와 release gate</li>
+            <li><code>src/personal_agent_gateway/app.py</code>, <code>job_worker.py</code>, <code>scheduler_loop.py</code>, <code>team_runtime.py</code></li>
+            <li><code>frontend/src/components/containers/GatewayApp/index.jsx</code>, <code>frontend/src/api/client.js</code></li>
+            <li><code>python -m pytest --collect-only -q</code> → 338 tests collected</li>
+          </ol>
+        </section>
+
+        <section class="section" id="expand" aria-labelledby="expand-title">
+          <div class="section__head">
+            <div>
+              <div class="section__kicker">Next questions</div>
+              <h2 class="section__title" id="expand-title">AI에게 물어볼 더 알아보기</h2>
+              <p class="section__lead">각 프롬프트는 새 대화에 그대로 붙여 넣을 수 있습니다.</p>
+            </div>
+          </div>
+          <div class="expand__grid">
+            <article class="expand__card">
+              <div class="expand__head"><span class="expand__icon" aria-hidden="true">🛠</span><span class="expand__label">구현자</span></div>
+              <p class="expand__prompt">Personal Agent Gateway의 server-validated session과 FastAPI lifespan 기반 JobWorker/SchedulerLoop 연결을 기존 테스트 구조를 유지하며 단계별로 구현하는 계획을 작성해줘.</p>
+            </article>
+            <article class="expand__card">
+              <div class="expand__head"><span class="expand__icon" aria-hidden="true">🤔</span><span class="expand__label">비판·리스크</span></div>
+              <p class="expand__prompt">Personal Agent Gateway의 NOW 로드맵에서 놓친 보안·복구·데이터 손실 위험을 공격적으로 검토하고 release gate 보완안을 제시해줘.</p>
+            </article>
+            <article class="expand__card">
+              <div class="expand__head"><span class="expand__icon" aria-hidden="true">🔍</span><span class="expand__label">대안 비교</span></div>
+              <p class="expand__prompt">Personal Agent Gateway의 local-first single-process 조건에서 SQLite session store와 signed cookie plus revocation 방식의 트레이드오프를 비교해줘.</p>
+            </article>
+            <article class="expand__card">
+              <div class="expand__head"><span class="expand__icon" aria-hidden="true">🧪</span><span class="expand__label">검증 설계</span></div>
+              <p class="expand__prompt">Personal Agent Gateway의 Chat, Team Run, Job/Schedule 핵심 여정을 fake CLI와 runner로 검증하는 E2E 테스트 매트릭스를 작성해줘.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <footer class="foot">
+    Personal Agent Gateway · 서비스 개선 통합 리포트 · 2026-07-15 · 자체 포함 HTML / 외부 런타임 의존성 없음
+  </footer>
+
+  <script>
+  (function () {
+    var root = document.documentElement;
+    var validThemes = { dark: true, light: true, system: true };
+    var themeSource = "system";
+    var themeButton = document.getElementById("theme-toggle");
+    var labels = { system: "테마: 시스템", dark: "테마: 다크", light: "테마: 라이트" };
+
+    function normalizeTheme(value) {
+      value = String(value || "").toLowerCase();
+      return validThemes[value] ? value : null;
+    }
+
+    function systemTheme() {
+      return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+        ? "light"
+        : "dark";
+    }
+
+    function applyTheme(value) {
+      var normalized = normalizeTheme(value) || "system";
+      themeSource = normalized;
+      var resolved = normalized === "system" ? systemTheme() : normalized;
+      root.dataset.theme = resolved;
+      root.dataset.themeSource = normalized;
+      root.style.colorScheme = resolved;
+      if (themeButton) themeButton.textContent = labels[normalized];
+    }
+
+    applyTheme(new URLSearchParams(window.location.search).get("theme") || "system");
+
+    if (themeButton) {
+      themeButton.addEventListener("click", function () {
+        var order = ["system", "dark", "light"];
+        var next = order[(order.indexOf(themeSource) + 1) % order.length];
+        applyTheme(next);
+      });
+    }
+
+    window.addEventListener("message", function (event) {
+      var data = event.data;
+      if (!data || data.type !== "set-theme" || !normalizeTheme(data.theme)) return;
+      applyTheme(data.theme);
+    });
+
+    if (window.matchMedia) {
+      var media = window.matchMedia("(prefers-color-scheme: light)");
+      var onSystemChange = function () {
+        if (themeSource === "system") applyTheme("system");
+      };
+      if (media.addEventListener) media.addEventListener("change", onSystemChange);
+      else if (media.addListener) media.addListener(onSystemChange);
+    }
+
+    var printButton = document.getElementById("print-report");
+    if (printButton) printButton.addEventListener("click", function () { window.print(); });
+
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a[href^="#"]'));
+    var byId = {};
+    links.forEach(function (link) {
+      byId[link.getAttribute("href").slice(1)] = link;
+    });
+    if ("IntersectionObserver" in window) {
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          links.forEach(function (link) { link.classList.remove("is-active"); });
+          var current = byId[entry.target.id];
+          if (current) current.classList.add("is-active");
+        });
+      }, { rootMargin: "-12% 0px -78% 0px" });
+      document.querySelectorAll("main[id], main section[id]").forEach(function (section) {
+        observer.observe(section);
+      });
+    }
+
+    document.querySelectorAll("[data-copy-code]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var figure = button.closest(".code-example");
+        var code = figure && figure.querySelector("pre code");
+        if (!code) return;
+        copyText(code.textContent, button, "코드 복사");
+      });
+    });
+
+    function fallbackCopy(text) {
+      var textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+
+    function copyText(text, button, originalLabel) {
+      var done = function () {
+        button.textContent = "복사됨";
+        setTimeout(function () { button.textContent = originalLabel; }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () {
+          fallbackCopy(text);
+          done();
+        });
+      } else {
+        fallbackCopy(text);
+        done();
+      }
+    }
+
+    var targets = [
+      { label: "Claude", base: "https://claude.ai/new?q=" },
+      { label: "ChatGPT", base: "https://chatgpt.com/?temporary-chat=true&q=" },
+      { label: "Gemini", base: "https://gemini.google.com/app?q=" },
+      { label: "Grok", base: "https://grok.com/?q=" }
+    ];
+
+    document.querySelectorAll(".expand__card").forEach(function (card) {
+      var prompt = card.querySelector(".expand__prompt");
+      if (!prompt || !prompt.textContent.trim()) return;
+      var text = prompt.textContent.trim();
+      var actions = document.createElement("div");
+      actions.className = "expand__actions";
+
+      var copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "expand__btn";
+      copy.textContent = "복사";
+      copy.addEventListener("click", function () { copyText(text, copy, "복사"); });
+      actions.appendChild(copy);
+
+      targets.forEach(function (target) {
+        var link = document.createElement("a");
+        link.className = "expand__btn";
+        link.href = target.base + encodeURIComponent(text);
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = target.label;
+        actions.appendChild(link);
+      });
+      card.appendChild(actions);
+    });
+  })();
+  </script>
+</body>
+</html>

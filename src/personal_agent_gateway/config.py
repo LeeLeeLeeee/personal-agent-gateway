@@ -1,7 +1,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, field_validator, model_validator
@@ -44,9 +44,17 @@ class AppConfig(BaseModel):
     artifact_root: Path | None = None
     temp_dir: Path | None = None
     auth_dir: Path | None = None
+    backup_root: Path | None = None
+    log_dir: Path | None = None
     cookie_secure: bool = False
     auth_setup_token: str | None = None
     auth_require_token_and_otp: bool = False
+    auth_session_absolute_seconds: int = 86400
+    auth_session_idle_seconds: int = 3600
+    access_mode: Literal["restricted", "full_access"] = "restricted"
+    audit_enabled: bool = True
+    observability_enabled: bool = True
+    audit_retention_days: int = 90
     environment_title: str | None = None
     openai_api_key: str | None = None
     codex_binary: str = _default_codex_binary()
@@ -75,6 +83,8 @@ class AppConfig(BaseModel):
         "artifact_root",
         "temp_dir",
         "auth_dir",
+        "backup_root",
+        "log_dir",
         mode="after",
     )
     @classmethod
@@ -94,9 +104,19 @@ class AppConfig(BaseModel):
             self.temp_dir = (data_root / "temp").resolve()
         if self.auth_dir is None:
             self.auth_dir = (data_root / "auth").resolve()
+        if self.backup_root is None:
+            self.backup_root = (data_root / "backups").resolve()
+        if self.log_dir is None:
+            self.log_dir = (data_root / "logs").resolve()
         return self
 
-    @field_validator("cookie_secure", "auth_require_token_and_otp", mode="before")
+    @field_validator(
+        "cookie_secure",
+        "auth_require_token_and_otp",
+        "audit_enabled",
+        "observability_enabled",
+        mode="before",
+    )
     @classmethod
     def parse_bool(cls, value: object) -> bool:
         if isinstance(value, bool):
@@ -104,6 +124,20 @@ class AppConfig(BaseModel):
         if isinstance(value, str):
             return value.lower() in {"1", "true", "yes", "on"}
         return False
+
+    @field_validator("auth_session_absolute_seconds", "auth_session_idle_seconds")
+    @classmethod
+    def validate_auth_session_ttl(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("Auth session TTL values must be positive")
+        return value
+
+    @field_validator("audit_retention_days")
+    @classmethod
+    def validate_audit_retention(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("AGENT_AUDIT_RETENTION_DAYS must be positive")
+        return value
 
     @classmethod
     def from_env(cls, env: dict[str, str | None]) -> Self:
@@ -122,6 +156,8 @@ class AppConfig(BaseModel):
         artifact_root = env.get("AGENT_ARTIFACT_ROOT") or str(data_root / "artifacts")
         temp_dir = env.get("AGENT_TEMP_DIR") or str(data_root / "temp")
         auth_dir = env.get("AGENT_AUTH_DIR") or str(data_root / "auth")
+        backup_root = env.get("AGENT_BACKUP_ROOT") or str(data_root / "backups")
+        log_dir = env.get("AGENT_LOG_DIR") or str(data_root / "logs")
 
         try:
             return cls(
@@ -136,9 +172,21 @@ class AppConfig(BaseModel):
                 artifact_root=Path(artifact_root),
                 temp_dir=Path(temp_dir),
                 auth_dir=Path(auth_dir),
+                backup_root=Path(backup_root),
+                log_dir=Path(log_dir),
                 cookie_secure=env.get("AGENT_COOKIE_SECURE") or False,
                 auth_setup_token=env.get("AGENT_AUTH_SETUP_TOKEN") or None,
                 auth_require_token_and_otp=env.get("AGENT_AUTH_REQUIRE_TOKEN_AND_OTP") or False,
+                auth_session_absolute_seconds=int(
+                    env.get("AGENT_AUTH_SESSION_ABSOLUTE_SECONDS") or "86400"
+                ),
+                auth_session_idle_seconds=int(
+                    env.get("AGENT_AUTH_SESSION_IDLE_SECONDS") or "3600"
+                ),
+                access_mode=env.get("AGENT_ACCESS_MODE") or "restricted",
+                audit_enabled=env.get("AGENT_AUDIT_ENABLED") or True,
+                observability_enabled=env.get("AGENT_OBSERVABILITY_ENABLED") or True,
+                audit_retention_days=int(env.get("AGENT_AUDIT_RETENTION_DAYS") or "90"),
                 environment_title=env.get("AGENT_ENVIRONMENT_TITLE") or env.get("PAG_ENV_TITLE") or None,
                 openai_api_key=env.get("OPENAI_API_KEY"),
                 codex_binary=env.get("AGENT_CODEX_BIN") or _default_codex_binary(),
@@ -177,9 +225,19 @@ def load_config() -> AppConfig:
             "AGENT_ARTIFACT_ROOT": os.getenv("AGENT_ARTIFACT_ROOT"),
             "AGENT_TEMP_DIR": os.getenv("AGENT_TEMP_DIR"),
             "AGENT_AUTH_DIR": os.getenv("AGENT_AUTH_DIR"),
+            "AGENT_BACKUP_ROOT": os.getenv("AGENT_BACKUP_ROOT"),
+            "AGENT_LOG_DIR": os.getenv("AGENT_LOG_DIR"),
             "AGENT_COOKIE_SECURE": os.getenv("AGENT_COOKIE_SECURE"),
             "AGENT_AUTH_SETUP_TOKEN": os.getenv("AGENT_AUTH_SETUP_TOKEN"),
             "AGENT_AUTH_REQUIRE_TOKEN_AND_OTP": os.getenv("AGENT_AUTH_REQUIRE_TOKEN_AND_OTP"),
+            "AGENT_AUTH_SESSION_ABSOLUTE_SECONDS": os.getenv(
+                "AGENT_AUTH_SESSION_ABSOLUTE_SECONDS"
+            ),
+            "AGENT_AUTH_SESSION_IDLE_SECONDS": os.getenv("AGENT_AUTH_SESSION_IDLE_SECONDS"),
+            "AGENT_ACCESS_MODE": os.getenv("AGENT_ACCESS_MODE"),
+            "AGENT_AUDIT_ENABLED": os.getenv("AGENT_AUDIT_ENABLED"),
+            "AGENT_OBSERVABILITY_ENABLED": os.getenv("AGENT_OBSERVABILITY_ENABLED"),
+            "AGENT_AUDIT_RETENTION_DAYS": os.getenv("AGENT_AUDIT_RETENTION_DAYS"),
             "AGENT_ENVIRONMENT_TITLE": os.getenv("AGENT_ENVIRONMENT_TITLE"),
             "PAG_ENV_TITLE": os.getenv("PAG_ENV_TITLE"),
             "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
