@@ -26,6 +26,40 @@ class AgentRuntimeFactory:
     def create_default_runtime(self) -> AgentRuntime:
         return self._create_runtime_for_app_config()
 
+    def create_headless_runtime(
+        self, backend: str, model: str, options: dict[str, object]
+    ) -> AgentRuntime:
+        workspace_root = self._config.workspace_root
+        if backend == "claude":
+            client = ClaudeModelClient(
+                binary=self._config.claude_binary,
+                model=model,
+                workspace_root=workspace_root,
+                effort=str(options.get("effort") or "high"),
+                permission_mode=str(
+                    options.get("permission_mode") or self._config.claude_permission_mode
+                ),
+                agent=str(options["agent"]) if options.get("agent") else None,
+                timeout_seconds=self._config.codex_timeout_seconds,
+            )
+            return self._runtime(client, session_id=None)
+        if backend == "codex":
+            client = CodexModelClient(
+                binary=self._config.codex_binary,
+                model=model,
+                workspace_root=workspace_root,
+                sandbox=str(options.get("sandbox") or self._config.codex_sandbox),
+                approval_policy=str(
+                    options.get("approval_policy") or self._config.codex_approval_policy
+                ),
+                profile=str(options["profile"]) if options.get("profile") else None,
+                effort=str(options.get("effort") or "high"),
+                timeout_seconds=self._config.codex_timeout_seconds,
+                idle_timeout_seconds=self._config.codex_idle_timeout_seconds,
+            )
+            return self._runtime(client, session_id=None)
+        raise ConfigError(f"Unsupported hook backend: {backend}")
+
     def create_runtime_for_active_session(self) -> AgentRuntime:
         session_id = self._transcript.active_id()
         if session_id is None:
