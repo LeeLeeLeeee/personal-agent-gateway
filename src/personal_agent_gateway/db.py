@@ -214,6 +214,41 @@ create table if not exists rule_sets (
     updated_at text not null,
     unique(scope, team_id)
 );
+
+create table if not exists hooks (
+    id text primary key,
+    name text not null,
+    source_type text not null,
+    connection_ref text not null,
+    filter_json text not null default '{}',
+    target_backend text not null,
+    target_model text not null,
+    target_options_json text not null default '{}',
+    prompt_template text not null,
+    poll_interval_seconds integer not null default 300,
+    enabled integer not null,
+    cursor_json text,
+    last_polled_at text,
+    last_error text,
+    created_at text not null,
+    updated_at text not null
+);
+
+create table if not exists hook_runs (
+    id text primary key,
+    hook_id text not null,
+    dedup_key text not null,
+    trigger_summary text not null,
+    trigger_payload_json text not null,
+    status text not null,
+    result_text text,
+    error_message text,
+    created_at text not null,
+    started_at text,
+    finished_at text,
+    foreign key (hook_id) references hooks(id) on delete cascade,
+    unique(hook_id, dedup_key)
+);
 """
 
 
