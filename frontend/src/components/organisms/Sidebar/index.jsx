@@ -4,6 +4,7 @@ export const NAV = [
   { key: "chat", label: "Chat" },
   { key: "jobs", label: "Jobs" },
   { key: "schedules", label: "Schedules" },
+  { key: "hooks", label: "Hooks" },
   { key: "artifacts", label: "Artifacts" },
   { key: "operations", label: "Operations" },
   { key: "settings", label: "Settings" }
@@ -25,7 +26,7 @@ function formatEnvironmentLabel(value) {
   return `${machine}(${env})`;
 }
 
-export function Sidebar({ screen, teamRunBadge = 0, environmentTitle = "", onScreenChange }) {
+export function Sidebar({ screen, teamRunBadge = 0, hooksBadge = 0, environmentTitle = "", onScreenChange }) {
   const environmentLabel = formatEnvironmentLabel(environmentTitle);
   return (
     <aside className="sidebar">
@@ -37,17 +38,21 @@ export function Sidebar({ screen, teamRunBadge = 0, environmentTitle = "", onScr
         <div className="sidebar-brand-sub">LOCAL CONSOLE</div>
       </div>
       <nav className="sidebar-nav">
-        {NAV.map((item) => (
-          <button
-            key={item.key}
-            className={`nav-item${screen === item.key ? " nav-item-active" : ""}`}
-            type="button"
-            aria-current={screen === item.key ? "page" : undefined}
-            onClick={() => onScreenChange(item.key)}
-          >
-            {item.label}
-          </button>
-        ))}
+        {NAV.map((item) => {
+          const showBadge = item.key === "hooks" && hooksBadge > 0;
+          return (
+            <button
+              key={item.key}
+              className={`nav-item${screen === item.key ? " nav-item-active" : ""}`}
+              type="button"
+              aria-current={screen === item.key ? "page" : undefined}
+              onClick={() => onScreenChange(item.key)}
+            >
+              <span>{item.label}</span>
+              {showBadge ? <span className="nav-badge" aria-hidden="true">{hooksBadge}</span> : null}
+            </button>
+          );
+        })}
         <div className="sidebar-nav-section">TEAMS</div>
         {TEAM_NAV.map((item) => {
           const active = screen === item.key;
