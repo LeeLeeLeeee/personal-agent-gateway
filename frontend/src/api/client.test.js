@@ -330,4 +330,28 @@ describe("api client", () => {
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/team-runs/run-1/documents");
     expect(fetch).toHaveBeenNthCalledWith(2, "/api/team-runs/run-1/documents/content?path=notes.md");
   });
+
+  it("supports hook endpoints", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ hooks: [{ id: "h1" }] }))
+      .mockResolvedValueOnce(jsonResponse({ hook: { id: "h1", name: "n" } }))
+      .mockResolvedValueOnce(jsonResponse({ hook: { id: "h1", enabled: false } }))
+      .mockResolvedValueOnce(jsonResponse({ created: 2 }))
+      .mockResolvedValueOnce(jsonResponse({ runs: [{ id: "r1" }] }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    await expect(api.listHooks()).resolves.toEqual([{ id: "h1" }]);
+    await expect(api.createHook({ name: "n" })).resolves.toEqual({ id: "h1", name: "n" });
+    await expect(api.updateHook("h 1", { enabled: false })).resolves.toEqual({ id: "h1", enabled: false });
+    await expect(api.runHookNow("h1")).resolves.toEqual({ created: 2 });
+    await expect(api.listHookRuns("h1")).resolves.toEqual([{ id: "r1" }]);
+    await expect(api.testHookConnection({ secret: "x" })).resolves.toEqual({ ok: true });
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/hooks");
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/hooks", expect.objectContaining({ method: "POST" }));
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/hooks/h%201", expect.objectContaining({ method: "PATCH" }));
+    expect(fetch).toHaveBeenNthCalledWith(4, "/api/hooks/h1/run-now", expect.objectContaining({ method: "POST" }));
+    expect(fetch).toHaveBeenNthCalledWith(5, "/api/hooks/h1/runs");
+    expect(fetch).toHaveBeenNthCalledWith(6, "/api/hooks/test-connection", expect.objectContaining({ method: "POST" }));
+  });
 });

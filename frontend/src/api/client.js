@@ -417,5 +417,39 @@ export const api = {
     return jsonOrNull(await fetch(
       `/api/team-runs/${encodeURIComponent(runId)}/documents/content?path=${encodeURIComponent(path)}`
     ));
+  },
+  async listHooks() {
+    return jsonList(await fetch("/api/hooks"), "hooks");
+  },
+  async createHook(body) {
+    const res = await jsonOrNull(await fetch("/api/hooks", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }));
+    return res?.hook || null;
+  },
+  async getHook(id) {
+    const res = await jsonOrNull(await fetch(`/api/hooks/${encodeURIComponent(id)}`));
+    return res?.hook || null;
+  },
+  async updateHook(id, body) {
+    const res = await jsonOrNull(await fetch(`/api/hooks/${encodeURIComponent(id)}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }));
+    return res?.hook || null;
+  },
+  async deleteHook(id) {
+    const response = await fetch(`/api/hooks/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return response.ok;
+  },
+  async runHookNow(id) {
+    return jsonOrNull(await fetch(`/api/hooks/${encodeURIComponent(id)}/run-now`, { method: "POST" }));
+  },
+  async listHookRuns(id) {
+    return jsonList(await fetch(`/api/hooks/${encodeURIComponent(id)}/runs`), "runs");
+  },
+  async testHookConnection(body) {
+    return jsonOrNull(await fetch("/api/hooks/test-connection", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }));
   }
 };
