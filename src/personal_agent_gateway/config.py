@@ -44,6 +44,7 @@ class AppConfig(BaseModel):
     artifact_root: Path | None = None
     temp_dir: Path | None = None
     auth_dir: Path | None = None
+    hooks_dir: Path | None = None
     backup_root: Path | None = None
     log_dir: Path | None = None
     cookie_secure: bool = False
@@ -68,6 +69,7 @@ class AppConfig(BaseModel):
     ffprobe_binary: str = "ffprobe"
     capture_binary: str = _default_capture_binary()
     job_worker_concurrency: int = 1
+    hook_poll_interval_seconds: int = 30
 
     @field_validator("web_host")
     @classmethod
@@ -83,6 +85,7 @@ class AppConfig(BaseModel):
         "artifact_root",
         "temp_dir",
         "auth_dir",
+        "hooks_dir",
         "backup_root",
         "log_dir",
         mode="after",
@@ -104,6 +107,8 @@ class AppConfig(BaseModel):
             self.temp_dir = (data_root / "temp").resolve()
         if self.auth_dir is None:
             self.auth_dir = (data_root / "auth").resolve()
+        if self.hooks_dir is None:
+            self.hooks_dir = (data_root / "hooks").resolve()
         if self.backup_root is None:
             self.backup_root = (data_root / "backups").resolve()
         if self.log_dir is None:
@@ -156,6 +161,7 @@ class AppConfig(BaseModel):
         artifact_root = env.get("AGENT_ARTIFACT_ROOT") or str(data_root / "artifacts")
         temp_dir = env.get("AGENT_TEMP_DIR") or str(data_root / "temp")
         auth_dir = env.get("AGENT_AUTH_DIR") or str(data_root / "auth")
+        hooks_dir = env.get("AGENT_HOOKS_DIR") or str(data_root / "hooks")
         backup_root = env.get("AGENT_BACKUP_ROOT") or str(data_root / "backups")
         log_dir = env.get("AGENT_LOG_DIR") or str(data_root / "logs")
 
@@ -172,6 +178,7 @@ class AppConfig(BaseModel):
                 artifact_root=Path(artifact_root),
                 temp_dir=Path(temp_dir),
                 auth_dir=Path(auth_dir),
+                hooks_dir=Path(hooks_dir),
                 backup_root=Path(backup_root),
                 log_dir=Path(log_dir),
                 cookie_secure=env.get("AGENT_COOKIE_SECURE") or False,
@@ -202,6 +209,9 @@ class AppConfig(BaseModel):
                 ffprobe_binary=env.get("AGENT_FFPROBE_BIN") or "ffprobe",
                 capture_binary=env.get("AGENT_CAPTURE_BIN") or _default_capture_binary(),
                 job_worker_concurrency=int(env.get("AGENT_JOB_WORKER_CONCURRENCY") or "1"),
+                hook_poll_interval_seconds=int(
+                    env.get("AGENT_HOOK_POLL_INTERVAL_SECONDS") or "30"
+                ),
             )
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
@@ -225,6 +235,7 @@ def load_config() -> AppConfig:
             "AGENT_ARTIFACT_ROOT": os.getenv("AGENT_ARTIFACT_ROOT"),
             "AGENT_TEMP_DIR": os.getenv("AGENT_TEMP_DIR"),
             "AGENT_AUTH_DIR": os.getenv("AGENT_AUTH_DIR"),
+            "AGENT_HOOKS_DIR": os.getenv("AGENT_HOOKS_DIR"),
             "AGENT_BACKUP_ROOT": os.getenv("AGENT_BACKUP_ROOT"),
             "AGENT_LOG_DIR": os.getenv("AGENT_LOG_DIR"),
             "AGENT_COOKIE_SECURE": os.getenv("AGENT_COOKIE_SECURE"),
@@ -252,5 +263,6 @@ def load_config() -> AppConfig:
             "AGENT_FFPROBE_BIN": os.getenv("AGENT_FFPROBE_BIN"),
             "AGENT_CAPTURE_BIN": os.getenv("AGENT_CAPTURE_BIN"),
             "AGENT_JOB_WORKER_CONCURRENCY": os.getenv("AGENT_JOB_WORKER_CONCURRENCY"),
+            "AGENT_HOOK_POLL_INTERVAL_SECONDS": os.getenv("AGENT_HOOK_POLL_INTERVAL_SECONDS"),
         }
     )
