@@ -98,6 +98,8 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         application.state.hook_run_service.recover_interrupted_runs()
         await application.state.scheduler_loop.start()
         await application.state.hook_runner.start()
+        for run in application.state.hook_run_service.list_queued_runs():
+            await application.state.hook_runner.enqueue(run.id)
         await application.state.hook_loop.start()
         try:
             yield

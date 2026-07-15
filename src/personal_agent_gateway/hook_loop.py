@@ -44,9 +44,10 @@ class HookLoop:
         self._task = None
 
     async def tick(self) -> None:
-        for run in self._hooks.poll_due(
-            self._hook_runs, now=datetime.now(timezone.utc)
-        ):
+        runs = await asyncio.to_thread(
+            self._hooks.poll_due, self._hook_runs, datetime.now(timezone.utc)
+        )
+        for run in runs:
             await self._runner.enqueue(run.id)
 
     async def _run_loop(self) -> None:

@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -78,8 +80,10 @@ async def run_hook_now(
     request: Request, hook_id: str, _session: None = session_dependency
 ) -> dict[str, int]:
     _require(request, hook_id)
-    runs = request.app.state.hook_service.poll_hook(
-        hook_id, request.app.state.hook_run_service
+    runs = await asyncio.to_thread(
+        request.app.state.hook_service.poll_hook,
+        hook_id,
+        request.app.state.hook_run_service,
     )
     for run in runs:
         await request.app.state.hook_runner.enqueue(run.id)

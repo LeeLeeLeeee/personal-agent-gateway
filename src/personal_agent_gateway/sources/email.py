@@ -129,7 +129,7 @@ class _ImapClient:
     """imaplib 기반 실 IMAP 클라이언트. (서버 없이 단위 테스트하지 않음)"""
 
     def __init__(self, host: str, port: int) -> None:
-        self._conn = imaplib.IMAP4_SSL(host, port)
+        self._conn = imaplib.IMAP4_SSL(host, port, timeout=30)
         self._folder = "INBOX"
 
     def login(self, username: str, password: str) -> None:

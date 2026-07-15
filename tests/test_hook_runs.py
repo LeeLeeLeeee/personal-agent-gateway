@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 
 from personal_agent_gateway.db import Database
@@ -64,3 +65,23 @@ def test_recover_interrupted_marks_running_as_failed(tmp_path: Path) -> None:
     service.mark_running(run.id)
     service.recover_interrupted_runs()
     assert service.get_run(run.id).status == "failed"
+
+
+def test_list_queued_runs_excludes_other_statuses_and_orders_by_created_at(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    first = service.create_run("h1", "k1", "s", {}, now=datetime(2024, 1, 1, tzinfo=timezone.utc))
+    assert first is not None
+    running = service.create_run(
+        "h1", "k2", "s", {}, now=datetime(2024, 1, 2, tzinfo=timezone.utc)
+    )
+    assert running is not None
+    service.mark_running(running.id)
+    second = service.create_run("h1", "k3", "s", {}, now=datetime(2024, 1, 3, tzinfo=timezone.utc))
+    assert second is not None
+
+    queued = service.list_queued_runs()
+
+    assert [run.id for run in queued] == [first.id, second.id]
+    assert all(run.status == "queued" for run in queued)

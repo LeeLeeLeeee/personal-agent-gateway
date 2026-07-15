@@ -97,6 +97,14 @@ class HookRunService:
         )
         return self.get_run(run_id)
 
+    def list_queued_runs(self) -> list[HookRun]:
+        return [
+            _run_from_row(row)
+            for row in self._db.fetchall(
+                "select * from hook_runs where status = 'queued' order by created_at asc"
+            )
+        ]
+
     def recover_interrupted_runs(self) -> None:
         for row in self._db.fetchall(
             "select id from hook_runs where status = 'running'"
