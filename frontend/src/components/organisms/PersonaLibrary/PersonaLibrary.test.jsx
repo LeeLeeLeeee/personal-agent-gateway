@@ -84,23 +84,26 @@ describe("PersonaLibrary", () => {
     }));
   });
 
-  it("selects detected backend, model and model-specific options for a persona", async () => {
+  it("selects backend, model and model-specific options through the chat-style picker", async () => {
     const onCreate = vi.fn();
     render(<PersonaLibrary personas={personas} agents={agents} onCreate={onCreate} onSave={vi.fn()} />);
 
     await userEvent.click(screen.getByRole("button", { name: /new persona/i }));
     await userEvent.type(screen.getByLabelText("Name"), "Local Agent");
-    await userEvent.selectOptions(screen.getByLabelText("Backend"), "claude");
 
-    expect(screen.getByLabelText("Model")).toHaveValue("sonnet");
-    expect(screen.getByLabelText("effort")).toHaveValue("medium");
-    expect(screen.getByLabelText("permission mode")).toHaveValue("manual");
+    // backend via the agent dropdown (chat-style, not a native <select>)
+    await userEvent.click(screen.getByRole("button", { name: "Agent" }));
+    await userEvent.click(screen.getByRole("button", { name: /Claude Code/i }));
 
-    await userEvent.selectOptions(screen.getByLabelText("Model"), "opus");
-    expect(screen.getByLabelText("effort")).toHaveValue("high");
-    expect(screen.queryByRole("option", { name: "low" })).not.toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByLabelText("effort"), "max");
-    await userEvent.selectOptions(screen.getByLabelText("permission mode"), "plan");
+    // model -> opus
+    await userEvent.click(screen.getByRole("button", { name: "Model" }));
+    await userEvent.click(screen.getByRole("button", { name: "Opus" }));
+
+    // effort segmented control (opus offers high/max), then permission mode dropdown -> plan
+    await userEvent.click(screen.getByRole("button", { name: "effort max" }));
+    await userEvent.click(screen.getByRole("button", { name: "permission mode" }));
+    await userEvent.click(screen.getByRole("button", { name: /^plan/ }));
+
     await userEvent.click(screen.getByRole("button", { name: /create persona/i }));
 
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
@@ -108,6 +111,12 @@ describe("PersonaLibrary", () => {
       default_model: "opus",
       default_options: { effort: "max", permission_mode: "plan" }
     }));
+  });
+
+  it("explains runtime options with an info tooltip in the persona picker", () => {
+    render(<PersonaLibrary personas={personas} agents={agents} onCreate={vi.fn()} onSave={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "sandbox 설명" })).toBeInTheDocument();
+    expect(screen.getByText(/파일을 어디까지 쓸 수 있는지/)).toBeInTheDocument();
   });
 
   it("creates (not updates) the first persona when the library is empty", async () => {

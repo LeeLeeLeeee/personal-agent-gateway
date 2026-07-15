@@ -2,6 +2,58 @@ import { useState } from "react";
 
 const EFFORT_LABELS = { low: "LOW", medium: "MED", high: "HIGH", xhigh: "XHIGH", max: "MAX" };
 
+const AGENT_INFO = "이 세션/페르소나가 사용할 CLI 백엔드입니다.";
+const MODEL_INFO = "선택한 백엔드가 사용할 모델입니다.";
+const OPTION_INFO = {
+  effort: {
+    label: "모델의 추론(사고) 노력 수준입니다. 높을수록 더 깊이 생각하지만 느리고 비쌉니다.",
+    choices: {
+      low: "가장 빠름, 얕은 추론",
+      medium: "속도와 품질의 균형",
+      high: "깊은 추론",
+      xhigh: "매우 깊은 추론",
+      max: "최대 추론(가장 느림)",
+      ultra: "최대 추론(가장 느림)"
+    }
+  },
+  sandbox: {
+    label: "에이전트가 파일을 어디까지 쓸 수 있는지 범위입니다.",
+    choices: {
+      "read-only": "파일 수정 불가, 읽기만",
+      "workspace-write": "워크스페이스 안에만 쓰기 허용",
+      "danger-full-access": "시스템 전체 읽기/쓰기 (위험)"
+    }
+  },
+  approval_policy: {
+    label: "위험한 작업을 실행하기 전에 승인을 요청할지 정합니다.",
+    choices: {
+      never: "승인 없이 자동 실행",
+      "on-request": "위험한 작업 전 사용자 확인",
+      "on-failure": "실패했을 때만 확인",
+      untrusted: "신뢰되지 않은 작업만 확인"
+    }
+  },
+  permission_mode: {
+    label: "도구 실행과 파일 편집을 어떻게 승인할지 정합니다.",
+    choices: {
+      default: "작업마다 수동 승인",
+      manual: "작업마다 수동 승인",
+      plan: "계획만 세우고 실행하지 않음",
+      acceptEdits: "편집은 자동 승인",
+      bypassPermissions: "모든 권한 자동 승인 (위험)"
+    }
+  }
+};
+
+function InfoTip({ label, children }) {
+  return (
+    <span className="config-info">
+      <button type="button" className="config-info-btn" aria-label={`${label} 설명`}>ⓘ</button>
+      <span className="config-info-pop" role="tooltip">{children}</span>
+    </span>
+  );
+}
+
 function modelOptions(agent, configuredModel) {
   const detected = agent.model_options?.length
     ? agent.model_options
@@ -97,6 +149,7 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
 
     const value = optionValue(config, current, option.name);
     const label = optionLabel(option.name);
+    const info = OPTION_INFO[option.name];
     const metadata = selectedModel(current, config.model);
     const choices = option.name === "effort" && metadata?.efforts?.length
       ? metadata.efforts
@@ -105,7 +158,19 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
     if (option.name === "effort" && option.kind === "select") {
       return (
         <div className="config-field" key={option.name}>
-          <span className="config-field-label mono">EFFORT</span>
+          <span className="config-field-label mono">
+            EFFORT
+            <InfoTip label="effort">
+              <span className="config-info-lead">{OPTION_INFO.effort.label}</span>
+              <span className="config-info-list">
+                {choices.map((choice) => (
+                  <span className="config-info-list-row" key={choice}>
+                    <b>{EFFORT_LABELS[choice] || choice.toUpperCase()}</b> {OPTION_INFO.effort.choices[choice] || ""}
+                  </span>
+                ))}
+              </span>
+            </InfoTip>
+          </span>
           <div className="config-segment" role="group" aria-label="effort">
             {choices.map((choice) => (
               <button
@@ -126,7 +191,10 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
 
     return (
       <div className="config-field" key={option.name}>
-        <span className="config-field-label mono">{label.toUpperCase()}</span>
+        <span className="config-field-label mono">
+          {label.toUpperCase()}
+          {info ? <InfoTip label={label}>{info.label}</InfoTip> : null}
+        </span>
         <div className="config-dropdown">
           <button
             type="button"
@@ -151,6 +219,9 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
                     <span className="config-menu-mark mono">{choice === value ? "✓" : ""}</span>
                     <span className="config-menu-name mono">{choice}</span>
                   </span>
+                  {info?.choices?.[choice] ? (
+                    <span className="config-menu-sub mono">{info.choices[choice]}</span>
+                  ) : null}
                 </button>
               ))}
             </div>
@@ -172,7 +243,7 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
       <div className="config-bar-row">
         {/* AGENT */}
         <div className="config-field">
-          <span className="config-field-label mono">AGENT</span>
+          <span className="config-field-label mono">AGENT<InfoTip label="agent">{AGENT_INFO}</InfoTip></span>
           <div className="config-dropdown">
             <button
               type="button"
@@ -219,7 +290,7 @@ export function AgentPicker({ agents = [], config, onChange, error = "", onRetry
         {/* MODEL */}
         {current.available ? (
           <div className="config-field">
-            <span className="config-field-label mono">MODEL</span>
+            <span className="config-field-label mono">MODEL<InfoTip label="model">{MODEL_INFO}</InfoTip></span>
             <div className="config-dropdown">
               <button
                 type="button"

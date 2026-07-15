@@ -3766,3 +3766,13 @@ p {
 .team-agent-report-owner { font-size: 11px; font-weight: 700; flex: 1; }
 .team-agent-report-time { font-size: 10px; color: #808080; }
 .team-agent-report-body { padding: 9px 12px; margin: 0; font-family: var(--font-body); font-size: 12px; line-height: 1.5; color: #333; }
+
+.config-info { position: relative; display: inline-flex; margin-left: 5px; }
+.config-info-btn { border: none; background: none; color: #808080; cursor: help; font-size: 11px; line-height: 1; padding: 0; }
+.config-info-btn:hover, .config-info-btn:focus-visible { color: #000; }
+.config-info-pop { display: none; position: absolute; top: 100%; left: 0; z-index: 60; margin-top: 4px; width: 220px; background: #000; color: #fff; border: 2px solid #000; padding: 8px 10px; font-family: var(--font-body); font-size: 11px; line-height: 1.5; letter-spacing: normal; text-transform: none; white-space: normal; box-shadow: 3px 3px 0 rgba(0,0,0,0.25); }
+.config-info:hover .config-info-pop, .config-info:focus-within .config-info-pop { display: block; }
+.config-info-lead { display: block; }
+.config-info-list { display: block; margin-top: 6px; padding-top: 6px; border-top: 1px solid #333; }
+.config-info-list-row { display: block; margin-top: 2px; }
+.config-info-list-row b { display: inline-block; min-width: 46px; }

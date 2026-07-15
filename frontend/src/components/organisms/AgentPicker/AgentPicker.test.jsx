@@ -121,4 +121,31 @@ describe("AgentPicker (session config bar)", () => {
     await userEvent.click(screen.getByRole("button", { name: "RETRY" }));
     expect(onRetry).toHaveBeenCalled();
   });
+
+  it("shows info tooltips explaining sandbox and approval policy", () => {
+    render(<AgentPicker agents={agents} config={editable()} onChange={vi.fn()} />);
+
+    // an info affordance sits next to each option label (distinct from the control button)
+    expect(screen.getByRole("button", { name: "sandbox 설명" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "approval policy 설명" })).toBeInTheDocument();
+
+    // the explanatory copy is rendered (revealed on hover/focus via CSS, present in the DOM)
+    expect(screen.getByText(/파일을 어디까지 쓸 수 있는지/)).toBeInTheDocument();
+    expect(screen.getByText(/위험한 작업.*승인/)).toBeInTheDocument();
+  });
+
+  it("describes each choice inside the sandbox dropdown", async () => {
+    render(<AgentPicker agents={agents} config={editable()} onChange={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "sandbox" }));
+    expect(screen.getByText("워크스페이스 안에만 쓰기 허용")).toBeInTheDocument();
+    expect(screen.getByText("파일 수정 불가, 읽기만")).toBeInTheDocument();
+  });
+
+  it("explains effort levels through an info tooltip", () => {
+    render(<AgentPicker agents={agents} config={editable()} onChange={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "effort 설명" })).toBeInTheDocument();
+    expect(screen.getByText(/추론.*노력/)).toBeInTheDocument();
+  });
 });

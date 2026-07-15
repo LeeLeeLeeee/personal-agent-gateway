@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../atoms/Button/index.jsx";
 import { AvatarPicker } from "../AvatarPicker/index.jsx";
+import { AgentPicker } from "../AgentPicker/index.jsx";
 import { useConfirm } from "../../providers/UiProvider/index.jsx";
 
 const EMPTY_FORM = {
@@ -132,31 +133,13 @@ export function PersonaLibrary({ personas = [], avatars = [], agents = [], onCre
     setForm(initialForm(agents));
   }
 
-  function changeBackend(agentId) {
-    const agent = agents.find((candidate) => candidate.id === agentId);
-    if (!agent) return;
-    const model = agent.default_model;
+  // The persona picker reuses the chat AgentPicker; map its config shape back onto the form.
+  function handlePickerChange(next) {
     setForm((previous) => ({
       ...previous,
-      default_backend: agent.id,
-      default_model: model,
-      default_options: normalizedOptions(agent, model, agent.defaults)
-    }));
-  }
-
-  function changeModel(modelId) {
-    const agent = agents.find((candidate) => candidate.id === form.default_backend);
-    setForm((previous) => ({
-      ...previous,
-      default_model: modelId,
-      default_options: normalizedOptions(agent, modelId, previous.default_options)
-    }));
-  }
-
-  function changeDefaultOption(name, value) {
-    setForm((previous) => ({
-      ...previous,
-      default_options: { ...previous.default_options, [name]: value }
+      default_backend: next.agent_id ?? previous.default_backend,
+      default_model: next.model ?? previous.default_model,
+      default_options: next.options || {}
     }));
   }
 
@@ -208,9 +191,12 @@ export function PersonaLibrary({ personas = [], avatars = [], agents = [], onCre
   }
 
   const headMeta = isNew ? "NEW" : `PRESET · ${(editingId || "").slice(0, 8).toUpperCase()}`;
-  const currentAgent = agents.find((agent) => agent.id === form.default_backend) || null;
-  const backendChoices = agents.filter((agent) => agent.available || agent.id === form.default_backend);
-  const modelChoices = agentModels(currentAgent, form.default_model);
+  const pickerConfig = {
+    agent_id: form.default_backend,
+    model: form.default_model,
+    options: form.default_options || {},
+    editable: true
+  };
 
   return (
     <section className="persona-library" aria-label="Persona library">
@@ -303,45 +289,13 @@ export function PersonaLibrary({ personas = [], avatars = [], agents = [], onCre
               <span className="persona-field-label">CONSTRAINTS · ONE PER LINE</span>
               <textarea className="persona-textarea persona-textarea-constraints" aria-label="Constraints" value={form.constraints} onChange={(event) => update("constraints", event.target.value)} />
             </label>
+            {agents.length ? (
+              <div className="persona-field persona-field-wide">
+                <span className="persona-field-label">MODEL &amp; RUNTIME</span>
+                <AgentPicker agents={agents} config={pickerConfig} onChange={handlePickerChange} />
+              </div>
+            ) : null}
             <div className="persona-edit-actions">
-              <label className="persona-field">
-                <span className="persona-field-label">BACKEND</span>
-                <select className="persona-input" aria-label="Backend" value={form.default_backend} onChange={(event) => changeBackend(event.target.value)}>
-                  {!backendChoices.some((agent) => agent.id === form.default_backend) ? (
-                    <option value={form.default_backend}>{form.default_backend}</option>
-                  ) : null}
-                  {backendChoices.map((agent) => (
-                    <option key={agent.id} value={agent.id}>{agent.label}{agent.version ? ` · ${agent.version}` : ""}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="persona-field">
-                <span className="persona-field-label">MODEL</span>
-                <select className="persona-input" aria-label="Model" value={form.default_model} onChange={(event) => changeModel(event.target.value)}>
-                  {modelChoices.map((model) => (
-                    <option key={model.id} value={model.id}>{model.label || model.id}</option>
-                  ))}
-                </select>
-              </label>
-              {(currentAgent?.options_schema || []).filter((option) => option.kind === "select").map((option) => {
-                const choices = optionChoices(currentAgent, form.default_model, option);
-                if (!choices.length) return null;
-                const currentValue = form.default_options?.[option.name] || "";
-                const values = currentValue && !choices.includes(currentValue) ? [currentValue, ...choices] : choices;
-                return (
-                  <label className="persona-field" key={option.name}>
-                    <span className="persona-field-label">{option.name.replaceAll("_", " ").toUpperCase()}</span>
-                    <select
-                      className="persona-input"
-                      aria-label={option.name.replaceAll("_", " ")}
-                      value={currentValue}
-                      onChange={(event) => changeDefaultOption(option.name, event.target.value)}
-                    >
-                      {values.map((value) => <option key={value} value={value}>{value}</option>)}
-                    </select>
-                  </label>
-                );
-              })}
               {!isNew ? (
                 <Button type="button" variant="destructive" onClick={handleDelete}>Delete</Button>
               ) : null}
