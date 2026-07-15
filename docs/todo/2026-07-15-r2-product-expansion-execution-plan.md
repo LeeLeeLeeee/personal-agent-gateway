@@ -14,7 +14,7 @@ tags:
   - product-expansion
   - result-package
   - workflow
-updated_at: 2026-07-15
+updated_at: 2026-07-16
 ---
 
 # Personal Agent Gateway R2 제품 확장 실행 플랜
@@ -86,6 +86,40 @@ updated_at: 2026-07-15
 | G2-1 | LOCK | 5~10회 실제 사용 기록으로 제품 가설 검토 | 1/5 기록 완료. 결과 확인 시간, 알림 필요, 반복 구성, 검색 대상, concurrency 필요 기록표 |
 
 G2-1은 수동 기록으로 시작할 수 있다. R2 Local Metrics를 먼저 구현하기 위해 Gate를 우회하지 않는다.
+
+### G2-1 중간 제품 가설 재평가 (2026-07-16)
+
+PG-1 완료 뒤 실제 사용 #1을 다시 검토했지만 G2-1을 해제할 근거는 아직 없다. 결과 위치는 바로 찾았고, 당시 결과 탐색 마찰이었던 preview·최신순 정렬·담당자·개별 종료는 PG-1이 해결했다. 데이터 source가 구조적으로 흩어져 있다는 사실만으로 Result package를 추가하면 사용자 문제보다 구현 구조가 먼저 생긴다.
+
+| 묶음 | 현재 근거 | 판단 |
+| --- | --- | --- |
+| R2-A Result package | 결과 위치를 바로 찾았고 cross-source 판단 또는 삭제 영향 불확실성은 관찰되지 않음 | `LOCK` 유지. 남은 사용에서 같은 Run의 task/document/artifact를 반복 왕복하거나 삭제 범위를 판단하지 못한 사례가 확인될 때 재검토 |
+| R2-B Browser notification | 완료까지 화면을 지켜봤고 browser notification 선호 1회 확인 | 후보 유지. 반복 사용에서도 같은 대기 비용이 확인될 때 D2-2 검토 |
+| R2-C Template | 반복 입력이 불편하지 않았음 | 후순위 유지 |
+| R2-D Search/Metrics | global search 요구는 없었고 최신순 문제는 PG-1에서 해결 | `LOCK` 유지 |
+| R2-E Review workflow | Review target/finding 계약의 실제 요구가 관찰되지 않음 | `LOCK` 유지 |
+| R2-F Persona-local concurrency | Team Task 순차 실행 선호, Persona 내부 독립 업무 병렬성 선호 1회 | capability 조사 전 구현 금지 |
+
+#### Finding: R2-A는 현재 사용자 근거보다 구조적 가능성이 앞선다
+
+**Evidence**
+- 실제 사용 #1은 결과 위치를 바로 찾았다고 기록했다.
+- 관찰된 결과 탐색 문제는 PG-1의 preview, 정렬, assignment와 Stop 보정으로 닫혔다.
+- 삭제 영향 preview, stale source, cross-source verification 누락은 아직 실제 사례가 없다.
+
+**Principle**
+- SRP와 단순성: 기존 Team detail이 사용자 판단을 충족하는 동안 별도 `RunResultService`를 추가하지 않는다.
+
+**Recommendation**
+- D2-1과 R2-A를 `LOCK`으로 유지한다.
+- 남은 실제 사용에서 cross-source 왕복 또는 삭제 영향 불확실성이 반복될 때만 read model과 delete preview 계약을 승인한다.
+
+**Refutation**
+- Team, Task, Document, Artifact source가 분산된 것은 사실이지만 현재 consumer가 하나의 package를 요구했다는 증거는 없다. 구조적 분산만으로 새 service를 만드는 비용이 더 크므로 현 단계에서는 구현하지 않는다.
+
+**Plan Impact**
+- R2-A 파일과 code task는 변경하지 않는다.
+- G2-1 실제 사용 기록만 계속하며 unlock evidence가 생기면 D2-1부터 다시 검토한다.
 
 ### 결정 항목
 
@@ -352,6 +386,7 @@ flowchart LR
 
 - G2-1 1회차 근거를 1/5로 기록하고 기존 UX correction과 신규 제품 확장을 분리했다.
 - Documents/Results/Live Activity/Shared Handoffs 최신순, 지원 document filtering, image/HTML preview, Task/Agent assignment 가시성, Team Run roster avatar+name, 개별 Run Stop을 `PG-1`로 추가했다.
+- PG-1 완료 뒤 제품 가설을 재평가했으며 Result package 문제는 아직 관찰되지 않아 D2-1/R2-A `LOCK`을 유지했다. Browser notification은 반복성 확인 전 후보로만 남겼다.
 - Browser Notification 첫 slice에서 backend provider framework와 service worker를 제거했다.
 - Template을 후순위로 내리고 Global Search의 Template 선행 의존성을 제거했다.
 - Team Task 병렬 실행 계획을 Persona-local capability 조사로 축소하고 `max_workers=1` baseline을 유지했다.

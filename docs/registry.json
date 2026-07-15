@@ -5367,7 +5367,7 @@
         "result-package",
         "workflow"
       ],
-      "updated_at": "2026-07-15",
+      "updated_at": "2026-07-16",
       "headings": [
         {
           "level": 1,
@@ -5392,6 +5392,14 @@
         {
           "level": 3,
           "text": "진입 Gate"
+        },
+        {
+          "level": 3,
+          "text": "G2-1 중간 제품 가설 재평가 (2026-07-16)"
+        },
+        {
+          "level": 4,
+          "text": "Finding: R2-A는 현재 사용자 근거보다 구조적 가능성이 앞선다"
         },
         {
           "level": 3,
