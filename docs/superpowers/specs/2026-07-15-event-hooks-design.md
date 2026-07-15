@@ -156,6 +156,7 @@ sequenceDiagram
 - `AgentRunner`와 동일하게, agent가 mid-turn 도구 승인을 요구해 실행이 멈추면 headless에서 응답할 수 없으므로 hook_run을 `failed`로 처리한다. 이는 **backstop**이지 "shell을 절대 실행하지 않는다"는 보장이 아니다(`approval_policy=never`면 승인 없이 실행된다). 이 위험 수준은 기존 scheduled agent job과 동일하다.
 - 앱 비밀번호는 `HookSecretStore` 파일에만 저장하고 DB·로그·오류·SSE 어디에도 노출하지 않는다. 오류 메시지에는 기존 `_redact_text` 방식(비밀 치환)을 재사용한다.
 - hook API는 기존 `require_session` 의존성으로 보호한다.
+- **결정 기록(2026-07-15, 프론트엔드 구현 후 재검토)**: 이메일 hook의 Agent 기본 posture는 permissive(codex `sandbox=workspace-write`/`approval_policy=never`)를 **그대로 유지**하기로 확정. 기존 scheduled agent job과 동일 위험 수준으로 간주하며, 필요 시 hook 생성 시 AgentPicker로 hook별 `read-only` 설정이 가능하다.
 
 ## 7. 오류 처리
 

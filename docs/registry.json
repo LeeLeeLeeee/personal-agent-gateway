@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 70,
+  "document_count": 76,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -745,6 +745,80 @@
       "excerpt": "- Root: `frontend/src/components/organisms/SchedulesView/index.jsx` (205 lines) - Modes: `understand`, `api-state`, `test` - Verdict: form/list ownership은 적절하다. Schedule detail drawer와 `onLoadDetail`만 추가하고 Job/Schedul..."
     },
     {
+      "path": "docs/component-inspector/TeamRunCard/2026-07-15-1639.md",
+      "title": "TeamRunCard PG-1 Roster Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "pg-1-team-run-roster",
+      "status": "done",
+      "aliases": [
+        "TeamRunCard roster analysis",
+        "팀 실행 목록 프로필 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "roster"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunCard PG-1 Roster Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "구조와 props 흐름"
+        },
+        {
+          "level": 3,
+          "text": "외부 primitive와 주입 동작"
+        },
+        {
+          "level": 3,
+          "text": "실제 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "데이터 계약"
+        },
+        {
+          "level": 2,
+          "text": "스타일 / 레이아웃"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 2,
+          "text": "권장 구현 순서"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/molecules/TeamRunCard/index.jsx` - Modes: `understand`, `style`, `test` - Proposed verdict: 기존 집계 응답에 `leader` snapshot object를 추가하고, leader/member 모두 같은 profile chip으로 avatar/initials..."
+    },
+    {
       "path": "docs/component-inspector/TeamRunDetail/2026-07-14-1316.md",
       "title": "TeamRunDetail Component Analysis",
       "type": "report",
@@ -965,6 +1039,173 @@
       "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: API 호출은 `GatewayApp`이 소유하고 `TeamRunDetail`은 비동기 callback의 진행 상태만 소유하는 기존 경계가 명확하다. 실패 Task 재시도도 `onRetryTask(..."
     },
     {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-15-1639.md",
+      "title": "TeamRunDetail PG-1 Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "pg-1-team-run-observability",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail PG-1 analysis",
+        "팀 실행 상세 관찰성 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "documents",
+        "cancellation"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail PG-1 Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props와 상태 흐름"
+        },
+        {
+          "level": 3,
+          "text": "외부 primitive와 주입 동작"
+        },
+        {
+          "level": 3,
+          "text": "로컬 state / effects"
+        },
+        {
+          "level": 2,
+          "text": "파생 데이터와 상호작용"
+        },
+        {
+          "level": 2,
+          "text": "API / state 경계"
+        },
+        {
+          "level": 2,
+          "text": "문서 미리보기와 보안"
+        },
+        {
+          "level": 2,
+          "text": "스타일 / 레이아웃"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 2,
+          "text": "권장 구현 순서"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `api-state`, `style`, `test` - Proposed verdict: 기존 `detail`/callback 경계를 유지하면서 파생 목록 정렬, Task 담당자 이름, Agent 현재 업무 fallback, 문..."
+    },
+    {
+      "path": "docs/component-inspector/TeamsView/2026-07-15-1250.md",
+      "title": "TeamsView Persona Card Selection Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "teams-view-persona-selection",
+      "status": "done",
+      "aliases": [
+        "TeamsView persona card analysis",
+        "팀 생성 프로필 카드 분석",
+        "팀 리더 멤버 선택 UI 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "teams",
+        "persona",
+        "style"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamsView Persona Card Selection Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "State / Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 primitive와 주입 동작"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "스타일 / 레이아웃"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / Story"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamsView/index.jsx` - Modes: `understand`, `style`, `test` - Verdict: `personas` prop에 이미 `avatar`, `name`, `role`이 있으므로 API 변경 없이 현재 이름 버튼을 프로필 선택 카드로 바꾸는 것이 안전하다. 로컬 state..."
+    },
+    {
       "path": "docs/component-inspector/index.md",
       "title": "Component Inspector Reports",
       "type": "report",
@@ -985,7 +1226,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [JobsView Retry and Lineage — 2026-07-15 10:57](./JobsView/2026-07-15-1057.md) - [SchedulesView History and Preview — 2026-07-15 10:57](./SchedulesView/2026-07-15-1057.md) - [GatewayApp R1 Operability — 2026-07-15 1..."
+      "excerpt": "- [TeamRunDetail PG-1 — 2026-07-15 16:39](./TeamRunDetail/2026-07-15-1639.md) - [TeamRunCard PG-1 Roster — 2026-07-15 16:39](./TeamRunCard/2026-07-15-1639.md) - [TeamsView Persona Card Selection — 2026-07-15 12:50](./..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -1494,78 +1735,46 @@
       "excerpt": "Personal Agent Gateway의 **Persona**와 **Team Run** 기능을 어떻게 쓰는지, 그리고 직접 따라 해볼 수 있는 시나리오를 정리한다. 동작 설명은 실제 코드(`personas.py`, `teams.py`, `team_runtime.py`, `TeamRunForm`)에 근거한다."
     },
     {
-      "path": "docs/plans/2026-07-10-chat-liveness-reasoning-interrupt.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
+      "path": "docs/plans/completed_2026-07-10-chat-liveness-reasoning-interrupt.md",
+      "title": "채팅 라이브니스 Reasoning 인터럽트 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "chat-liveness-reasoning-interrupt",
+      "status": "done",
+      "aliases": [
+        "채팅 인터럽트 완료",
+        "Reasoning timeline 완료"
+      ],
+      "tags": [
+        "chat",
+        "reasoning",
+        "interrupt",
+        "timeline"
+      ],
+      "updated_at": "2026-07-16",
       "headings": [
         {
           "level": 1,
-          "text": "채팅 라이브니스·reasoning 보존·인터럽트 Implementation Plan"
+          "text": "채팅 라이브니스·Reasoning·인터럽트 완료 기록"
         },
         {
           "level": 2,
-          "text": "Global Constraints"
+          "text": "결과 요약"
         },
         {
           "level": 2,
-          "text": "파일 구조"
+          "text": "단계별 상태"
         },
         {
           "level": 2,
-          "text": "Task 1: 단일 정렬 comparator + rank 테이블"
+          "text": "검증"
         },
         {
           "level": 2,
-          "text": "Task 2: Timeline 렌더가 compareEntries 사용"
-        },
-        {
-          "level": 2,
-          "text": "Task 3: 로컬 엔트리 createdAtMs 스탬프"
-        },
-        {
-          "level": 2,
-          "text": "Task 4: reasoning 아이템 매핑 (entryFromSse)"
-        },
-        {
-          "level": 2,
-          "text": "Task 5: reasoning 접이식 블록 렌더 + 스타일"
-        },
-        {
-          "level": 2,
-          "text": "Task 6: 라이브 working 인디케이터 + 스타일"
-        },
-        {
-          "level": 2,
-          "text": "Task 7: run_state에 취소 가능한 task 등록"
-        },
-        {
-          "level": 2,
-          "text": "Task 8: model_client 취소 시 서브프로세스 정리"
-        },
-        {
-          "level": 2,
-          "text": "Task 9: /interrupt 엔드포인트 + chat_for_session 취소·발행"
-        },
-        {
-          "level": 2,
-          "text": "Task 10: interrupted 매핑 + 렌더 (프론트)"
-        },
-        {
-          "level": 2,
-          "text": "Task 11: 인터럽트 배선 (api + Esc + GatewayApp)"
-        },
-        {
-          "level": 2,
-          "text": "Task 12: 전체 검증"
+          "text": "문서 승격 및 정리"
         }
       ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+      "excerpt": "Chat timeline 정렬을 단일 comparator로 통일하고 reasoning과 working indicator를 추가했다. 실행 task와 CLI subprocess 취소를 연결해 API 또는 `Esc`로 현재 Chat을 중단하고 `runtime.interrupted`를 timeline에 남긴다."
     },
     {
       "path": "docs/reports/2026-07-15-development-pm-maintainability-assessment.md",
@@ -1908,6 +2117,57 @@
         }
       ],
       "excerpt": "R1-A부터 R1-G까지 구현하고 NEXT Release Gate를 통과했다. 운영자는 한 화면에서 DB, Worker, Scheduler, CLI, intake, cookie, tunnel 보고 상태와 workspace 쓰기 가능 여부를 확인하고, 실행 중단·재개·재시도·backup 검증·원래 상세 화면 이동을 수행할 수 있다."
+    },
+    {
+      "path": "docs/reports/2026-07-15-r2-g2-user-validation.md",
+      "title": "Personal Agent Gateway R2 G2-1 실제 사용 검증 기록",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "r2-product-expansion",
+      "status": "active",
+      "aliases": [
+        "R2 사용자 검증 기록",
+        "G2-1 실제 사용 기록",
+        "R2 진입 Gate 피드백"
+      ],
+      "tags": [
+        "product-validation",
+        "g2-1",
+        "r2",
+        "usability"
+      ],
+      "updated_at": "2026-07-15",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway R2 G2-1 실제 사용 검증 기록"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Changes"
+        },
+        {
+          "level": 3,
+          "text": "실제 사용 #1"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        },
+        {
+          "level": 2,
+          "text": "관련 문서"
+        }
+      ],
+      "excerpt": "- 최소 Gate: 실제 사용 5회 - 현재 기록: 1회 - 상태: `G2-1 LOCK` 유지 - 1회차 결과: Team Run 완료 결과 위치는 바로 찾았지만, 문서 preview와 목록 정렬, roster/Task 담당자/현재 업무 가시성, 완료 알림, Run 단위 강제 종료에 마찰이 있었다."
     },
     {
       "path": "docs/reports/2026-07-15-read-performance-baseline.md",
@@ -2944,60 +3204,6 @@
       "excerpt": "- 작성일: 2026-07-08 - 대상: `src/personal_agent_gateway/static/app.js`, `styles.css`, `index.html`, `app.py`(정적 마운트 1줄), `static/vendor/**` - 브랜치: feat/live-activity-viewer - 범위: 프론트 중심 + 최소 백엔드(정적 서빙 경로). **2차 AI 변환 없음.**"
     },
     {
-      "path": "docs/superpowers/plans/2026-07-07-frontend-redesign-slice1.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Frontend Redesign Slice 1 Implementation Plan"
-        },
-        {
-          "level": 2,
-          "text": "Global Constraints"
-        },
-        {
-          "level": 2,
-          "text": "File Structure"
-        },
-        {
-          "level": 2,
-          "text": "Running & Verifying"
-        },
-        {
-          "level": 3,
-          "text": "Task 1: Neo-brutalist CSS + shell chrome"
-        },
-        {
-          "level": 3,
-          "text": "Task 2: OTP Login + auth gating"
-        },
-        {
-          "level": 3,
-          "text": "Task 3: Chat screen (layout A) — sessions, transcript, composer"
-        },
-        {
-          "level": 3,
-          "text": "Task 4: Job Proposal (shell approval) in Chat"
-        },
-        {
-          "level": 3,
-          "text": "Task 5: Responsive adaptation"
-        },
-        {
-          "level": 2,
-          "text": "Self-Review"
-        }
-      ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
-    },
-    {
       "path": "docs/superpowers/plans/2026-07-08-observability-audit-log.md",
       "title": "",
       "type": "",
@@ -3116,564 +3322,6 @@
         }
       ],
       "excerpt": "- 작성일: 2026-07-08 - 출처: `feat/persona-agent-teams` 백엔드 구현(→ `main` `bcc96b5`로 머지)의 태스크별 리뷰 + 전체 브랜치 리뷰(opus)에서 도출한 **비차단(non-blocking) 후속 과제**. - 관련: `docs/superpowers/plans/completed_2026-07-08-persona-agent-teams.md..."
-    },
-    {
-      "path": "docs/superpowers/plans/2026-07-09-chat-path-artifact-registration.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Chat Path → Artifact Registration Implementation Plan"
-        },
-        {
-          "level": 2,
-          "text": "Global Constraints"
-        },
-        {
-          "level": 3,
-          "text": "Task 1: Backend — extension whitelist module + register endpoint"
-        },
-        {
-          "level": 3,
-          "text": "Task 2: Frontend — path detection + \"+등록\" button in the transcript"
-        },
-        {
-          "level": 3,
-          "text": "Task 3: Frontend — Artifacts viewer \"document\" support"
-        },
-        {
-          "level": 2,
-          "text": "Self-Review"
-        },
-        {
-          "level": 2,
-          "text": "Execution Handoff"
-        }
-      ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
-    },
-    {
-      "path": "docs/superpowers/plans/2026-07-09-gateway-screens-jobs-schedules-artifacts-settings.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Gateway Screens (Jobs · Schedules · Artifacts · Settings) Implementation Plan"
-        },
-        {
-          "level": 2,
-          "text": "Global Constraints"
-        },
-        {
-          "level": 2,
-          "text": "Backend reference (already exists — do not rebuild)"
-        },
-        {
-          "level": 2,
-          "text": "File Structure"
-        },
-        {
-          "level": 3,
-          "text": "Task A: Remove Capabilities from the sidebar"
-        },
-        {
-          "level": 3,
-          "text": "Task B: Settings screen (read-only)"
-        },
-        {
-          "level": 3,
-          "text": "Task C: Artifacts screen"
-        },
-        {
-          "level": 3,
-          "text": "Task D: Jobs screen"
-        },
-        {
-          "level": 3,
-          "text": "Task E: Backend `agent.instruct` capability + agent runner"
-        },
-        {
-          "level": 3,
-          "text": "Task F: Schedules screen (recurring instruction) — depends on Task E"
-        },
-        {
-          "level": 3,
-          "text": "Task G: Integration verification"
-        },
-        {
-          "level": 2,
-          "text": "Self-Review"
-        },
-        {
-          "level": 2,
-          "text": "Execution Handoff"
-        }
-      ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
-    },
-    {
-      "path": "docs/superpowers/plans/2026-07-09-session-scoped-chat-and-sse.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Session-Scoped Chat and SSE Implementation Plan"
-        },
-        {
-          "level": 2,
-          "text": "Global Constraints"
-        },
-        {
-          "level": 2,
-          "text": "File Map"
-        },
-        {
-          "level": 3,
-          "text": "Task 1: Durable Session Activity Store"
-        },
-        {
-          "level": 3,
-          "text": "Task 2: Persist Chat Runtime Events Before SSE Fanout"
-        },
-        {
-          "level": 3,
-          "text": "Task 3: Session-Scoped Running State and Explicit Backend APIs"
-        },
-        {
-          "level": 3,
-          "text": "Task 4: Frontend API and Timeline Model for Session Activity"
-        },
-        {
-          "level": 3,
-          "text": "Task 5: Frontend Session-Owned Chat State"
-        },
-        {
-          "level": 3,
-          "text": "Task 6: Session-Scoped Approval Endpoints and UI Calls"
-        },
-        {
-          "level": 3,
-          "text": "Task 7: Final Verification, Build, and Dev Server Restart"
-        },
-        {
-          "level": 2,
-          "text": "Self-Review"
-        }
-      ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
-    },
-    {
-      "path": "docs/superpowers/plans/2026-07-10-artifact-viewer-dedup-chat-view.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Artifact Viewer + Dedup + Chat \"보기\" Implementation Plan"
-        },
-        {
-          "level": 2,
-          "text": "Global Constraints"
-        },
-        {
-          "level": 3,
-          "text": "Task 1: Backend — dedup on register + delete endpoint"
-        },
-        {
-          "level": 3,
-          "text": "Task 2: Frontend — centered ArtifactModal (zoom/pan), grid thumbnails, delete, overflow fix"
-        },
-        {
-          "level": 3,
-          "text": "Task 3: Frontend — chat \"보기\" button + dedup-aware PathChip"
-        },
-        {
-          "level": 2,
-          "text": "Self-Review"
-        },
-        {
-          "level": 2,
-          "text": "Execution Handoff"
-        }
-      ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
-    },
-    {
-      "path": "docs/superpowers/plans/2026-07-10-team-collaboration-and-reliability.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Team Run: 동적 협업 메시징 + 실행 신뢰성 구현 계획"
-        },
-        {
-          "level": 2,
-          "text": "Global Constraints"
-        },
-        {
-          "level": 2,
-          "text": "파일 구조"
-        },
-        {
-          "level": 2,
-          "text": "Task 1: 데이터 모델 확장 (DB 마이그레이션 + teams.py)"
-        },
-        {
-          "level": 2,
-          "text": "Task 2: TeamRunRegistry (실행 수명주기)"
-        },
-        {
-          "level": 2,
-          "text": "Task 3: backend-aware 모델 팩토리 + config"
-        },
-        {
-          "level": 2,
-          "text": "Task 4: team_runtime 재구조화 — 부분 실패 격리 + 종료 상태"
-        },
-        {
-          "level": 2,
-          "text": "Task 5: 동적 메시징 라운드 (needs_info + 리더 중재 + resume + 예산/캡)"
-        },
-        {
-          "level": 2,
-          "text": "Task 6: 리더 최종 종합 (synthesis)"
-        },
-        {
-          "level": 2,
-          "text": "Task 7: 백그라운드 실행 + 실제 취소 배선"
-        },
-        {
-          "level": 2,
-          "text": "Task 8: 프런트엔드 — 상태 배지 + 논블로킹 확인"
-        },
-        {
-          "level": 2,
-          "text": "Task 9: 통합 검증"
-        },
-        {
-          "level": 2,
-          "text": "Self-Review 결과"
-        }
-      ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
-    },
-    {
-      "path": "docs/superpowers/plans/2026-07-13-team-run-ux-improvements.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Team Run UX Improvements Implementation Plan"
-        },
-        {
-          "level": 2,
-          "text": "Global Constraints"
-        },
-        {
-          "level": 2,
-          "text": "File Structure"
-        },
-        {
-          "level": 2,
-          "text": "Task 1: Avatar in persona snapshot (backend)"
-        },
-        {
-          "level": 2,
-          "text": "Task 2: Backfill avatar into existing agent snapshots (backend)"
-        },
-        {
-          "level": 2,
-          "text": "Task 3: Leader cannot also be a member (frontend)"
-        },
-        {
-          "level": 2,
-          "text": "Task 4: Drain loop in `_execute` (backend runtime)"
-        },
-        {
-          "level": 2,
-          "text": "Task 5: Race-safe synthesize loop + `resume` (backend runtime)"
-        },
-        {
-          "level": 2,
-          "text": "Task 6: `add_work` runtime method (leader decomposition)"
-        },
-        {
-          "level": 2,
-          "text": "Task 7: `add-work` API endpoint"
-        },
-        {
-          "level": 2,
-          "text": "Task 8: Add-work frontend (client + handler + input)"
-        },
-        {
-          "level": 2,
-          "text": "Task 9: Progress display — phase stepper, richer lanes, colored activity (frontend + CSS)"
-        },
-        {
-          "level": 2,
-          "text": "Task 10: Shared documents panel (frontend + CSS)"
-        },
-        {
-          "level": 2,
-          "text": "Final verification"
-        },
-        {
-          "level": 2,
-          "text": "Self-Review Notes"
-        }
-      ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
-    },
-    {
-      "path": "docs/superpowers/plans/2026-07-14-agent-teams-backend.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Agent Teams — 백엔드 기반 Implementation Plan"
-        },
-        {
-          "level": 2,
-          "text": "Global Constraints"
-        },
-        {
-          "level": 2,
-          "text": "파일 구조"
-        },
-        {
-          "level": 2,
-          "text": "Task 1: DB 스키마 + 마이그레이션"
-        },
-        {
-          "level": 2,
-          "text": "Task 2: RuleSetService (규칙 세트 CRUD + 시드)"
-        },
-        {
-          "level": 2,
-          "text": "Task 3: TeamService (팀 로스터 CRUD)"
-        },
-        {
-          "level": 2,
-          "text": "Task 4: 팀 기반 실행 생성 + 규칙 스냅샷"
-        },
-        {
-          "level": 2,
-          "text": "Task 5: 런타임 규칙 프롬프트 주입"
-        },
-        {
-          "level": 2,
-          "text": "Task 6: 목록 enrich (리더·멤버·Task 카운트·elapsed)"
-        },
-        {
-          "level": 2,
-          "text": "Task 7: 워크스페이스 문서 조회 API"
-        },
-        {
-          "level": 1,
-          "text": "Reuse the same app/client/run creation helper style as tests/test_api_team_runs.py."
-        },
-        {
-          "level": 2,
-          "text": "Task 8: 라우터 신설 · 앱 wiring · 팀 기반 실행 생성 API"
-        },
-        {
-          "level": 2,
-          "text": "Self-Review (backend)"
-        },
-        {
-          "level": 2,
-          "text": "검증 (백엔드 완료 시)"
-        }
-      ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
-    },
-    {
-      "path": "docs/superpowers/plans/2026-07-14-agent-teams-frontend.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Agent Teams — 프런트엔드 화면 Implementation Plan"
-        },
-        {
-          "level": 2,
-          "text": "Global Constraints"
-        },
-        {
-          "level": 2,
-          "text": "파일 구조"
-        },
-        {
-          "level": 2,
-          "text": "Task 1: API 클라이언트 확장"
-        },
-        {
-          "level": 2,
-          "text": "Task 2: 사이드바 내비게이션 (Teams · Rules)"
-        },
-        {
-          "level": 2,
-          "text": "Task 3: Team Runs 목록 (TeamRunCard + 상태 필터)"
-        },
-        {
-          "level": 2,
-          "text": "Task 4: 팀 기반 New Team Run 흐름"
-        },
-        {
-          "level": 2,
-          "text": "Task 5: Teams 관리 화면 (CRUD + 로스터)"
-        },
-        {
-          "level": 2,
-          "text": "Task 6: Rules 화면"
-        },
-        {
-          "level": 2,
-          "text": "Task 7: Team Run 상세 — DOCUMENTS 탭 + 문서 프리뷰"
-        },
-        {
-          "level": 2,
-          "text": "Task 8: 통합 빌드 + 회귀 확인"
-        },
-        {
-          "level": 2,
-          "text": "Self-Review (frontend)"
-        },
-        {
-          "level": 2,
-          "text": "검증 (프런트 완료 시)"
-        }
-      ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
-    },
-    {
-      "path": "docs/superpowers/plans/2026-07-15-event-hooks.md",
-      "title": "",
-      "type": "",
-      "domain": "",
-      "feature": "",
-      "status": "",
-      "aliases": [],
-      "tags": [],
-      "updated_at": "",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Event Hooks Implementation Plan"
-        },
-        {
-          "level": 2,
-          "text": "Global Constraints"
-        },
-        {
-          "level": 2,
-          "text": "이 계획의 범위"
-        },
-        {
-          "level": 3,
-          "text": "Task 1: DB 스키마 (hooks, hook_runs)"
-        },
-        {
-          "level": 3,
-          "text": "Task 2: HookSecretStore (파일 기반 비밀 저장)"
-        },
-        {
-          "level": 3,
-          "text": "Task 3: HookRunService (실행 기록 + 상태 전이)"
-        },
-        {
-          "level": 3,
-          "text": "Task 4: SourceAdapter 인터페이스 + ImapEmailAdapter"
-        },
-        {
-          "level": 3,
-          "text": "Task 5: HookService (CRUD + 폴링 조율)"
-        },
-        {
-          "level": 3,
-          "text": "Task 6: AgentRuntimeFactory.create_headless_runtime"
-        },
-        {
-          "level": 3,
-          "text": "Task 7: HookRunner (queued run 순차 실행)"
-        },
-        {
-          "level": 3,
-          "text": "Task 8: HookLoop (폴링 루프)"
-        },
-        {
-          "level": 3,
-          "text": "Task 9: config 추가 (poll interval, hooks 디렉토리)"
-        },
-        {
-          "level": 3,
-          "text": "Task 10: api/hooks.py + 앱 배선"
-        },
-        {
-          "level": 2,
-          "text": "후속 계획 (이 계획 밖)"
-        },
-        {
-          "level": 2,
-          "text": "Self-Review 결과"
-        }
-      ],
-      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
     },
     {
       "path": "docs/superpowers/plans/archived_2026-07-07-live-status-sse-backlog.md",
@@ -3806,6 +3454,48 @@
         }
       ],
       "excerpt": "> 완료된 구현 계획을 축약한 감사 기록이다. 상세 구현 절차와 오래된 TODO 목록은 제거했다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-07-frontend-redesign-slice1.md",
+      "title": "Frontend Redesign Slice 1 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "frontend-redesign-slice1",
+      "status": "done",
+      "aliases": [
+        "프런트 리디자인 1차 완료",
+        "Neo-brutalist gateway UI"
+      ],
+      "tags": [
+        "frontend",
+        "redesign",
+        "authentication",
+        "chat"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Frontend Redesign Slice 1 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "Neo-brutalist shell, OTP 인증 화면, Chat 기본 화면, shell 승인 카드와 반응형 navigation을 구현했다. 이후 Vite React 전환과 Live Activity Viewer가 같은 사용자 계약을 이어받았다."
     },
     {
       "path": "docs/superpowers/plans/completed_2026-07-07-live-activity-viewer-and-sse.md",
@@ -3986,6 +3676,48 @@
       "excerpt": "> 완료된 구현 계획을 축약한 감사 기록이다."
     },
     {
+      "path": "docs/superpowers/plans/completed_2026-07-09-chat-path-artifact-registration.md",
+      "title": "Chat Path Artifact Registration 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "chat-path-artifact-registration",
+      "status": "done",
+      "aliases": [
+        "채팅 경로 아티팩트 등록 완료",
+        "Chat 파일 등록"
+      ],
+      "tags": [
+        "chat",
+        "artifact",
+        "frontend",
+        "api"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Chat Path → Artifact Registration 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "Chat 응답에서 로컬 파일 경로를 식별하고 Artifact로 등록하는 흐름을 구현했다. 등록 API, transcript의 `+등록` action, document type viewer가 연결됐고 URL과 디렉터리는 등록 대상으로 오인하지 않는다."
+    },
+    {
       "path": "docs/superpowers/plans/completed_2026-07-09-cli-session-resume-bridge.md",
       "title": "",
       "type": "",
@@ -4018,6 +3750,409 @@
         }
       ],
       "excerpt": "> 완료된 구현 계획을 축약한 감사 기록이다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-09-gateway-screens-jobs-schedules-artifacts-settings.md",
+      "title": "Gateway 운영 화면 1차 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "gateway-operational-screens",
+      "status": "done",
+      "aliases": [
+        "Jobs Schedules Artifacts Settings 완료",
+        "Gateway 운영 화면"
+      ],
+      "tags": [
+        "frontend",
+        "jobs",
+        "schedules",
+        "artifacts",
+        "settings"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Gateway Screens 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "Capabilities placeholder를 제거하고 Settings, Artifacts, Jobs, Schedules 화면을 실제 API와 연결했다. `agent.instruct` capability와 schedule runner를 추가해 예약된 로컬 Agent instruction이 Job으로 실행되는 기본 흐름을 완성했다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-09-session-scoped-chat-and-sse.md",
+      "title": "Session Scoped Chat and SSE 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "session-scoped-chat-sse",
+      "status": "done",
+      "aliases": [
+        "세션 범위 채팅 SSE 완료",
+        "Session activity persistence"
+      ],
+      "tags": [
+        "chat",
+        "sse",
+        "session",
+        "activity"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Session-Scoped Chat and SSE 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "Chat 실행 상태, activity, approval과 frontend timeline을 session 단위로 격리했다. Runtime event는 SSE fanout 전에 durable activity로 저장되고, explicit session API와 reconnect cursor를 통해 재진입 시 같은 timeline을 복원한다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-10-artifact-viewer-dedup-chat-view.md",
+      "title": "Artifact Viewer Dedup Chat View 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "artifact-viewer-dedup-chat-view",
+      "status": "done",
+      "aliases": [
+        "아티팩트 중복 제거 완료",
+        "채팅 파일 보기 완료"
+      ],
+      "tags": [
+        "artifact",
+        "chat",
+        "viewer",
+        "deduplication"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Artifact Viewer + Dedup + Chat 보기 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "동일 source path의 Artifact 중복 등록을 막고 삭제 API를 추가했다. Artifact grid는 중앙 modal, image zoom/pan과 삭제를 제공하며, Chat의 등록된 path는 `보기` action으로 같은 viewer를 연다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-10-team-collaboration-and-reliability.md",
+      "title": "Team Run 협업과 실행 신뢰성 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "team-collaboration-reliability",
+      "status": "done",
+      "aliases": [
+        "Team Run 동적 협업 완료",
+        "팀 실행 취소와 부분 실패"
+      ],
+      "tags": [
+        "team-run",
+        "collaboration",
+        "reliability",
+        "cancellation"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run 동적 협업 메시징과 실행 신뢰성 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "실행 교훈"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "Team Run에 task별 실패 격리, 동적 리더 중재, round budget, 최종 synthesis와 실제 background cancel을 구현했다. 일부 task 실패는 `completed_with_failures`로 구분하고 agent backend별 model factory와 실행 수명주기를 분리했다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-13-team-run-ux-improvements.md",
+      "title": "Team Run UX Improvements 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "team-run-ux-improvements",
+      "status": "done",
+      "aliases": [
+        "Team Run UX 개선 완료",
+        "add work shared documents 완료"
+      ],
+      "tags": [
+        "team-run",
+        "ux",
+        "add-work",
+        "documents"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run UX Improvements 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "실행 교훈"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "Persona avatar snapshot, leader/member 중복 방지, 진행 중 task drain, terminal Run resume와 add-work 흐름을 구현했다. 상세 화면에는 phase stepper, agent lane, 색상 activity, shared document와 handoff panel을 추가했다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-14-agent-teams-backend.md",
+      "title": "Agent Teams Backend 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "agent-teams-backend",
+      "status": "done",
+      "aliases": [
+        "Agent Teams 백엔드 완료",
+        "Teams Rules backend 완료"
+      ],
+      "tags": [
+        "teams",
+        "rules",
+        "backend",
+        "api"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Agent Teams Backend 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "실행 교훈"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "재사용 가능한 Team과 global/team/persona Rule Set을 저장하는 schema와 service를 구현했다. Team 기반 Run 생성 시 roster와 규칙을 snapshot으로 고정하고, 실행 prompt에 주입하며 목록 aggregate와 안전한 workspace document API를 제공한다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-14-agent-teams-frontend.md",
+      "title": "Agent Teams Frontend 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "agent-teams-frontend",
+      "status": "done",
+      "aliases": [
+        "Agent Teams 프런트엔드 완료",
+        "Teams Rules 화면 완료"
+      ],
+      "tags": [
+        "teams",
+        "rules",
+        "frontend",
+        "documents"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Agent Teams Frontend 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "실행 교훈"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "Teams와 Rules navigation, Team Run rich list, TeamPicker 기반 실행 생성, Team/roster 관리, scope별 Rules 편집과 workspace document preview를 구현했다. 화면은 backend snapshot/read model을 사용하며 기존 Persona/Team Run 흐름과 통합됐다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-15-event-hooks-frontend.md",
+      "title": "Event Hooks Frontend 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "event-hooks-frontend",
+      "status": "done",
+      "aliases": [
+        "Event Hooks 프런트엔드 완료",
+        "Hooks 화면 완료"
+      ],
+      "tags": [
+        "hooks",
+        "frontend",
+        "sse",
+        "automation"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Event Hooks Frontend 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "실행 교훈"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "Hook 연결 사전 검증 API와 frontend client를 추가하고, Sidebar의 Hooks navigation·상태 badge, Hook 생성/목록 화면, Hook Run detail drawer를 구현했다. GatewayApp은 hook SSE를 routing해 상태, badge와 toast를 갱신한다."
+    },
+    {
+      "path": "docs/superpowers/plans/completed_2026-07-15-event-hooks.md",
+      "title": "Event Hooks Backend 완료 기록",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "event-hooks-backend",
+      "status": "done",
+      "aliases": [
+        "Event Hooks 백엔드 완료",
+        "IMAP hook 자동 실행 완료"
+      ],
+      "tags": [
+        "hooks",
+        "automation",
+        "imap",
+        "backend"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Event Hooks Backend 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "결과 요약"
+        },
+        {
+          "level": 2,
+          "text": "단계별 상태"
+        },
+        {
+          "level": 2,
+          "text": "실행 교훈"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        }
+      ],
+      "excerpt": "IMAP email source를 polling해 durable Hook Run을 생성하고 headless Agent runtime으로 순차 실행하는 Event Hooks backend를 구현했다. Secret은 별도 파일 store에 보관하고, app lifespan이 HookLoop와 HookRunner를 시작·정리하며 재시작 시 queued run을 복구한다."
     },
     {
       "path": "docs/superpowers/specs/2026-07-10-team-collaboration-and-reliability-design.md",
@@ -4486,6 +4621,64 @@
       "excerpt": "- 작성일: 2026-07-15 - 상태: 설계 확정, 구현 대기 - 관련 도메인: Automation(Jobs/Schedules) 인접, Chat 실행 재사용"
     },
     {
+      "path": "docs/superpowers/specs/2026-07-15-event-hooks-frontend-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Event Hooks 프론트엔드 UI 설계"
+        },
+        {
+          "level": 2,
+          "text": "1. 배경과 목적"
+        },
+        {
+          "level": 3,
+          "text": "확정된 결정 (브레인스토밍 결과)"
+        },
+        {
+          "level": 3,
+          "text": "범위 밖 (후속)"
+        },
+        {
+          "level": 2,
+          "text": "2. 구성요소"
+        },
+        {
+          "level": 2,
+          "text": "3. 화면 레이아웃"
+        },
+        {
+          "level": 2,
+          "text": "4. 상태 · 데이터 흐름 (GatewayApp)"
+        },
+        {
+          "level": 2,
+          "text": "5. 백엔드 추가 (test-connection)"
+        },
+        {
+          "level": 2,
+          "text": "6. API client 메서드 (api/client.js)"
+        },
+        {
+          "level": 2,
+          "text": "7. 테스트 전략"
+        },
+        {
+          "level": 2,
+          "text": "8. 근거 파일"
+        }
+      ],
+      "excerpt": "- 작성일: 2026-07-15 - 상태: 구현 완료 - 선행: `2026-07-15-event-hooks-design.md`(백엔드, main에 머지 완료 — HEAD 09aa771) - 관련 화면: Sidebar NAV(Automation 그룹), GatewayApp 컨테이너"
+    },
+    {
       "path": "docs/superpowers/specs/completed_2026-07-06-otp-setup-ui-design.md",
       "title": "",
       "type": "",
@@ -4865,7 +5058,7 @@
           "text": "관련 문서"
         }
       ],
-      "excerpt": "작성일: 2026-07-15   상태: SUCCESS"
+      "excerpt": "작성일: 2026-07-15 상태: SUCCESS"
     },
     {
       "path": "docs/todo/2026-07-15-r1-operability-execution-plan.md",
@@ -5153,7 +5346,7 @@
           "text": "관련 문서"
         }
       ],
-      "excerpt": "작성일: 2026-07-15   상태: SUCCESS"
+      "excerpt": "작성일: 2026-07-15 상태: SUCCESS"
     },
     {
       "path": "docs/todo/2026-07-15-r2-product-expansion-execution-plan.md",
@@ -5222,7 +5415,27 @@
         },
         {
           "level": 4,
-          "text": "Finding: 알림 변형은 작은 Adapter 경계가 정당화된다"
+          "text": "Finding: 최신순 표시는 domain query가 아니라 view projection이어야 한다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: Task 담당자와 Agent 현재 업무는 하나의 runtime 상태 전이어야 한다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: Team Run roster는 기존 enriched read model을 확장하면 충분하다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: Document metadata와 안전한 preview byte 전달을 분리해야 한다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: 개별 Run 강제 종료는 새 backend 기능이 아니라 누락된 UI 연결이다"
+        },
+        {
+          "level": 4,
+          "text": "Finding: 첫 Browser Notification에는 backend provider 계층이 필요하지 않다"
         },
         {
           "level": 4,
@@ -5230,7 +5443,7 @@
         },
         {
           "level": 4,
-          "text": "Finding: 병렬성은 executor 기능보다 자원 정책이다"
+          "text": "Finding: Team Task 병렬화와 Persona 내부 병렬화는 같은 기능이 아니다"
         },
         {
           "level": 3,
@@ -5245,8 +5458,40 @@
           "text": "Test Strategy Alignment"
         },
         {
+          "level": 3,
+          "text": "Plan Changes Applied"
+        },
+        {
           "level": 2,
           "text": "변경 묶음"
+        },
+        {
+          "level": 2,
+          "text": "PG-1. 기존 Run 탐색·assignment·preview·개별 종료 correction"
+        },
+        {
+          "level": 3,
+          "text": "가정과 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 범위"
+        },
+        {
+          "level": 3,
+          "text": "수정 계획"
+        },
+        {
+          "level": 3,
+          "text": "완료 기준"
+        },
+        {
+          "level": 3,
+          "text": "검증"
+        },
+        {
+          "level": 3,
+          "text": "롤백 기준"
         },
         {
           "level": 2,
@@ -5370,7 +5615,7 @@
         },
         {
           "level": 2,
-          "text": "R2-F. Bounded concurrency"
+          "text": "R2-F. Persona-local concurrency capability"
         },
         {
           "level": 3,
@@ -5409,7 +5654,7 @@
           "text": "관련 문서"
         }
       ],
-      "excerpt": "작성일: 2026-07-15   상태: paused — R1 NEXT Release Gate 통과, 실제 사용 근거 확보 전 실행 금지"
+      "excerpt": "작성일: 2026-07-15 상태: paused — `PG-1` SUCCESS, R2-A~R2-F는 실제 사용 근거 전 실행 금지"
     },
     {
       "path": "docs/todo/2026-07-15-service-improvement-roadmap.md",
