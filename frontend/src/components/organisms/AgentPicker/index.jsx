@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 const EFFORT_LABELS = { low: "LOW", medium: "MED", high: "HIGH", xhigh: "XHIGH", max: "MAX" };
 
@@ -46,10 +46,11 @@ const OPTION_INFO = {
 };
 
 function InfoTip({ label, children }) {
+  const tipId = useId();
   return (
     <span className="config-info">
-      <button type="button" className="config-info-btn" aria-label={`${label} 설명`}>ⓘ</button>
-      <span className="config-info-pop" role="tooltip">{children}</span>
+      <button type="button" className="config-info-btn" aria-label={`${label} 설명`} aria-describedby={tipId}>ⓘ</button>
+      <span className="config-info-pop" role="tooltip" id={tipId}>{children}</span>
     </span>
   );
 }

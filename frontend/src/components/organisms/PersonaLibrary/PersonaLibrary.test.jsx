@@ -99,6 +99,9 @@ describe("PersonaLibrary", () => {
     await userEvent.click(screen.getByRole("button", { name: "Model" }));
     await userEvent.click(screen.getByRole("button", { name: "Opus" }));
 
+    // opus only offers high/max, so "low" is no longer a choice
+    expect(screen.queryByRole("button", { name: "effort low" })).not.toBeInTheDocument();
+
     // effort segmented control (opus offers high/max), then permission mode dropdown -> plan
     await userEvent.click(screen.getByRole("button", { name: "effort max" }));
     await userEvent.click(screen.getByRole("button", { name: "permission mode" }));
