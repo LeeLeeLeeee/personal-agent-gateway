@@ -94,3 +94,37 @@ def test_run_now_returns_created_count(tmp_path: Path) -> None:
     runs = client.get(f"/api/hooks/{hook_id}/runs")
     assert runs.status_code == 200
     assert runs.json()["runs"] == []
+
+
+def test_test_connection_unreachable_returns_ok_false(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    response = client.post(
+        "/api/hooks/test-connection",
+        json={
+            "connection": {"host": "imap.invalid.test", "port": 993, "username": "me@test"},
+            "secret": "app-password",
+            "filter": {"folder": "INBOX"},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "app-password" not in response.text
+
+
+def test_test_connection_unsupported_source_returns_400(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    response = client.post(
+        "/api/hooks/test-connection",
+        json={"source_type": "slack", "connection": {}, "secret": "x"},
+    )
+    assert response.status_code == 400
+
+
+def test_test_connection_requires_session(tmp_path: Path) -> None:
+    client = TestClient(create_app(make_config(tmp_path)))
+    response = client.post(
+        "/api/hooks/test-connection",
+        json={"connection": {}, "secret": "x"},
+    )
+    assert response.status_code == 401

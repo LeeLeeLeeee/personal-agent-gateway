@@ -167,6 +167,19 @@ class HookService:
         )
         return created
 
+    def verify_connection(
+        self,
+        source_type: str,
+        connection: dict[str, object],
+        secret: str,
+        filter: dict[str, object],
+    ) -> None:
+        adapter = self._adapters.get(source_type)
+        if adapter is None or not hasattr(adapter, "verify"):
+            raise ValueError(f"Connection test not supported for source: {source_type}")
+        folder = str(filter.get("folder") or "INBOX")
+        adapter.verify(connection, secret, folder)
+
 
 def render_prompt(template: str, payload: dict[str, object]) -> str:
     return (

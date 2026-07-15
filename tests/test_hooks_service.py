@@ -130,3 +130,39 @@ def test_delete_removes_hook_and_secret(tmp_path: Path) -> None:
 
     assert hook_service.list_hooks() == []
     assert hook_service._secret_store.load(ref) is None
+
+
+def test_verify_connection_success(tmp_path) -> None:
+    class VerifyAdapter:
+        def __init__(self):
+            self.called = None
+        def poll(self, connection, secret, cursor, filter_config):
+            raise AssertionError("poll should not be called")
+        def verify(self, connection, secret, folder):
+            self.called = (connection, secret, folder)
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.hook_secrets import HookSecretStore
+    from personal_agent_gateway.hooks import HookService
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    adapter = VerifyAdapter()
+    service = HookService(db, HookSecretStore(tmp_path / "hooks"), {"email": adapter})
+    service.verify_connection(
+        "email",
+        {"host": "h", "port": 993, "username": "u"},
+        "pw",
+        {"folder": "INBOX"},
+    )
+    assert adapter.called == ({"host": "h", "port": 993, "username": "u"}, "pw", "INBOX")
+
+
+def test_verify_connection_unsupported_source_raises(tmp_path) -> None:
+    from personal_agent_gateway.db import Database
+    from personal_agent_gateway.hook_secrets import HookSecretStore
+    from personal_agent_gateway.hooks import HookService
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    service = HookService(db, HookSecretStore(tmp_path / "hooks"), {})
+    import pytest
+    with pytest.raises(ValueError):
+        service.verify_connection("email", {}, "pw", {})

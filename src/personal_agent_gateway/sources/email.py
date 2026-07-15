@@ -65,6 +65,14 @@ class ImapEmailAdapter:
         finally:
             client.logout()
 
+    def verify(self, connection: dict[str, object], secret: str, folder: str = "INBOX") -> None:
+        client = self._client_factory(str(connection["host"]), int(connection["port"]))
+        try:
+            client.login(str(connection["username"]), secret)
+            client.select(str(folder or "INBOX"))
+        finally:
+            client.logout()
+
 
 def normalize_email(message: Message) -> dict[str, object]:
     return {

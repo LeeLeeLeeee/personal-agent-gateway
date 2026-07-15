@@ -27,6 +27,13 @@ class UpdateHookRequest(BaseModel):
     enabled: bool
 
 
+class TestConnectionRequest(BaseModel):
+    source_type: str = "email"
+    connection: dict[str, object] = Field(default_factory=dict)
+    secret: str
+    filter: dict[str, object] = Field(default_factory=dict)
+
+
 @router.get("")
 def list_hooks(request: Request, _session: None = session_dependency) -> dict[str, object]:
     return {"hooks": [_hook_payload(h) for h in request.app.state.hook_service.list_hooks()]}
@@ -52,6 +59,25 @@ def create_hook(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"hook": _hook_payload(hook)}
+
+
+@router.post("/test-connection")
+async def test_connection(
+    request: Request, payload: TestConnectionRequest, _session: None = session_dependency
+) -> dict[str, object]:
+    try:
+        await asyncio.to_thread(
+            request.app.state.hook_service.verify_connection,
+            payload.source_type,
+            payload.connection,
+            payload.secret,
+            payload.filter,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — surface connection failure as ok:false
+        return {"ok": False, "error": str(exc)[:500] or type(exc).__name__}
+    return {"ok": True}
 
 
 @router.get("/{hook_id}")
