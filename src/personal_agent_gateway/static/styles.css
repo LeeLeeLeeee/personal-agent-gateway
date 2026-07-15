@@ -3911,3 +3911,14 @@ p {
 .config-info-list { display: block; margin-top: 6px; padding-top: 6px; border-top: 1px solid #333; }
 .config-info-list-row { display: block; margin-top: 2px; }
 .config-info-list-row b { display: inline-block; min-width: 46px; }
+
+/* Hooks view (reuses schedule-*/jobs-drawer-* classes) */
+.hook-section { margin-top: 14px; opacity: 0.7; letter-spacing: 0.08em; }
+.hook-test-row { display: flex; align-items: center; gap: 10px; }
+.hook-test-result.ok { color: var(--ok, #3fb950); }
+.hook-test-result.err { color: var(--err, #f85149); }
+.hook-row-error { color: var(--err, #f85149); }
+.hook-run { padding: 8px 0; border-bottom: 1px solid var(--line, #222); }
+.hook-run-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hook-run-summary { font-weight: 600; }
+.hook-run-result { white-space: pre-wrap; margin-top: 4px; opacity: 0.9; }
