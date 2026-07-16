@@ -55,17 +55,18 @@ updated_at: 2026-07-16
 - 현재 생성된 Team Run이나 workspace를 자동화 fixture로 사용하지 않았다.
 - 사용자가 추가 4회를 기다리지 않고 이번 1회를 기준으로 진행하도록 명시했으므로, 횟수 자체가 아니라 항목별 관찰 근거로 범위를 제한했다.
 
+### R2-B 수동 확인 (2026-07-16)
+
+- 처음에는 Windows 전역 알림이 꺼져 있어 Gateway의 browser preference가 `ON`이어도 toast가 표시되지 않았다.
+- Windows 알림과 Chrome 알림을 활성화한 뒤 사용자가 Team Run 완료 알림 수신을 확인했다.
+- 이 확인으로 열린 Gateway 탭, browser permission, OS notification permission이 모두 필요한 실제 운영 조건을 고정했다.
+
 ## Follow-ups
 
-1. Documents에서 폴더를 제외하고 열람 가능한 파일만 표시한다.
-2. 이미지와 HTML을 preview로 열며 HTML은 실행 권한을 제한한 안전한 렌더링 경계를 사용한다.
-3. Documents, Results, Live Activity, Shared / Handoffs의 기본 정렬을 최신순으로 통일한다.
-4. 열린 Gateway 탭의 브라우저 완료 알림을 R2-B 첫 slice로 구현한다.
-5. 개별 Team Run 강제 종료와 terminal 상태 기록을 R2 전 운영 UX 보완 후보로 분리한다.
-6. Concurrency는 상위 Task 순서를 유지하고 Persona 내부 독립 하위 업무에만 적용하는 정책으로 검토한다.
-7. 후속 실제 사용은 Gate 해제 조건이 아니라 R2-B 유효성 및 다른 가설의 신규 근거로 기록한다.
-8. Task assignment와 Agent current work 상태를 runtime source of truth에 기록하고 Task Board/Agent Sessions에 표시한다.
-9. Team Runs roster에서 leader와 members의 snapshot avatar·name을 함께 표시한다.
+- PG-1에서 document filtering, image/sandbox HTML preview, 최신순 projection, 개별 Run Stop, Task assignment/current work, roster identity를 완료했다.
+- R2-B에서 열린 Gateway 탭의 browser notification을 구현하고 수동 수신을 확인했다.
+- Concurrency와 나머지 제품 가설은 [R2 후속 제품 가설 backlog](../todo/2026-07-16-r2-deferred-product-backlog.md)로 이동했다.
+- 후속 실제 사용은 Gate 횟수가 아니라 잠긴 가설의 신규 근거로 기록한다.
 
 ## 관련 문서
 

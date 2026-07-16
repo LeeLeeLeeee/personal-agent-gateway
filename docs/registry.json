@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 77,
+  "document_count": 81,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -222,6 +222,65 @@
         }
       ],
       "excerpt": "Gateway는 로컬 파일과 command를 다룰 수 있지만 현재 UI/API는 실제 접근 경계를 명시하지 않는다. 특히 Artifact 등록 API는 workspace 밖 absolute path도 허용해 로그인 session 탈취 시 피해 범위가 넓다."
+    },
+    {
+      "path": "docs/adr/2026-07-16-browser-notification-privacy.md",
+      "title": "열린 Gateway 탭의 Browser Notification과 privacy 경계",
+      "type": "adr",
+      "domain": "personal-agent-gateway",
+      "feature": "team-run-completion-notification",
+      "status": "done",
+      "aliases": [
+        "Team Run 완료 알림 결정",
+        "브라우저 알림 privacy",
+        "R2-B 알림 계약"
+      ],
+      "tags": [
+        "notification",
+        "privacy",
+        "team-run",
+        "r2"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "열린 Gateway 탭의 Browser Notification과 privacy 경계"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Decision"
+        },
+        {
+          "level": 2,
+          "text": "Alternatives"
+        },
+        {
+          "level": 3,
+          "text": "Backend notification provider와 webhook"
+        },
+        {
+          "level": 3,
+          "text": "Service Worker와 Push API"
+        },
+        {
+          "level": 3,
+          "text": "알림을 제공하지 않음"
+        },
+        {
+          "level": 2,
+          "text": "Consequences"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "실제 Team Run 사용에서 사용자가 완료될 때까지 화면을 계속 지켜보는 대기 비용이 확인됐다. Browser Notification 선호는 확인됐지만 webhook, 닫힌 페이지의 background push, 외부 provider 요구는 없었다. Team terminal SSE에는 summary와 error 같은 민감 내용이 포함될 수 있으므로 표시 payload도 별도로 제한해야..."
     },
     {
       "path": "docs/component-inspector/AgentPicker/2026-07-14-1626.md",
@@ -1537,6 +1596,57 @@
       "excerpt": "Gateway process는 유지하면서 새 실행 intake를 먼저 닫고 Chat, Team, Job을 순서대로 terminal 상태로 수렴시킨다. 자동 재개하지 않으며 소유자가 상태를 확인한 뒤 별도 action으로 intake를 연다."
     },
     {
+      "path": "docs/flows/2026-07-16-team-run-completion-notification.md",
+      "title": "Team Run 완료 알림 사용과 확인",
+      "type": "flow",
+      "domain": "personal-agent-gateway",
+      "feature": "team-run-completion-notification",
+      "status": "done",
+      "aliases": [
+        "Team Run 알림 켜는 법",
+        "브라우저 알림 테스트",
+        "알림이 안 올 때"
+      ],
+      "tags": [
+        "notification",
+        "operations",
+        "team-run",
+        "troubleshooting"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run 완료 알림 사용과 확인"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Entry Points"
+        },
+        {
+          "level": 2,
+          "text": "Flow"
+        },
+        {
+          "level": 2,
+          "text": "Edge Cases"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "열린 Gateway 탭에서 사용자가 알림을 opt-in하면 새 Team Run의 완료 또는 실패 terminal SSE를 browser notification으로 표시한다. Browser site permission과 OS notification permission이 모두 필요하며 Gateway 탭을 닫은 상태는 지원하지 않는다."
+    },
+    {
       "path": "docs/knowledge/2026-07-08-full-access-security-operating-model.md",
       "title": "Full Access Mode Security Operating Model",
       "type": "knowledge",
@@ -2257,6 +2367,10 @@
           "text": "Verification"
         },
         {
+          "level": 3,
+          "text": "R2-B 수동 확인 (2026-07-16)"
+        },
+        {
           "level": 2,
           "text": "Follow-ups"
         },
@@ -2316,6 +2430,53 @@
         }
       ],
       "excerpt": "Windows 11, Python 3.13.13 로컬 환경의 임시 fixture에서 1,000개 Session 목록 p95는 JSONL 전체 스캔 133.899ms에서 SQLite metadata index 3.257ms로 줄었다. 기본 페이지는 Session·Job·Artifact·Team Run 100개, event·Team detail·document 200개로 제한했다."
+    },
+    {
+      "path": "docs/reports/2026-07-16-r2-scoped-product-expansion-implementation.md",
+      "title": "Personal Agent Gateway R2 실제 사용 기반 범위 축소 구현 보고서",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "r2-product-expansion",
+      "status": "done",
+      "aliases": [
+        "R2 구현 완료 보고서",
+        "R2-B 알림 완료",
+        "PG-1 R2 완료 결과"
+      ],
+      "tags": [
+        "r2",
+        "implementation",
+        "usability",
+        "notification"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway R2 실제 사용 기반 범위 축소 구현 보고서"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Changes"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Scope Decisions"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "R2는 최초 계획의 모든 제품 확장을 구현하지 않고 실제 사용 1회에서 관찰된 문제만 해결하는 범위로 축소해 완료했다. PG-1은 기존 Team Run 탐색·preview·assignment·중단 UX를 보정했고, R2-B는 열린 Gateway 탭의 opt-in Browser Notification을 제공한다. 사용자가 Windows/Chrome 알림을 활성화한 뒤 실제 완료 알림 수신..."
     },
     {
       "path": "docs/specs/2026-07-08-observability-audit-log-spec.md",
@@ -5448,319 +5609,71 @@
     },
     {
       "path": "docs/todo/2026-07-15-r2-product-expansion-execution-plan.md",
-      "title": "Personal Agent Gateway R2 제품 확장 실행 플랜",
+      "title": "Personal Agent Gateway R2 제품 확장 완료 기록",
       "type": "todo",
       "domain": "personal-agent-gateway",
       "feature": "r2-product-expansion",
-      "status": "paused",
+      "status": "done",
       "aliases": [
         "PAG R2 실행 계획",
-        "결과 알림 템플릿 검색 수정 계획",
-        "Review concurrency 구현 순서",
-        "LATER 단계 구현 계획"
+        "R2 완료 기록",
+        "R2-B 브라우저 알림 완료",
+        "LATER 단계 완료"
       ],
       "tags": [
         "execution-plan",
         "product-expansion",
-        "result-package",
-        "workflow"
+        "usability",
+        "notification"
       ],
       "updated_at": "2026-07-16",
       "headings": [
         {
           "level": 1,
-          "text": "Personal Agent Gateway R2 제품 확장 실행 플랜"
+          "text": "Personal Agent Gateway R2 제품 확장 완료 기록"
         },
         {
           "level": 2,
-          "text": "배경"
+          "text": "결과 요약"
         },
         {
           "level": 2,
-          "text": "목표"
+          "text": "완료 이력"
         },
         {
           "level": 2,
-          "text": "RULES"
+          "text": "최종 범위"
+        },
+        {
+          "level": 3,
+          "text": "PG-1"
+        },
+        {
+          "level": 3,
+          "text": "R2-B"
         },
         {
           "level": 2,
-          "text": "진입 Gate와 실행 전 결정"
-        },
-        {
-          "level": 3,
-          "text": "진입 Gate"
-        },
-        {
-          "level": 3,
-          "text": "G2-1 중간 제품 가설 재평가 (2026-07-16)"
-        },
-        {
-          "level": 4,
-          "text": "Finding: R2-A는 현재 사용자 근거보다 구조적 가능성이 앞선다"
-        },
-        {
-          "level": 3,
-          "text": "결정 항목"
+          "text": "수동 확인과 운영 교훈"
         },
         {
           "level": 2,
-          "text": "Architecture Review"
-        },
-        {
-          "level": 3,
-          "text": "Current Structural Risks"
-        },
-        {
-          "level": 3,
-          "text": "SOLID Review"
-        },
-        {
-          "level": 4,
-          "text": "Finding: Result package는 새 저장소가 아니라 read model이어야 한다"
-        },
-        {
-          "level": 4,
-          "text": "Finding: 최신순 표시는 domain query가 아니라 view projection이어야 한다"
-        },
-        {
-          "level": 4,
-          "text": "Finding: Task 담당자와 Agent 현재 업무는 하나의 runtime 상태 전이어야 한다"
-        },
-        {
-          "level": 4,
-          "text": "Finding: Team Run roster는 기존 enriched read model을 확장하면 충분하다"
-        },
-        {
-          "level": 4,
-          "text": "Finding: Document metadata와 안전한 preview byte 전달을 분리해야 한다"
-        },
-        {
-          "level": 4,
-          "text": "Finding: 개별 Run 강제 종료는 새 backend 기능이 아니라 누락된 UI 연결이다"
-        },
-        {
-          "level": 4,
-          "text": "Finding: 첫 Browser Notification에는 backend provider 계층이 필요하지 않다"
-        },
-        {
-          "level": 4,
-          "text": "Finding: 실제 실행 variant가 생기는 시점에 Strategy를 도입한다"
-        },
-        {
-          "level": 4,
-          "text": "Finding: Team Task 병렬화와 Persona 내부 병렬화는 같은 기능이 아니다"
-        },
-        {
-          "level": 3,
-          "text": "Design Pattern Decisions"
-        },
-        {
-          "level": 3,
-          "text": "Dependency Direction"
-        },
-        {
-          "level": 3,
-          "text": "Test Strategy Alignment"
-        },
-        {
-          "level": 3,
-          "text": "Plan Changes Applied"
+          "text": "제거 및 의존성 정리"
         },
         {
           "level": 2,
-          "text": "변경 묶음"
+          "text": "완료 체크리스트"
         },
         {
           "level": 2,
-          "text": "PG-1. 기존 Run 탐색·assignment·preview·개별 종료 correction"
-        },
-        {
-          "level": 3,
-          "text": "가정과 범위"
-        },
-        {
-          "level": 3,
-          "text": "수정 범위"
-        },
-        {
-          "level": 3,
-          "text": "수정 계획"
-        },
-        {
-          "level": 3,
-          "text": "완료 기준"
-        },
-        {
-          "level": 3,
-          "text": "검증"
-        },
-        {
-          "level": 3,
-          "text": "롤백 기준"
-        },
-        {
-          "level": 2,
-          "text": "R2-A. Run result package, deep link, delete preview"
-        },
-        {
-          "level": 3,
-          "text": "수정 범위"
-        },
-        {
-          "level": 3,
-          "text": "수정 계획"
-        },
-        {
-          "level": 3,
-          "text": "완료 기준"
-        },
-        {
-          "level": 3,
-          "text": "검증"
-        },
-        {
-          "level": 3,
-          "text": "롤백 기준"
-        },
-        {
-          "level": 2,
-          "text": "R2-B. Completion notification"
-        },
-        {
-          "level": 3,
-          "text": "수정 범위"
-        },
-        {
-          "level": 3,
-          "text": "수정 계획"
-        },
-        {
-          "level": 3,
-          "text": "완료 기준"
-        },
-        {
-          "level": 3,
-          "text": "검증"
-        },
-        {
-          "level": 3,
-          "text": "롤백 기준"
-        },
-        {
-          "level": 2,
-          "text": "R2-C. Reusable work template"
-        },
-        {
-          "level": 3,
-          "text": "수정 범위"
-        },
-        {
-          "level": 3,
-          "text": "수정 계획"
-        },
-        {
-          "level": 3,
-          "text": "완료 기준"
-        },
-        {
-          "level": 3,
-          "text": "검증"
-        },
-        {
-          "level": 3,
-          "text": "롤백 기준"
-        },
-        {
-          "level": 2,
-          "text": "R2-D. Global search와 local-only metrics"
-        },
-        {
-          "level": 3,
-          "text": "수정 범위"
-        },
-        {
-          "level": 3,
-          "text": "수정 계획"
-        },
-        {
-          "level": 3,
-          "text": "완료 기준"
-        },
-        {
-          "level": 3,
-          "text": "검증"
-        },
-        {
-          "level": 3,
-          "text": "롤백 기준"
-        },
-        {
-          "level": 2,
-          "text": "R2-E. 실제 Review workflow"
-        },
-        {
-          "level": 3,
-          "text": "수정 범위"
-        },
-        {
-          "level": 3,
-          "text": "수정 계획"
-        },
-        {
-          "level": 3,
-          "text": "완료 기준"
-        },
-        {
-          "level": 3,
-          "text": "검증"
-        },
-        {
-          "level": 3,
-          "text": "롤백 기준"
-        },
-        {
-          "level": 2,
-          "text": "R2-F. Persona-local concurrency capability"
-        },
-        {
-          "level": 3,
-          "text": "수정 범위"
-        },
-        {
-          "level": 3,
-          "text": "수정 계획"
-        },
-        {
-          "level": 3,
-          "text": "완료 기준"
-        },
-        {
-          "level": 3,
-          "text": "검증"
-        },
-        {
-          "level": 3,
-          "text": "롤백 기준"
-        },
-        {
-          "level": 2,
-          "text": "LATER Release Gate"
-        },
-        {
-          "level": 2,
-          "text": "통합 체크리스트"
-        },
-        {
-          "level": 2,
-          "text": "Docs 승격"
+          "text": "Docs 승격 결과"
         },
         {
           "level": 2,
           "text": "관련 문서"
         }
       ],
-      "excerpt": "작성일: 2026-07-15 상태: paused — `PG-1`, `R2-B` SUCCESS; 나머지 R2 묶음은 실제 사용 근거와 개별 결정 전까지 `LOCK`"
+      "excerpt": "작성일: 2026-07-15 완료일: 2026-07-16 상태: SUCCESS — 실제 사용 1회에서 확인된 `PG-1`과 `R2-B`로 범위를 축소해 완료"
     },
     {
       "path": "docs/todo/2026-07-15-service-improvement-roadmap.md",
@@ -5781,7 +5694,7 @@
         "product-pm",
         "backlog"
       ],
-      "updated_at": "2026-07-15",
+      "updated_at": "2026-07-16",
       "headings": [
         {
           "level": 1,
@@ -5917,7 +5830,7 @@
         },
         {
           "level": 3,
-          "text": "R2-2. 완료 알림"
+          "text": "R2-2. 완료 알림 — SUCCESS (축소 범위)"
         },
         {
           "level": 3,
@@ -5960,7 +5873,49 @@
           "text": "관련 문서"
         }
       ],
-      "excerpt": "- **SUCCESS**: 서비스 도메인, 사용자 여정, 유지보수·성능·보안 위험을 코드와 기존 문서 기준으로 정리했다. - **SUCCESS**: R0 신뢰 기반 구현과 NOW Release Gate를 완료했다. - **SUCCESS**: R1 운영 가능성 구현과 NEXT Release Gate를 완료했다. - **PAUSED**: R2는 5~10회 실제 사용 근거가 확보될 때까지 범..."
+      "excerpt": "- **SUCCESS**: 서비스 도메인, 사용자 여정, 유지보수·성능·보안 위험을 코드와 기존 문서 기준으로 정리했다. - **SUCCESS**: R0 신뢰 기반 구현과 NOW Release Gate를 완료했다. - **SUCCESS**: R1 운영 가능성 구현과 NEXT Release Gate를 완료했다. - **SUCCESS**: 실제 사용 1회에서 확인된 PG-1 사용성 보정과 ..."
+    },
+    {
+      "path": "docs/todo/2026-07-16-r2-deferred-product-backlog.md",
+      "title": "Personal Agent Gateway R2 후속 제품 가설 backlog",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "r2-deferred-product-hypotheses",
+      "status": "active",
+      "aliases": [
+        "R2 남은 작업",
+        "R2 후속 backlog",
+        "Result Template Search Review Concurrency"
+      ],
+      "tags": [
+        "r2",
+        "backlog",
+        "product-validation"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway R2 후속 제품 가설 backlog"
+        },
+        {
+          "level": 2,
+          "text": "배경"
+        },
+        {
+          "level": 2,
+          "text": "체크리스트"
+        },
+        {
+          "level": 2,
+          "text": "원칙"
+        },
+        {
+          "level": 2,
+          "text": "관련 문서"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-16 상태: active — 구현 대기 목록이 아니라 실제 사용 근거를 기다리는 가설 목록"
     }
   ]
 }
