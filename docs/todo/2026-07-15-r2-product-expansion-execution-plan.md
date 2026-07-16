@@ -389,6 +389,7 @@ flowchart LR
 - PG-1 완료 뒤 제품 가설을 재평가했으며 Result package 문제는 아직 관찰되지 않아 D2-1/R2-A `LOCK`을 유지했다. Browser notification은 열린 탭의 opt-in slice만 승인했다.
 - Browser Notification 첫 slice에서 backend provider framework와 service worker를 제거했다.
 - 한 번의 실제 사용으로 승인된 열린 탭 Browser Notification slice를 구현하고 privacy/delivery/navigation test와 전체 frontend gate를 통과했다.
+- R2-B 완료 뒤 R0/R1 전체 release gate를 다시 실행해 backend 454 tests, Ruff, frontend 217 tests와 production build 통과를 확인했다.
 - Template을 후순위로 내리고 Global Search의 Template 선행 의존성을 제거했다.
 - Team Task 병렬 실행 계획을 Persona-local capability 조사로 축소하고 `max_workers=1` baseline을 유지했다.
 
@@ -584,6 +585,7 @@ npm --prefix frontend run build
 - 기존 단일 Team SSE callback에서 completed/failed만 처리하며, generic title/body에 summary, error, prompt, path, opaque Run id를 노출하지 않는다.
 - `(run id, terminal type, finished_at)` page-lifetime key로 중복을 막고 click 시 열린 창에 focus한 뒤 기존 Teams 상세를 선택한다.
 - targeted 50 tests와 frontend 전체 217 tests가 통과했고 production build가 성공했다.
+- 후속 R0/R1 regression gate에서 backend 전체 454 tests와 Ruff까지 통과해 기존 auth, lifecycle, stop, audit, retry, backup 계약이 유지됐다.
 
 ### 롤백 기준
 
@@ -776,13 +778,13 @@ npm --prefix frontend run build
 - [ ] Local metrics가 content 없이 성공·복구·신뢰성 지표를 계산한다.
 - [ ] Review가 명시적 target과 finding/verification 계약으로 실제 실행된다.
 - [ ] Team Task 순차성을 유지하며 지원되는 Persona-local concurrency만 workspace 충돌·cancel·비용 정책을 지킨다.
-- [ ] R0/R1 전체 release gate가 계속 통과한다.
+- [x] R0/R1 전체 release gate가 계속 통과한다. (2026-07-16: backend 454, Ruff, frontend 217, build)
 
 ## 통합 체크리스트
 
 | 상태 | 작업 | 잠금/실패 사유 | 검증 |
 | --- | --- | --- | --- |
-| SUCCESS | G2-0 R1 NEXT Release Gate |  | R1 full gate |
+| SUCCESS | G2-0 R1 NEXT Release Gate |  | R1 full gate + 2026-07-16 post-R2-B regression gate |
 | SUCCESS | PG-1 기존 UX correction |  | Backend/frontend full gate + 8787 smoke |
 | SUCCESS | G2-1 실제 사용 근거 | 사용자 결정으로 1/1 기록 완료 | Product hypothesis review |
 | LOCK | D2-1 Result/delete 계약 | G2-0, G2-1 | Contract review |
