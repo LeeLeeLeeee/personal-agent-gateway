@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 76,
+  "document_count": 77,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -598,6 +598,104 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `refactor`, `api-state`, `test` - Verdict: R1 기능은 현재 container에 직접 누적하지 않고, 먼저 공통 `ApiError` 계약과 Operations 화면을 추가한 뒤 기존 bootstr..."
+    },
+    {
+      "path": "docs/component-inspector/GatewayApp/2026-07-16-0855.md",
+      "title": "GatewayApp Browser Notification Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "gateway-app-browser-notification",
+      "status": "done",
+      "aliases": [
+        "GatewayApp browser notification analysis",
+        "Team Run 완료 알림 컴포넌트 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "api-state",
+        "test"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp Browser Notification Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "State / Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 library primitive"
+        },
+        {
+          "level": 2,
+          "text": "Custom hook / 주입 action"
+        },
+        {
+          "level": 2,
+          "text": "API / State 흐름"
+        },
+        {
+          "level": 2,
+          "text": "주요 interaction 흐름"
+        },
+        {
+          "level": 3,
+          "text": "Opt-in"
+        },
+        {
+          "level": 3,
+          "text": "Team Run 종료와 click"
+        },
+        {
+          "level": 2,
+          "text": "Tests / Stories"
+        },
+        {
+          "level": 3,
+          "text": "기존 coverage"
+        },
+        {
+          "level": 3,
+          "text": "구현 전 RED cases"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: 브라우저 알림 상태와 Team Run 종료 이벤트 처리는 `GatewayApp`가 소유하고, `SettingsView`에는 상태와 사용자 동작 callback만 주입한다. -..."
     },
     {
       "path": "docs/component-inspector/JobsView/2026-07-15-1057.md",
@@ -1226,7 +1324,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [TeamRunDetail PG-1 — 2026-07-15 16:39](./TeamRunDetail/2026-07-15-1639.md) - [TeamRunCard PG-1 Roster — 2026-07-15 16:39](./TeamRunCard/2026-07-15-1639.md) - [TeamsView Persona Card Selection — 2026-07-15 12:50](./..."
+      "excerpt": "- [GatewayApp Browser Notification — 2026-07-16 08:55](./GatewayApp/2026-07-16-0855.md) - [TeamRunDetail PG-1 — 2026-07-15 16:39](./TeamRunDetail/2026-07-15-1639.md) - [TeamRunCard PG-1 Roster — 2026-07-15 16:39](./Te..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -2124,7 +2222,7 @@
       "type": "report",
       "domain": "personal-agent-gateway",
       "feature": "r2-product-expansion",
-      "status": "active",
+      "status": "done",
       "aliases": [
         "R2 사용자 검증 기록",
         "G2-1 실제 사용 기록",
@@ -2136,7 +2234,7 @@
         "r2",
         "usability"
       ],
-      "updated_at": "2026-07-15",
+      "updated_at": "2026-07-16",
       "headings": [
         {
           "level": 1,
@@ -2167,7 +2265,7 @@
           "text": "관련 문서"
         }
       ],
-      "excerpt": "- 최소 Gate: 실제 사용 5회 - 현재 기록: 1회 - 상태: `G2-1 LOCK` 유지 - 1회차 결과: Team Run 완료 결과 위치는 바로 찾았지만, 문서 preview와 목록 정렬, roster/Task 담당자/현재 업무 가시성, 완료 알림, Run 단위 강제 종료에 마찰이 있었다."
+      "excerpt": "- 최소 Gate: 실제 사용 1회 — 2026-07-16 사용자 결정으로 기존 5회 기준을 대체 - 현재 기록: 1회 - 상태: `G2-1 SUCCESS` - 1회차 결과: Team Run 완료 결과 위치는 바로 찾았지만, 문서 preview와 목록 정렬, roster/Task 담당자/현재 업무 가시성, 완료 알림, Run 단위 강제 종료에 마찰이 있었다. - 제품 범위 결정: 관찰된..."
     },
     {
       "path": "docs/reports/2026-07-15-read-performance-baseline.md",
@@ -5662,7 +5760,7 @@
           "text": "관련 문서"
         }
       ],
-      "excerpt": "작성일: 2026-07-15 상태: paused — `PG-1` SUCCESS, R2-A~R2-F는 실제 사용 근거 전 실행 금지"
+      "excerpt": "작성일: 2026-07-15 상태: paused — `PG-1`, `R2-B` SUCCESS; 나머지 R2 묶음은 실제 사용 근거와 개별 결정 전까지 `LOCK`"
     },
     {
       "path": "docs/todo/2026-07-15-service-improvement-roadmap.md",

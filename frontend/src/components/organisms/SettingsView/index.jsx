@@ -75,6 +75,9 @@ function buildGroups(settings) {
 export function SettingsView({
   settings,
   authSessions = [],
+  notificationState = { supported: false, permission: "unsupported", enabled: false },
+  onEnableNotifications,
+  onDisableNotifications,
   onAccessModeChange,
   onRevokeSession,
   onRevokeAllSessions
@@ -86,6 +89,11 @@ export function SettingsView({
     ...group,
     rows: group.rows.filter((row) => row.v)
   }));
+  const notificationStatus = !notificationState.supported
+    ? "UNSUPPORTED"
+    : notificationState.permission === "denied"
+      ? "BLOCKED"
+      : notificationState.enabled ? "ON" : "OFF";
 
   async function changeAccessMode(mode) {
     if (!onAccessModeChange) return;
@@ -115,6 +123,26 @@ export function SettingsView({
       danger: true
     });
     if (accepted) await onRevokeAllSessions?.();
+  }
+
+  async function enableNotifications() {
+    if (!onEnableNotifications) return;
+    setBusy("notifications");
+    try {
+      await onEnableNotifications();
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function disableNotifications() {
+    if (!onDisableNotifications) return;
+    setBusy("notifications");
+    try {
+      await onDisableNotifications();
+    } finally {
+      setBusy("");
+    }
   }
 
   return (
@@ -153,6 +181,39 @@ export function SettingsView({
           >
             Enable Full Access
           </button>
+        </div>
+      </div>
+      <div className="settings-group">
+        <div className="settings-section-row">
+          <div className="settings-group-head">Browser notifications</div>
+          <span className="badge" aria-label="Browser notification status">{notificationStatus}</span>
+        </div>
+        <div className="settings-block">
+          <div className="settings-row">
+            <span className="settings-k mono">DELIVERY</span>
+            <span className="settings-v mono">ONLY WHILE THIS GATEWAY TAB IS OPEN</span>
+          </div>
+        </div>
+        <div className="settings-security-actions">
+          {notificationState.enabled ? (
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy === "notifications"}
+              onClick={disableNotifications}
+            >
+              Disable notifications
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy === "notifications" || !notificationState.supported || notificationState.permission === "denied"}
+              onClick={enableNotifications}
+            >
+              Enable notifications
+            </button>
+          )}
         </div>
       </div>
       <div className="settings-group">

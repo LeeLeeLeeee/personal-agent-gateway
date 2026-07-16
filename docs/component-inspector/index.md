@@ -14,6 +14,7 @@ updated_at: 2026-07-15
 
 # Component Inspector Reports
 
+- [GatewayApp Browser Notification — 2026-07-16 08:55](./GatewayApp/2026-07-16-0855.md)
 - [TeamRunDetail PG-1 — 2026-07-15 16:39](./TeamRunDetail/2026-07-15-1639.md)
 - [TeamRunCard PG-1 Roster — 2026-07-15 16:39](./TeamRunCard/2026-07-15-1639.md)
 - [TeamsView Persona Card Selection — 2026-07-15 12:50](./TeamsView/2026-07-15-1250.md)

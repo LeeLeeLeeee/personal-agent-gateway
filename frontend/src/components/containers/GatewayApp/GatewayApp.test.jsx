@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayApp, applyTeamRunDelta } from "./index.jsx";
 import { UiProvider } from "../../providers/UiProvider/index.jsx";
 
@@ -40,6 +40,11 @@ const sessions = [{
 describe("GatewayApp", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    localStorage.removeItem("pag.browser-notifications.v1");
+    vi.unstubAllGlobals();
   });
 
   it("applies Team SSE entity deltas without requiring a full detail response", () => {
@@ -1300,6 +1305,84 @@ describe("GatewayApp", () => {
 
     const hooksButton = screen.getByRole("button", { name: "Hooks" });
     expect(within(hooksButton).getByText("1")).toBeInTheDocument();
+  });
+
+  it("sends one private terminal notification after opt-in and opens the Team Run on click", async () => {
+    const notifications = [];
+    class FakeNotification {
+      static permission = "default";
+      static requestPermission = vi.fn(async () => {
+        FakeNotification.permission = "granted";
+        return "granted";
+      });
+
+      constructor(title, options) {
+        this.title = title;
+        this.options = options;
+        this.close = vi.fn();
+        notifications.push(this);
+      }
+    }
+    vi.stubGlobal("Notification", FakeNotification);
+    const focus = vi.spyOn(window, "focus").mockImplementation(() => {});
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/settings": { settings: { access_mode: "restricted", agent_availability: [] } },
+      "GET /api/auth/sessions": { sessions: [] },
+      "GET /api/team-runs": { team_runs: [{ id: "run-private", goal: "Private goal", status: "failed" }] },
+      "GET /api/teams": { teams: [] },
+      "GET /api/team-runs/run-private/detail": {
+        team_run: { id: "run-private", goal: "Private goal", status: "failed", run_mode: "plan_and_execute" },
+        agents: [], tasks: [], messages: [], document_summary: null
+      },
+      "GET /api/team-runs/run-private/documents": { documents: [] }
+    });
+
+    render(<GatewayApp />);
+    await screen.findByLabelText("Agent Gateway");
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit({ id: "before-opt-in", type: "team.run.failed", team_run_id: "run-private" });
+    });
+    expect(notifications).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(await screen.findByRole("button", { name: /enable notifications/i }));
+    expect(FakeNotification.requestPermission).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      source.emit({
+        id: "terminal-1",
+        type: "team.run.failed",
+        team_run_id: "run-private",
+        prompt: "private prompt",
+        run: {
+          status: "failed",
+          finished_at: "2026-07-16T00:00:00Z",
+          summary: "secret summary",
+          error_message: "C:/secret/path"
+        }
+      });
+      source.emit({
+        id: "terminal-2",
+        type: "team.run.failed",
+        team_run_id: "run-private",
+        run: { status: "failed", finished_at: "2026-07-16T00:00:00Z" }
+      });
+    });
+
+    expect(notifications).toHaveLength(1);
+    expect(JSON.stringify([notifications[0].title, notifications[0].options.body])).not.toMatch(/secret|private|C:\//i);
+
+    act(() => notifications[0].onclick());
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("← TEAM RUNS")).toBeInTheDocument();
   });
 
   it("clears the selected team run detail when navigating away from the teams screen", async () => {

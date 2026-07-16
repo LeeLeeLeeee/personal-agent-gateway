@@ -3,7 +3,7 @@ title: Personal Agent Gateway R2 G2-1 실제 사용 검증 기록
 type: report
 domain: personal-agent-gateway
 feature: r2-product-expansion
-status: active
+status: done
 aliases:
   - R2 사용자 검증 기록
   - G2-1 실제 사용 기록
@@ -13,17 +13,18 @@ tags:
   - g2-1
   - r2
   - usability
-updated_at: 2026-07-15
+updated_at: 2026-07-16
 ---
 
 # Personal Agent Gateway R2 G2-1 실제 사용 검증 기록
 
 ## Summary
 
-- 최소 Gate: 실제 사용 5회
+- 최소 Gate: 실제 사용 1회 — 2026-07-16 사용자 결정으로 기존 5회 기준을 대체
 - 현재 기록: 1회
-- 상태: `G2-1 LOCK` 유지
+- 상태: `G2-1 SUCCESS`
 - 1회차 결과: Team Run 완료 결과 위치는 바로 찾았지만, 문서 preview와 목록 정렬, roster/Task 담당자/현재 업무 가시성, 완료 알림, Run 단위 강제 종료에 마찰이 있었다.
+- 제품 범위 결정: 관찰된 대기 비용을 해결하는 열린 탭 Browser Notification만 승인한다. Result package, Template, Search, Review, concurrency는 이 1회에서 구현 근거가 부족해 `LOCK`을 유지한다.
 
 ## Changes
 
@@ -52,16 +53,17 @@ updated_at: 2026-07-15
 - R2 실행 플랜의 G2-1 필드인 결과 확인, 알림 필요, 반복 구성, 검색 대상, concurrency 필요를 사용자 문답으로 기록했다.
 - Recovery는 이번 사용에서 발생하지 않아 검증하지 않았다.
 - 현재 생성된 Team Run이나 workspace를 자동화 fixture로 사용하지 않았다.
+- 사용자가 추가 4회를 기다리지 않고 이번 1회를 기준으로 진행하도록 명시했으므로, 횟수 자체가 아니라 항목별 관찰 근거로 범위를 제한했다.
 
 ## Follow-ups
 
 1. Documents에서 폴더를 제외하고 열람 가능한 파일만 표시한다.
 2. 이미지와 HTML을 preview로 열며 HTML은 실행 권한을 제한한 안전한 렌더링 경계를 사용한다.
 3. Documents, Results, Live Activity, Shared / Handoffs의 기본 정렬을 최신순으로 통일한다.
-4. 브라우저 완료 알림을 R2-B 우선 후보로 유지한다.
+4. 열린 Gateway 탭의 브라우저 완료 알림을 R2-B 첫 slice로 구현한다.
 5. 개별 Team Run 강제 종료와 terminal 상태 기록을 R2 전 운영 UX 보완 후보로 분리한다.
 6. Concurrency는 상위 Task 순서를 유지하고 Persona 내부 독립 하위 업무에만 적용하는 정책으로 검토한다.
-7. 실제 사용 기록 4회를 추가한 뒤 G2-1 해제 여부와 R2 범위를 결정한다.
+7. 후속 실제 사용은 Gate 해제 조건이 아니라 R2-B 유효성 및 다른 가설의 신규 근거로 기록한다.
 8. Task assignment와 Agent current work 상태를 runtime source of truth에 기록하고 Task Board/Agent Sessions에 표시한다.
 9. Team Runs roster에서 leader와 members의 snapshot avatar·name을 함께 표시한다.
 

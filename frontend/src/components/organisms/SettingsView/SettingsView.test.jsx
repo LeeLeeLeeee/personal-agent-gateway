@@ -67,4 +67,46 @@ describe("SettingsView", () => {
     expect(onAccessModeChange).toHaveBeenCalledWith("full_access", true);
     expect(onRevokeSession).toHaveBeenCalledWith("other-session", false);
   });
+
+  it("shows the open-tab notification boundary and delegates opt-in", async () => {
+    const onEnableNotifications = vi.fn();
+    const { rerender } = render(
+      <SettingsView
+        settings={settings}
+        notificationState={{ supported: true, permission: "default", enabled: false }}
+        onEnableNotifications={onEnableNotifications}
+      />
+    );
+
+    expect(screen.getByText("Browser notifications")).toBeInTheDocument();
+    expect(screen.getByLabelText("Browser notification status")).toHaveTextContent("OFF");
+    expect(screen.getByText(/only while this gateway tab is open/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /enable notifications/i }));
+    expect(onEnableNotifications).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <SettingsView
+        settings={settings}
+        notificationState={{ supported: true, permission: "denied", enabled: false }}
+        onEnableNotifications={onEnableNotifications}
+      />
+    );
+    expect(screen.getByLabelText("Browser notification status")).toHaveTextContent("BLOCKED");
+    expect(screen.getByRole("button", { name: /enable notifications/i })).toBeDisabled();
+  });
+
+  it("delegates disabling an enabled browser notification preference", async () => {
+    const onDisableNotifications = vi.fn();
+    render(
+      <SettingsView
+        settings={settings}
+        notificationState={{ supported: true, permission: "granted", enabled: true }}
+        onDisableNotifications={onDisableNotifications}
+      />
+    );
+
+    expect(screen.getByLabelText("Browser notification status")).toHaveTextContent("ON");
+    await userEvent.click(screen.getByRole("button", { name: /disable notifications/i }));
+    expect(onDisableNotifications).toHaveBeenCalledTimes(1);
+  });
 });

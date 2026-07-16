@@ -3,6 +3,12 @@ import { api, apiErrorAction } from "../../../api/client.js";
 import { useGatewayBootstrap } from "../../../hooks/useGatewayBootstrap.js";
 import { useSessionController } from "../../../hooks/useSessionController.js";
 import { useTeamRunController } from "../../../hooks/useTeamRunController.js";
+import {
+  disableBrowserNotifications,
+  enableBrowserNotifications,
+  getBrowserNotificationState,
+  showTeamRunTerminalNotification
+} from "../../../lib/browserNotification.js";
 import { AuthCard } from "../../molecules/AuthCard/index.jsx";
 import { AuthTemplate } from "../../templates/AuthTemplate/index.jsx";
 import { AppShell } from "../../templates/AppShell/index.jsx";
@@ -42,6 +48,7 @@ export function GatewayApp() {
   const [avatarChoices, setAvatarChoices] = useState([]);
   const [teams, setTeams] = useState([]);
   const [settings, setSettings] = useState(null);
+  const [notificationState, setNotificationState] = useState(getBrowserNotificationState);
   const [authSessions, setAuthSessions] = useState([]);
   const [rules, setRules] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
@@ -52,6 +59,8 @@ export function GatewayApp() {
   const [openHookRunsId, setOpenHookRunsId] = useState(null);
   const [hooksBadge, setHooksBadge] = useState(0);
   const hooksRef = useRef([]);
+  const notificationStateRef = useRef(notificationState);
+  const notifiedTeamRunsRef = useRef(new Set());
   const screenRef = useRef("chat");
   const openHookRunsIdRef = useRef(null);
   const [focusedJobId, setFocusedJobId] = useState(null);
@@ -113,6 +122,35 @@ export function GatewayApp() {
     clearTeamRunView
   } = useTeamRunController({ toast, confirm, setScreenError });
 
+  const handleEnableNotifications = useCallback(async () => {
+    const next = await enableBrowserNotifications();
+    notificationStateRef.current = next;
+    setNotificationState(next);
+  }, []);
+
+  const handleDisableNotifications = useCallback(() => {
+    const next = disableBrowserNotifications();
+    notificationStateRef.current = next;
+    setNotificationState(next);
+  }, []);
+
+  const handleTeamEventWithNotification = useCallback((event) => {
+    if (
+      notificationStateRef.current.enabled
+      && ["team.run.completed", "team.run.failed"].includes(event.type)
+    ) {
+      const key = `${event.team_run_id}:${event.type}:${event.run?.finished_at || "terminal"}`;
+      if (!notifiedTeamRunsRef.current.has(key)) {
+        const notification = showTeamRunTerminalNotification(event, (teamRunId) => {
+          setSelectedTeamRunId(teamRunId);
+          setScreen("teams");
+        });
+        if (notification) notifiedTeamRunsRef.current.add(key);
+      }
+    }
+    handleTeamEvent(event);
+  }, [handleTeamEvent, setSelectedTeamRunId]);
+
   useEffect(() => { hooksRef.current = hooks; }, [hooks]);
   useEffect(() => { screenRef.current = screen; }, [screen]);
   useEffect(() => { openHookRunsIdRef.current = openHookRunsId; }, [openHookRunsId]);
@@ -168,7 +206,7 @@ export function GatewayApp() {
     turnStartRef,
     lastConfigAttemptRef,
     setScreenError,
-    onTeamEvent: handleTeamEvent,
+    onTeamEvent: handleTeamEventWithNotification,
     onHookEvent: handleHookEvent
   });
 
@@ -792,6 +830,9 @@ export function GatewayApp() {
           <SettingsView
             settings={settings}
             authSessions={authSessions}
+            notificationState={notificationState}
+            onEnableNotifications={handleEnableNotifications}
+            onDisableNotifications={handleDisableNotifications}
             onAccessModeChange={handleAccessModeChange}
             onRevokeSession={handleRevokeAuthSession}
             onRevokeAllSessions={handleRevokeAllAuthSessions}

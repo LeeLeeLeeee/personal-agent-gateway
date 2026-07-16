@@ -20,7 +20,7 @@ updated_at: 2026-07-16
 # Personal Agent Gateway R2 제품 확장 실행 플랜
 
 작성일: 2026-07-15
-상태: paused — `PG-1` SUCCESS, R2-A~R2-F는 실제 사용 근거 전 실행 금지
+상태: paused — `PG-1`, `R2-B` SUCCESS; 나머지 R2 묶음은 실제 사용 근거와 개별 결정 전까지 `LOCK`
 
 ## 배경
 
@@ -74,7 +74,7 @@ updated_at: 2026-07-16
 - Template은 현재 Team/Persona/Rules를 강제로 덮어쓰지 않고 새 snapshot을 만든다.
 - 병렬 실행은 Review flow가 순차 실행으로 먼저 검증된 뒤에만 활성화한다.
 - 현재 생성된 Team Run과 실제 사용자 workspace는 자동화 test fixture로 사용하지 않는다.
-- G2-1은 R2-A~R2-F 제품 확장을 잠근다. 실제 사용을 방해하는 기존 정렬·preview·취소 UI 결함은 별도 `PG-1`로 수정할 수 있지만 G2-1 사용 횟수로 대체하지 않는다.
+- G2-1은 2026-07-16 사용자 결정에 따라 실제 사용 1회로 판정한다. 이 성공은 모든 R2 묶음을 자동 승인하지 않으며, 해당 1회에서 직접 관찰된 가설만 개별 결정으로 해제한다.
 
 ## 진입 Gate와 실행 전 결정
 
@@ -83,18 +83,18 @@ updated_at: 2026-07-16
 | ID | 상태 | 조건 | 해제 증거 |
 | --- | --- | --- | --- |
 | G2-0 | SUCCESS | R1 NEXT Release Gate 전체 통과 | R1 구현 보고서와 full gate |
-| G2-1 | LOCK | 5~10회 실제 사용 기록으로 제품 가설 검토 | 1/5 기록 완료. 결과 확인 시간, 알림 필요, 반복 구성, 검색 대상, concurrency 필요 기록표 |
+| G2-1 | SUCCESS | 사용자 결정에 따른 실제 사용 1회로 제품 가설 검토 | 1/1 기록 완료. 결과 확인 시간, 알림 필요, 반복 구성, 검색 대상, concurrency 필요 기록표 |
 
-G2-1은 수동 기록으로 시작할 수 있다. R2 Local Metrics를 먼저 구현하기 위해 Gate를 우회하지 않는다.
+G2-1은 수동 기록 1회로 닫혔다. 관찰 근거가 없는 R2 기능은 각 결정 항목의 `LOCK`을 유지한다.
 
 ### G2-1 중간 제품 가설 재평가 (2026-07-16)
 
-PG-1 완료 뒤 실제 사용 #1을 다시 검토했지만 G2-1을 해제할 근거는 아직 없다. 결과 위치는 바로 찾았고, 당시 결과 탐색 마찰이었던 preview·최신순 정렬·담당자·개별 종료는 PG-1이 해결했다. 데이터 source가 구조적으로 흩어져 있다는 사실만으로 Result package를 추가하면 사용자 문제보다 구현 구조가 먼저 생긴다.
+PG-1 완료 뒤 실제 사용 #1을 다시 검토했고, 사용자의 명시적 결정으로 이 1회를 G2-1 최종 근거로 삼는다. 결과 위치는 바로 찾았고, 당시 결과 탐색 마찰이었던 preview·최신순 정렬·담당자·개별 종료는 PG-1이 해결했다. 데이터 source가 구조적으로 흩어져 있다는 사실만으로 Result package를 추가하면 사용자 문제보다 구현 구조가 먼저 생긴다.
 
 | 묶음 | 현재 근거 | 판단 |
 | --- | --- | --- |
 | R2-A Result package | 결과 위치를 바로 찾았고 cross-source 판단 또는 삭제 영향 불확실성은 관찰되지 않음 | `LOCK` 유지. 남은 사용에서 같은 Run의 task/document/artifact를 반복 왕복하거나 삭제 범위를 판단하지 못한 사례가 확인될 때 재검토 |
-| R2-B Browser notification | 완료까지 화면을 지켜봤고 browser notification 선호 1회 확인 | 후보 유지. 반복 사용에서도 같은 대기 비용이 확인될 때 D2-2 검토 |
+| R2-B Browser notification | 완료까지 화면을 지켜봤고 browser notification 선호 1회 확인 | 첫 slice 승인. 열린 Gateway 탭, opt-in, 민감정보 없는 terminal 알림만 구현 |
 | R2-C Template | 반복 입력이 불편하지 않았음 | 후순위 유지 |
 | R2-D Search/Metrics | global search 요구는 없었고 최신순 문제는 PG-1에서 해결 | `LOCK` 유지 |
 | R2-E Review workflow | Review target/finding 계약의 실제 요구가 관찰되지 않음 | `LOCK` 유지 |
@@ -119,14 +119,14 @@ PG-1 완료 뒤 실제 사용 #1을 다시 검토했지만 G2-1을 해제할 근
 
 **Plan Impact**
 - R2-A 파일과 code task는 변경하지 않는다.
-- G2-1 실제 사용 기록만 계속하며 unlock evidence가 생기면 D2-1부터 다시 검토한다.
+- 후속 실제 사용에서 unlock evidence가 생기면 D2-1부터 다시 검토한다.
 
 ### 결정 항목
 
 | ID | 상태 | 결정 | 권고안 | 산출물/해제 조건 |
 | --- | --- | --- | --- | --- |
 | D2-1 | LOCK | Result package source와 삭제 의미 | 기존 Team/Task/Document/Artifact를 참조하는 read model, Run 삭제 전 workspace/result 영향 preview | Result/delete contract 승인 |
-| D2-2 | LOCK | 알림 provider와 privacy | 열린 gateway 탭의 Browser Notification 우선, webhook/service worker push 후속, opaque id/status/deep link만 payload | Notification/privacy contract 승인 |
+| D2-2 | SUCCESS | 알림 provider와 privacy | 열린 gateway 탭의 opt-in Browser Notification, webhook/service worker 제외, generic status와 opaque run id만 사용 | 2026-07-16 사용자 범위 결정과 component analysis 승인 |
 | D2-3 | LOCK | Template snapshot/version | 사용 시 새 Run config snapshot 생성, 원본 Team 변경과 독립, schema version 포함 | Template data contract 승인 |
 | D2-4 | LOCK | Search index/retention | SQLite metadata index 우선, content indexing은 명시적 opt-in과 rebuild 가능 구조 | Search/privacy ADR 승인 |
 | D2-5 | LOCK | Review target/result 계약 | target path/artifact/diff 중 하나 필수, severity와 evidence/verification 포함 | Review UX/API contract 승인 |
@@ -349,7 +349,7 @@ PG-1 완료 뒤 실제 사용 #1을 다시 검토했지만 G2-1을 해제할 근
 ```mermaid
 flowchart TD
     G0[R1 NEXT Gate] --> P[PG-1 기존 UX correction]
-    G0 --> G1[5~10회 사용 근거]
+    G0 --> G1[사용자 결정에 따른 1회 사용 근거]
     P -. 후속 사용 마찰 감소 .-> G1
     G1 --> A[R2-A Result package/deep links]
     A --> B[R2-B Completion notifications]
@@ -384,10 +384,11 @@ flowchart LR
 
 ### Plan Changes Applied
 
-- G2-1 1회차 근거를 1/5로 기록하고 기존 UX correction과 신규 제품 확장을 분리했다.
+- 사용자 결정에 따라 G2-1 1회차를 1/1 최종 근거로 기록하고 기존 UX correction과 신규 제품 확장을 분리했다.
 - Documents/Results/Live Activity/Shared Handoffs 최신순, 지원 document filtering, image/HTML preview, Task/Agent assignment 가시성, Team Run roster avatar+name, 개별 Run Stop을 `PG-1`로 추가했다.
-- PG-1 완료 뒤 제품 가설을 재평가했으며 Result package 문제는 아직 관찰되지 않아 D2-1/R2-A `LOCK`을 유지했다. Browser notification은 반복성 확인 전 후보로만 남겼다.
+- PG-1 완료 뒤 제품 가설을 재평가했으며 Result package 문제는 아직 관찰되지 않아 D2-1/R2-A `LOCK`을 유지했다. Browser notification은 열린 탭의 opt-in slice만 승인했다.
 - Browser Notification 첫 slice에서 backend provider framework와 service worker를 제거했다.
+- 한 번의 실제 사용으로 승인된 열린 탭 Browser Notification slice를 구현하고 privacy/delivery/navigation test와 전체 frontend gate를 통과했다.
 - Template을 후순위로 내리고 Global Search의 Template 선행 의존성을 제거했다.
 - Team Task 병렬 실행 계획을 Persona-local capability 조사로 축소하고 `max_workers=1` baseline을 유지했다.
 
@@ -397,7 +398,7 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- |
 | 0 | PG-1 | SUCCESS | 기존 Run 탐색·assignment·preview·개별 종료 correction | G2-0, 실제 사용 #1 | backend 454 / frontend 210 / build / 8787 smoke |
 | 1 | R2-A | LOCK | Run result package, deep link, delete preview | G2-0, G2-1, D2-1 | result/delete/frontend test |
-| 2 | R2-B | LOCK | Completion notification | R2-A, D2-2 | privacy/delivery/deep-link test |
+| 2 | R2-B | SUCCESS | Completion notification | G2-1, D2-2 | frontend 217 tests / production build |
 | 3 | R2-D | LOCK | Global search와 local-only metrics | R2-A, D2-4 | rebuild/filter/privacy/metric test |
 | 4 | R2-E | LOCK | 실제 Review workflow | R2-D, D2-5 | sequential review E2E |
 | 5 | R2-F | LOCK | Persona-local concurrency capability | R2-E, D2-6 | capability/conflict/cancel E2E |
@@ -538,10 +539,12 @@ npm --prefix frontend test -- TeamRunDetail.test.jsx DocumentPreview.test.jsx Ar
 
 ## R2-B. Completion notification
 
+상태: SUCCESS (2026-07-16)
+
 ### 수정 범위
 
 - 새 `frontend/src/lib/browserNotification.js`
-- Team terminal SSE event를 소유한 `frontend/src/hooks/useTeamRunController.js`
+- Team terminal SSE callback을 조합하는 `frontend/src/components/containers/GatewayApp/index.jsx`
 - Settings의 browser permission/preference/test UI
 - `frontend/src/components/containers/GatewayApp/index.jsx`
 - 관련 frontend test
@@ -552,17 +555,17 @@ npm --prefix frontend test -- TeamRunDetail.test.jsx DocumentPreview.test.jsx Ar
 
 1. Browser Notification API의 support/permission/request/send를 작은 frontend adapter로 격리한다.
 2. 사용자가 Settings에서 명시적으로 opt-in한 경우에만 권한을 요청하고 `default`, `granted`, `denied`, `unsupported`를 구분한다.
-3. 현재 실제 발행되는 `team.run.completed`/`team.run.failed` SSE와 포함된 Run delta를 `success`, `partial`, `failed` safe payload로 변환한다. canceled/interrupted 알림은 대응 event 계약이 생기기 전 광고하지 않는다.
-4. Payload는 Team label, 상태, 완료 시각, opaque run id만 표시하고 prompt, command, output, absolute path, secret을 포함하지 않는다.
+3. 현재 실제 발행되는 `team.run.completed`/`team.run.failed` SSE를 generic completed/failed safe payload로 변환한다. canceled/interrupted 알림은 대응 event 계약이 생기기 전 광고하지 않는다.
+4. Payload는 terminal 상태와 generic 안내만 표시하고 prompt, command, output, summary, error, absolute path, secret을 포함하지 않는다. opaque run id는 notification tag와 내부 navigation에만 사용한다.
 5. event id 또는 `(run id, terminal status, finished_at)` key로 현재 page lifetime의 duplicate delivery를 억제한다.
-6. 클릭 시 열린 gateway window에 focus하고 R2-A의 stable target으로 이동한다. target이 없으면 Team Runs 목록까지만 이동한다.
+6. 클릭 시 열린 gateway window에 focus하고 기존 Teams 화면에서 해당 Run을 선택한다. R2-A stable route는 요구하지 않는다.
 7. Webhook과 page가 닫힌 뒤의 background push는 추가 사용 근거와 별도 privacy/delivery 결정 전까지 범위 밖으로 둔다.
 
 ### 완료 기준
 
 - 사용자가 opt-in하지 않으면 권한 prompt나 browser notification이 없다.
 - 알림에 prompt, command, output, absolute path, secret이 포함되지 않는다.
-- 알림 action이 정확한 result package로 이동한다.
+- 알림 click이 열린 Gateway 창에 focus하고 해당 Team Run 상세를 선택한다.
 - duplicate terminal event가 동일 알림을 반복 생성하지 않는다.
 - denied/unsupported/API 예외가 Run terminal 상태나 SSE 갱신을 바꾸지 않는다.
 - page가 닫힌 상태의 알림을 지원한다고 UI가 광고하지 않는다.
@@ -574,6 +577,13 @@ npm --prefix frontend test -- SettingsView.test.jsx GatewayApp.test.jsx
 npm --prefix frontend test
 npm --prefix frontend run build
 ```
+
+구현 결과:
+
+- versioned localStorage opt-in과 `unsupported/default/granted/denied` 상태를 작은 browser adapter에 격리했다.
+- 기존 단일 Team SSE callback에서 completed/failed만 처리하며, generic title/body에 summary, error, prompt, path, opaque Run id를 노출하지 않는다.
+- `(run id, terminal type, finished_at)` page-lifetime key로 중복을 막고 click 시 열린 창에 focus한 뒤 기존 Teams 상세를 선택한다.
+- targeted 50 tests와 frontend 전체 217 tests가 통과했고 production build가 성공했다.
 
 ### 롤백 기준
 
@@ -760,7 +770,7 @@ npm --prefix frontend run build
 - [x] Task Board와 Agent Sessions가 담당 Persona/current Task를 runtime source of truth와 일치하게 표시한다.
 - [x] Team Runs roster가 leader/member snapshot avatar와 이름을 함께 표시한다.
 - [ ] Result package에서 완료/부분 실패/미검증과 모든 source를 한 번에 판단한다.
-- [ ] 알림은 opt-in이며 민감 정보를 포함하지 않고 정확한 result로 이동한다.
+- [x] 알림은 opt-in이며 민감 정보를 포함하지 않고 해당 Team Run 상세로 이동한다.
 - [ ] Template이 원본 설정을 변경하지 않고 재현 가능한 Run snapshot을 만든다.
 - [ ] Global search가 source filter와 stable deep link를 제공하고 rebuild 가능하다.
 - [ ] Local metrics가 content 없이 성공·복구·신뢰성 지표를 계산한다.
@@ -774,15 +784,15 @@ npm --prefix frontend run build
 | --- | --- | --- | --- |
 | SUCCESS | G2-0 R1 NEXT Release Gate |  | R1 full gate |
 | SUCCESS | PG-1 기존 UX correction |  | Backend/frontend full gate + 8787 smoke |
-| LOCK | G2-1 실제 사용 근거 | 1/5 기록 완료, 최소 4회 추가 필요 | Product hypothesis review |
+| SUCCESS | G2-1 실제 사용 근거 | 사용자 결정으로 1/1 기록 완료 | Product hypothesis review |
 | LOCK | D2-1 Result/delete 계약 | G2-0, G2-1 | Contract review |
-| LOCK | D2-2 Notification/privacy | G2-0, G2-1 | Privacy review |
+| SUCCESS | D2-2 Notification/privacy | 열린 탭 opt-in/generic payload로 범위 제한 | Privacy review + component analysis |
 | LOCK | D2-3 Template snapshot/version | G2-0, G2-1 | Data contract review |
 | LOCK | D2-4 Search/privacy/retention | G2-0, G2-1 | ADR review |
 | LOCK | D2-5 Review target/result | G2-0, G2-1 | UX/API contract review |
 | LOCK | D2-6 Persona-local concurrency safety | R2-E 전, CLI capability 미확인 | Capability/Safety ADR review |
 | LOCK | R2-A Result package | G2-0, G2-1, D2-1 | Service/API/Vitest |
-| LOCK | R2-B Completion notification | R2-A, D2-2 | Privacy/delivery test |
+| SUCCESS | R2-B Completion notification |  | Frontend 217 tests + production build |
 | LOCK | R2-C Work template | G2-0, G2-1, D2-3, 반복 구성 마찰 근거 부족 | Clone/version test |
 | LOCK | R2-D Search/Metrics | R2-A, D2-4 | Rebuild/privacy test |
 | LOCK | R2-E Review workflow | R2-D, D2-5 | Sequential Review E2E |
