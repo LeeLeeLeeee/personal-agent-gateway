@@ -15,6 +15,7 @@ const LABELS = {
   pending: "PENDING",
   waiting: "WAITING",
   waiting_approval: "WAITING",
+  waiting_for_user: "INPUT NEEDED",
   queued: "QUEUED",
   in_progress: "IN PROGRESS",
   blocked: "BLOCKED",
@@ -29,6 +30,7 @@ const ACTIVE = new Set([
   "summarizing",
   "waiting",
   "waiting_approval",
+  "waiting_for_user",
   "queued",
   "pending",
   "in_progress"

@@ -2546,6 +2546,119 @@ p {
 .team-interrupted-copy {
     font-size: 12px;
 }
+.team-decision-panel {
+    margin-top: 16px;
+    border: 2px solid var(--c-black);
+    background: #fff9df;
+}
+.team-decision-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 16px;
+    border-bottom: var(--bd);
+}
+.team-decision-kicker,
+.team-decision-revision,
+.team-decision-item-id {
+    font-size: 9px;
+    letter-spacing: 1.4px;
+}
+.team-decision-title {
+    margin-top: 4px;
+    font-size: 18px;
+}
+.team-decision-intro,
+.team-decision-secret-warning {
+    margin: 0;
+    padding: 10px 16px 0;
+    font-size: 12px;
+}
+.team-decision-secret-warning {
+    color: #8a2d1d;
+}
+.team-decision-list {
+    display: grid;
+    gap: 12px;
+    padding: 14px 16px;
+}
+.team-decision-item {
+    margin: 0;
+    padding: 12px;
+    border: var(--bd-in);
+    background: var(--c-white);
+}
+.team-decision-item legend {
+    display: grid;
+    gap: 4px;
+    width: 100%;
+    padding: 0 4px;
+}
+.team-decision-question {
+    font-size: 14px;
+    font-weight: 700;
+}
+.team-decision-why,
+.team-decision-recommended {
+    margin: 8px 0 0;
+    font-size: 12px;
+}
+.team-decision-recommended {
+    font-weight: 700;
+}
+.team-decision-options {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+}
+.team-decision-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px;
+    border: var(--bd-in);
+    cursor: pointer;
+}
+.team-decision-option span,
+.team-decision-option small {
+    display: block;
+}
+.team-decision-option small {
+    margin-top: 2px;
+    color: var(--c-grey);
+}
+.team-decision-freeform {
+    display: grid;
+    gap: 6px;
+    margin-top: 10px;
+    font-size: 9px;
+    letter-spacing: 1px;
+}
+.team-decision-freeform textarea {
+    min-height: 76px;
+    resize: vertical;
+    padding: 9px;
+    border: var(--bd-in);
+    font: inherit;
+    letter-spacing: normal;
+}
+.team-decision-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 12px 16px;
+    border-top: var(--bd);
+    font-size: 9px;
+}
+.team-decision-unavailable {
+    margin-top: 12px;
+    padding: 12px;
+    border: var(--bd);
+    background: #fff3d6;
+    font-size: 12px;
+}
 .team-section-head {
     display: flex;
     align-items: baseline;
@@ -3945,7 +4058,7 @@ p {
 .config-info-list-row { display: block; margin-top: 2px; }
 .config-info-list-row b { display: inline-block; min-width: 46px; }
 
-/* Hooks view (reuses schedule-*/jobs-drawer-* classes) */
+/* Hooks view (reuses schedule and jobs-drawer classes) */
 .hook-section { margin-top: 14px; opacity: 0.7; letter-spacing: 0.08em; }
 .hook-test-row { display: flex; align-items: center; gap: 10px; }
 .hook-test-result.ok { color: var(--ok, #3fb950); }
@@ -3955,3 +4068,10 @@ p {
 .hook-run-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .hook-run-summary { font-weight: 600; }
 .hook-run-result { white-space: pre-wrap; margin-top: 4px; opacity: 0.9; }
+.team-cycles { margin-top: 24px; }
+.team-cycle-list { display: grid; gap: 8px; }
+.team-cycle { border: 2px solid #000; padding: 10px 12px; background: #fff; }
+.team-cycle-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.team-cycle-sequence { font-size: 12px; font-weight: 700; }
+.team-cycle-lineage, .team-cycle-budget { margin-top: 5px; font-size: 10px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-cycle-summary { margin-top: 8px; white-space: pre-wrap; }

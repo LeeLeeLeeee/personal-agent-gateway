@@ -7,7 +7,7 @@ import {
   disableBrowserNotifications,
   enableBrowserNotifications,
   getBrowserNotificationState,
-  showTeamRunTerminalNotification
+  showTeamRunNotification
 } from "../../../lib/browserNotification.js";
 import { AuthCard } from "../../molecules/AuthCard/index.jsx";
 import { AuthTemplate } from "../../templates/AuthTemplate/index.jsx";
@@ -114,6 +114,7 @@ export function GatewayApp() {
     handleCreateTeamRun,
     handleAddWork,
     handleResumeTeamRun,
+    handleAnswerTeamDecision,
     handleCancelTeamRun,
     handleRetryTeamTask,
     handleDeleteTeamRun,
@@ -137,11 +138,13 @@ export function GatewayApp() {
   const handleTeamEventWithNotification = useCallback((event) => {
     if (
       notificationStateRef.current.enabled
-      && ["team.run.completed", "team.run.failed"].includes(event.type)
+      && ["team.run.completed", "team.run.failed", "team.run.input_requested"].includes(event.type)
     ) {
-      const key = `${event.team_run_id}:${event.type}:${event.run?.finished_at || "terminal"}`;
+      const key = `${event.team_run_id}:${event.type}:${
+        event.decision_request_id || event.run?.finished_at || "event"
+      }`;
       if (!notifiedTeamRunsRef.current.has(key)) {
-        const notification = showTeamRunTerminalNotification(event, (teamRunId) => {
+        const notification = showTeamRunNotification(event, (teamRunId) => {
           setSelectedTeamRunId(teamRunId);
           setScreen("teams");
         });
@@ -265,6 +268,7 @@ export function GatewayApp() {
       load(api.settings(), setSettings);
     } else if (screen === "hooks") {
       load(api.listHooks(), setHooks);
+      load(api.teamRuns(), setTeamRuns);
       setHooksBadge(0);
     } else if (screen === "operations") {
       loadOperations();
@@ -466,6 +470,12 @@ export function GatewayApp() {
   }
   function handleCloseHookRuns() { setOpenHookRunsId(null); setHookRuns([]); }
   function handleTestHookConnection(body) { return api.testHookConnection(body); }
+  function handleOpenHookTeamRun(teamRunId) {
+    handleCloseHookRuns();
+    setSelectedTeamRunId(teamRunId);
+    setScreen("teams");
+    setNavOpen(false);
+  }
 
   async function handleRetryJob(id) {
     try {
@@ -742,6 +752,7 @@ export function GatewayApp() {
               onLoadDocument={(path) => api.teamDocumentContent(selectedTeamRunId, path)}
               onAddWork={handleAddWork}
               onResume={handleResumeTeamRun}
+              onAnswerDecision={handleAnswerTeamDecision}
               onCancel={handleCancelTeamRun}
               onRetryTask={handleRetryTeamTask}
             />
@@ -892,6 +903,7 @@ export function GatewayApp() {
             hooks={hooks}
             hookRuns={hookRuns}
             agents={agents}
+            teamRuns={teamRuns}
             openHookRunsId={openHookRunsId}
             onCreate={handleCreateHook}
             onToggle={handleToggleHook}
@@ -900,6 +912,7 @@ export function GatewayApp() {
             onOpenRuns={handleOpenHookRuns}
             onCloseRuns={handleCloseHookRuns}
             onTestConnection={handleTestHookConnection}
+            onOpenTeamRun={handleOpenHookTeamRun}
           />
         </div>
       ) : (

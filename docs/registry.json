@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 81,
+  "document_count": 91,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -225,7 +225,7 @@
     },
     {
       "path": "docs/adr/2026-07-16-browser-notification-privacy.md",
-      "title": "열린 Gateway 탭의 Browser Notification과 privacy 경계",
+      "title": "열린 Gateway 탭의 Team Run Browser Notification과 privacy 경계",
       "type": "adr",
       "domain": "personal-agent-gateway",
       "feature": "team-run-completion-notification",
@@ -281,6 +281,221 @@
         }
       ],
       "excerpt": "실제 Team Run 사용에서 사용자가 완료될 때까지 화면을 계속 지켜보는 대기 비용이 확인됐다. Browser Notification 선호는 확인됐지만 webhook, 닫힌 페이지의 background push, 외부 provider 요구는 없었다. Team terminal SSE에는 summary와 error 같은 민감 내용이 포함될 수 있으므로 표시 payload도 별도로 제한해야..."
+    },
+    {
+      "path": "docs/adr/2026-07-16-hook-team-mail-workspace.md",
+      "title": "Email Hook의 영속 Mail Team Run과 작업 사이클",
+      "type": "adr",
+      "domain": "personal-agent-gateway",
+      "feature": "hook-team-mail-workspace",
+      "status": "done",
+      "aliases": [
+        "메일 전용 Team Run",
+        "Hook Team Run 연결",
+        "메일 명함 수첩 Workspace"
+      ],
+      "tags": [
+        "event-hooks",
+        "team-run",
+        "email",
+        "workspace",
+        "contacts"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Email Hook의 영속 Mail Team Run과 작업 사이클"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Decision"
+        },
+        {
+          "level": 3,
+          "text": "Hook은 기존 Mail Team Run을 대상으로 한다"
+        },
+        {
+          "level": 3,
+          "text": "Cycle이 메일 단위 격리와 idempotency를 소유한다"
+        },
+        {
+          "level": 3,
+          "text": "Mail Team Run은 serial mailbox queue로 동작한다"
+        },
+        {
+          "level": 3,
+          "text": "Mail Team Run Workspace가 메일 지식을 소유한다"
+        },
+        {
+          "level": 3,
+          "text": "외부 메일은 명령이 아니라 입력 데이터다"
+        },
+        {
+          "level": 2,
+          "text": "Runtime sequence"
+        },
+        {
+          "level": 2,
+          "text": "Consequences"
+        },
+        {
+          "level": 2,
+          "text": "Rejected alternatives"
+        },
+        {
+          "level": 3,
+          "text": "메일마다 Team Run 생성"
+        },
+        {
+          "level": 3,
+          "text": "Cycle 없이 `add_work()`만 반복"
+        },
+        {
+          "level": 3,
+          "text": "Team이 persistent MAIL 폴더를 직접 편집"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "현재 Email Hook은 새 메일마다 단일 headless Agent를 실행한다. Team Run은 Team·Persona·Rules snapshot, Leader/Worker 협업, 사용자 결정 batch, 격리 workspace를 이미 제공하고 `add_work()`로 실행 중이거나 종료된 Run에 작업을 추가할 수 있다."
+    },
+    {
+      "path": "docs/adr/2026-07-16-team-run-batched-user-decisions.md",
+      "title": "Team Run Leader의 배치형 사용자 결정 요청",
+      "type": "adr",
+      "domain": "personal-agent-gateway",
+      "feature": "team-run-user-decisions",
+      "status": "done",
+      "aliases": [
+        "Team Run 사용자 컨펌",
+        "Leader 배치 질문",
+        "Decision Request"
+      ],
+      "tags": [
+        "team-run",
+        "leader",
+        "user-input",
+        "decision-request"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run Leader의 배치형 사용자 결정 요청"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Assumptions and success criteria"
+        },
+        {
+          "level": 2,
+          "text": "Decision"
+        },
+        {
+          "level": 3,
+          "text": "1. 내부 질문과 사용자 결정을 분리한다"
+        },
+        {
+          "level": 3,
+          "text": "2. 질문을 active batch에 누적한다"
+        },
+        {
+          "level": 3,
+          "text": "3. 명확한 gate에서만 사용자에게 요청한다"
+        },
+        {
+          "level": 3,
+          "text": "4. `waiting_for_user`를 별도 Run 상태로 둔다"
+        },
+        {
+          "level": 3,
+          "text": "5. 파일은 사람이 읽는 투영본으로 생성한다"
+        },
+        {
+          "level": 1,
+          "text": "User decisions"
+        },
+        {
+          "level": 2,
+          "text": "Q-001 — 배포 대상"
+        },
+        {
+          "level": 3,
+          "text": "Options"
+        },
+        {
+          "level": 3,
+          "text": "Answer"
+        },
+        {
+          "level": 3,
+          "text": "6. 한 번의 제출로 답변하고 재개한다"
+        },
+        {
+          "level": 3,
+          "text": "7. 이벤트와 알림은 내용을 노출하지 않는다"
+        },
+        {
+          "level": 2,
+          "text": "Runtime sequence"
+        },
+        {
+          "level": 2,
+          "text": "Security and privacy boundaries"
+        },
+        {
+          "level": 2,
+          "text": "Alternatives"
+        },
+        {
+          "level": 3,
+          "text": "Worker가 사용자에게 즉시 질문"
+        },
+        {
+          "level": 3,
+          "text": "Markdown 파일만 source of truth로 사용"
+        },
+        {
+          "level": 3,
+          "text": "기존 `interrupted` 상태 재사용"
+        },
+        {
+          "level": 3,
+          "text": "질문마다 별도 DB row와 부분 답변 지원"
+        },
+        {
+          "level": 2,
+          "text": "Consequences"
+        },
+        {
+          "level": 2,
+          "text": "Verification contract"
+        },
+        {
+          "level": 2,
+          "text": "Implementation boundaries"
+        },
+        {
+          "level": 2,
+          "text": "Implementation evidence"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "현재 Team Run의 `needs_info`는 Worker가 Leader에게 질문하고 Leader가 답하는 내부 협업 계약이다. Leader가 답할 수 없는 질문을 사용자에게 전달하는 상태, 저장소, API는 없다. `interrupted`는 Gateway 프로세스 중단 뒤 명시적으로 재개하는 복구 상태이므로 사용자 답변 대기에 재사용할 수 없다."
     },
     {
       "path": "docs/component-inspector/AgentPicker/2026-07-14-1626.md",
@@ -755,6 +970,76 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: 브라우저 알림 상태와 Team Run 종료 이벤트 처리는 `GatewayApp`가 소유하고, `SettingsView`에는 상태와 사용자 동작 callback만 주입한다. -..."
+    },
+    {
+      "path": "docs/component-inspector/GatewayApp/2026-07-16-1536.md",
+      "title": "GatewayApp Mail Team Run UI Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "hook-team-mail-workspace",
+      "status": "done",
+      "aliases": [
+        "GatewayApp Mail Team Run analysis",
+        "메일 Team Run UI 컴포넌트 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "hooks",
+        "team-run"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp Mail Team Run UI Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 흐름"
+        },
+        {
+          "level": 3,
+          "text": "`GatewayApp` 상태와 callback"
+        },
+        {
+          "level": 3,
+          "text": "API 계약의 현재 간극"
+        },
+        {
+          "level": 2,
+          "text": "부작용과 데이터 갱신"
+        },
+        {
+          "level": 2,
+          "text": "테스트 현황과 누락 RED"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `api-state`, `test` - 범위: `GatewayApp`가 합성하는 `TeamPicker`, `HooksView`, `TeamRunDetail`의 Mail Team Run 생성·선택·Cycle lineage 경로 - Verdict: 기존 컴포..."
     },
     {
       "path": "docs/component-inspector/JobsView/2026-07-15-1057.md",
@@ -1283,6 +1568,84 @@
       "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `api-state`, `style`, `test` - Proposed verdict: 기존 `detail`/callback 경계를 유지하면서 파생 목록 정렬, Task 담당자 이름, Agent 현재 업무 fallback, 문..."
     },
     {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-16-1107.md",
+      "title": "TeamRunDetail User Decision Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-user-decisions",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail Decision Request analysis",
+        "Team Run 사용자 질문 UI 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "user-input"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail User Decision Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / state 추적"
+        },
+        {
+          "level": 3,
+          "text": "현재 경계"
+        },
+        {
+          "level": 3,
+          "text": "제안 변경"
+        },
+        {
+          "level": 3,
+          "text": "component-pattern 판단"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 3,
+          "text": "기존 보호 범위"
+        },
+        {
+          "level": 3,
+          "text": "추가할 RED 사례"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: 기존 `detail` read model과 injected callback 경계를 유지하며 `decision_request`와 `onAnswerDecision`만 추가하는 것이 가장 작은 변경이다..."
+    },
+    {
       "path": "docs/component-inspector/TeamsView/2026-07-15-1250.md",
       "title": "TeamsView Persona Card Selection Component Analysis",
       "type": "report",
@@ -1383,7 +1746,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [GatewayApp Browser Notification — 2026-07-16 08:55](./GatewayApp/2026-07-16-0855.md) - [TeamRunDetail PG-1 — 2026-07-15 16:39](./TeamRunDetail/2026-07-15-1639.md) - [TeamRunCard PG-1 Roster — 2026-07-15 16:39](./Te..."
+      "excerpt": "- [GatewayApp Mail Team Run UI — 2026-07-16 15:36](./GatewayApp/2026-07-16-1536.md) - [TeamRunDetail User Decision — 2026-07-16 11:07](./TeamRunDetail/2026-07-16-1107.md) - [GatewayApp Browser Notification — 2026-07-1..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -1596,6 +1959,65 @@
       "excerpt": "Gateway process는 유지하면서 새 실행 intake를 먼저 닫고 Chat, Team, Job을 순서대로 terminal 상태로 수렴시킨다. 자동 재개하지 않으며 소유자가 상태를 확인한 뒤 별도 action으로 intake를 연다."
     },
     {
+      "path": "docs/flows/2026-07-16-mail-hook-team-run.md",
+      "title": "Email Hook이 영속 Mail Team Run을 trigger하는 흐름",
+      "type": "flow",
+      "domain": "personal-agent-gateway",
+      "feature": "hook-team-mail-workspace",
+      "status": "done",
+      "aliases": [
+        "메일 Team 자동 실행 흐름",
+        "Hook Mail Team Run trigger",
+        "메일 발신자 수첩 갱신"
+      ],
+      "tags": [
+        "event-hooks",
+        "team-run",
+        "email",
+        "contacts"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Email Hook이 영속 Mail Team Run을 trigger하는 흐름"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Entry Points"
+        },
+        {
+          "level": 2,
+          "text": "Flow"
+        },
+        {
+          "level": 2,
+          "text": "State flow"
+        },
+        {
+          "level": 2,
+          "text": "Ownership"
+        },
+        {
+          "level": 2,
+          "text": "Edge cases"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "Mail Team Run은 한 번 생성한다. Email Hook의 각 전달은 같은 Team Run 안에 고유 Cycle을 추가하고, Cycle만 메일별 budget·Task·Message·Decision·Summary를 소유한다."
+    },
+    {
       "path": "docs/flows/2026-07-16-team-run-completion-notification.md",
       "title": "Team Run 완료 알림 사용과 확인",
       "type": "flow",
@@ -1645,6 +2067,81 @@
         }
       ],
       "excerpt": "열린 Gateway 탭에서 사용자가 알림을 opt-in하면 새 Team Run의 완료 또는 실패 terminal SSE를 browser notification으로 표시한다. Browser site permission과 OS notification permission이 모두 필요하며 Gateway 탭을 닫은 상태는 지원하지 않는다."
+    },
+    {
+      "path": "docs/flows/2026-07-16-team-run-user-decision-request.md",
+      "title": "Team Run 사용자 결정 요청과 재개 흐름",
+      "type": "flow",
+      "domain": "personal-agent-gateway",
+      "feature": "team-run-user-decisions",
+      "status": "done",
+      "aliases": [
+        "INPUT NEEDED 사용 흐름",
+        "Leader 질문 답변 흐름",
+        "Team Run waiting for user"
+      ],
+      "tags": [
+        "team-run",
+        "user-input",
+        "decision-request",
+        "resume"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run 사용자 결정 요청과 재개 흐름"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "User-visible flow"
+        },
+        {
+          "level": 2,
+          "text": "State and ownership"
+        },
+        {
+          "level": 2,
+          "text": "Decision gate"
+        },
+        {
+          "level": 2,
+          "text": "Answer rules"
+        },
+        {
+          "level": 2,
+          "text": "API and event flow"
+        },
+        {
+          "level": 2,
+          "text": "Edge cases"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 3,
+          "text": "Runtime"
+        },
+        {
+          "level": 3,
+          "text": "Persistence and API"
+        },
+        {
+          "level": 3,
+          "text": "UI and privacy"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "Worker 질문은 먼저 Leader가 처리한다. Leader도 결정할 수 없는 질문은 `USER_DECISIONS.md`에 누적하고, 독립 작업을 마친 뒤 한 batch로 공개한다. 사용자는 Team Run의 `INPUT NEEDED` panel에서 모든 질문에 답하고 `ANSWER & RESUME`으로 Run을 재개한다."
     },
     {
       "path": "docs/knowledge/2026-07-08-full-access-security-operating-model.md",
@@ -1879,6 +2376,63 @@
         }
       ],
       "excerpt": "Personal Agent Gateway는 **로컬 PC의 AI CLI와 자동화 도구를 원격 브라우저에서 제어하는 1인용 control console**이다. 제품은 세 실행 축으로 나뉜다."
+    },
+    {
+      "path": "docs/knowledge/2026-07-16-runtime-domain-relationship-map.md",
+      "title": "Chat Persona Team Team Run Job Schedule Hooks Rules 관계 지도",
+      "type": "knowledge",
+      "domain": "personal-agent-gateway",
+      "feature": "runtime-domain-map",
+      "status": "active",
+      "aliases": [
+        "런타임 도메인 관계도",
+        "CHAT PERSONA TEAM TEAM RUN JOB SCHEDULE HOOKS RULES",
+        "자동화 실행 모델"
+      ],
+      "tags": [
+        "architecture",
+        "chat",
+        "team-run",
+        "jobs",
+        "schedules",
+        "event-hooks"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Chat Persona Team Team Run Job Schedule Hooks Rules 관계 지도"
+        },
+        {
+          "level": 2,
+          "text": "한눈에 보기"
+        },
+        {
+          "level": 2,
+          "text": "도메인별 책임"
+        },
+        {
+          "level": 2,
+          "text": "실행 trigger의 차이"
+        },
+        {
+          "level": 2,
+          "text": "구현된 Mail Hook 흐름"
+        },
+        {
+          "level": 2,
+          "text": "Runtime CLI prompt 전달 규칙"
+        },
+        {
+          "level": 2,
+          "text": "Composition root"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "아래 연결은 현재 구현된 런타임 관계다."
     },
     {
       "path": "docs/knowledge/persona-team-usage-guide.md",
@@ -2432,6 +2986,49 @@
       "excerpt": "Windows 11, Python 3.13.13 로컬 환경의 임시 fixture에서 1,000개 Session 목록 p95는 JSONL 전체 스캔 133.899ms에서 SQLite metadata index 3.257ms로 줄었다. 기본 페이지는 Session·Job·Artifact·Team Run 100개, event·Team detail·document 200개로 제한했다."
     },
     {
+      "path": "docs/reports/2026-07-16-pop3-email-hook-support.md",
+      "title": "POP3 Email Hook 지원 및 NAVER WORKS 연결 보고서",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "event-hooks-email-pop3",
+      "status": "done",
+      "aliases": [
+        "POP3 메일 Hook 설정",
+        "NAVER WORKS 메일 연동",
+        "pop.worksmobile.com 연결"
+      ],
+      "tags": [
+        "event-hooks",
+        "email",
+        "pop3",
+        "naver-works"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "POP3 Email Hook 지원 및 NAVER WORKS 연결 보고서"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Changes"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "기존 IMAP email adapter가 Host/Port에 따라 POP3 SSL도 처리하도록 확장했다. NAVER WORKS POP3 실계정 연결과 최초 baseline Poll을 검증하고, `NAVER WORKS Inbox` Hook을 활성화했다. 최초 Poll은 기존 메일을 실행하지 않고 이후 새 메일부터 처리한다."
+    },
+    {
       "path": "docs/reports/2026-07-16-r2-scoped-product-expansion-implementation.md",
       "title": "Personal Agent Gateway R2 실제 사용 기반 범위 축소 구현 보고서",
       "type": "report",
@@ -2477,6 +3074,56 @@
         }
       ],
       "excerpt": "R2는 최초 계획의 모든 제품 확장을 구현하지 않고 실제 사용 1회에서 관찰된 문제만 해결하는 범위로 축소해 완료했다. PG-1은 기존 Team Run 탐색·preview·assignment·중단 UX를 보정했고, R2-B는 열린 Gateway 탭의 opt-in Browser Notification을 제공한다. 사용자가 Windows/Chrome 알림을 활성화한 뒤 실제 완료 알림 수신..."
+    },
+    {
+      "path": "docs/reports/2026-07-16-team-run-user-decisions-implementation.md",
+      "title": "Team Run 배치형 사용자 결정 구현 보고서",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "team-run-user-decisions",
+      "status": "done",
+      "aliases": [
+        "Team Run INPUT NEEDED 구현",
+        "Leader 질문 batch 구현 결과"
+      ],
+      "tags": [
+        "team-run",
+        "user-input",
+        "decision-request",
+        "implementation"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run 배치형 사용자 결정 구현 보고서"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Delivered"
+        },
+        {
+          "level": 2,
+          "text": "Key contracts"
+        },
+        {
+          "level": 2,
+          "text": "Changed areas"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "Worker가 요청한 정보 중 Leader가 내부적으로 답할 수 없는 질문을 하나의 decision batch로 모으고, Run이 더 진행할 수 없을 때 사용자에게 한 번에 요청하는 흐름을 구현했다. 답변 대기 중에는 실행 process가 없으며, 모든 질문을 제출하면 관련 blocked Task만 자동 재개한다."
     },
     {
       "path": "docs/specs/2026-07-08-observability-audit-log-spec.md",
@@ -5874,6 +6521,53 @@
         }
       ],
       "excerpt": "- **SUCCESS**: 서비스 도메인, 사용자 여정, 유지보수·성능·보안 위험을 코드와 기존 문서 기준으로 정리했다. - **SUCCESS**: R0 신뢰 기반 구현과 NOW Release Gate를 완료했다. - **SUCCESS**: R1 운영 가능성 구현과 NEXT Release Gate를 완료했다. - **SUCCESS**: 실제 사용 1회에서 확인된 PG-1 사용성 보정과 ..."
+    },
+    {
+      "path": "docs/todo/2026-07-16-hook-team-mail-workspace-implementation.md",
+      "title": "영속 Mail Team Run과 Hook Cycle 구현 계획",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "hook-team-mail-workspace",
+      "status": "done",
+      "aliases": [
+        "메일 Team Hook 구현",
+        "Mail Team Run Cycle 구현",
+        "메일 명함 수첩 작업 계획"
+      ],
+      "tags": [
+        "event-hooks",
+        "team-run",
+        "email",
+        "workspace"
+      ],
+      "updated_at": "2026-07-16",
+      "headings": [
+        {
+          "level": 1,
+          "text": "영속 Mail Team Run과 Hook Cycle 구현 완료"
+        },
+        {
+          "level": 2,
+          "text": "단계별 완료 기록"
+        },
+        {
+          "level": 2,
+          "text": "실행 중 발견한 실패와 교훈"
+        },
+        {
+          "level": 2,
+          "text": "최종 검증"
+        },
+        {
+          "level": 2,
+          "text": "문서 승격 및 정리"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-16   상태: done"
     },
     {
       "path": "docs/todo/2026-07-16-r2-deferred-product-backlog.md",

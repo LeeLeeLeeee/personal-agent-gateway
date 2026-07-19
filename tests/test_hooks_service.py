@@ -57,6 +57,34 @@ def test_create_hook_stores_secret_out_of_db(tmp_path: Path) -> None:
     assert hook_service._secret_store.load(hook.connection_ref) == "app-pw"
 
 
+def test_create_team_run_hook_requires_continuous_execution_run(tmp_path: Path) -> None:
+    adapter = StubAdapter()
+    hook_service, _ = _service(tmp_path, adapter)
+    hook_service._db.execute(
+        "insert into team_runs (id, goal, status, run_mode, lifecycle_mode, max_workers, "
+        "workspace_root, created_at, updated_at) "
+        "values ('mail-run','mailbox','draft','plan_and_execute','continuous',1,'w','t','t')"
+    )
+
+    hook = hook_service.create_hook(
+        name="Mail team",
+        source_type="email",
+        connection={},
+        secret="pw",
+        filter={},
+        target_backend="",
+        target_model="",
+        target_options={},
+        prompt_template="{{subject}}",
+        poll_interval_seconds=300,
+        target_kind="team_run",
+        target_team_run_id="mail-run",
+    )
+
+    assert hook.target_kind == "team_run"
+    assert hook.target_team_run_id == "mail-run"
+
+
 def test_render_prompt_substitutes_placeholders() -> None:
     prompt = render_prompt(
         "From {{from}} / {{subject}}: {{body}}",

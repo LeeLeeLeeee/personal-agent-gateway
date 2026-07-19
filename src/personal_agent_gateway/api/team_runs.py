@@ -1,4 +1,3 @@
-import asyncio
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +15,14 @@ from personal_agent_gateway.api.dependencies import (
 )
 from personal_agent_gateway.auth_sessions import SessionPrincipal
 from personal_agent_gateway.pagination import decode_cursor, encode_cursor
-from personal_agent_gateway.teams import TeamAgent, TeamMessage, TeamRun, TeamTask
+from personal_agent_gateway.teams import (
+    TeamAgent,
+    TeamDecisionRequest,
+    TeamMessage,
+    TeamRun,
+    TeamRunCycle,
+    TeamTask,
+)
 
 
 router = APIRouter(prefix="/api/team-runs", tags=["team-runs"])
@@ -29,11 +35,18 @@ class CreateTeamRunRequest(BaseModel):
     team_id: str
     goal: str
     run_mode: Literal["planning_only", "plan_and_execute"] = "planning_only"
+    lifecycle_mode: Literal["standard", "continuous"] = "standard"
     max_workers: Literal[1] = 1
 
 
 class AddWorkRequest(BaseModel):
     instruction: str
+
+
+class AnswerDecisionRequest(BaseModel):
+    request_id: str
+    revision: int
+    answers: dict[str, str]
 
 
 @router.get("")
@@ -66,6 +79,7 @@ def create_team_run(
             goal=payload.goal,
             run_mode=payload.run_mode,
             max_workers=payload.max_workers,
+            lifecycle_mode=payload.lifecycle_mode,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team not found") from exc
@@ -104,6 +118,7 @@ def get_team_run_detail(
         agents = service.list_agents(team_run_id)
         tasks = service.list_tasks(team_run_id)
         messages = service.list_messages(team_run_id)
+        cycles = service.list_cycles(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     selected_tasks = tasks[-limit:]
@@ -113,6 +128,10 @@ def get_team_run_detail(
         "agents": [_agent_payload(agent) for agent in agents],
         "tasks": [_task_payload(task) for task in selected_tasks],
         "messages": [_message_payload(message) for message in selected_messages],
+        "cycles": [_cycle_payload(cycle) for cycle in cycles],
+        "decision_request": _decision_request_payload(
+            service.get_active_decision_request(team_run_id)
+        ),
         "document_summary": _document_summary(_resolved_workspace(run)),
         "truncated": {
             "tasks": len(tasks) > len(selected_tasks),
@@ -130,7 +149,6 @@ async def start_team_run(
     require_intake_open(request)
     service = request.app.state.team_run_service
     registry = request.app.state.team_run_registry
-    runtime = request.app.state.team_runtime
     try:
         run = service.get_team_run(team_run_id)
     except KeyError as exc:
@@ -140,14 +158,7 @@ async def start_team_run(
     if run.status != "draft":
         raise HTTPException(status_code=409, detail="Only draft team runs can be started")
 
-    async def _run_and_finish() -> None:
-        try:
-            await runtime.start(team_run_id)
-        finally:
-            registry.finish(team_run_id)
-
-    task = asyncio.create_task(_run_and_finish())
-    registry.register(team_run_id, task)
+    request.app.state.team_run_orchestrator.start(team_run_id)
     record_domain_audit(
         request,
         principal,
@@ -169,7 +180,6 @@ async def resume_team_run(
     require_intake_open(request)
     service = request.app.state.team_run_service
     registry = request.app.state.team_run_registry
-    runtime = request.app.state.team_runtime
     try:
         run = service.get_team_run(team_run_id)
     except KeyError as exc:
@@ -178,15 +188,21 @@ async def resume_team_run(
         raise HTTPException(status_code=409, detail="Team run already running")
     if run.status != "interrupted":
         raise HTTPException(status_code=409, detail="Only interrupted team runs can be resumed")
+    cycle_id = None
+    if run.lifecycle_mode == "continuous":
+        cycle = next(
+            (
+                candidate
+                for candidate in service.list_cycles(team_run_id)
+                if candidate.status == "interrupted"
+            ),
+            None,
+        )
+        if cycle is None:
+            raise HTTPException(status_code=409, detail="No interrupted cycle to resume")
+        cycle_id = cycle.id
 
-    async def _resume_and_finish() -> None:
-        try:
-            await runtime.resume(team_run_id)
-        finally:
-            registry.finish(team_run_id)
-
-    task = asyncio.create_task(_resume_and_finish())
-    registry.register(team_run_id, task)
+    request.app.state.team_run_orchestrator.resume(team_run_id, cycle_id)
     record_domain_audit(
         request,
         principal,
@@ -197,6 +213,76 @@ async def resume_team_run(
         team_run_id=team_run_id,
     )
     return {"team_run": _team_run_payload(run)}
+
+
+@router.get("/{team_run_id}/decision-request")
+def get_decision_request(
+    request: Request,
+    team_run_id: str,
+    _session: None = session_dependency,
+) -> dict[str, object]:
+    try:
+        decision_request = request.app.state.team_run_service.get_active_decision_request(
+            team_run_id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    return {"decision_request": _decision_request_payload(decision_request)}
+
+
+@router.post("/{team_run_id}/decision-request/answer")
+async def answer_decision_request(
+    request: Request,
+    team_run_id: str,
+    payload: AnswerDecisionRequest,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    require_intake_open(request)
+    service = request.app.state.team_run_service
+    registry = request.app.state.team_run_registry
+    if registry.is_running(team_run_id):
+        raise HTTPException(status_code=409, detail="Team run already running")
+    try:
+        run, decision_request = service.answer_decision_request(
+            team_run_id,
+            payload.request_id,
+            payload.revision,
+            payload.answers,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await request.app.state.event_bus.publish(
+        {
+            "type": "team.run.input_resolved",
+            "team_run_id": team_run_id,
+            "decision_request_id": decision_request.id,
+            "run": _team_run_payload(run),
+        }
+    )
+
+    request.app.state.team_run_orchestrator.resume(
+        team_run_id, decision_request.cycle_id
+    )
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.user_decision_answered",
+        action="team_runs.answer_decision",
+        resource_type="team_decision_request",
+        resource_id=decision_request.id,
+        team_run_id=team_run_id,
+        metadata={
+            "revision": payload.revision,
+            "question_count": len(payload.answers),
+        },
+    )
+    return {
+        "team_run": _team_run_payload(run),
+        "decision_request": _decision_request_payload(decision_request),
+    }
 
 
 @router.post("/{team_run_id}/tasks/{task_id}/retry")
@@ -260,19 +346,14 @@ async def add_work(
         raise HTTPException(status_code=409, detail="Start the run before adding work")
     if run.status == "interrupted":
         raise HTTPException(status_code=409, detail="Resume the run before adding work")
+    if run.status == "waiting_for_user":
+        raise HTTPException(status_code=409, detail="Answer the pending decision request first")
 
     await runtime.add_work(team_run_id, payload.instruction)
 
     run = service.get_team_run(team_run_id)
     if run.status in _TERMINAL and not registry.is_running(team_run_id):
-        async def _resume_and_finish() -> None:
-            try:
-                await runtime.resume(team_run_id)
-            finally:
-                registry.finish(team_run_id)
-
-        task = asyncio.create_task(_resume_and_finish())
-        registry.register(team_run_id, task)
+        request.app.state.team_run_orchestrator.resume(team_run_id)
 
     record_domain_audit(
         request,
@@ -301,6 +382,8 @@ async def cancel_team_run(
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     if await registry.cancel_and_wait(team_run_id):
         run = service.get_team_run(team_run_id)
+    elif run.status == "waiting_for_user":
+        run = service.cancel_waiting_decision(team_run_id)
     elif run.status not in _TERMINAL:
         run = service.set_run_status(team_run_id, "canceled")
     record_domain_audit(
@@ -327,7 +410,7 @@ def delete_team_run(
         run = service.get_team_run(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
-    if registry.is_running(team_run_id) or run.status in _ACTIVE:
+    if registry.is_running(team_run_id) or run.status in _ACTIVE or run.status == "waiting_for_user":
         raise HTTPException(status_code=409, detail="Running team runs cannot be deleted")
     try:
         service.delete_team_run(team_run_id)
@@ -654,6 +737,7 @@ def _team_run_payload(run: TeamRun) -> dict[str, object]:
         "goal": run.goal,
         "status": run.status,
         "run_mode": run.run_mode,
+        "lifecycle_mode": run.lifecycle_mode,
         "leader_agent_id": run.leader_agent_id,
         "max_workers": 1,
         "configured_max_workers": run.max_workers,
@@ -694,6 +778,7 @@ def _task_payload(task: TeamTask) -> dict[str, object]:
     return {
         "id": task.id,
         "team_run_id": task.team_run_id,
+        "cycle_id": task.cycle_id,
         "title": task.title,
         "description": task.description,
         "owner_agent_id": task.owner_agent_id,
@@ -711,10 +796,51 @@ def _message_payload(message: TeamMessage) -> dict[str, object]:
     return {
         "id": message.id,
         "team_run_id": message.team_run_id,
+        "cycle_id": message.cycle_id,
         "sender_agent_id": message.sender_agent_id,
         "recipient_agent_id": message.recipient_agent_id,
         "kind": message.kind,
         "content": message.content,
         "metadata": message.metadata,
         "created_at": message.created_at,
+    }
+
+
+def _cycle_payload(cycle: TeamRunCycle) -> dict[str, object]:
+    return {
+        "id": cycle.id,
+        "team_run_id": cycle.team_run_id,
+        "sequence": cycle.sequence,
+        "source_type": cycle.source_type,
+        "source_id": cycle.source_id,
+        "status": cycle.status,
+        "rounds_budget": cycle.rounds_budget,
+        "rounds_used": cycle.rounds_used,
+        "summary": cycle.summary,
+        "error_message": cycle.error_message,
+        "created_at": cycle.created_at,
+        "started_at": cycle.started_at,
+        "finished_at": cycle.finished_at,
+        "updated_at": cycle.updated_at,
+    }
+
+
+def _decision_request_payload(
+    decision_request: TeamDecisionRequest | None,
+) -> dict[str, object] | None:
+    if decision_request is None:
+        return None
+    return {
+        "id": decision_request.id,
+        "team_run_id": decision_request.team_run_id,
+        "cycle_id": decision_request.cycle_id,
+        "status": decision_request.status,
+        "revision": decision_request.revision,
+        "items": decision_request.items,
+        "answers": decision_request.answers,
+        "file_path": decision_request.file_path,
+        "created_at": decision_request.created_at,
+        "published_at": decision_request.published_at,
+        "answered_at": decision_request.answered_at,
+        "updated_at": decision_request.updated_at,
     }

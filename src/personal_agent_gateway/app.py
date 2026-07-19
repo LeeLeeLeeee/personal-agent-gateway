@@ -56,6 +56,7 @@ from personal_agent_gateway.hooks import HookService
 from personal_agent_gateway.intake import IntakeGate
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
+from personal_agent_gateway.mail_knowledge import MailKnowledgeService, MailWorkspaceProjector
 from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelClient, ModelClient
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.runtime import AgentRuntime
@@ -72,6 +73,7 @@ from personal_agent_gateway.security_settings import SecuritySettingsService
 from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
 from personal_agent_gateway.sources.email import ImapEmailAdapter
 from personal_agent_gateway.team_directory import TeamService
+from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
 from personal_agent_gateway.transcript import TranscriptStore
@@ -96,6 +98,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         ):
             await application.state.job_worker.enqueue(job.id)
         application.state.hook_run_service.recover_interrupted_runs()
+        application.state.mail_workspace_projector.project_pending()
         await application.state.scheduler_loop.start()
         await application.state.hook_runner.start()
         for run in application.state.hook_run_service.list_queued_runs():
@@ -166,6 +169,14 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         app.state.team_run_service,
         _team_model_factory(app_config),
         event_bus,
+    )
+    app.state.team_run_orchestrator = TeamRunOrchestrator(
+        team_run_registry,
+        lambda: app.state.team_runtime,
+    )
+    app.state.hook_runner.attach_team_runtime(
+        app.state.team_run_service,
+        app.state.team_run_orchestrator,
     )
     app.state.team_run_service.backfill_agent_avatars()
 
@@ -379,6 +390,12 @@ def _attach_local_services(
     )
     hook_run_service = HookRunService(db)
     hook_runner = HookRunner(hook_service, hook_run_service, runtime_factory, event_bus)
+    mail_knowledge_service = MailKnowledgeService(db)
+    mail_workspace_projector = MailWorkspaceProjector(mail_knowledge_service)
+    hook_runner.attach_mail_knowledge(
+        mail_knowledge_service,
+        mail_workspace_projector,
+    )
     hook_loop = HookLoop(
         hook_service,
         hook_run_service,
@@ -422,6 +439,8 @@ def _attach_local_services(
     app.state.hook_run_service = hook_run_service
     app.state.hook_runner = hook_runner
     app.state.hook_loop = hook_loop
+    app.state.mail_knowledge_service = mail_knowledge_service
+    app.state.mail_workspace_projector = mail_workspace_projector
     return runtime_factory
 
 

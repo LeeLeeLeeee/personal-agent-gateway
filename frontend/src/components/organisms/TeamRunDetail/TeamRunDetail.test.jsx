@@ -259,6 +259,39 @@ describe("TeamRunDetail", () => {
     expect(screen.queryByText("Planning started")).not.toBeInTheDocument();
   });
 
+  it("renders continuous lifecycle Cycle status and Hook lineage newest first", () => {
+    const { container } = render(
+      <TeamRunDetail detail={{
+        run: {
+          id: "mail-run",
+          goal: "Mail inbox",
+          status: "running",
+          run_mode: "plan_and_execute",
+          lifecycle_mode: "continuous"
+        },
+        agents: [],
+        tasks: [],
+        messages: [],
+        cycles: [
+          {
+            id: "c1", sequence: 1, source_type: "hook", source_id: "hook-run-1",
+            status: "completed", rounds_used: 1, rounds_budget: 8, summary: "First mail done"
+          },
+          {
+            id: "c2", sequence: 2, source_type: "hook", source_id: "hook-run-2",
+            status: "queued", rounds_used: 0, rounds_budget: 8
+          }
+        ]
+      }} />
+    );
+
+    expect(screen.getByText("continuous")).toBeInTheDocument();
+    expect(screen.getByText("hook · hook-run-2")).toBeInTheDocument();
+    expect(screen.getByText("First mail done")).toBeInTheDocument();
+    expect([...container.querySelectorAll(".team-cycle-sequence")].map((node) => node.textContent))
+      .toEqual(["CYCLE #2", "CYCLE #1"]);
+  });
+
   it("orders results and activity newest first while keeping handoff pairs intact", async () => {
     const { container } = render(
       <TeamRunDetail detail={{
@@ -296,6 +329,37 @@ describe("TeamRunDetail", () => {
     expect(handoffs[1]).toHaveTextContent("old answer");
   });
 
+  it("pairs answers by query id even when answers arrive out of order", async () => {
+    const { container } = render(
+      <TeamRunDetail detail={{
+        run: { id: "r1", goal: "Link", status: "waiting_for_user", run_mode: "plan_and_execute" },
+        agents: [
+          { id: "lead", name: "Lead", role: "leader", status: "waiting" },
+          { id: "worker", name: "Worker", role: "member", status: "waiting" }
+        ],
+        tasks: [],
+        messages: [
+          { id: "q1", kind: "query", sender_agent_id: "worker", content: "first question", created_at: "2026-07-15T01:00:00Z" },
+          { id: "q2", kind: "query", sender_agent_id: "worker", content: "second question", created_at: "2026-07-15T01:01:00Z" },
+          { id: "q3", kind: "query", sender_agent_id: "worker", content: "still waiting", created_at: "2026-07-15T01:02:00Z" },
+          { id: "a2", kind: "answer", sender_agent_id: "lead", content: "second answer", metadata: { query_id: "q2" }, created_at: "2026-07-15T02:00:00Z" },
+          { id: "a1", kind: "answer", sender_agent_id: "lead", content: "first answer", metadata: { query_id: "q1" }, created_at: "2026-07-15T02:01:00Z" }
+        ]
+      }} />
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /SHARED \/ HANDOFFS/ }));
+    const byQuestion = new Map(
+      [...container.querySelectorAll(".team-handoff")].map((handoff) => [
+        handoff.querySelector(".team-handoff-q .team-handoff-text").textContent,
+        handoff.textContent
+      ])
+    );
+    expect(byQuestion.get("first question")).toContain("first answer");
+    expect(byQuestion.get("second question")).toContain("second answer");
+    expect(byQuestion.get("still waiting")).toContain("awaiting answer");
+  });
+
   it("shows assigned task names and a phase fallback for the leader", () => {
     render(<TeamRunDetail detail={{
       run: { id: "r1", goal: "Work", status: "running", run_mode: "plan_and_execute" },
@@ -327,5 +391,73 @@ describe("TeamRunDetail", () => {
 
     rerender(<TeamRunDetail detail={{ ...detail, run: { ...detail.run, status: "completed" } }} onCancel={onCancel} />);
     expect(screen.queryByRole("button", { name: "Stop run" })).not.toBeInTheDocument();
+  });
+
+  it("collects every pending user decision and submits one answer batch", async () => {
+    const onAnswerDecision = vi.fn(() => new Promise(() => {}));
+    render(<TeamRunDetail
+      onAddWork={vi.fn()}
+      onResume={vi.fn()}
+      onCancel={vi.fn()}
+      onAnswerDecision={onAnswerDecision}
+      detail={{
+        run: { id: "r1", goal: "Ship", status: "waiting_for_user", run_mode: "plan_and_execute" },
+        agents: [],
+        tasks: [{ id: "t1", title: "Deploy", status: "blocked" }],
+        messages: [],
+        decisionRequest: {
+          id: "d1",
+          revision: 3,
+          status: "awaiting_user",
+          items: [
+            {
+              id: "Q-001",
+              topic: "Target",
+              question: "Where should this deploy?",
+              why_needed: "Configuration depends on the target.",
+              options: [
+                { id: "staging", label: "Staging", impact: "Safer validation." },
+                { id: "production", label: "Production", impact: "Immediate release." }
+              ],
+              recommended_option_id: "staging"
+            },
+            {
+              id: "Q-002",
+              topic: "Audience",
+              question: "Who should be notified?",
+              why_needed: "Recipients are not defined.",
+              options: []
+            }
+          ]
+        }
+      }}
+    />);
+
+    expect(screen.getByRole("region", { name: "Input needed" })).toBeInTheDocument();
+    expect(screen.getByText("Recommended: Staging")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop run" })).toBeInTheDocument();
+    const submit = screen.getByRole("button", { name: "ANSWER & RESUME" });
+    expect(submit).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("radio", { name: /Staging/ }));
+    await userEvent.type(screen.getByLabelText("Answer for Q-002"), "Release team");
+    await userEvent.click(submit);
+
+    expect(onAnswerDecision).toHaveBeenCalledWith({
+      "Q-001": "staging",
+      "Q-002": "Release team"
+    });
+    expect(submit).toBeDisabled();
+  });
+
+  it("shows a recoverable message when a waiting run has no active request", () => {
+    render(<TeamRunDetail detail={{
+      run: { id: "r1", goal: "Ship", status: "waiting_for_user", run_mode: "plan_and_execute" },
+      agents: [], tasks: [], messages: [], decisionRequest: null
+    }} />);
+
+    expect(screen.getByText("Decision request is unavailable. Refresh this run.")).toBeInTheDocument();
   });
 });

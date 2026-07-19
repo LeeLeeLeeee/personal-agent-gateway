@@ -153,6 +153,34 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
     assert model._workspace_root == Path(run["workspace_root"]).resolve()
 
 
+def test_create_team_run_lifecycle_mode_roundtrip_and_default(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
+
+    continuous = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Watch inbox",
+            "run_mode": "plan_and_execute",
+            "lifecycle_mode": "continuous",
+        },
+    )
+    standard = client.post(
+        "/api/team-runs",
+        json={"team_id": team_id, "goal": "One-off task"},
+    )
+
+    assert continuous.status_code == 200
+    assert continuous.json()["team_run"]["lifecycle_mode"] == "continuous"
+    assert client.get(
+        f"/api/team-runs/{continuous.json()['team_run']['id']}"
+    ).json()["team_run"]["lifecycle_mode"] == "continuous"
+    assert standard.status_code == 200
+    assert standard.json()["team_run"]["lifecycle_mode"] == "standard"
+
+
 def test_list_team_runs_returns_enriched_fields(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
@@ -288,11 +316,181 @@ def test_team_run_detail_aggregate_includes_documents_summary(tmp_path: Path) ->
     assert len(detail["agents"]) == 2
     assert detail["tasks"] == []
     assert detail["messages"] == []
+    assert detail["cycles"] == []
     assert detail["document_summary"] == {
         "count": 1,
         "size_bytes": 5,
         "kinds": {"md": 1},
     }
+
+
+def test_team_run_detail_includes_complete_cycle_payload(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Mail Lead")
+    team_id = create_team(client, leader_id)
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Process inbox",
+            "run_mode": "plan_and_execute",
+            "lifecycle_mode": "continuous",
+        },
+    ).json()["team_run"]
+    service = client.app.state.team_run_service
+    created = service.create_cycle(run["id"], "hook", "hook-run-1", rounds_budget=3)
+    service.set_cycle_status(created.id, "running")
+    service.increment_cycle_rounds_used(created.id)
+    cycle = service.set_cycle_status(created.id, "completed", summary="Mail handled")
+
+    response = client.get(f"/api/team-runs/{run['id']}/detail")
+
+    assert response.status_code == 200
+    assert response.json()["cycles"] == [
+        {
+            "id": cycle.id,
+            "team_run_id": run["id"],
+            "sequence": 1,
+            "source_type": "hook",
+            "source_id": "hook-run-1",
+            "status": "completed",
+            "rounds_budget": 3,
+            "rounds_used": 1,
+            "summary": "Mail handled",
+            "error_message": None,
+            "created_at": cycle.created_at,
+            "started_at": cycle.started_at,
+            "finished_at": cycle.finished_at,
+            "updated_at": cycle.updated_at,
+        }
+    ]
+
+
+async def test_answer_decision_request_rejects_stale_and_registers_one_resume(
+    tmp_path: Path,
+) -> None:
+    app = create_app(make_config(tmp_path))
+    gate = asyncio.Event()
+    _inject_gated_team_runtime(app, gate)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        leader_id = await _async_create_persona(client, "Lead")
+        member_id = await _async_create_persona(client, "Worker")
+        team_id = await _async_create_team(client, leader_id, [member_id])
+        run = (
+            await client.post(
+                "/api/team-runs",
+                json={
+                    "team_id": team_id,
+                    "goal": "g",
+                    "run_mode": "plan_and_execute",
+                    "max_workers": 1,
+                },
+            )
+        ).json()["team_run"]
+        service = app.state.team_run_service
+        worker = service.list_agents(run["id"])[1]
+        task = service.create_task(run["id"], "Deploy", "choose target")
+        service.set_run_status(run["id"], "running")
+        service.start_task(task.id, worker.id)
+        service.defer_task_for_user_decision(
+            task.id,
+            worker.id,
+            {
+                "topic": "target",
+                "question": "Where?",
+                "why_needed": "Changes config.",
+                "options": [],
+                "recommended_option_id": None,
+                "blocking_scope": "task",
+            },
+        )
+        request = service.publish_decision_request(run["id"])
+
+        detail = (await client.get(f"/api/team-runs/{run['id']}/detail")).json()
+        assert detail["decision_request"]["id"] == request.id
+        assert detail["decision_request"]["items"][0]["id"] == "Q-001"
+
+        stale = await client.post(
+            f"/api/team-runs/{run['id']}/decision-request/answer",
+            json={
+                "request_id": request.id,
+                "revision": request.revision - 1,
+                "answers": {"Q-001": "staging"},
+            },
+        )
+        assert stale.status_code == 409
+
+        answered = await client.post(
+            f"/api/team-runs/{run['id']}/decision-request/answer",
+            json={
+                "request_id": request.id,
+                "revision": request.revision,
+                "answers": {"Q-001": "staging"},
+            },
+        )
+
+        assert answered.status_code == 200
+        assert answered.json()["decision_request"]["status"] == "resolved"
+        assert app.state.team_run_registry.is_running(run["id"]) is True
+        duplicate = await client.post(
+            f"/api/team-runs/{run['id']}/decision-request/answer",
+            json={
+                "request_id": request.id,
+                "revision": request.revision,
+                "answers": {"Q-001": "production"},
+            },
+        )
+        assert duplicate.status_code == 409
+
+        gate.set()
+        await _poll_until(lambda: not app.state.team_run_registry.is_running(run["id"]))
+
+
+def test_waiting_decision_survives_restart_and_cancel_settles_request(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    app = create_app(config)
+    service = app.state.team_run_service
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    member = app.state.persona_service.create_persona("Worker", "work", "d", [], [])
+    run = service.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    worker = service.list_agents(run.id)[1]
+    task = service.create_task(run.id, "Deploy", "choose target")
+    service.set_run_status(run.id, "running")
+    service.start_task(task.id, worker.id)
+    service.defer_task_for_user_decision(
+        task.id,
+        worker.id,
+        {
+            "topic": "target",
+            "question": "Where?",
+            "why_needed": "Changes config.",
+            "options": [],
+            "recommended_option_id": None,
+            "blocking_scope": "task",
+        },
+    )
+    request = service.publish_decision_request(run.id)
+
+    restarted_app = create_app(config)
+    with TestClient(restarted_app) as client:
+        client.cookies.set(
+            "agent_session", restarted_app.state.auth_session_service.issue().token
+        )
+        assert restarted_app.state.team_run_service.get_team_run(run.id).status == "waiting_for_user"
+        assert client.post(
+            f"/api/team-runs/{run.id}/add-work", json={"instruction": "more"}
+        ).status_code == 409
+        canceled = client.post(f"/api/team-runs/{run.id}/cancel")
+
+    assert canceled.status_code == 200
+    assert canceled.json()["team_run"]["status"] == "canceled"
+    assert restarted_app.state.team_run_service.list_tasks(run.id)[0].status == "canceled"
+    resolved = restarted_app.state.team_run_service.list_decision_requests(run.id)[0]
+    assert resolved.id == request.id
+    assert resolved.status == "canceled"
 
 
 def test_team_run_list_uses_stable_cursor_pages(tmp_path: Path) -> None:

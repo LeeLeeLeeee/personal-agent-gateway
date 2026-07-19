@@ -17,6 +17,11 @@ const hooks = [
   }
 ];
 
+const teamRuns = [
+  { id: "standard-1", goal: "One-off", lifecycle_mode: "standard", run_mode: "plan_and_execute" },
+  { id: "mail-1", goal: "Mail inbox", lifecycle_mode: "continuous", run_mode: "plan_and_execute" }
+];
+
 function noop() {}
 
 describe("HooksView", () => {
@@ -46,10 +51,34 @@ describe("HooksView", () => {
       secret: "app-pw",
       target_backend: "codex",
       target_model: "gpt-5",
+      target_kind: "agent",
+      target_team_run_id: null,
       prompt_template: "요약: {{subject}}",
       poll_interval_seconds: 300
     }));
     expect(onCreate.mock.calls[0][0].filter.from_contains).toBe("boss");
+  });
+
+  it("creates a hook targeting an existing continuous Team Run", async () => {
+    const onCreate = vi.fn();
+    render(<HooksView hooks={[]} agents={agents} teamRuns={teamRuns} onCreate={onCreate} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} />);
+    await userEvent.click(screen.getByRole("button", { name: "TEAM RUN" }));
+    expect(screen.getByRole("option", { name: "Mail inbox" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "One-off" })).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Name"), "Mail team hook");
+    await userEvent.type(screen.getByLabelText("Host"), "imap.example.com");
+    await userEvent.type(screen.getByLabelText("Username"), "me@example.com");
+    await userEvent.type(screen.getByLabelText("App password"), "app-pw");
+    await userEvent.type(screen.getByLabelText("Prompt template"), "Process {{{{subject}}");
+    await userEvent.click(screen.getByRole("button", { name: /create hook/i }));
+
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      target_kind: "team_run",
+      target_team_run_id: "mail-1",
+      target_backend: "",
+      target_model: "",
+      target_options: {}
+    }));
   });
 
   it("shows the result of a connection test", async () => {
@@ -72,6 +101,27 @@ describe("HooksView", () => {
     const drawer = screen.getByLabelText("Hook runs");
     expect(within(drawer).getByText("정리했습니다")).toBeInTheDocument();
     expect(within(drawer).getByText("실행 실패")).toBeInTheDocument();
+  });
+
+  it("shows Hook Run cycle lineage and opens its target Team Run", async () => {
+    const onOpenTeamRun = vi.fn();
+    const teamHook = {
+      ...hooks[0],
+      target_kind: "team_run",
+      target_team_run_id: "mail-1"
+    };
+    const runs = [{
+      id: "r1",
+      trigger_summary: "메일: hi",
+      status: "queued",
+      created_at: "2026-07-15T10:32:00Z",
+      team_run_cycle_id: "cycle-7"
+    }];
+    render(<HooksView hooks={[teamHook]} hookRuns={runs} agents={agents} teamRuns={teamRuns} openHookRunsId="h1" onCreate={noop} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} onOpenTeamRun={onOpenTeamRun} />);
+
+    expect(screen.getByText("CYCLE · cycle-7")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open Team Run" }));
+    expect(onOpenTeamRun).toHaveBeenCalledWith("mail-1");
   });
 
   it("calls onRunNow and onToggle", async () => {

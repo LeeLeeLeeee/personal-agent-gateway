@@ -24,7 +24,7 @@ const RUN_PHASES = [
 
 function phaseIndex(status) {
   const index = RUN_PHASES.findIndex((phase) => phase.statuses.includes(status));
-  if (status === "interrupted") return -1;
+  if (["interrupted", "waiting_for_user"].includes(status)) return -1;
   return index < 0 ? 0 : index;
 }
 
@@ -61,8 +61,20 @@ function newestFirst(items) {
 function buildHandoffs(messages) {
   const queries = messages.filter((message) => message.kind === "query");
   const answers = messages.filter((message) => message.kind === "answer");
+  const answersByQuery = new Map(
+    answers
+      .filter((answer) => answer.metadata?.query_id)
+      .map((answer) => [answer.metadata.query_id, answer])
+  );
+  const legacyAnswers = answers.filter((answer) => !answer.metadata?.query_id);
+  let legacyIndex = 0;
   return queries
-    .map((query, index) => ({ query, answer: answers[index] || null }))
+    .map((query) => {
+      const linked = answersByQuery.get(query.id);
+      const answer = linked || legacyAnswers[legacyIndex] || null;
+      if (!linked && answer) legacyIndex += 1;
+      return { query, answer };
+    })
     .sort((left, right) => {
       const leftMessage = left.answer || left.query;
       const rightMessage = right.answer || right.query;
@@ -200,8 +212,109 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
   );
 }
 
+function DecisionRequestPanel({ request, onSubmit }) {
+  const [answers, setAnswers] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const items = request.items || [];
+  const complete = items.length > 0 && items.every((item) => String(answers[item.id] || "").trim());
+
+  return (
+    <section className="team-decision-panel" role="region" aria-label="Input needed">
+      <div className="team-decision-head">
+        <div>
+          <div className="mono team-decision-kicker">INPUT NEEDED · {items.length}</div>
+          <h2 className="headline team-decision-title">Leader needs your decisions</h2>
+        </div>
+        <span className="mono team-decision-revision">REV {request.revision}</span>
+      </div>
+      <p className="team-decision-intro">
+        Independent work is complete. Answer every open question once, then the blocked tasks resume.
+      </p>
+      <p className="team-decision-secret-warning">
+        Do not enter passwords, tokens, recovery codes, or private keys here.
+      </p>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (!complete || !onSubmit) return;
+          setSubmitting(true);
+          try {
+            await onSubmit(answers);
+          } finally {
+            setSubmitting(false);
+          }
+        }}
+      >
+        <div className="team-decision-list">
+          {items.map((item) => {
+            const options = item.options || [];
+            const recommended = options.find(
+              (option) => option.id === item.recommended_option_id
+            );
+            return (
+              <fieldset className="team-decision-item" key={item.id}>
+                <legend>
+                  <span className="mono team-decision-item-id">{item.id} · {item.topic || "Decision"}</span>
+                  <span className="team-decision-question">{item.question}</span>
+                </legend>
+                {item.why_needed ? (
+                  <p className="team-decision-why">Why now: {item.why_needed}</p>
+                ) : null}
+                {recommended ? (
+                  <p className="team-decision-recommended">Recommended: {recommended.label}</p>
+                ) : null}
+                {options.length ? (
+                  <div className="team-decision-options">
+                    {options.map((option) => (
+                      <label className="team-decision-option" key={option.id}>
+                        <input
+                          type="radio"
+                          name={`decision-${item.id}`}
+                          value={option.id}
+                          checked={answers[item.id] === option.id}
+                          onChange={(event) => setAnswers((current) => ({
+                            ...current,
+                            [item.id]: event.target.value
+                          }))}
+                        />
+                        <span>
+                          <strong>{option.label}</strong>
+                          {option.impact ? <small>{option.impact}</small> : null}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <label className="team-decision-freeform">
+                    <span className="mono">YOUR ANSWER</span>
+                    <textarea
+                      aria-label={`Answer for ${item.id}`}
+                      value={answers[item.id] || ""}
+                      onChange={(event) => setAnswers((current) => ({
+                        ...current,
+                        [item.id]: event.target.value
+                      }))}
+                    />
+                  </label>
+                )}
+              </fieldset>
+            );
+          })}
+        </div>
+        <div className="team-decision-actions">
+          <span className="mono">{Object.keys(answers).filter((id) => answers[id]?.trim()).length}/{items.length} answered</span>
+          <Button type="submit" size="btn-sm" variant="primary" disabled={!complete || submitting || !onSubmit}>
+            {submitting ? "RESUMING..." : "ANSWER & RESUME"}
+          </Button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
 export function TeamRunDetail({
-  detail, documents = [], onLoadDocument, onAddWork, onResume, onRetryTask, onCancel
+  detail, documents = [], onLoadDocument, onAddWork, onResume, onAnswerDecision,
+  onRetryTask, onCancel
 }) {
   const [workInput, setWorkInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -221,6 +334,7 @@ export function TeamRunDetail({
   const agents = detail.agents || [];
   const tasks = detail.tasks || [];
   const messages = detail.messages || [];
+  const cycles = [...(detail.cycles || [])].sort((left, right) => right.sequence - left.sequence);
   const leader = findAgent(agents, run.leader_agent_id);
   const reports = newestFirst(messages.filter((message) => message.kind === "agent_output"));
   const activity = newestFirst(messages);
@@ -238,9 +352,12 @@ export function TeamRunDetail({
       && run.run_mode === "plan_and_execute"
       && run.status !== "draft"
       && run.status !== "interrupted"
+      && run.status !== "waiting_for_user"
   );
   const canResume = Boolean(onResume && run.status === "interrupted");
-  const canCancel = Boolean(onCancel && ["planning", "running", "summarizing"].includes(run.status));
+  const canCancel = Boolean(
+    onCancel && ["planning", "running", "summarizing", "waiting_for_user"].includes(run.status)
+  );
 
   return (
     <section className="team-run-detail" aria-label="Team run detail">
@@ -276,6 +393,10 @@ export function TeamRunDetail({
           <div className="mono team-run-meta-v">{run.run_mode}</div>
         </div>
         <div className="team-run-meta-cell">
+          <div className="mono team-run-meta-k">LIFECYCLE</div>
+          <div className="mono team-run-meta-v">{run.lifecycle_mode || "standard"}</div>
+        </div>
+        <div className="team-run-meta-cell">
           <div className="mono team-run-meta-k">WORKERS</div>
           <div className="mono team-run-meta-v">{run.max_workers ?? "-"}</div>
         </div>
@@ -295,11 +416,58 @@ export function TeamRunDetail({
         </div>
       </div>
 
+      {run.lifecycle_mode === "continuous" ? (
+        <section className="team-cycles" aria-label="Team Run cycles">
+          <div className="team-section-head">
+            <span className="mono team-section-label">Cycles</span>
+            <span className="mono team-section-count">{cycles.length}</span>
+            <span className="team-section-rule" />
+          </div>
+          {cycles.length ? (
+            <div className="team-cycle-list">
+              {cycles.map((cycle) => (
+                <article className="team-cycle" key={cycle.id}>
+                  <div className="team-cycle-head">
+                    <span className="mono team-cycle-sequence">CYCLE #{cycle.sequence}</span>
+                    <StatusBadge kind={cycle.status} />
+                  </div>
+                  <div className="mono team-cycle-lineage" title={cycle.source_id || ""}>
+                    {cycle.source_type || "manual"} · {cycle.source_id || cycle.id}
+                  </div>
+                  <div className="mono team-cycle-budget">
+                    ROUNDS · {cycle.rounds_used}/{cycle.rounds_budget}
+                    {cycle.finished_at ? ` · ${fmtDateTime(cycle.finished_at)}` : ""}
+                  </div>
+                  {cycle.summary ? <div className="team-cycle-summary">{cycle.summary}</div> : null}
+                  {cycle.error_message ? <div className="hook-row-error mono">{cycle.error_message}</div> : null}
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="team-task-empty mono">Waiting for the first Hook delivery.</div>
+          )}
+        </section>
+      ) : null}
+
       {run.status === "interrupted" ? (
         <div className="team-interrupted-banner" role="status">
           <span className="headline team-interrupted-title">Run interrupted</span>
           <span className="team-interrupted-copy">Running work was returned to Pending. Resume when you are ready.</span>
         </div>
+      ) : null}
+
+      {run.status === "waiting_for_user" ? (
+        detail.decisionRequest?.status === "awaiting_user" ? (
+          <DecisionRequestPanel
+            key={`${detail.decisionRequest.id}:${detail.decisionRequest.revision}`}
+            request={detail.decisionRequest}
+            onSubmit={onAnswerDecision}
+          />
+        ) : (
+          <div className="team-decision-unavailable" role="status">
+            Decision request is unavailable. Refresh this run.
+          </div>
+        )
       ) : null}
 
       <div className="team-section-head team-section-toolbar">
@@ -500,7 +668,7 @@ export function TeamRunDetail({
                         <span className="team-handoff-text">{answer.content}</span>
                       </div>
                     ) : (
-                      <div className="team-handoff-a team-handoff-unanswered mono">no answer (budget/cap reached)</div>
+                      <div className="team-handoff-a team-handoff-unanswered mono">awaiting answer</div>
                     )}
                   </div>
                 );

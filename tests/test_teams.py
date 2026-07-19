@@ -192,6 +192,92 @@ def test_new_run_has_default_budget(tmp_path):
     run = teams.create_team_run("goal", leader.id, [], "planning_only", 1)
     assert run.rounds_budget == 8
     assert run.rounds_used == 0
+    assert run.lifecycle_mode == "standard"
+
+
+def test_continuous_team_run_cycles_are_ordered_and_idempotent(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "role", "d", [], [])
+    run = teams.create_team_run(
+        "mailbox",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        rounds_budget=6,
+        lifecycle_mode="continuous",
+    )
+
+    first = teams.create_cycle(run.id, "hook", "hook-run-1")
+    duplicate = teams.create_cycle(run.id, "hook", "hook-run-1")
+    second = teams.create_cycle(run.id, "hook", "hook-run-2", rounds_budget=3)
+
+    assert duplicate.id == first.id
+    assert [(cycle.sequence, cycle.source_id) for cycle in teams.list_cycles(run.id)] == [
+        (1, "hook-run-1"),
+        (2, "hook-run-2"),
+    ]
+    assert first.status == "queued"
+    assert first.rounds_budget == 6
+    assert second.rounds_budget == 3
+    assert teams.increment_cycle_rounds_used(first.id).rounds_used == 1
+
+
+def test_standard_team_run_rejects_explicit_cycles(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "role", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [], "plan_and_execute", 1)
+
+    with pytest.raises(ValueError, match="continuous"):
+        teams.create_cycle(run.id, "hook", "hook-run-1")
+
+
+def test_task_and_message_keep_cycle_lineage(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "role", "d", [], [])
+    run = teams.create_team_run(
+        "mailbox",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+    )
+    cycle = teams.create_cycle(run.id, "hook", "hook-run-1")
+
+    task = teams.create_task(run.id, "Classify mail", "d", cycle_id=cycle.id)
+    message = teams.append_message(
+        run.id,
+        None,
+        None,
+        "mail_received",
+        "Mail queued.",
+        {},
+        cycle_id=cycle.id,
+    )
+
+    assert task.cycle_id == cycle.id
+    assert message.cycle_id == cycle.id
+
+
+def test_cycle_lineage_rejects_another_team_run_and_cascades(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "role", "d", [], [])
+    first_run = teams.create_team_run(
+        "first", leader.id, [], "plan_and_execute", 1, lifecycle_mode="continuous"
+    )
+    second_run = teams.create_team_run(
+        "second", leader.id, [], "plan_and_execute", 1, lifecycle_mode="continuous"
+    )
+    cycle = teams.create_cycle(first_run.id, "hook", "hook-run-1")
+
+    with pytest.raises(ValueError, match="different team run"):
+        teams.create_task(second_run.id, "wrong", "d", cycle_id=cycle.id)
+
+    teams.delete_team_run(first_run.id)
+
+    with pytest.raises(KeyError):
+        teams.get_cycle(cycle.id)
 
 
 def test_agent_session_and_counters(tmp_path):
@@ -375,6 +461,95 @@ def test_retry_failed_task_rejects_nonfailed_task_and_nonterminal_run(tmp_path):
     teams.set_run_status(run.id, "failed", error_message="all failed")
     with pytest.raises(ValueError, match="Only failed tasks"):
         teams.retry_failed_task(run.id, task.id)
+
+
+def test_decision_request_batches_blocked_tasks_and_projects_workspace_file(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    leader_agent, worker = teams.list_agents(run.id)
+    first = teams.create_task(run.id, "Deploy", "choose target")
+    second = teams.create_task(run.id, "Notify", "choose audience")
+    teams.set_run_status(run.id, "running")
+    teams.set_agent_status(leader_agent.id, "running")
+
+    for task in (first, second):
+        teams.start_task(task.id, worker.id)
+        request = teams.defer_task_for_user_decision(
+            task.id,
+            worker.id,
+            {
+                "topic": task.title,
+                "question": f"Choose for {task.title}?",
+                "why_needed": "The choice changes the result.",
+                "options": [
+                    {"id": "safe", "label": "Safe", "impact": "Lower risk."},
+                    {"id": "fast", "label": "Fast", "impact": "Faster delivery."},
+                ],
+                "recommended_option_id": "safe",
+                "blocking_scope": "task",
+            },
+        )
+
+    assert request.status == "collecting"
+    assert request.revision == 2
+    assert [item["id"] for item in request.items] == ["Q-001", "Q-002"]
+    assert {task.status for task in teams.list_tasks(run.id)} == {"blocked"}
+
+    published = teams.publish_decision_request(run.id)
+
+    assert published.status == "awaiting_user"
+    assert published.revision == 3
+    assert teams.get_team_run(run.id).status == "waiting_for_user"
+    assert teams.get_agent(leader_agent.id).status == "waiting"
+    decision_file = Path(run.workspace_root) / "USER_DECISIONS.md"
+    content = decision_file.read_text(encoding="utf-8")
+    assert "status: awaiting_user" in content
+    assert "Q-001" in content and "Q-002" in content
+    assert "Choose for Deploy?" in content
+
+
+def test_answer_decision_request_requeues_only_listed_tasks_and_rejects_stale_submit(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    worker = teams.list_agents(run.id)[1]
+    blocked = teams.create_task(run.id, "Deploy", "choose target")
+    untouched = teams.create_task(run.id, "Later", "already pending")
+    teams.set_run_status(run.id, "running")
+    teams.start_task(blocked.id, worker.id)
+    teams.defer_task_for_user_decision(
+        blocked.id,
+        worker.id,
+        {
+            "topic": "target",
+            "question": "Where?",
+            "why_needed": "Changes configuration.",
+            "options": [],
+            "recommended_option_id": None,
+            "blocking_scope": "task",
+        },
+    )
+    request = teams.publish_decision_request(run.id)
+
+    updated_run, resolved = teams.answer_decision_request(
+        run.id, request.id, request.revision, {"Q-001": "staging"}
+    )
+
+    assert updated_run.status == "running"
+    assert resolved.status == "resolved"
+    assert resolved.answers == {"Q-001": "staging"}
+    task_by_id = {task.id: task for task in teams.list_tasks(run.id)}
+    assert task_by_id[blocked.id].status == "pending"
+    assert task_by_id[untouched.id].status == "pending"
+    assert teams.decision_context_for_task(run.id, blocked.id) == "Q: Where?\nA: staging"
+    assert "staging" in (Path(run.workspace_root) / "USER_DECISIONS.md").read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="no longer awaiting"):
+        teams.answer_decision_request(
+            run.id, request.id, request.revision, {"Q-001": "production"}
+        )
 
 
 def test_create_team_run_from_team_snapshots_roster_and_rules(tmp_path):

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 
 import pytest
@@ -6,7 +7,7 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
-from personal_agent_gateway.team_runtime import TeamRuntime, _rules_block
+from personal_agent_gateway.team_runtime import TeamRuntime, WORKER_PROMPT, _rules_block
 from personal_agent_gateway.teams import TeamRunService
 
 
@@ -44,6 +45,20 @@ def _factory_by_role(leader_responses, worker_responses):
             models[agent.id] = ScriptedModel(list(responses))
         return models[agent.id]
     return factory
+
+
+def test_worker_prompt_presents_a_complete_concrete_assignment() -> None:
+    prompt = WORKER_PROMPT.format(
+        persona_snapshot_json="{}",
+        goal="Summarize the mail",
+        task_title="Read mail context",
+        task_description="Read CYCLES/cycle-1/MAIL_CONTEXT.md",
+    )
+
+    assert "Perform the concrete assignment below now" in prompt
+    assert "Do not ask the user what work to do" in prompt
+    assert "Read CYCLES/cycle-1/MAIL_CONTEXT.md" in prompt
+    assert "changed files" not in prompt
 
 
 @pytest.mark.asyncio
@@ -252,6 +267,99 @@ async def test_worker_query_consumes_round_and_reinvokes(tmp_path):
     assert agent.reinvocations == 1
     kinds = [m.kind for m in teams.list_messages(run.id)]
     assert "query" in kinds and "answer" in kinds
+
+
+@pytest.mark.asyncio
+async def test_user_decisions_batch_after_independent_tasks_and_resume_with_answers(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    bus = EventBus()
+    plan = (
+        '[{"title":"Deploy","description":"choose target"},'
+        '{"title":"Notify","description":"choose audience"}]'
+    )
+    needs_target = (
+        '```json\n{"needs_info":{"topic":"target","question":"Where deploy?"}}\n```'
+    )
+    needs_audience = (
+        '```json\n{"needs_info":{"topic":"audience","question":"Who gets notified?"}}\n```'
+    )
+    ask_target = json.dumps(
+        {
+            "resolution": {
+                "kind": "ask_user",
+                "topic": "target",
+                "question": "Where deploy?",
+                "why_needed": "Changes configuration.",
+                "options": [{"id": "staging", "label": "Staging", "impact": "Safer."}],
+                "recommended_option_id": "staging",
+                "blocking_scope": "task",
+            }
+        }
+    )
+    ask_audience = json.dumps(
+        {
+            "resolution": {
+                "kind": "ask_user",
+                "topic": "audience",
+                "question": "Who gets notified?",
+                "why_needed": "Changes recipients.",
+                "options": [],
+                "recommended_option_id": None,
+                "blocking_scope": "task",
+            }
+        }
+    )
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role(
+            [plan, ask_target, ask_audience, "All decisions applied."],
+            [needs_target, needs_audience, "deployed to staging", "notified release team"],
+        ),
+        event_bus=bus,
+    )
+
+    waiting = await runtime.start(run.id)
+
+    assert waiting.status == "waiting_for_user"
+    request = teams.get_active_decision_request(run.id)
+    assert request is not None
+    assert request.status == "awaiting_user"
+    assert [item["id"] for item in request.items] == ["Q-001", "Q-002"]
+    assert [task.status for task in teams.list_tasks(run.id)] == ["blocked", "blocked"]
+    assert "team.run.input_requested" in [event["type"] for event in bus.recent()]
+    assert "synthesis" not in [message.kind for message in teams.list_messages(run.id)]
+
+    teams.answer_decision_request(
+        run.id,
+        request.id,
+        request.revision,
+        {"Q-001": "staging", "Q-002": "release team"},
+    )
+    messages = teams.list_messages(run.id)
+    query_ids = {message.content: message.id for message in messages if message.kind == "query"}
+    user_answers = {
+        message.metadata["query_id"]: message.content
+        for message in messages
+        if message.kind == "answer" and message.metadata.get("source") == "user_decision"
+    }
+    assert user_answers == {
+        query_ids["Where deploy?"]: "staging",
+        query_ids["Who gets notified?"]: "release team",
+    }
+    completed = await runtime.resume(run.id)
+
+    assert completed.status == "completed"
+    assert completed.summary == "All decisions applied."
+    assert [task.result for task in teams.list_tasks(run.id)] == [
+        "deployed to staging",
+        "notified release team",
+    ]
 
 
 @pytest.mark.asyncio
@@ -643,6 +751,107 @@ async def test_add_work_creates_pending_tasks_from_instruction(tmp_path):
         "Extra B": "pending",
     }
     assert any(m.kind == "plan_note" for m in teams.list_messages(run.id))
+
+
+@pytest.mark.asyncio
+async def test_continuous_run_executes_and_synthesizes_each_cycle_in_isolation(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    worker = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run(
+        "mailbox",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+    )
+    first_cycle = teams.create_cycle(run.id, "hook", "hook-run-1")
+    second_cycle = teams.create_cycle(run.id, "hook", "hook-run-2")
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role(
+            [
+                '[{"title":"Mail 1","description":"d1"}]',
+                "summary-1",
+                '[{"title":"Mail 2","description":"d2"}]',
+                "summary-2",
+            ],
+            ["result-1", "result-2"],
+        ),
+    )
+
+    await runtime.add_work(run.id, "first mail", first_cycle.id)
+    await runtime.resume(run.id, first_cycle.id)
+    await runtime.add_work(run.id, "second mail", second_cycle.id)
+    completed = await runtime.resume(run.id, second_cycle.id)
+
+    assert completed.status == "completed"
+    assert [task.title for task in teams.list_tasks(run.id, first_cycle.id)] == [
+        "Mail 1"
+    ]
+    assert [task.title for task in teams.list_tasks(run.id, second_cycle.id)] == [
+        "Mail 2"
+    ]
+    assert [
+        message.content
+        for message in teams.list_messages(run.id, first_cycle.id)
+        if message.kind == "synthesis"
+    ] == ["summary-1"]
+    assert [
+        message.content
+        for message in teams.list_messages(run.id, second_cycle.id)
+        if message.kind == "synthesis"
+    ] == ["summary-2"]
+    assert teams.get_cycle(first_cycle.id).summary == "summary-1"
+    assert teams.get_cycle(second_cycle.id).summary == "summary-2"
+
+
+@pytest.mark.asyncio
+async def test_continuous_run_uses_cycle_round_budget_instead_of_run_total(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    worker = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run(
+        "mailbox",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+    )
+    exhausted_cycle = teams.create_cycle(
+        run.id, "hook", "hook-run-1", rounds_budget=1
+    )
+    active_cycle = teams.create_cycle(
+        run.id, "hook", "hook-run-2", rounds_budget=1
+    )
+    teams.increment_cycle_rounds_used(exhausted_cycle.id)
+    teams.create_task(run.id, "Mail 2", "d", cycle_id=active_cycle.id)
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role(
+            ['{"resolution":{"kind":"answer","answer":"continue"}}', "summary"],
+            [
+                '```json\n{"needs_info":{"topic":"scope","question":"Which?"}}\n```',
+                "done",
+            ],
+        ),
+    )
+
+    completed = await runtime.resume(run.id, active_cycle.id)
+
+    assert completed.status == "completed"
+    assert teams.get_cycle(exhausted_cycle.id).rounds_used == 1
+    assert teams.get_cycle(active_cycle.id).rounds_used == 1
+    assert teams.get_team_run(run.id).rounds_used == 0
+    assert teams.list_tasks(run.id, active_cycle.id)[0].result == "done"
 
 
 def test_rules_block_empty_when_no_snapshot():

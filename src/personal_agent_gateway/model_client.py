@@ -309,8 +309,8 @@ class ClaudeModelClient:
         try:
             process = await asyncio.create_subprocess_exec(
                 *self._command(),
-                _claude_prompt(messages),
                 cwd=str(self._workspace_root),
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 **_process_group_options(),
@@ -319,7 +319,10 @@ class ClaudeModelClient:
             raise RuntimeError(f"Claude binary not found: {self._binary}") from exc
 
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self._timeout_seconds)
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(_claude_prompt(messages).encode()),
+                timeout=self._timeout_seconds,
+            )
         except TimeoutError as exc:
             await _terminate_process_tree(process)
             raise RuntimeError("Claude execution timed out") from exc

@@ -1,5 +1,6 @@
 import email
 import imaplib
+import poplib
 from email.header import decode_header, make_header
 from email.message import Message
 from typing import Callable, Protocol
@@ -18,12 +19,21 @@ class ImapClientProtocol(Protocol):
     def logout(self) -> None: ...
 
 
+class Pop3ClientProtocol(Protocol):
+    def login(self, username: str, password: str) -> None: ...
+    def list_uids(self) -> list[tuple[int, str]]: ...
+    def fetch_rfc822(self, message_number: int) -> bytes: ...
+    def logout(self) -> None: ...
+
+
 class ImapEmailAdapter:
     def __init__(
         self,
         client_factory: Callable[[str, int], ImapClientProtocol] | None = None,
+        pop_client_factory: Callable[[str, int], Pop3ClientProtocol] | None = None,
     ) -> None:
         self._client_factory = client_factory or _default_client_factory
+        self._pop_client_factory = pop_client_factory or _default_pop_client_factory
 
     def poll(
         self,
@@ -32,6 +42,8 @@ class ImapEmailAdapter:
         cursor: dict[str, object] | None,
         filter_config: dict[str, object],
     ) -> PollResult:
+        if _is_pop3(connection):
+            return self._poll_pop3(connection, secret, cursor, filter_config)
         folder = str(filter_config.get("folder") or "INBOX")
         client = self._client_factory(str(connection["host"]), int(connection["port"]))
         try:
@@ -65,7 +77,58 @@ class ImapEmailAdapter:
         finally:
             client.logout()
 
+    def _poll_pop3(
+        self,
+        connection: dict[str, object],
+        secret: str,
+        cursor: dict[str, object] | None,
+        filter_config: dict[str, object],
+    ) -> PollResult:
+        client = self._pop_client_factory(str(connection["host"]), int(connection["port"]))
+        try:
+            client.login(str(connection["username"]), secret)
+            messages = client.list_uids()
+            last_uid = _pop3_last_uid(cursor)
+            current_last_uid = messages[-1][1] if messages else ""
+            if last_uid is None:
+                return PollResult(
+                    events=[],
+                    cursor={"protocol": "pop3", "last_uid": current_last_uid},
+                )
+            start = 0 if not last_uid else next(
+                (index + 1 for index, (_, uid) in enumerate(messages) if uid == last_uid),
+                len(messages),
+            )
+            events: list[HookEvent] = []
+            for message_number, uid in messages[start:]:
+                message = email.message_from_bytes(client.fetch_rfc822(message_number))
+                normalized = normalize_email(message)
+                if not passes_filter(normalized, filter_config):
+                    continue
+                events.append(
+                    HookEvent(
+                        dedup_key=f"email:pop3:{uid}",
+                        summary=f"메일: {normalized['subject']} — {normalized['from']}",
+                        payload=normalized,
+                    )
+                )
+            return PollResult(
+                events=events,
+                cursor={"protocol": "pop3", "last_uid": current_last_uid},
+            )
+        finally:
+            client.logout()
+
     def verify(self, connection: dict[str, object], secret: str, folder: str = "INBOX") -> None:
+        if _is_pop3(connection):
+            client = self._pop_client_factory(
+                str(connection["host"]), int(connection["port"])
+            )
+            try:
+                client.login(str(connection["username"]), secret)
+            finally:
+                client.logout()
+            return
         client = self._client_factory(str(connection["host"]), int(connection["port"]))
         try:
             client.login(str(connection["username"]), secret)
@@ -101,6 +164,17 @@ def _cursor_last_uid(cursor: dict[str, object] | None, uidvalidity: int) -> int 
     return int(cursor["last_uid"])
 
 
+def _pop3_last_uid(cursor: dict[str, object] | None) -> str | None:
+    if cursor is None or cursor.get("protocol") != "pop3":
+        return None
+    return str(cursor.get("last_uid") or "")
+
+
+def _is_pop3(connection: dict[str, object]) -> bool:
+    host = str(connection.get("host") or "").lower()
+    return int(connection.get("port") or 0) == 995 or host.startswith("pop.")
+
+
 def _header(message: Message, name: str) -> str:
     raw = message.get(name, "")
     try:
@@ -131,6 +205,10 @@ def _decode_part(part: Message) -> str:
 
 def _default_client_factory(host: str, port: int) -> ImapClientProtocol:
     return _ImapClient(host, port)
+
+
+def _default_pop_client_factory(host: str, port: int) -> Pop3ClientProtocol:
+    return _Pop3Client(host, port)
 
 
 class _ImapClient:
@@ -180,3 +258,30 @@ class _ImapClient:
         if status != "OK" or not data or not data[0]:
             return []
         return [int(part) for part in data[0].split()]
+
+
+class _Pop3Client:
+    def __init__(self, host: str, port: int) -> None:
+        self._conn = poplib.POP3_SSL(host, port, timeout=30)
+
+    def login(self, username: str, password: str) -> None:
+        self._conn.user(username)
+        self._conn.pass_(password)
+
+    def list_uids(self) -> list[tuple[int, str]]:
+        _, lines, _ = self._conn.uidl()
+        result: list[tuple[int, str]] = []
+        for line in lines:
+            number, uid = line.decode("ascii", errors="replace").split(maxsplit=1)
+            result.append((int(number), uid))
+        return result
+
+    def fetch_rfc822(self, message_number: int) -> bytes:
+        _, lines, _ = self._conn.retr(message_number)
+        return b"\r\n".join(lines)
+
+    def logout(self) -> None:
+        try:
+            self._conn.quit()
+        except Exception:
+            pass

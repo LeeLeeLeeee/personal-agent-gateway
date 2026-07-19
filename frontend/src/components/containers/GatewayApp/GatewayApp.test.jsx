@@ -1165,6 +1165,56 @@ describe("GatewayApp", () => {
     expect(screen.queryByText("should not enter chat")).not.toBeInTheDocument();
   });
 
+  it("creates a continuous Team Run without starting work before a Hook cycle", async () => {
+    const continuousRun = {
+      id: "mail-run",
+      goal: "Watch inbox",
+      status: "draft",
+      run_mode: "plan_and_execute",
+      lifecycle_mode: "continuous",
+      max_workers: 1
+    };
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/teams": {
+        teams: [{ id: "t1", name: "Mail Crew", leader: { name: "Mail Lead", avatar: null }, members: [] }]
+      },
+      "GET /api/team-runs": { team_runs: [continuousRun] },
+      "POST /api/team-runs": { team_run: continuousRun },
+      "GET /api/team-runs/mail-run/detail": {
+        team_run: continuousRun,
+        agents: [], tasks: [], messages: [], cycles: []
+      },
+      "GET /api/team-runs/mail-run/documents": { documents: [] }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
+    await userEvent.type(await screen.findByLabelText(/goal/i), "Watch inbox");
+    await userEvent.click(screen.getByRole("button", { name: "CONTINUOUS" }));
+    await userEvent.click(screen.getByRole("button", { name: "Create continuous run" }));
+
+    expect(await screen.findByText("Waiting for the first Hook delivery.")).toBeInTheDocument();
+    const createCall = fetch.mock.calls.find(([url, init]) => (
+      url === "/api/team-runs" && init?.method === "POST"
+    ));
+    expect(createCall).toBeDefined();
+    expect(JSON.parse(createCall[1].body)).toMatchObject({
+      lifecycle_mode: "continuous",
+      run_mode: "plan_and_execute"
+    });
+    expect(fetch).not.toHaveBeenCalledWith(
+      "/api/team-runs/mail-run/start",
+      expect.anything()
+    );
+  });
+
   it("shows an error and keeps the app usable when creating a team run fails", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
@@ -1260,6 +1310,13 @@ describe("GatewayApp", () => {
         prompt_template: "Summarize {{subject}}",
         filter: { folder: "INBOX" },
         last_polled_at: null
+      }] },
+      "GET /api/team-runs": { team_runs: [{
+        id: "mail-run",
+        goal: "Mail inbox",
+        status: "draft",
+        run_mode: "plan_and_execute",
+        lifecycle_mode: "continuous"
       }] }
     });
 
@@ -1268,6 +1325,8 @@ describe("GatewayApp", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Hooks" }));
     expect(await screen.findByRole("heading", { name: "Hooks" })).toBeInTheDocument();
     expect(await screen.findByText("Invoice Watcher")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "TEAM RUN" }));
+    expect(screen.getByRole("option", { name: "Mail inbox" })).toBeInTheDocument();
   });
 
   it("shows a success toast and increments the Hooks nav badge on hook.run.updated SSE", async () => {
@@ -1345,6 +1404,7 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
     await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
     const source = MockEventSource.instances[0];
 
     act(() => {

@@ -59,6 +59,79 @@ def test_create_hook_hides_secret(tmp_path: Path) -> None:
     assert "connection_ref" not in hook
 
 
+def test_create_hook_can_target_continuous_team_run(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    personas = client.app.state.persona_service
+    leader = personas.create_persona("Mail lead", "lead", "d", [], [])
+    team_run = client.app.state.team_run_service.create_team_run(
+        "mailbox",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+    )
+    body = _create_body()
+    body.update(
+        {
+            "target_kind": "team_run",
+            "target_team_run_id": team_run.id,
+            "target_backend": "",
+            "target_model": "",
+        }
+    )
+
+    response = client.post("/api/hooks", json=body)
+
+    assert response.status_code == 200
+    hook = response.json()["hook"]
+    assert hook["target_kind"] == "team_run"
+    assert hook["target_team_run_id"] == team_run.id
+
+
+def test_create_hook_rejects_incompatible_team_run_targets(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    personas = client.app.state.persona_service
+    leader = personas.create_persona("Mail lead", "lead", "d", [], [])
+    service = client.app.state.team_run_service
+    incompatible_runs = [
+        service.create_team_run(
+            "standard mailbox",
+            leader.id,
+            [],
+            "plan_and_execute",
+            1,
+            lifecycle_mode="standard",
+        ),
+        service.create_team_run(
+            "planning mailbox",
+            leader.id,
+            [],
+            "planning_only",
+            1,
+            lifecycle_mode="continuous",
+        ),
+    ]
+
+    for team_run in incompatible_runs:
+        body = _create_body()
+        body.update(
+            {
+                "target_kind": "team_run",
+                "target_team_run_id": team_run.id,
+                "target_backend": "",
+                "target_model": "",
+            }
+        )
+
+        response = client.post("/api/hooks", json=body)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            "Hook target must be a continuous plan_and_execute Team Run"
+        )
+
+
 def test_get_and_list_and_delete(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     hook_id = client.post("/api/hooks", json=_create_body()).json()["hook"]["id"]

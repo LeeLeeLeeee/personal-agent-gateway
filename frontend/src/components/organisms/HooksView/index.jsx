@@ -15,16 +15,21 @@ function seedAgentConfig(agents) {
   };
 }
 
-function targetSummary(hook) {
+function targetSummary(hook, teamRuns) {
   const bits = [];
   if (hook.filter?.from_contains) bits.push(`from∋${hook.filter.from_contains}`);
   if (hook.filter?.subject_contains) bits.push(`subj∋${hook.filter.subject_contains}`);
   bits.push(hook.filter?.folder || "INBOX");
-  bits.push(`${hook.target_backend}/${hook.target_model}`);
+  if (hook.target_kind === "team_run") {
+    const target = teamRuns.find((run) => run.id === hook.target_team_run_id);
+    bits.push(`team:${target?.goal || hook.target_team_run_id || "missing"}`);
+  } else {
+    bits.push(`${hook.target_backend}/${hook.target_model}`);
+  }
   return bits.join(" · ");
 }
 
-function HookForm({ agents, onCreate, onTestConnection }) {
+function HookForm({ agents, teamRuns, onCreate, onTestConnection }) {
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("993");
@@ -36,6 +41,8 @@ function HookForm({ agents, onCreate, onTestConnection }) {
   const [promptTemplate, setPromptTemplate] = useState("");
   const [intervalMinutes, setIntervalMinutes] = useState(5);
   const [agentConfig, setAgentConfig] = useState(null);
+  const [targetKind, setTargetKind] = useState("agent");
+  const [targetTeamRunId, setTargetTeamRunId] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
@@ -43,9 +50,18 @@ function HookForm({ agents, onCreate, onTestConnection }) {
     if (!agentConfig && agents.length) setAgentConfig(seedAgentConfig(agents));
   }, [agents, agentConfig]);
 
+  const continuousRuns = teamRuns.filter(
+    (run) => run.lifecycle_mode === "continuous" && run.run_mode === "plan_and_execute"
+  );
+
+  const selectedTargetTeamRunId = continuousRuns.some(
+    (run) => run.id === targetTeamRunId
+  ) ? targetTeamRunId : (continuousRuns[0]?.id || "");
+  const targetReady = targetKind === "team_run" ? selectedTargetTeamRunId : agentConfig;
+
   const canSubmit =
     name.trim() && host.trim() && username.trim() && password
-    && promptTemplate.trim() && agentConfig;
+    && promptTemplate.trim() && targetReady;
 
   function connectionBody() {
     return { host: host.trim(), port: Number(port) || 993, username: username.trim() };
@@ -81,9 +97,11 @@ function HookForm({ agents, onCreate, onTestConnection }) {
         subject_contains: subjectContains.trim(),
         folder: folder.trim() || "INBOX"
       },
-      target_backend: agentConfig.agent_id,
-      target_model: agentConfig.model,
-      target_options: agentConfig.options || {},
+      target_kind: targetKind,
+      target_team_run_id: targetKind === "team_run" ? selectedTargetTeamRunId : null,
+      target_backend: targetKind === "agent" ? agentConfig.agent_id : "",
+      target_model: targetKind === "agent" ? agentConfig.model : "",
+      target_options: targetKind === "agent" ? (agentConfig.options || {}) : {},
       prompt_template: promptTemplate.trim(),
       poll_interval_seconds: (Number(intervalMinutes) || 1) * 60
     });
@@ -148,8 +166,42 @@ function HookForm({ agents, onCreate, onTestConnection }) {
           <input className="schedule-input" aria-label="Folder" value={folder} onChange={(e) => setFolder(e.target.value)} />
         </label>
 
-        <div className="hook-section mono">AGENT</div>
-        <AgentPicker agents={agents} config={agentConfig} onChange={setAgentConfig} />
+        <div className="hook-section mono">TARGET</div>
+        <div className="tp-mode" role="group" aria-label="Hook target">
+          <button
+            type="button"
+            className={`tp-mode-btn${targetKind === "agent" ? " active" : ""}`}
+            aria-pressed={targetKind === "agent"}
+            onClick={() => setTargetKind("agent")}
+          >AGENT</button>
+          <button
+            type="button"
+            className={`tp-mode-btn${targetKind === "team_run" ? " active" : ""}`}
+            aria-pressed={targetKind === "team_run"}
+            disabled={!continuousRuns.length}
+            onClick={() => setTargetKind("team_run")}
+          >TEAM RUN</button>
+        </div>
+        {targetKind === "agent" ? (
+          <AgentPicker agents={agents} config={agentConfig} onChange={setAgentConfig} />
+        ) : (
+          <label className="schedule-field">
+            <span className="schedule-field-label">Target team run</span>
+            <select
+              className="schedule-input"
+              aria-label="Target team run"
+              value={selectedTargetTeamRunId}
+              onChange={(event) => setTargetTeamRunId(event.target.value)}
+            >
+              {continuousRuns.map((run) => (
+                <option key={run.id} value={run.id}>{run.goal}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {!continuousRuns.length ? (
+          <div className="schedule-policy mono">Create a continuous plan-and-execute Team Run to enable TEAM RUN target.</div>
+        ) : null}
 
         <label className="schedule-field">
           <span className="schedule-field-label">Prompt template</span>
@@ -173,7 +225,7 @@ function HookForm({ agents, onCreate, onTestConnection }) {
   );
 }
 
-function HookRow({ hook, onToggle, onRunNow, onDelete, onOpenRuns }) {
+function HookRow({ hook, teamRuns, onToggle, onRunNow, onDelete, onOpenRuns }) {
   const confirm = useConfirm();
   async function handleDelete() {
     const ok = await confirm({
@@ -189,7 +241,7 @@ function HookRow({ hook, onToggle, onRunNow, onDelete, onOpenRuns }) {
     <div className="schedule-row">
       <div className="schedule-row-main">
         <div className="schedule-row-name">{hook.name}</div>
-        <div className="schedule-row-prompt mono">{targetSummary(hook)}</div>
+        <div className="schedule-row-prompt mono">{targetSummary(hook, teamRuns)}</div>
         <div className="schedule-row-prompt mono">{hook.prompt_template}</div>
         <div className="schedule-row-meta">
           <StatusBadge kind={hook.enabled ? "enabled" : "paused"} />
@@ -211,11 +263,16 @@ function HookRow({ hook, onToggle, onRunNow, onDelete, onOpenRuns }) {
   );
 }
 
-function HookRunsDrawer({ hook, runs, onClose }) {
+function HookRunsDrawer({ hook, runs, onClose, onOpenTeamRun }) {
   return (
     <aside className="schedule-detail" aria-label="Hook runs">
       <div className="jobs-drawer-head">
         <span className="mono">HOOK RUNS · {hook?.name}</span>
+        {hook?.target_team_run_id && onOpenTeamRun ? (
+          <button type="button" className="btn btn-sm" onClick={() => onOpenTeamRun(hook.target_team_run_id)}>
+            Open Team Run
+          </button>
+        ) : null}
         <button type="button" className="jobs-drawer-close" aria-label="Close runs" onClick={onClose}>✕</button>
       </div>
       <div className="jobs-drawer-body">
@@ -226,6 +283,9 @@ function HookRunsDrawer({ hook, runs, onClose }) {
               <StatusBadge kind={run.status} />
             </div>
             <div className="mono schedule-row-when">{fmtDateTime(run.created_at)}</div>
+            {run.team_run_cycle_id ? (
+              <div className="mono schedule-row-when">CYCLE · {run.team_run_cycle_id}</div>
+            ) : null}
             {run.status === "succeeded" && run.result_text ? <div className="hook-run-result">{run.result_text}</div> : null}
             {run.status === "failed" && run.error_message ? <div className="jobs-drawer-error mono">{run.error_message}</div> : null}
           </div>
@@ -239,6 +299,7 @@ export function HooksView({
   hooks = [],
   hookRuns = [],
   agents = [],
+  teamRuns = [],
   openHookRunsId = null,
   onCreate,
   onToggle,
@@ -246,7 +307,8 @@ export function HooksView({
   onDelete,
   onOpenRuns,
   onCloseRuns,
-  onTestConnection
+  onTestConnection,
+  onOpenTeamRun
 }) {
   const openHook = hooks.find((hook) => hook.id === openHookRunsId) || null;
   return (
@@ -260,6 +322,7 @@ export function HooksView({
               <HookRow
                 key={hook.id}
                 hook={hook}
+                teamRuns={teamRuns}
                 onToggle={onToggle}
                 onRunNow={onRunNow}
                 onDelete={onDelete}
@@ -270,10 +333,22 @@ export function HooksView({
         ) : (
           <div className="planned">NO HOOKS</div>
         )}
-        {openHook ? <HookRunsDrawer hook={openHook} runs={hookRuns} onClose={onCloseRuns} /> : null}
+        {openHook ? (
+          <HookRunsDrawer
+            hook={openHook}
+            runs={hookRuns}
+            onClose={onCloseRuns}
+            onOpenTeamRun={onOpenTeamRun}
+          />
+        ) : null}
       </div>
 
-      <HookForm agents={agents} onCreate={onCreate} onTestConnection={onTestConnection} />
+      <HookForm
+        agents={agents}
+        teamRuns={teamRuns}
+        onCreate={onCreate}
+        onTestConnection={onTestConnection}
+      />
     </div>
   );
 }

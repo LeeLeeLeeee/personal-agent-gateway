@@ -12,6 +12,11 @@ const REVIEW_MODE = {
   desc: "Members review existing work against their persona and report findings."
 };
 
+const LIFECYCLE_MODES = [
+  { value: "standard", label: "STANDARD", desc: "Runs once and starts immediately after creation." },
+  { value: "continuous", label: "CONTINUOUS", desc: "Stays ready and runs a new cycle for each hook trigger." }
+];
+
 function Avatar({ person }) {
   if (person?.avatar) return <img className="tp-avatar" src={`/static/avatars/${person.avatar}.png`} alt="" />;
   return <span className="tp-avatar tp-avatar-initials mono">{(person?.name || "?").slice(0, 2).toUpperCase()}</span>;
@@ -21,6 +26,7 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
   const [teamId, setTeamId] = useState("");
   const [goal, setGoal] = useState("");
   const [runMode, setRunMode] = useState("planning_only");
+  const [lifecycleMode, setLifecycleMode] = useState("standard");
 
   useEffect(() => {
     if (!teamId && teams.length) setTeamId(teams[0].id);
@@ -32,13 +38,21 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
 
   const team = teams.find((t) => t.id === teamId) || teams[0];
   const supportedModes = runtime?.team_review_supported ? [...RUN_MODES, REVIEW_MODE] : RUN_MODES;
-  const activeMode = supportedModes.find((m) => m.value === runMode) || supportedModes[0];
+  const activeRunMode = lifecycleMode === "continuous" ? "plan_and_execute" : runMode;
+  const activeMode = supportedModes.find((m) => m.value === activeRunMode) || supportedModes[0];
+  const activeLifecycle = LIFECYCLE_MODES.find((mode) => mode.value === lifecycleMode);
   const executionMode = (runtime?.team_execution_mode || "sequential").toUpperCase();
 
   return (
       <form className="tp" aria-label="New team run" onSubmit={(event) => {
       event.preventDefault();
-      onStart({ team_id: team.id, goal: goal.trim(), run_mode: activeMode.value, max_workers: 1 });
+      onStart({
+        team_id: team.id,
+        goal: goal.trim(),
+        run_mode: activeMode.value,
+        lifecycle_mode: lifecycleMode,
+        max_workers: 1
+      });
     }}>
       <div className="tp-form">
         <div className="tp-field">
@@ -89,16 +103,33 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
         </div>
 
         <div className="tp-settings">
-          <div className="tp-field">
-            <span className="tp-label">Run mode</span>
-            <div className="tp-mode" role="group" aria-label="Run mode">
-              {supportedModes.map((mode) => (
-                <button key={mode.value} type="button" aria-pressed={runMode === mode.value}
-                  className={`tp-mode-btn${runMode === mode.value ? " active" : ""}`}
-                  onClick={() => setRunMode(mode.value)}>{mode.label}</button>
-              ))}
+          <div className="tp-form">
+            <div className="tp-field">
+              <span className="tp-label">Lifecycle</span>
+              <div className="tp-mode" role="group" aria-label="Lifecycle">
+                {LIFECYCLE_MODES.map((mode) => (
+                  <button key={mode.value} type="button" aria-pressed={lifecycleMode === mode.value}
+                    className={`tp-mode-btn${lifecycleMode === mode.value ? " active" : ""}`}
+                    onClick={() => {
+                      setLifecycleMode(mode.value);
+                      if (mode.value === "continuous") setRunMode("plan_and_execute");
+                    }}>{mode.label}</button>
+                ))}
+              </div>
+              <div className="tp-mode-desc">{activeLifecycle.desc}</div>
             </div>
-            <div className="tp-mode-desc">{activeMode.desc}</div>
+            <div className="tp-field">
+              <span className="tp-label">Run mode</span>
+              <div className="tp-mode" role="group" aria-label="Run mode">
+                {supportedModes.map((mode) => (
+                  <button key={mode.value} type="button" aria-pressed={activeMode.value === mode.value}
+                    disabled={lifecycleMode === "continuous" && mode.value !== "plan_and_execute"}
+                    className={`tp-mode-btn${activeMode.value === mode.value ? " active" : ""}`}
+                    onClick={() => setRunMode(mode.value)}>{mode.label}</button>
+                ))}
+              </div>
+              <div className="tp-mode-desc">{activeMode.desc}</div>
+            </div>
           </div>
           <div className="tp-field">
             <span className="tp-label">Execution</span>
@@ -115,11 +146,14 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
           <div className="tp-preview-kv">
             <div className="k">TEAM</div><div>{team.name}</div>
             <div className="k">MEMBERS</div><div>{(team.members || []).length} agents</div>
+            <div className="k">LIFECYCLE</div><div>{activeLifecycle.label}</div>
             <div className="k">MODE</div><div>{activeMode.label}</div>
             <div className="k">WORKERS</div><div>1 · {executionMode}</div>
           </div>
           <div className="tp-preview-action">
-            <Button type="submit" variant="primary" size="btn-lg">Start team run</Button>
+            <Button type="submit" variant="primary" size="btn-lg">
+              {lifecycleMode === "continuous" ? "Create continuous run" : "Start team run"}
+            </Button>
           </div>
         </div>
       </aside>

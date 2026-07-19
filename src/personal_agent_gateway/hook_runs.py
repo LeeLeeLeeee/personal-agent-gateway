@@ -20,6 +20,7 @@ class HookRun:
     created_at: str
     started_at: str | None
     finished_at: str | None
+    team_run_cycle_id: str | None = None
 
 
 class HookRunService:
@@ -97,6 +98,50 @@ class HookRunService:
         )
         return self.get_run(run_id)
 
+    def mark_waiting_for_user(self, run_id: str) -> HookRun:
+        self._db.execute(
+            "update hook_runs set status = 'waiting_for_user' where id = ?",
+            (run_id,),
+        )
+        return self.get_run(run_id)
+
+    def mark_interrupted(self, run_id: str, message: str) -> HookRun:
+        self._db.execute(
+            "update hook_runs set status = 'interrupted', error_message = ? where id = ?",
+            (message, run_id),
+        )
+        return self.get_run(run_id)
+
+    def link_cycle(self, run_id: str, cycle_id: str) -> HookRun:
+        run = self.get_run(run_id)
+        if run.team_run_cycle_id is not None:
+            if run.team_run_cycle_id != cycle_id:
+                raise ValueError("Hook Run is already linked to another Team Run Cycle")
+            return run
+        self._db.execute(
+            "update hook_runs set team_run_cycle_id = ? where id = ?",
+            (cycle_id, run_id),
+        )
+        return self.get_run(run_id)
+
+    def get_run_for_cycle(self, cycle_id: str) -> HookRun | None:
+        row = self._db.fetchone(
+            "select * from hook_runs where team_run_cycle_id = ?", (cycle_id,)
+        )
+        return _run_from_row(row) if row is not None else None
+
+    def next_queued_for_team_run(self, team_run_id: str) -> HookRun | None:
+        row = self._db.fetchone(
+            """
+            select hook_runs.* from hook_runs
+            join team_run_cycles on team_run_cycles.id = hook_runs.team_run_cycle_id
+            where team_run_cycles.team_run_id = ? and hook_runs.status = 'queued'
+            order by team_run_cycles.sequence asc limit 1
+            """,
+            (team_run_id,),
+        )
+        return _run_from_row(row) if row is not None else None
+
     def list_queued_runs(self) -> list[HookRun]:
         return [
             _run_from_row(row)
@@ -107,9 +152,14 @@ class HookRunService:
 
     def recover_interrupted_runs(self) -> None:
         for row in self._db.fetchall(
-            "select id from hook_runs where status = 'running'"
+            "select id, team_run_cycle_id from hook_runs where status = 'running'"
         ):
-            self.mark_failed(row["id"], "Gateway restarted while hook run was running")
+            if row["team_run_cycle_id"]:
+                self.mark_interrupted(
+                    row["id"], "Gateway restarted while Team Run Cycle was running"
+                )
+            else:
+                self.mark_failed(row["id"], "Gateway restarted while hook run was running")
 
 
 def _run_from_row(row: object) -> HookRun:
@@ -125,6 +175,11 @@ def _run_from_row(row: object) -> HookRun:
         created_at=row["created_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
+        team_run_cycle_id=(
+            row["team_run_cycle_id"]
+            if "team_run_cycle_id" in row.keys()
+            else None
+        ),
     )
 
 

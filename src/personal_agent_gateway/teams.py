@@ -21,10 +21,23 @@ TeamRunStatus = Literal[
     "failed",
     "canceled",
     "interrupted",
+    "waiting_for_user",
 ]
 RunMode = Literal["planning_only", "plan_and_execute", "review_only"]
+LifecycleMode = Literal["standard", "continuous"]
+CycleStatus = Literal[
+    "queued",
+    "running",
+    "waiting_for_user",
+    "interrupted",
+    "completed",
+    "completed_with_failures",
+    "failed",
+    "canceled",
+]
 AgentStatus = Literal["pending", "running", "waiting", "completed", "failed", "canceled"]
 TaskStatus = Literal["pending", "in_progress", "blocked", "completed", "failed", "canceled"]
+DecisionRequestStatus = Literal["collecting", "awaiting_user", "resolved", "canceled"]
 
 _ACTIVE_RUN_STATUSES = {"planning", "running", "summarizing"}
 _TERMINAL_RUN_STATUSES = {"completed", "completed_with_failures", "failed", "canceled"}
@@ -36,6 +49,7 @@ class TeamRun:
     goal: str
     status: TeamRunStatus
     run_mode: RunMode
+    lifecycle_mode: LifecycleMode
     leader_agent_id: str | None
     max_workers: int
     rounds_budget: int
@@ -49,6 +63,24 @@ class TeamRun:
     updated_at: str
     team_id: str | None = None
     rules_snapshot: dict | None = None
+
+
+@dataclass(frozen=True)
+class TeamRunCycle:
+    id: str
+    team_run_id: str
+    sequence: int
+    source_type: str
+    source_id: str
+    status: CycleStatus
+    rounds_budget: int
+    rounds_used: int
+    summary: str | None
+    error_message: str | None
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
+    updated_at: str
 
 
 @dataclass(frozen=True)
@@ -86,6 +118,7 @@ class TeamTask:
     updated_at: str
     started_at: str | None = None
     finished_at: str | None = None
+    cycle_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +131,23 @@ class TeamMessage:
     content: str
     metadata: dict[str, object]
     created_at: str
+    cycle_id: str | None = None
+
+
+@dataclass(frozen=True)
+class TeamDecisionRequest:
+    id: str
+    team_run_id: str
+    status: DecisionRequestStatus
+    revision: int
+    items: list[dict[str, object]]
+    answers: dict[str, str]
+    file_path: str
+    created_at: str
+    published_at: str | None
+    answered_at: str | None
+    updated_at: str
+    cycle_id: str | None = None
 
 
 class TeamRunService:
@@ -116,6 +166,7 @@ class TeamRunService:
         rounds_budget: int = 8,
         team_id: str | None = None,
         rules_snapshot_json: str | None = None,
+        lifecycle_mode: LifecycleMode = "standard",
     ) -> TeamRun:
         team_run_id = uuid4().hex
         now = _now()
@@ -125,14 +176,14 @@ class TeamRunService:
         self._db.execute(
             """
             insert into team_runs (
-                id, goal, status, run_mode, leader_agent_id, max_workers,
+                id, goal, status, run_mode, lifecycle_mode, leader_agent_id, max_workers,
                 rounds_budget, rounds_used, workspace_root, summary, error_message,
                 created_at, started_at, finished_at, updated_at, team_id, rules_snapshot_json
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                team_run_id, goal, "draft", run_mode, None, max_workers,
+                team_run_id, goal, "draft", run_mode, lifecycle_mode, None, max_workers,
                 rounds_budget, 0, workspace_root, None, None,
                 now, None, None, now, team_id, rules_snapshot_json,
             ),
@@ -155,6 +206,7 @@ class TeamRunService:
         run_mode: RunMode,
         max_workers: int,
         rounds_budget: int = 8,
+        lifecycle_mode: LifecycleMode = "standard",
     ) -> TeamRun:
         team = team_service.get_team(team_id)
         snapshot = rule_set_service.snapshot_for_team(team_id)
@@ -169,6 +221,7 @@ class TeamRunService:
             rounds_budget=rounds_budget,
             team_id=team_id,
             rules_snapshot_json=json.dumps(snapshot, ensure_ascii=False),
+            lifecycle_mode=lifecycle_mode,
         )
 
     def get_team_run(self, team_run_id: str) -> TeamRun:
@@ -176,6 +229,125 @@ class TeamRunService:
         if row is None:
             raise KeyError(f"Team run not found: {team_run_id}")
         return _team_run_from_row(row)
+
+    def create_cycle(
+        self,
+        team_run_id: str,
+        source_type: str,
+        source_id: str,
+        rounds_budget: int | None = None,
+    ) -> TeamRunCycle:
+        run = self.get_team_run(team_run_id)
+        if run.lifecycle_mode != "continuous":
+            raise ValueError("Cycles require a continuous team run")
+        normalized_source_type = source_type.strip()
+        normalized_source_id = source_id.strip()
+        if not normalized_source_type or not normalized_source_id:
+            raise ValueError("Cycle source type and source id are required")
+        normalized_budget = run.rounds_budget if rounds_budget is None else rounds_budget
+        if normalized_budget < 1:
+            raise ValueError("Cycle rounds budget must be positive")
+
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            existing = connection.execute(
+                """
+                select * from team_run_cycles
+                where team_run_id = ? and source_type = ? and source_id = ?
+                """,
+                (team_run_id, normalized_source_type, normalized_source_id),
+            ).fetchone()
+            if existing is not None:
+                return _team_run_cycle_from_row(existing)
+            row = connection.execute(
+                "select coalesce(max(sequence), 0) + 1 as next from team_run_cycles "
+                "where team_run_id = ?",
+                (team_run_id,),
+            ).fetchone()
+            sequence = int(row["next"])
+            cycle_id = uuid4().hex
+            now = _now()
+            connection.execute(
+                """
+                insert into team_run_cycles (
+                    id, team_run_id, sequence, source_type, source_id, status,
+                    rounds_budget, rounds_used, summary, error_message,
+                    created_at, started_at, finished_at, updated_at
+                ) values (?, ?, ?, ?, ?, 'queued', ?, 0, null, null, ?, null, null, ?)
+                """,
+                (
+                    cycle_id,
+                    team_run_id,
+                    sequence,
+                    normalized_source_type,
+                    normalized_source_id,
+                    normalized_budget,
+                    now,
+                    now,
+                ),
+            )
+        return self.get_cycle(cycle_id)
+
+    def get_cycle(self, cycle_id: str) -> TeamRunCycle:
+        row = self._db.fetchone(
+            "select * from team_run_cycles where id = ?", (cycle_id,)
+        )
+        if row is None:
+            raise KeyError(f"Team run cycle not found: {cycle_id}")
+        return _team_run_cycle_from_row(row)
+
+    def list_cycles(self, team_run_id: str) -> list[TeamRunCycle]:
+        self.get_team_run(team_run_id)
+        return [
+            _team_run_cycle_from_row(row)
+            for row in self._db.fetchall(
+                "select * from team_run_cycles where team_run_id = ? order by sequence asc",
+                (team_run_id,),
+            )
+        ]
+
+    def increment_cycle_rounds_used(self, cycle_id: str) -> TeamRunCycle:
+        self.get_cycle(cycle_id)
+        self._db.execute(
+            "update team_run_cycles set rounds_used = rounds_used + 1, updated_at = ? "
+            "where id = ?",
+            (_now(), cycle_id),
+        )
+        return self.get_cycle(cycle_id)
+
+    def set_cycle_status(
+        self,
+        cycle_id: str,
+        status: CycleStatus,
+        summary: str | None = None,
+        error_message: str | None = None,
+    ) -> TeamRunCycle:
+        self.get_cycle(cycle_id)
+        started_at = _now() if status == "running" else None
+        finished_at = (
+            _now()
+            if status in {"completed", "completed_with_failures", "failed", "canceled"}
+            else None
+        )
+        self._db.execute(
+            """
+            update team_run_cycles
+            set status = ?, summary = ?, error_message = ?,
+                started_at = coalesce(?, started_at),
+                finished_at = coalesce(?, finished_at), updated_at = ?
+            where id = ?
+            """,
+            (
+                status,
+                summary,
+                error_message,
+                started_at,
+                finished_at,
+                _now(),
+                cycle_id,
+            ),
+        )
+        return self.get_cycle(cycle_id)
 
     def delete_team_run(self, team_run_id: str) -> None:
         run = self.get_team_run(team_run_id)
@@ -259,6 +431,7 @@ class TeamRunService:
                     "goal": run.goal,
                     "status": run.status,
                     "run_mode": run.run_mode,
+                    "lifecycle_mode": run.lifecycle_mode,
                     "max_workers": 1,
                     "configured_max_workers": run.max_workers,
                     "execution_mode": "sequential",
@@ -352,16 +525,37 @@ class TeamRunService:
                 """,
                 (now, team_run_id),
             )
+            cycle_statuses = ("running", "canceled") if include_canceled else ("running",)
+            cycle_placeholders = ", ".join("?" for _ in cycle_statuses)
+            active_cycle = connection.execute(
+                f"""
+                select id from team_run_cycles
+                where team_run_id = ? and status in ({cycle_placeholders})
+                order by sequence asc limit 1
+                """,
+                (team_run_id, *cycle_statuses),
+            ).fetchone()
+            cycle_id = active_cycle["id"] if active_cycle is not None else None
+            if cycle_id is not None:
+                connection.execute(
+                    """
+                    update team_run_cycles
+                    set status = 'interrupted', error_message = null,
+                        finished_at = null, updated_at = ? where id = ?
+                    """,
+                    (now, cycle_id),
+                )
             connection.execute(
                 """
                 insert into team_messages (
-                    id, team_run_id, sender_agent_id, recipient_agent_id,
+                    id, team_run_id, cycle_id, sender_agent_id, recipient_agent_id,
                     kind, content, metadata_json, created_at
-                ) values (?, ?, null, null, ?, ?, ?, ?)
+                ) values (?, ?, ?, null, null, ?, ?, ?, ?)
                 """,
                 (
                     uuid4().hex,
                     team_run_id,
+                    cycle_id,
                     "system_interrupted",
                     "Gateway execution stopped. Resume is required.",
                     json.dumps(
@@ -429,6 +623,14 @@ class TeamRunService:
         )
         return self._get_agent(agent_id)
 
+    def reset_agent_reinvocations(self, team_run_id: str) -> None:
+        self.get_team_run(team_run_id)
+        self._db.execute(
+            "update team_agents set reinvocations = 0, updated_at = ? "
+            "where team_run_id = ?",
+            (_now(), team_run_id),
+        )
+
     def increment_rounds_used(self, team_run_id: str) -> TeamRun:
         self.get_team_run(team_run_id)
         self._db.execute(
@@ -443,21 +645,25 @@ class TeamRunService:
         title: str,
         description: str,
         owner_agent_id: str | None = None,
+        cycle_id: str | None = None,
     ) -> TeamTask:
         self.get_team_run(team_run_id)
+        if cycle_id is not None:
+            self._require_cycle_for_run(team_run_id, cycle_id)
         task_id = uuid4().hex
         now = _now()
         self._db.execute(
             """
             insert into team_tasks (
-                id, team_run_id, title, description, owner_agent_id, status,
+                id, team_run_id, cycle_id, title, description, owner_agent_id, status,
                 result, error_message, created_at, updated_at, started_at, finished_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
                 team_run_id,
+                cycle_id,
                 title,
                 description,
                 owner_agent_id,
@@ -472,13 +678,21 @@ class TeamRunService:
         )
         return self._get_task(task_id)
 
-    def list_tasks(self, team_run_id: str) -> list[TeamTask]:
+    def list_tasks(
+        self, team_run_id: str, cycle_id: str | None = None
+    ) -> list[TeamTask]:
         self.get_team_run(team_run_id)
+        where = "team_run_id = ?"
+        parameters: tuple[object, ...] = (team_run_id,)
+        if cycle_id is not None:
+            self._require_cycle_for_run(team_run_id, cycle_id)
+            where += " and cycle_id = ?"
+            parameters += (cycle_id,)
         return [
             _team_task_from_row(row)
             for row in self._db.fetchall(
-                "select * from team_tasks where team_run_id = ? order by created_at asc, id asc",
-                (team_run_id,),
+                f"select * from team_tasks where {where} order by created_at asc, id asc",
+                parameters,
             )
         ]
 
@@ -494,7 +708,8 @@ class TeamRunService:
                 raise ValueError("Only failed terminal team runs can retry tasks")
 
             task = connection.execute(
-                "select status, error_message from team_tasks where id = ? and team_run_id = ?",
+                "select cycle_id, status, error_message from team_tasks "
+                "where id = ? and team_run_id = ?",
                 (task_id, team_run_id),
             ).fetchone()
             if task is None:
@@ -520,16 +735,26 @@ class TeamRunService:
                 """,
                 (now, team_run_id),
             )
+            if task["cycle_id"] is not None:
+                connection.execute(
+                    """
+                    update team_run_cycles
+                    set status = 'interrupted', summary = null, error_message = null,
+                        finished_at = null, updated_at = ? where id = ?
+                    """,
+                    (now, task["cycle_id"]),
+                )
             connection.execute(
                 """
                 insert into team_messages (
-                    id, team_run_id, sender_agent_id, recipient_agent_id,
+                    id, team_run_id, cycle_id, sender_agent_id, recipient_agent_id,
                     kind, content, metadata_json, created_at
-                ) values (?, ?, null, null, ?, ?, ?, ?)
+                ) values (?, ?, ?, null, null, ?, ?, ?, ?)
                 """,
                 (
                     uuid4().hex,
                     team_run_id,
+                    task["cycle_id"],
                     "system_task_retried",
                     "Failed task queued for retry. Resume is required.",
                     json.dumps(
@@ -638,6 +863,461 @@ class TeamRunService:
             )
         return self._get_task(task_id), self._get_agent(agent_id)
 
+    def get_active_decision_request(
+        self, team_run_id: str, cycle_id: str | None = None
+    ) -> TeamDecisionRequest | None:
+        self.get_team_run(team_run_id)
+        cycle_clause = ""
+        parameters: tuple[object, ...] = (team_run_id,)
+        if cycle_id is not None:
+            self._require_cycle_for_run(team_run_id, cycle_id)
+            cycle_clause = "and cycle_id = ?"
+            parameters += (cycle_id,)
+        row = self._db.fetchone(
+            f"""
+            select * from team_decision_requests
+            where team_run_id = ? {cycle_clause}
+              and status in ('collecting', 'awaiting_user')
+            order by created_at desc limit 1
+            """,
+            parameters,
+        )
+        return _team_decision_request_from_row(row) if row is not None else None
+
+    def list_decision_requests(self, team_run_id: str) -> list[TeamDecisionRequest]:
+        self.get_team_run(team_run_id)
+        return [
+            _team_decision_request_from_row(row)
+            for row in self._db.fetchall(
+                """
+                select * from team_decision_requests
+                where team_run_id = ? order by created_at asc, id asc
+                """,
+                (team_run_id,),
+            )
+        ]
+
+    def defer_task_for_user_decision(
+        self,
+        task_id: str,
+        agent_id: str,
+        decision: dict[str, object],
+    ) -> TeamDecisionRequest:
+        now = _now()
+        with self._db.connection() as connection:
+            task = connection.execute(
+                "select team_run_id, cycle_id, status from team_tasks where id = ?",
+                (task_id,),
+            ).fetchone()
+            agent = connection.execute(
+                "select team_run_id from team_agents where id = ?", (agent_id,)
+            ).fetchone()
+            if task is None or agent is None:
+                raise KeyError("Team task or agent not found")
+            if task["team_run_id"] != agent["team_run_id"]:
+                raise ValueError("Task and agent belong to different team runs")
+            if task["status"] != "in_progress":
+                raise ValueError("Only in-progress tasks can wait for a user decision")
+
+            team_run_id = task["team_run_id"]
+            cycle_id = task["cycle_id"]
+            cycle_clause = "cycle_id is null" if cycle_id is None else "cycle_id = ?"
+            cycle_parameters: tuple[object, ...] = (
+                (team_run_id,) if cycle_id is None else (team_run_id, cycle_id)
+            )
+            row = connection.execute(
+                f"""
+                select * from team_decision_requests
+                where team_run_id = ? and {cycle_clause}
+                  and status in ('collecting', 'awaiting_user')
+                order by created_at desc limit 1
+                """,
+                cycle_parameters,
+            ).fetchone()
+            if row is not None and row["status"] != "collecting":
+                raise ValueError("Decision request is already awaiting user input")
+
+            if row is None:
+                request_id = uuid4().hex
+                items: list[dict[str, object]] = []
+                revision = 0
+                connection.execute(
+                    """
+                    insert into team_decision_requests (
+                        id, team_run_id, cycle_id, status, revision, items_json, answers_json,
+                        file_path, created_at, published_at, answered_at, updated_at
+                    ) values (?, ?, ?, 'collecting', 0, '[]', '{}', 'USER_DECISIONS.md', ?, null, null, ?)
+                    """,
+                    (request_id, team_run_id, cycle_id, now, now),
+                )
+            else:
+                request_id = row["id"]
+                items = json.loads(row["items_json"])
+                revision = row["revision"]
+
+            topic = str(decision.get("topic") or "").strip()
+            question = str(decision.get("question") or "").strip()
+            if not question:
+                raise ValueError("User decision requires a question")
+            duplicate = next(
+                (
+                    item
+                    for item in items
+                    if item.get("topic") == topic and item.get("question") == question
+                ),
+                None,
+            )
+            if duplicate is not None:
+                blocking_ids = list(duplicate.get("blocking_task_ids") or [])
+                if task_id not in blocking_ids:
+                    blocking_ids.append(task_id)
+                duplicate["blocking_task_ids"] = blocking_ids
+                query_ids = list(duplicate.get("query_message_ids") or [])
+                query_message_id = decision.get("query_message_id")
+                if isinstance(query_message_id, str) and query_message_id not in query_ids:
+                    query_ids.append(query_message_id)
+                duplicate["query_message_ids"] = query_ids
+            else:
+                item_id = f"Q-{len(items) + 1:03d}"
+                query_message_id = decision.get("query_message_id")
+                items.append(
+                    {
+                        "id": item_id,
+                        "topic": topic,
+                        "question": question,
+                        "why_needed": str(decision.get("why_needed") or "").strip(),
+                        "options": list(decision.get("options") or []),
+                        "recommended_option_id": decision.get("recommended_option_id"),
+                        "blocking_scope": (
+                            "run" if decision.get("blocking_scope") == "run" else "task"
+                        ),
+                        "blocking_task_ids": [task_id],
+                        "query_message_ids": (
+                            [query_message_id] if isinstance(query_message_id, str) else []
+                        ),
+                    }
+                )
+
+            connection.execute(
+                """
+                update team_decision_requests
+                set items_json = ?, revision = ?, updated_at = ? where id = ?
+                """,
+                (
+                    json.dumps(items, ensure_ascii=False, sort_keys=True),
+                    revision + 1,
+                    now,
+                    request_id,
+                ),
+            )
+            connection.execute(
+                """
+                update team_tasks
+                set status = 'blocked', result = null, error_message = null,
+                    finished_at = null, updated_at = ? where id = ?
+                """,
+                (now, task_id),
+            )
+            connection.execute(
+                """
+                update team_agents
+                set status = 'waiting', current_task_id = null, finished_at = null, updated_at = ?
+                where id = ?
+                """,
+                (now, agent_id),
+            )
+        request = self._get_decision_request(request_id)
+        self._project_decisions_safely(team_run_id)
+        return request
+
+    def publish_decision_request(
+        self, team_run_id: str, cycle_id: str | None = None
+    ) -> TeamDecisionRequest:
+        now = _now()
+        cycle_clause = ""
+        parameters: tuple[object, ...] = (team_run_id,)
+        if cycle_id is not None:
+            self._require_cycle_for_run(team_run_id, cycle_id)
+            cycle_clause = "and cycle_id = ?"
+            parameters += (cycle_id,)
+        with self._db.connection() as connection:
+            row = connection.execute(
+                f"""
+                select * from team_decision_requests
+                where team_run_id = ? {cycle_clause} and status = 'collecting'
+                order by created_at desc limit 1
+                """,
+                parameters,
+            ).fetchone()
+            if row is None:
+                raise ValueError("No collecting decision request")
+            items = json.loads(row["items_json"])
+            if not items:
+                raise ValueError("Cannot publish an empty decision request")
+            connection.execute(
+                """
+                update team_decision_requests
+                set status = 'awaiting_user', revision = revision + 1,
+                    published_at = ?, updated_at = ? where id = ?
+                """,
+                (now, now, row["id"]),
+            )
+            connection.execute(
+                """
+                update team_runs
+                set status = 'waiting_for_user', error_message = null,
+                    finished_at = null, updated_at = ? where id = ?
+                """,
+                (now, team_run_id),
+            )
+            connection.execute(
+                """
+                update team_agents
+                set status = 'waiting', current_task_id = null, finished_at = null, updated_at = ?
+                where team_run_id = ? and status = 'running'
+                """,
+                (now, team_run_id),
+            )
+            connection.execute(
+                """
+                insert into team_messages (
+                    id, team_run_id, cycle_id, sender_agent_id, recipient_agent_id,
+                    kind, content, metadata_json, created_at
+                ) values (?, ?, ?, null, null, 'user_decision_requested', ?, ?, ?)
+                """,
+                (
+                    uuid4().hex,
+                    team_run_id,
+                    row["cycle_id"],
+                    f"User input requested for {len(items)} decision(s).",
+                    json.dumps(
+                        {"request_id": row["id"], "question_count": len(items)},
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
+            )
+        request = self._get_decision_request(row["id"])
+        self._project_decisions_safely(team_run_id)
+        return request
+
+    def answer_decision_request(
+        self,
+        team_run_id: str,
+        request_id: str,
+        revision: int,
+        answers: dict[str, str],
+    ) -> tuple[TeamRun, TeamDecisionRequest]:
+        now = _now()
+        with self._db.connection() as connection:
+            run = connection.execute(
+                "select status, leader_agent_id from team_runs where id = ?", (team_run_id,)
+            ).fetchone()
+            if run is None:
+                raise KeyError(f"Team run not found: {team_run_id}")
+            row = connection.execute(
+                "select * from team_decision_requests where id = ? and team_run_id = ?",
+                (request_id, team_run_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Decision request not found: {request_id}")
+            if run["status"] != "waiting_for_user" or row["status"] != "awaiting_user":
+                raise ValueError("Decision request is no longer awaiting user input")
+            if row["revision"] != revision:
+                raise ValueError("Decision request revision is stale")
+            items = json.loads(row["items_json"])
+            required_ids = {item["id"] for item in items}
+            normalized = {
+                key: value.strip()
+                for key, value in answers.items()
+                if key in required_ids and isinstance(value, str) and value.strip()
+            }
+            if set(normalized) != required_ids:
+                raise ValueError("Every open decision requires an answer")
+            blocking_task_ids = {
+                task_id
+                for item in items
+                for task_id in item.get("blocking_task_ids", [])
+                if isinstance(task_id, str)
+            }
+            connection.execute(
+                """
+                update team_decision_requests
+                set status = 'resolved', revision = revision + 1, answers_json = ?,
+                    answered_at = ?, updated_at = ? where id = ?
+                """,
+                (
+                    json.dumps(normalized, ensure_ascii=False, sort_keys=True),
+                    now,
+                    now,
+                    request_id,
+                ),
+            )
+            if blocking_task_ids:
+                placeholders = ", ".join("?" for _ in blocking_task_ids)
+                connection.execute(
+                    f"""
+                    update team_tasks
+                    set status = 'pending', result = null, error_message = null,
+                        started_at = null, finished_at = null, updated_at = ?
+                    where team_run_id = ? and status = 'blocked'
+                      and id in ({placeholders})
+                    """,
+                    (now, team_run_id, *sorted(blocking_task_ids)),
+                )
+            connection.execute(
+                """
+                update team_agents
+                set status = 'pending', current_task_id = null, finished_at = null, updated_at = ?
+                where team_run_id = ? and status = 'waiting'
+                """,
+                (now, team_run_id),
+            )
+            connection.execute(
+                """
+                update team_runs
+                set status = 'running', summary = null, error_message = null,
+                    finished_at = null, updated_at = ? where id = ?
+                """,
+                (now, team_run_id),
+            )
+            if row["cycle_id"] is not None:
+                connection.execute(
+                    """
+                    update team_run_cycles
+                    set status = 'interrupted', error_message = null,
+                        finished_at = null, updated_at = ? where id = ?
+                    """,
+                    (now, row["cycle_id"]),
+                )
+            connection.execute(
+                """
+                insert into team_messages (
+                    id, team_run_id, cycle_id, sender_agent_id, recipient_agent_id,
+                    kind, content, metadata_json, created_at
+                ) values (?, ?, ?, null, null, 'user_decision_answer', ?, ?, ?)
+                """,
+                (
+                    uuid4().hex,
+                    team_run_id,
+                    row["cycle_id"],
+                    f"User answered {len(normalized)} decision(s).",
+                    json.dumps(
+                        {"request_id": request_id, "question_count": len(normalized)},
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
+            )
+            for item in items:
+                answer = normalized[str(item["id"])]
+                for query_id in item.get("query_message_ids", []):
+                    query = connection.execute(
+                        """
+                        select sender_agent_id from team_messages
+                        where id = ? and team_run_id = ? and kind = 'query'
+                        """,
+                        (query_id, team_run_id),
+                    ).fetchone()
+                    if query is None:
+                        continue
+                    connection.execute(
+                        """
+                        insert into team_messages (
+                            id, team_run_id, cycle_id, sender_agent_id, recipient_agent_id,
+                            kind, content, metadata_json, created_at
+                        ) values (?, ?, ?, ?, ?, 'answer', ?, ?, ?)
+                        """,
+                        (
+                            uuid4().hex,
+                            team_run_id,
+                            row["cycle_id"],
+                            run["leader_agent_id"],
+                            query["sender_agent_id"],
+                            answer,
+                            json.dumps(
+                                {
+                                    "query_id": query_id,
+                                    "request_id": request_id,
+                                    "source": "user_decision",
+                                },
+                                sort_keys=True,
+                            ),
+                            now,
+                        ),
+                    )
+        request = self._get_decision_request(request_id)
+        self._project_decisions_safely(team_run_id)
+        return self.get_team_run(team_run_id), request
+
+    def decision_context_for_task(self, team_run_id: str, task_id: str) -> str:
+        lines: list[str] = []
+        for request in self.list_decision_requests(team_run_id):
+            if request.status != "resolved":
+                continue
+            for item in request.items:
+                if task_id not in item.get("blocking_task_ids", []):
+                    continue
+                answer = request.answers.get(str(item.get("id")))
+                if answer:
+                    lines.append(f"Q: {item.get('question', '')}\nA: {answer}")
+        return "\n\n".join(lines)
+
+    def cancel_waiting_decision(self, team_run_id: str) -> TeamRun:
+        now = _now()
+        with self._db.connection() as connection:
+            run = connection.execute(
+                "select status from team_runs where id = ?", (team_run_id,)
+            ).fetchone()
+            if run is None:
+                raise KeyError(f"Team run not found: {team_run_id}")
+            if run["status"] != "waiting_for_user":
+                raise ValueError("Team run is not waiting for user input")
+            connection.execute(
+                """
+                update team_run_cycles
+                set status = 'canceled', finished_at = ?, updated_at = ?
+                where id in (
+                    select cycle_id from team_decision_requests
+                    where team_run_id = ? and status = 'awaiting_user'
+                      and cycle_id is not null
+                )
+                """,
+                (now, now, team_run_id),
+            )
+            connection.execute(
+                """
+                update team_decision_requests
+                set status = 'canceled', revision = revision + 1, updated_at = ?
+                where team_run_id = ? and status = 'awaiting_user'
+                """,
+                (now, team_run_id),
+            )
+            connection.execute(
+                """
+                update team_tasks set status = 'canceled', finished_at = ?, updated_at = ?
+                where team_run_id = ? and status = 'blocked'
+                """,
+                (now, now, team_run_id),
+            )
+            connection.execute(
+                """
+                update team_agents
+                set status = 'canceled', current_task_id = null, finished_at = ?, updated_at = ?
+                where team_run_id = ? and status = 'waiting'
+                """,
+                (now, now, team_run_id),
+            )
+            connection.execute(
+                """
+                update team_runs set status = 'canceled', finished_at = ?, updated_at = ?
+                where id = ?
+                """,
+                (now, now, team_run_id),
+            )
+        self._project_decisions_safely(team_run_id)
+        return self.get_team_run(team_run_id)
+
     def append_message(
         self,
         team_run_id: str,
@@ -646,20 +1326,24 @@ class TeamRunService:
         kind: str,
         content: str,
         metadata: dict[str, object],
+        cycle_id: str | None = None,
     ) -> TeamMessage:
         self.get_team_run(team_run_id)
+        if cycle_id is not None:
+            self._require_cycle_for_run(team_run_id, cycle_id)
         message_id = uuid4().hex
         self._db.execute(
             """
             insert into team_messages (
-                id, team_run_id, sender_agent_id, recipient_agent_id, kind,
+                id, team_run_id, cycle_id, sender_agent_id, recipient_agent_id, kind,
                 content, metadata_json, created_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id,
                 team_run_id,
+                cycle_id,
                 sender_agent_id,
                 recipient_agent_id,
                 kind,
@@ -670,13 +1354,27 @@ class TeamRunService:
         )
         return self._get_message(message_id)
 
-    def list_messages(self, team_run_id: str) -> list[TeamMessage]:
+    def _require_cycle_for_run(self, team_run_id: str, cycle_id: str) -> TeamRunCycle:
+        cycle = self.get_cycle(cycle_id)
+        if cycle.team_run_id != team_run_id:
+            raise ValueError("Cycle belongs to a different team run")
+        return cycle
+
+    def list_messages(
+        self, team_run_id: str, cycle_id: str | None = None
+    ) -> list[TeamMessage]:
         self.get_team_run(team_run_id)
+        where = "team_run_id = ?"
+        parameters: tuple[object, ...] = (team_run_id,)
+        if cycle_id is not None:
+            self._require_cycle_for_run(team_run_id, cycle_id)
+            where += " and cycle_id = ?"
+            parameters += (cycle_id,)
         return [
             _team_message_from_row(row)
             for row in self._db.fetchall(
-                "select * from team_messages where team_run_id = ? order by created_at asc, id asc",
-                (team_run_id,),
+                f"select * from team_messages where {where} order by created_at asc, id asc",
+                parameters,
             )
         ]
 
@@ -749,6 +1447,88 @@ class TeamRunService:
         )
         return self._get_agent(agent_id)
 
+    def _get_decision_request(self, request_id: str) -> TeamDecisionRequest:
+        row = self._db.fetchone(
+            "select * from team_decision_requests where id = ?", (request_id,)
+        )
+        if row is None:
+            raise KeyError(f"Decision request not found: {request_id}")
+        return _team_decision_request_from_row(row)
+
+    def _project_decisions_safely(self, team_run_id: str) -> None:
+        try:
+            self._project_decisions(team_run_id)
+        except OSError as exc:
+            self.append_message(
+                team_run_id,
+                None,
+                None,
+                "document_projection_error",
+                "Could not update USER_DECISIONS.md.",
+                {"error_type": type(exc).__name__},
+            )
+
+    def _project_decisions(self, team_run_id: str) -> None:
+        run = self.get_team_run(team_run_id)
+        requests = self.list_decision_requests(team_run_id)
+        if not requests:
+            return
+        current = next(
+            (
+                request
+                for request in reversed(requests)
+                if request.status in {"collecting", "awaiting_user"}
+            ),
+            requests[-1],
+        )
+        lines = [
+            "---",
+            "schema: gateway.team-decisions/v1",
+            f"team_run_id: {team_run_id}",
+            f"active_request_id: {current.id}",
+            f"revision: {current.revision}",
+            f"status: {current.status}",
+            f"generated_at: {_now()}",
+            "---",
+            "",
+            "# User decisions",
+            "",
+            "Team Run 화면의 INPUT NEEDED에서 답변하세요. 이 파일은 자동 생성됩니다.",
+            "",
+        ]
+        for request in reversed(requests):
+            heading = "Active request" if request.status in {"collecting", "awaiting_user"} else "History"
+            lines.extend([f"## {heading} — {request.id}", ""])
+            for item in request.items:
+                item_id = str(item.get("id") or "")
+                answer = request.answers.get(item_id)
+                lines.extend(
+                    [
+                        f"### {item_id} — {item.get('topic') or 'Decision'}",
+                        "",
+                        f"- Status: {'answered' if answer else 'open'}",
+                        f"- Blocks: {', '.join(item.get('blocking_task_ids') or []) or '-'}",
+                        f"- Why now: {item.get('why_needed') or '-'}",
+                        f"- Question: {item.get('question') or '-'}",
+                    ]
+                )
+                recommended = item.get("recommended_option_id")
+                if recommended:
+                    lines.append(f"- Recommended: {recommended}")
+                options = item.get("options") or []
+                if options:
+                    lines.extend(["", "#### Options", ""])
+                    for option in options:
+                        lines.append(
+                            f"- `{option.get('id', '')}` — {option.get('label', '')}: "
+                            f"{option.get('impact', '')}"
+                        )
+                lines.extend(["", "#### Answer", "", answer or "Pending", ""])
+        target = Path(run.workspace_root) / current.file_path
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        temporary.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        temporary.replace(target)
+
     def _get_agent(self, agent_id: str) -> TeamAgent:
         row = self._db.fetchone("select * from team_agents where id = ?", (agent_id,))
         if row is None:
@@ -789,6 +1569,9 @@ def _team_run_from_row(row: object) -> TeamRun:
         goal=row["goal"],
         status=row["status"],
         run_mode=row["run_mode"],
+        lifecycle_mode=(
+            row["lifecycle_mode"] if "lifecycle_mode" in row.keys() else "standard"
+        ),
         leader_agent_id=row["leader_agent_id"],
         max_workers=row["max_workers"],
         rounds_budget=row["rounds_budget"],
@@ -806,6 +1589,25 @@ def _team_run_from_row(row: object) -> TeamRun:
             if "rules_snapshot_json" in row.keys() and row["rules_snapshot_json"]
             else None
         ),
+    )
+
+
+def _team_run_cycle_from_row(row: object) -> TeamRunCycle:
+    return TeamRunCycle(
+        id=row["id"],
+        team_run_id=row["team_run_id"],
+        sequence=row["sequence"],
+        source_type=row["source_type"],
+        source_id=row["source_id"],
+        status=row["status"],
+        rounds_budget=row["rounds_budget"],
+        rounds_used=row["rounds_used"],
+        summary=row["summary"],
+        error_message=row["error_message"],
+        created_at=row["created_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+        updated_at=row["updated_at"],
     )
 
 
@@ -845,6 +1647,7 @@ def _team_task_from_row(row: object) -> TeamTask:
         updated_at=row["updated_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
+        cycle_id=row["cycle_id"] if "cycle_id" in row.keys() else None,
     )
 
 
@@ -858,6 +1661,24 @@ def _team_message_from_row(row: object) -> TeamMessage:
         content=row["content"],
         metadata=json.loads(row["metadata_json"]),
         created_at=row["created_at"],
+        cycle_id=row["cycle_id"] if "cycle_id" in row.keys() else None,
+    )
+
+
+def _team_decision_request_from_row(row: object) -> TeamDecisionRequest:
+    return TeamDecisionRequest(
+        id=row["id"],
+        team_run_id=row["team_run_id"],
+        status=row["status"],
+        revision=row["revision"],
+        items=json.loads(row["items_json"]),
+        answers=json.loads(row["answers_json"]),
+        file_path=row["file_path"],
+        created_at=row["created_at"],
+        published_at=row["published_at"],
+        answered_at=row["answered_at"],
+        updated_at=row["updated_at"],
+        cycle_id=row["cycle_id"] if "cycle_id" in row.keys() else None,
     )
 
 

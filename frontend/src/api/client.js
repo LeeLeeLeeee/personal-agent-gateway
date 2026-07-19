@@ -334,6 +334,19 @@ export const api = {
     ));
     return body?.team_run || null;
   },
+  async answerTeamDecision(id, requestId, revision, answers) {
+    const body = await jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/decision-request/answer`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: requestId, revision, answers })
+      }
+    ));
+    return body?.team_run && body?.decision_request
+      ? { run: body.team_run, decisionRequest: body.decision_request }
+      : null;
+  },
   async retryTeamTask(runId, taskId) {
     const path = "/api/team-runs/" + encodeURIComponent(runId)
       + "/tasks/" + encodeURIComponent(taskId) + "/retry";
@@ -363,6 +376,8 @@ export const api = {
         agents: body?.agents || [],
         tasks: body?.tasks || [],
         messages: body?.messages || [],
+        cycles: body?.cycles || [],
+        decisionRequest: body?.decision_request || null,
         documentSummary: body?.document_summary || null
       };
     } catch (error) {
@@ -373,7 +388,15 @@ export const api = {
         jsonList(await fetch(`/api/team-runs/${encodedId}/tasks`), "tasks"),
         jsonList(await fetch(`/api/team-runs/${encodedId}/messages`), "messages")
       ]);
-      return { run: run?.team_run || null, agents, tasks, messages, documentSummary: null };
+      return {
+        run: run?.team_run || null,
+        agents,
+        tasks,
+        messages,
+        cycles: [],
+        decisionRequest: null,
+        documentSummary: null
+      };
     }
   },
   async teams() {

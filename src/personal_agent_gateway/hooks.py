@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from uuid import uuid4
 
 from personal_agent_gateway.db import Database
@@ -20,6 +21,8 @@ class Hook:
     target_backend: str
     target_model: str
     target_options: dict[str, object]
+    target_kind: Literal["agent", "team_run"]
+    target_team_run_id: str | None
     prompt_template: str
     poll_interval_seconds: int
     enabled: bool
@@ -54,9 +57,29 @@ class HookService:
         prompt_template: str,
         poll_interval_seconds: int,
         now: datetime | None = None,
+        target_kind: Literal["agent", "team_run"] = "agent",
+        target_team_run_id: str | None = None,
     ) -> Hook:
         if source_type not in self._adapters:
             raise ValueError(f"Unsupported source type: {source_type}")
+        if target_kind == "team_run":
+            if not target_team_run_id:
+                raise ValueError("Team Run target is required")
+            target = self._db.fetchone(
+                "select lifecycle_mode, run_mode from team_runs where id = ?",
+                (target_team_run_id,),
+            )
+            if target is None:
+                raise ValueError("Team Run target not found")
+            if (
+                target["lifecycle_mode"] != "continuous"
+                or target["run_mode"] != "plan_and_execute"
+            ):
+                raise ValueError(
+                    "Hook target must be a continuous plan_and_execute Team Run"
+                )
+        elif target_kind != "agent":
+            raise ValueError(f"Unsupported target kind: {target_kind}")
         hook_id = uuid4().hex
         connection_ref = uuid4().hex
         self._secret_store.save(connection_ref, secret)
@@ -68,10 +91,11 @@ class HookService:
             insert into hooks (
                 id, name, source_type, connection_ref, filter_json,
                 target_backend, target_model, target_options_json, prompt_template,
+                target_kind, target_team_run_id,
                 poll_interval_seconds, enabled, cursor_json, last_polled_at, last_error,
                 created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, null, null, null, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, null, null, null, ?, ?)
             """,
             (
                 hook_id,
@@ -83,6 +107,8 @@ class HookService:
                 target_model,
                 json.dumps(target_options, sort_keys=True),
                 prompt_template,
+                target_kind,
+                target_team_run_id,
                 poll_interval_seconds,
                 stamp,
                 stamp,
@@ -203,6 +229,12 @@ def _hook_from_row(row: object) -> Hook:
         target_backend=row["target_backend"],
         target_model=row["target_model"],
         target_options=json.loads(row["target_options_json"]),
+        target_kind=row["target_kind"] if "target_kind" in row.keys() else "agent",
+        target_team_run_id=(
+            row["target_team_run_id"]
+            if "target_team_run_id" in row.keys()
+            else None
+        ),
         prompt_template=row["prompt_template"],
         poll_interval_seconds=row["poll_interval_seconds"],
         enabled=bool(row["enabled"]),

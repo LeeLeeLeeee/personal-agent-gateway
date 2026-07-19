@@ -292,6 +292,44 @@ async def test_claude_client_runs_print_json_and_parses_result(tmp_path: Path) -
     assert response == ModelResponse(content="claude answer", tool_calls=[])
 
 
+@pytest.mark.asyncio
+async def test_claude_client_sends_multiline_prompt_over_stdin(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+            captured["input"] = input
+            return b'{"result":"ok"}', b""
+
+    async def fake_create(*args, **kwargs):
+        captured["args"] = args
+        captured["stdin"] = kwargs.get("stdin")
+        return Process()
+
+    monkeypatch.setattr(
+        "personal_agent_gateway.model_client.asyncio.create_subprocess_exec",
+        fake_create,
+    )
+    client = ClaudeModelClient(
+        binary="claude",
+        model="sonnet",
+        workspace_root=tmp_path,
+    )
+
+    response = await client.complete(
+        [{"role": "user", "content": "first line\nsecond line"}]
+    )
+
+    assert response.content == "ok"
+    assert captured["input"] == b"first line\nsecond line\n"
+    assert captured["stdin"] is asyncio.subprocess.PIPE
+    assert "first line\nsecond line\n" not in captured["args"]
+
+
 def test_claude_client_builds_expected_command(tmp_path: Path) -> None:
     client = ClaudeModelClient(
         binary="claude",
@@ -533,7 +571,7 @@ class _FakeProcess:
     async def wait(self) -> int:
         return self.returncode or 0
 
-    async def communicate(self) -> tuple[bytes, bytes]:
+    async def communicate(self, _input: bytes | None = None) -> tuple[bytes, bytes]:
         await asyncio.sleep(60)
         return b"", b""
 

@@ -1,4 +1,5 @@
 import asyncio
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -16,9 +17,11 @@ class CreateHookRequest(BaseModel):
     connection: dict[str, object] = Field(default_factory=dict)
     secret: str
     filter: dict[str, object] = Field(default_factory=dict)
-    target_backend: str
-    target_model: str
+    target_backend: str = ""
+    target_model: str = ""
     target_options: dict[str, object] = Field(default_factory=dict)
+    target_kind: Literal["agent", "team_run"] = "agent"
+    target_team_run_id: str | None = None
     prompt_template: str
     poll_interval_seconds: int = 300
 
@@ -55,6 +58,8 @@ def create_hook(
             target_options=payload.target_options,
             prompt_template=payload.prompt_template,
             poll_interval_seconds=payload.poll_interval_seconds,
+            target_kind=payload.target_kind,
+            target_team_run_id=payload.target_team_run_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -140,6 +145,8 @@ def _hook_payload(hook: Hook) -> dict[str, object]:
         "target_backend": hook.target_backend,
         "target_model": hook.target_model,
         "target_options": hook.target_options,
+        "target_kind": hook.target_kind,
+        "target_team_run_id": hook.target_team_run_id,
         "prompt_template": hook.prompt_template,
         "poll_interval_seconds": hook.poll_interval_seconds,
         "enabled": hook.enabled,
@@ -161,4 +168,5 @@ def _run_payload(run: HookRun) -> dict[str, object]:
         "created_at": run.created_at,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
+        "team_run_cycle_id": run.team_run_cycle_id,
     }

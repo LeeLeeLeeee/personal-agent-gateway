@@ -62,8 +62,13 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     if (hasDelta) {
       setTeamRunDetail((current) => applyTeamRunDelta(current, event));
     }
-    const terminal = ["team.run.completed", "team.run.failed"].includes(event.type);
-    if (!hasDelta || terminal) {
+    const requiresRefresh = [
+      "team.run.completed",
+      "team.run.failed",
+      "team.run.input_requested",
+      "team.run.input_resolved"
+    ].includes(event.type);
+    if (!hasDelta || requiresRefresh) {
       api.teamRunDetail(event.team_run_id)
         .then(setTeamRunDetail)
         .catch(setScreenError);
@@ -80,15 +85,23 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
         toast("Failed to create team run", "error");
         return;
       }
-      const started = await api.startTeamRun(created.id);
-      if (!started) {
-        toast("Failed to start team run", "error");
-        return;
+      const isContinuous = payload.lifecycle_mode === "continuous";
+      let selectedRun = created;
+      if (!isContinuous) {
+        const started = await api.startTeamRun(created.id);
+        if (!started) {
+          toast("Failed to start team run", "error");
+          return;
+        }
+        selectedRun = started;
       }
       setCreatingTeamRun(false);
       setTeamRuns(await api.teamRuns());
-      setSelectedTeamRunId(started.id);
-      toast("Team run started", "success");
+      setSelectedTeamRunId(selectedRun.id);
+      toast(
+        isContinuous ? "Continuous team run created; waiting for hook triggers" : "Team run started",
+        "success"
+      );
     } catch (_error) {
       toast("Failed to create team run", "error");
     }
@@ -164,6 +177,36 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
       return true;
     } catch (_error) {
       toast("Failed to stop team run", "error");
+      return false;
+    }
+  }
+
+  async function handleAnswerTeamDecision(answers) {
+    const request = teamRunDetail?.decisionRequest;
+    if (!selectedTeamRunId || !request) return false;
+    try {
+      const result = await api.answerTeamDecision(
+        selectedTeamRunId,
+        request.id,
+        request.revision,
+        answers
+      );
+      if (!result) {
+        toast("Failed to answer decision request", "error");
+        return false;
+      }
+      const [detail, runs, documents] = await Promise.all([
+        api.teamRunDetail(selectedTeamRunId),
+        api.teamRuns(),
+        api.teamDocuments(selectedTeamRunId)
+      ]);
+      setTeamRunDetail(detail);
+      setTeamRuns(runs);
+      setTeamRunDocuments(documents);
+      toast("답변을 전달하고 팀 작업을 재개했습니다", "success");
+      return true;
+    } catch (_error) {
+      toast("Failed to answer decision request", "error");
       return false;
     }
   }
@@ -247,6 +290,7 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     handleCreateTeamRun,
     handleAddWork,
     handleResumeTeamRun,
+    handleAnswerTeamDecision,
     handleCancelTeamRun,
     handleRetryTeamTask,
     handleDeleteTeamRun,

@@ -85,3 +85,26 @@ def test_list_queued_runs_excludes_other_statuses_and_orders_by_created_at(
 
     assert [run.id for run in queued] == [first.id, second.id]
     assert all(run.status == "queued" for run in queued)
+
+
+def test_hook_run_links_exactly_one_team_run_cycle(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    db = service._db
+    db.execute(
+        "insert into team_runs (id, goal, status, run_mode, lifecycle_mode, max_workers, "
+        "workspace_root, created_at, updated_at) "
+        "values ('team-run','mailbox','draft','plan_and_execute','continuous',1,'w','t','t')"
+    )
+    db.execute(
+        "insert into team_run_cycles (id, team_run_id, sequence, source_type, source_id, "
+        "status, rounds_budget, created_at, updated_at) "
+        "values ('cycle-1','team-run',1,'hook','source-1','queued',8,'t','t')"
+    )
+    run = service.create_run("h1", "k", "s", {})
+    assert run is not None
+
+    linked = service.link_cycle(run.id, "cycle-1")
+    duplicate = service.link_cycle(run.id, "cycle-1")
+
+    assert linked.team_run_cycle_id == "cycle-1"
+    assert duplicate.team_run_cycle_id == "cycle-1"

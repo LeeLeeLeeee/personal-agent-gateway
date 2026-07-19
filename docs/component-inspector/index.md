@@ -14,6 +14,8 @@ updated_at: 2026-07-15
 
 # Component Inspector Reports
 
+- [GatewayApp Mail Team Run UI — 2026-07-16 15:36](./GatewayApp/2026-07-16-1536.md)
+- [TeamRunDetail User Decision — 2026-07-16 11:07](./TeamRunDetail/2026-07-16-1107.md)
 - [GatewayApp Browser Notification — 2026-07-16 08:55](./GatewayApp/2026-07-16-0855.md)
 - [TeamRunDetail PG-1 — 2026-07-15 16:39](./TeamRunDetail/2026-07-15-1639.md)
 - [TeamRunCard PG-1 Roster — 2026-07-15 16:39](./TeamRunCard/2026-07-15-1639.md)

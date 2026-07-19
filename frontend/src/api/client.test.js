@@ -124,6 +124,7 @@ describe("api client", () => {
         agents: [{ id: "a1" }],
         tasks: [{ id: "t1" }],
         messages: [{ id: "m1" }],
+        cycles: [{ id: "c1", sequence: 1 }],
         document_summary: { count: 2 }
       }));
 
@@ -133,6 +134,8 @@ describe("api client", () => {
       agents: [{ id: "a1" }],
       tasks: [{ id: "t1" }],
       messages: [{ id: "m1" }],
+      cycles: [{ id: "c1", sequence: 1 }],
+      decisionRequest: null,
       documentSummary: { count: 2 }
     });
 
@@ -141,6 +144,31 @@ describe("api client", () => {
       body: JSON.stringify({ instruction: "write docs" })
     }));
     expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1/detail");
+  });
+
+  it("falls back to legacy team-run endpoints with an empty cycle list", async () => {
+    fetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        headers: { get: () => null },
+        json: async () => ({ detail: "Not Found" })
+      })
+      .mockResolvedValueOnce(jsonResponse({ team_run: { id: "r1", goal: "Ship" } }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: "a1" }] }))
+      .mockResolvedValueOnce(jsonResponse({ tasks: [{ id: "t1" }] }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: "m1" }] }));
+
+    await expect(api.teamRunDetail("r1")).resolves.toEqual({
+      run: { id: "r1", goal: "Ship" },
+      agents: [{ id: "a1" }],
+      tasks: [{ id: "t1" }],
+      messages: [{ id: "m1" }],
+      cycles: [],
+      decisionRequest: null,
+      documentSummary: null
+    });
   });
 
   it("preserves non-2xx details and correlation IDs as ApiError", async () => {
@@ -224,6 +252,30 @@ describe("api client", () => {
     expect(fetch).toHaveBeenCalledWith(
       "/api/team-runs/r1/cancel",
       expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("submits a versioned team decision answer batch", async () => {
+    fetch.mockResolvedValueOnce(jsonResponse({
+      team_run: { id: "r1", status: "running" },
+      decision_request: { id: "d1", status: "resolved" }
+    }));
+
+    await expect(api.answerTeamDecision("r1", "d1", 3, { "Q-001": "staging" }))
+      .resolves.toEqual({
+        run: { id: "r1", status: "running" },
+        decisionRequest: { id: "d1", status: "resolved" }
+      });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/r1/decision-request/answer",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          request_id: "d1",
+          revision: 3,
+          answers: { "Q-001": "staging" }
+        })
+      })
     );
   });
 

@@ -3,7 +3,7 @@ import {
   disableBrowserNotifications,
   enableBrowserNotifications,
   getBrowserNotificationState,
-  showTeamRunTerminalNotification
+  showTeamRunNotification
 } from "./browserNotification.js";
 
 const STORAGE_KEY = "pag.browser-notifications.v1";
@@ -61,7 +61,7 @@ describe("browserNotification", () => {
 
   it("does not send when blocked or not opted in", () => {
     const denied = installNotification("denied");
-    expect(showTeamRunTerminalNotification({ type: "team.run.failed", team_run_id: "run-1" }, vi.fn())).toBeNull();
+    expect(showTeamRunNotification({ type: "team.run.failed", team_run_id: "run-1" }, vi.fn())).toBeNull();
     expect(denied.instances).toHaveLength(0);
   });
 
@@ -71,7 +71,7 @@ describe("browserNotification", () => {
     const onOpen = vi.fn();
     const focus = vi.spyOn(window, "focus").mockImplementation(() => {});
 
-    const notification = showTeamRunTerminalNotification({
+    const notification = showTeamRunNotification({
       type: "team.run.failed",
       team_run_id: "run-private",
       run: {
@@ -92,5 +92,22 @@ describe("browserNotification", () => {
     expect(focus).toHaveBeenCalledTimes(1);
     expect(onOpen).toHaveBeenCalledWith("run-private");
     expect(notification.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a generic payload when a Team Run needs input", () => {
+    const { instances } = installNotification("granted");
+    localStorage.setItem(STORAGE_KEY, "enabled");
+
+    const notification = showTeamRunNotification({
+      type: "team.run.input_requested",
+      team_run_id: "run-private",
+      decision_request_id: "secret-request",
+      question: "secret question"
+    }, vi.fn());
+
+    expect(instances).toHaveLength(1);
+    expect(notification.title).toBe("Team Run needs input");
+    expect(notification.options.body).toBe("Open Agent Gateway to answer pending questions.");
+    expect(JSON.stringify([notification.title, notification.options.body])).not.toContain("secret");
   });
 });

@@ -1,5 +1,9 @@
 const STORAGE_KEY = "pag.browser-notifications.v1";
-const TERMINAL_TYPES = new Set(["team.run.completed", "team.run.failed"]);
+const TEAM_RUN_NOTIFICATION_TYPES = new Set([
+  "team.run.completed",
+  "team.run.failed",
+  "team.run.input_requested"
+]);
 
 function readPreference() {
   try {
@@ -51,17 +55,22 @@ export function disableBrowserNotifications() {
   return getBrowserNotificationState();
 }
 
-export function showTeamRunTerminalNotification(event, onOpen) {
-  if (!TERMINAL_TYPES.has(event?.type) || !event.team_run_id) return null;
+export function showTeamRunNotification(event, onOpen) {
+  if (!TEAM_RUN_NOTIFICATION_TYPES.has(event?.type) || !event.team_run_id) return null;
   if (!getBrowserNotificationState().enabled) return null;
 
   const failed = event.type === "team.run.failed";
+  const needsInput = event.type === "team.run.input_requested";
   try {
     const notification = new globalThis.Notification(
-      failed ? "Team Run failed" : "Team Run completed",
+      needsInput ? "Team Run needs input" : failed ? "Team Run failed" : "Team Run completed",
       {
-        body: "Open Agent Gateway to review the run.",
-        tag: `team-run:${event.team_run_id}:${event.type}:${event.run?.finished_at || "terminal"}`,
+        body: needsInput
+          ? "Open Agent Gateway to answer pending questions."
+          : "Open Agent Gateway to review the run.",
+        tag: `team-run:${event.team_run_id}:${event.type}:${
+          event.decision_request_id || event.run?.finished_at || "event"
+        }`,
         data: { teamRunId: event.team_run_id }
       }
     );

@@ -16,9 +16,32 @@ describe("TeamPicker", () => {
     expect(screen.getByText("Tech Lead")).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText(/goal/i), "ship it");
     await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
-    expect(onStart).toHaveBeenCalledWith(expect.objectContaining({
-      team_id: "t1", goal: "ship it", run_mode: "planning_only", max_workers: 1
-    }));
+    expect(onStart).toHaveBeenCalledWith({
+      team_id: "t1",
+      goal: "ship it",
+      run_mode: "planning_only",
+      lifecycle_mode: "standard",
+      max_workers: 1
+    });
+  });
+
+  it("forces plan-and-execute for a continuous run payload", async () => {
+    const onStart = vi.fn();
+    render(<TeamPicker teams={teams} onStart={onStart} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "CONTINUOUS" }));
+    expect(screen.getByRole("button", { name: "PLANNING ONLY" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "PLAN + EXECUTE" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.type(screen.getByLabelText(/goal/i), "watch inbox");
+    await userEvent.click(screen.getByRole("button", { name: /create continuous run/i }));
+
+    expect(onStart).toHaveBeenCalledWith({
+      team_id: "t1",
+      goal: "watch inbox",
+      run_mode: "plan_and_execute",
+      lifecycle_mode: "continuous",
+      max_workers: 1
+    });
   });
 
   it("shows only implemented run modes and sequential execution", () => {

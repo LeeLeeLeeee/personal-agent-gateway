@@ -112,6 +112,7 @@ create table if not exists team_runs (
     goal text not null,
     status text not null,
     run_mode text not null,
+    lifecycle_mode text not null default 'standard',
     leader_agent_id text,
     max_workers integer not null,
     rounds_budget integer not null default 8,
@@ -125,6 +126,26 @@ create table if not exists team_runs (
     started_at text,
     finished_at text,
     updated_at text not null
+);
+
+create table if not exists team_run_cycles (
+    id text primary key,
+    team_run_id text not null,
+    sequence integer not null,
+    source_type text not null,
+    source_id text not null,
+    status text not null,
+    rounds_budget integer not null,
+    rounds_used integer not null default 0,
+    summary text,
+    error_message text,
+    created_at text not null,
+    started_at text,
+    finished_at text,
+    updated_at text not null,
+    foreign key (team_run_id) references team_runs(id) on delete cascade,
+    unique(team_run_id, sequence),
+    unique(team_run_id, source_type, source_id)
 );
 
 create table if not exists team_agents (
@@ -152,6 +173,7 @@ create table if not exists team_agents (
 create table if not exists team_tasks (
     id text primary key,
     team_run_id text not null,
+    cycle_id text,
     title text not null,
     description text not null,
     owner_agent_id text,
@@ -163,12 +185,14 @@ create table if not exists team_tasks (
     started_at text,
     finished_at text,
     foreign key (team_run_id) references team_runs(id) on delete cascade,
+    foreign key (cycle_id) references team_run_cycles(id) on delete cascade,
     foreign key (owner_agent_id) references team_agents(id) on delete set null
 );
 
 create table if not exists team_messages (
     id text primary key,
     team_run_id text not null,
+    cycle_id text,
     sender_agent_id text,
     recipient_agent_id text,
     kind text not null,
@@ -176,8 +200,26 @@ create table if not exists team_messages (
     metadata_json text not null,
     created_at text not null,
     foreign key (team_run_id) references team_runs(id) on delete cascade,
+    foreign key (cycle_id) references team_run_cycles(id) on delete cascade,
     foreign key (sender_agent_id) references team_agents(id) on delete set null,
     foreign key (recipient_agent_id) references team_agents(id) on delete set null
+);
+
+create table if not exists team_decision_requests (
+    id text primary key,
+    team_run_id text not null,
+    cycle_id text,
+    status text not null,
+    revision integer not null default 0,
+    items_json text not null default '[]',
+    answers_json text not null default '{}',
+    file_path text not null default 'USER_DECISIONS.md',
+    created_at text not null,
+    published_at text,
+    answered_at text,
+    updated_at text not null,
+    foreign key (team_run_id) references team_runs(id) on delete cascade,
+    foreign key (cycle_id) references team_run_cycles(id) on delete cascade
 );
 
 create table if not exists session_activity_events (
@@ -224,6 +266,8 @@ create table if not exists hooks (
     target_backend text not null,
     target_model text not null,
     target_options_json text not null default '{}',
+    target_kind text not null default 'agent',
+    target_team_run_id text,
     prompt_template text not null,
     poll_interval_seconds integer not null default 300,
     enabled integer not null,
@@ -231,7 +275,8 @@ create table if not exists hooks (
     last_polled_at text,
     last_error text,
     created_at text not null,
-    updated_at text not null
+    updated_at text not null,
+    foreign key (target_team_run_id) references team_runs(id) on delete set null
 );
 
 create table if not exists hook_runs (
@@ -243,12 +288,67 @@ create table if not exists hook_runs (
     status text not null,
     result_text text,
     error_message text,
+    team_run_cycle_id text unique,
     created_at text not null,
     started_at text,
     finished_at text,
     foreign key (hook_id) references hooks(id) on delete cascade,
+    foreign key (team_run_cycle_id) references team_run_cycles(id) on delete set null,
     unique(hook_id, dedup_key)
 );
+
+create table if not exists mail_messages (
+    id text primary key,
+    mail_team_run_id text not null,
+    workspace_root text not null,
+    hook_id text,
+    hook_run_id text unique,
+    team_run_cycle_id text,
+    dedup_key text not null,
+    sender_raw text not null,
+    sender_address text not null,
+    sender_name text not null,
+    subject text not null,
+    sent_at text not null,
+    body_text text not null,
+    result_text text,
+    archive_relative_path text not null,
+    projection_status text not null default 'pending',
+    projection_error text,
+    projected_at text,
+    created_at text not null,
+    updated_at text not null,
+    foreign key (hook_id) references hooks(id) on delete set null,
+    foreign key (hook_run_id) references hook_runs(id) on delete set null,
+    foreign key (team_run_cycle_id) references team_run_cycles(id) on delete set null,
+    unique(mail_team_run_id, dedup_key)
+);
+
+create table if not exists mail_contacts (
+    id text primary key,
+    mail_team_run_id text not null,
+    canonical_address text not null,
+    display_name text not null,
+    domain text not null,
+    first_seen_at text not null,
+    last_seen_at text not null,
+    message_count integer not null default 0,
+    last_message_id text,
+    observations_json text not null default '[]',
+    created_at text not null,
+    updated_at text not null,
+    foreign key (last_message_id) references mail_messages(id) on delete set null,
+    unique(mail_team_run_id, canonical_address)
+);
+
+create index if not exists idx_mail_messages_projection
+on mail_messages(projection_status, created_at);
+
+create index if not exists idx_mail_messages_cycle
+on mail_messages(team_run_cycle_id);
+
+create index if not exists idx_mail_contacts_team_seen
+on mail_contacts(mail_team_run_id, last_seen_at desc);
 """
 
 
