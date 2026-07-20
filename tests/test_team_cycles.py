@@ -110,6 +110,40 @@ def test_auto_series_counts_continue_and_keeps_retry_in_same_slot(
     assert continued.next_run_at == "2026-07-20T00:09:00+00:00"
 
 
+def test_retry_preserves_failed_slots_previous_cycle_snapshot(
+    tmp_path: Path,
+) -> None:
+    db, teams, cycles, run = make_auto_run(tmp_path)
+    series, first = cycles.create_auto_series(
+        run.id,
+        target_slots=2,
+        interval_seconds=300,
+        now=dt("2026-07-20T00:00:00+00:00"),
+    )
+    first = cycles.claim_next(run.id)
+    first_cycle = teams.create_cycle(run.id, "auto", first.source_id, request_id=first.id)
+    teams.set_cycle_status(first_cycle.id, "completed", summary="slot one snapshot")
+    cycles.settle_cycle(first_cycle.id, now=dt("2026-07-20T00:01:00+00:00"))
+    second = cycles.enqueue_due_auto_requests(now=dt("2026-07-20T00:06:00+00:00"))[0]
+    assert second.previous_cycle_id == first_cycle.id
+    assert second.previous_summary_text == "slot one snapshot"
+
+    second = cycles.claim_next(run.id)
+    second_cycle = teams.create_cycle(run.id, "auto", second.source_id, request_id=second.id)
+    teams.set_cycle_status(second_cycle.id, "failed", error_message="boom")
+    cycles.settle_cycle(second_cycle.id, now=dt("2026-07-20T00:07:00+00:00"))
+    teams.set_cycle_status(
+        first_cycle.id,
+        "completed",
+        summary="newer text that must not replace the snapshot",
+    )
+
+    retry = cycles.retry_failed(run.id, series.id, now=dt("2026-07-20T00:08:00+00:00"))
+
+    assert retry.previous_cycle_id == second.previous_cycle_id
+    assert retry.previous_summary_text == second.previous_summary_text
+
+
 @pytest.mark.parametrize("status", ["completed", "completed_with_failures"])
 def test_completed_cycle_statuses_settle_auto_slot(tmp_path: Path, status: str) -> None:
     db, teams, cycles, run = make_auto_run(tmp_path)
@@ -344,3 +378,23 @@ def test_pause_and_reconcile_preserve_or_requeue_dispatching_request(
 
     assert paused.series.status == "paused_interrupted"
     assert paused.request.status == "dispatching"
+
+
+def test_reconcile_is_idempotent_after_terminal_cycle_settlement(
+    tmp_path: Path,
+) -> None:
+    db, teams, cycles, run = make_triggered_run(tmp_path)
+    request = cycles.enqueue_request(run.id, "manual", "client-1", "work", previous_cycle_id=None)
+    request = cycles.claim_next(run.id)
+    cycle = teams.create_cycle(run.id, "manual", request.source_id, request_id=request.id)
+    teams.set_cycle_status(cycle.id, "completed", summary="done")
+
+    first = cycles.reconcile(teams)
+    second = cycles.reconcile(teams)
+
+    assert first == []
+    assert second == []
+    assert len(cycles.list_requests(run.id)) == 1
+    assert cycles.get_request(request.id).status == "settled"
+    assert teams.get_cycle_for_request(request.id).id == cycle.id
+    assert len(teams.list_cycles(run.id)) == 1

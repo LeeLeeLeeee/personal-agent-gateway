@@ -406,11 +406,15 @@ class TeamCycleService:
                 "retry",
                 _auto_source_id(series_id, failed["slot_ordinal"], attempt),
                 failed["instruction"],
-                previous_cycle_id=None,
+                previous_cycle_id=failed["previous_cycle_id"],
                 auto_series_id=series_id,
                 slot_ordinal=failed["slot_ordinal"],
                 retry_of_request_id=failed["id"],
                 now=timestamp,
+                previous_snapshot=(
+                    failed["previous_cycle_id"],
+                    failed["previous_summary_text"],
+                ),
             )
 
     def restart_series(
@@ -731,6 +735,7 @@ class TeamCycleService:
         slot_ordinal: int | None,
         retry_of_request_id: str | None,
         now: str,
+        previous_snapshot: tuple[str | None, str | None] | None = None,
     ) -> TeamCycleRequest:
         normalized_source_type = source_type.strip()
         normalized_source_id = source_id.strip()
@@ -761,8 +766,9 @@ class TeamCycleService:
             raise ValueError("Retry cycle requests require failed request lineage")
         if normalized_source_type != "retry" and retry_of_request_id is not None:
             raise ValueError("Only retry cycle requests can have retry lineage")
-        previous_summary = None
-        if previous_cycle_id is not None:
+        if previous_snapshot is not None:
+            previous_cycle_id, previous_summary = previous_snapshot
+        elif previous_cycle_id is not None:
             previous = connection.execute(
                 "select * from team_run_cycles where id = ?", (previous_cycle_id,)
             ).fetchone()
@@ -774,6 +780,8 @@ class TeamCycleService:
             ):
                 raise ValueError("Previous cycle is not a settled cycle for this team run")
             previous_summary = previous["summary"]
+        else:
+            previous_summary = None
         if auto_series_id is not None:
             series = self._get_series(connection, auto_series_id)
             if series.team_run_id != team_run_id:
