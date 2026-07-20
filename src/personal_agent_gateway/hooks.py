@@ -86,19 +86,7 @@ class HookService:
         elif target_kind == "team_run":
             if not target_team_run_id:
                 raise ValueError("Team Run target is required")
-            target = self._db.fetchone(
-                "select lifecycle_mode, run_mode from team_runs where id = ?",
-                (target_team_run_id,),
-            )
-            if target is None:
-                raise ValueError("Team Run target not found")
-            if (
-                target["lifecycle_mode"] != "continuous"
-                or target["run_mode"] != "plan_and_execute"
-            ):
-                raise ValueError(
-                    "Hook target must be a continuous plan_and_execute Team Run"
-                )
+            self._validate_team_run_target(target_team_run_id)
         elif target_kind != "agent":
             raise ValueError(f"Unsupported target kind: {target_kind}")
         hook_id = uuid4().hex
@@ -153,12 +141,32 @@ class HookService:
         ]
 
     def set_enabled(self, hook_id: str, enabled: bool, now: datetime | None = None) -> Hook:
-        self.get_hook(hook_id)
+        hook = self.get_hook(hook_id)
+        if enabled and hook.target_kind == "team_run":
+            if hook.target_team_run_id is None:
+                raise ValueError("Team Run target is required")
+            self._validate_team_run_target(hook.target_team_run_id)
         self._db.execute(
             "update hooks set enabled = ?, updated_at = ? where id = ?",
             (1 if enabled else 0, _now(now), hook_id),
         )
         return self.get_hook(hook_id)
+
+    def _validate_team_run_target(self, team_run_id: str) -> None:
+        target = self._db.fetchone(
+            "select lifecycle_mode, run_mode, execution_policy from team_runs where id = ?",
+            (team_run_id,),
+        )
+        if target is None:
+            raise ValueError("Team Run target not found")
+        if (
+            target["lifecycle_mode"] != "continuous"
+            or target["run_mode"] != "plan_and_execute"
+            or target["execution_policy"] != "triggered"
+        ):
+            raise ValueError(
+                "Hook target must be a continuous plan_and_execute TRIGGERED Team Run"
+            )
 
     def delete(self, hook_id: str) -> None:
         hook = self.get_hook(hook_id)

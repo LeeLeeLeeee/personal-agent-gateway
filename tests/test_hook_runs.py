@@ -108,3 +108,29 @@ def test_hook_run_links_exactly_one_team_run_cycle(tmp_path: Path) -> None:
 
     assert linked.team_run_cycle_id == "cycle-1"
     assert duplicate.team_run_cycle_id == "cycle-1"
+
+
+def test_hook_run_links_exactly_one_cycle_request(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service._db.execute(
+        "insert into team_runs "
+        "(id, goal, status, run_mode, lifecycle_mode, execution_policy, "
+        "max_workers, workspace_root, created_at, updated_at) "
+        "values ('team-run','goal','draft','plan_and_execute','continuous',"
+        "'triggered',1,'w','t','t')"
+    )
+    service._db.execute(
+        "insert into team_cycle_requests "
+        "(id, team_run_id, source_type, source_id, status, instruction, "
+        "created_at, updated_at) "
+        "values ('request-1','team-run','hook','source-1','queued','work','t','t')"
+    )
+    run = service.create_run("h1", "k", "s", {})
+    assert run is not None
+
+    linked = service.link_cycle_request(run.id, "request-1")
+    duplicate = service.link_cycle_request(run.id, "request-1")
+
+    assert linked.team_cycle_request_id == "request-1"
+    assert duplicate.team_cycle_request_id == "request-1"
+    assert service.get_run_for_cycle_request("request-1") == linked

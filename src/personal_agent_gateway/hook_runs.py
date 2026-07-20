@@ -21,6 +21,7 @@ class HookRun:
     started_at: str | None
     finished_at: str | None
     team_run_cycle_id: str | None = None
+    team_cycle_request_id: str | None = None
 
 
 class HookRunService:
@@ -124,21 +125,25 @@ class HookRunService:
         )
         return self.get_run(run_id)
 
+    def link_cycle_request(self, run_id: str, request_id: str) -> HookRun:
+        run = self.get_run(run_id)
+        if run.team_cycle_request_id not in {None, request_id}:
+            raise ValueError("Hook Run is already linked to another CycleRequest")
+        self._db.execute(
+            "update hook_runs set team_cycle_request_id = ? where id = ?",
+            (request_id, run_id),
+        )
+        return self.get_run(run_id)
+
     def get_run_for_cycle(self, cycle_id: str) -> HookRun | None:
         row = self._db.fetchone(
             "select * from hook_runs where team_run_cycle_id = ?", (cycle_id,)
         )
         return _run_from_row(row) if row is not None else None
 
-    def next_queued_for_team_run(self, team_run_id: str) -> HookRun | None:
+    def get_run_for_cycle_request(self, request_id: str) -> HookRun | None:
         row = self._db.fetchone(
-            """
-            select hook_runs.* from hook_runs
-            join team_run_cycles on team_run_cycles.id = hook_runs.team_run_cycle_id
-            where team_run_cycles.team_run_id = ? and hook_runs.status = 'queued'
-            order by team_run_cycles.sequence asc limit 1
-            """,
-            (team_run_id,),
+            "select * from hook_runs where team_cycle_request_id = ?", (request_id,)
         )
         return _run_from_row(row) if row is not None else None
 
@@ -190,6 +195,11 @@ def _run_from_row(row: object) -> HookRun:
         team_run_cycle_id=(
             row["team_run_cycle_id"]
             if "team_run_cycle_id" in row.keys()
+            else None
+        ),
+        team_cycle_request_id=(
+            row["team_cycle_request_id"]
+            if "team_cycle_request_id" in row.keys()
             else None
         ),
     )

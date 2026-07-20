@@ -26,6 +26,7 @@ def _setup(tmp_path: Path):
         "plan_and_execute",
         1,
         lifecycle_mode="continuous",
+        execution_policy="triggered",
     )
     hooks = HookService(db, HookSecretStore(tmp_path / "hooks"), {"email": object()})
     hook = hooks.create_hook(

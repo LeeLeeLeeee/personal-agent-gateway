@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.hook_runs import HookRunService
 from personal_agent_gateway.hook_secrets import HookSecretStore
@@ -61,9 +63,11 @@ def test_create_team_run_hook_requires_continuous_execution_run(tmp_path: Path) 
     adapter = StubAdapter()
     hook_service, _ = _service(tmp_path, adapter)
     hook_service._db.execute(
-        "insert into team_runs (id, goal, status, run_mode, lifecycle_mode, max_workers, "
-        "workspace_root, created_at, updated_at) "
-        "values ('mail-run','mailbox','draft','plan_and_execute','continuous',1,'w','t','t')"
+        "insert into team_runs "
+        "(id, goal, status, run_mode, lifecycle_mode, execution_policy, "
+        "max_workers, workspace_root, created_at, updated_at) "
+        "values ('mail-run','mailbox','draft','plan_and_execute','continuous',"
+        "'triggered',1,'w','t','t')"
     )
 
     hook = hook_service.create_hook(
@@ -83,6 +87,67 @@ def test_create_team_run_hook_requires_continuous_execution_run(tmp_path: Path) 
 
     assert hook.target_kind == "team_run"
     assert hook.target_team_run_id == "mail-run"
+
+
+def test_hook_rejects_auto_team_run_target(tmp_path: Path) -> None:
+    adapter = StubAdapter()
+    hooks, _ = _service(tmp_path, adapter)
+    hooks._db.execute(
+        "insert into team_runs "
+        "(id, goal, status, run_mode, lifecycle_mode, execution_policy, "
+        "max_workers, workspace_root, created_at, updated_at) "
+        "values ('auto-run','goal','draft','plan_and_execute','continuous',"
+        "'auto',1,'w','t','t')"
+    )
+
+    with pytest.raises(ValueError, match="TRIGGERED"):
+        hooks.create_hook(
+            name="mail",
+            source_type="email",
+            connection={"host": "imap.example.com", "port": 993, "username": "u"},
+            secret="app-password",
+            filter={"folder": "INBOX"},
+            target_backend="",
+            target_model="",
+            target_options={},
+            prompt_template="{{subject}}",
+            poll_interval_seconds=300,
+            target_kind="team_run",
+            target_team_run_id="auto-run",
+        )
+
+
+def test_enabling_hook_rechecks_team_run_target(tmp_path: Path) -> None:
+    adapter = StubAdapter()
+    hooks, _ = _service(tmp_path, adapter)
+    hooks._db.execute(
+        "insert into team_runs "
+        "(id, goal, status, run_mode, lifecycle_mode, execution_policy, "
+        "max_workers, workspace_root, created_at, updated_at) "
+        "values ('mail-run','goal','draft','plan_and_execute','continuous',"
+        "'triggered',1,'w','t','t')"
+    )
+    hook = hooks.create_hook(
+        name="mail",
+        source_type="email",
+        connection={},
+        secret="pw",
+        filter={},
+        target_backend="",
+        target_model="",
+        target_options={},
+        prompt_template="{{subject}}",
+        poll_interval_seconds=300,
+        target_kind="team_run",
+        target_team_run_id="mail-run",
+    )
+    hooks.set_enabled(hook.id, False)
+    hooks._db.execute(
+        "update team_runs set execution_policy = 'auto' where id = 'mail-run'"
+    )
+
+    with pytest.raises(ValueError, match="TRIGGERED"):
+        hooks.set_enabled(hook.id, True)
 
 
 def test_render_prompt_substitutes_placeholders() -> None:

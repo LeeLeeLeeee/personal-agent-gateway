@@ -5,15 +5,16 @@ from personal_agent_gateway.hook_runs import HookRunService
 from personal_agent_gateway.hooks import HookService, render_prompt
 from personal_agent_gateway.mail_knowledge import (
     MailKnowledgeService,
-    MailMessage,
     MailWorkspaceProjector,
     build_mail_team_instruction,
 )
 from personal_agent_gateway.personas import persona_system_prompt
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.redaction import redact_text
+from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
+from personal_agent_gateway.team_cycles import TeamCycleRequest, TeamCycleService
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
-from personal_agent_gateway.teams import TeamRun, TeamRunService
+from personal_agent_gateway.teams import TeamRun, TeamRunCycle, TeamRunService
 
 
 class HookRunner:
@@ -33,7 +34,8 @@ class HookRunner:
         self._last_error: str | None = None
         self._interruption: str | None = None
         self._teams: TeamRunService | None = None
-        self._team_orchestrator: TeamRunOrchestrator | None = None
+        self._team_cycles: TeamCycleService | None = None
+        self._team_dispatcher: TeamCycleDispatcher | None = None
         self._mail_knowledge: MailKnowledgeService | None = None
         self._mail_projector: MailWorkspaceProjector | None = None
 
@@ -51,8 +53,15 @@ class HookRunner:
         orchestrator: TeamRunOrchestrator,
     ) -> None:
         self._teams = teams
-        self._team_orchestrator = orchestrator
         orchestrator.add_observer(self.on_team_run_settled)
+
+    def attach_team_cycle_queue(
+        self,
+        cycles: TeamCycleService,
+        dispatcher: TeamCycleDispatcher,
+    ) -> None:
+        self._team_cycles = cycles
+        self._team_dispatcher = dispatcher
 
     @property
     def alive(self) -> bool:
@@ -137,71 +146,86 @@ class HookRunner:
         await self._publish(run.hook_id, run_id, status)
 
     async def _run_team_cycle(self, run_id: str) -> None:
-        if self._teams is None or self._team_orchestrator is None:
-            raise RuntimeError("Team Hook runtime is not attached")
+        if (
+            self._teams is None
+            or self._team_cycles is None
+            or self._team_dispatcher is None
+        ):
+            raise RuntimeError("Team Hook cycle queue is not attached")
         run = self._hook_runs.get_run(run_id)
         hook = self._hooks.get_hook(run.hook_id)
         if hook.target_team_run_id is None:
             raise ValueError("Team Hook target is missing")
-        if run.team_run_cycle_id is None:
-            cycle = self._teams.create_cycle(
-                hook.target_team_run_id, "hook", run.id
+        target = self._teams.get_team_run(hook.target_team_run_id)
+        if (
+            target.lifecycle_mode != "continuous"
+            or target.run_mode != "plan_and_execute"
+            or target.execution_policy != "triggered"
+        ):
+            raise ValueError(
+                "Hook target must be a continuous plan_and_execute TRIGGERED Team Run"
             )
-            run = self._hook_runs.link_cycle(run.id, cycle.id)
-        cycle = self._teams.get_cycle(run.team_run_cycle_id)
-        mail_message: MailMessage | None = None
-        if hook.source_type == "email":
+        previous = self._team_cycles.latest_settled_cycle(hook.target_team_run_id)
+        request = self._team_cycles.enqueue_request(
+            hook.target_team_run_id,
+            "hook",
+            run.id,
+            render_prompt(hook.prompt_template, run.trigger_payload),
+            previous_cycle_id=previous.id if previous is not None else None,
+        )
+        self._hook_runs.link_cycle_request(run.id, request.id)
+        await self._event_bus.publish(
+            {
+                "type": "team.cycle_request.queued",
+                "team_run_id": hook.target_team_run_id,
+                "cycle_request_id": request.id,
+                "source_type": "hook",
+            }
+        )
+        await self._team_dispatcher.enqueue_run(hook.target_team_run_id)
+
+    async def prepare_team_cycle(
+        self,
+        request: TeamCycleRequest,
+        cycle: TeamRunCycle,
+    ) -> str | None:
+        if request.source_type != "hook":
+            return None
+        if self._teams is None:
+            raise RuntimeError("Team Hook runtime is not attached")
+        hook_run = self._hook_runs.get_run(request.source_id)
+        hook_run = self._hook_runs.link_cycle(hook_run.id, cycle.id)
+        hook = self._hooks.get_hook(hook_run.hook_id)
+        if hook.source_type != "email":
+            return request.instruction
+        try:
             if self._mail_knowledge is None or self._mail_projector is None:
                 raise RuntimeError("Email Team Hook mail knowledge is not attached")
-            mail_message = self._mail_knowledge.ingest_hook_run(
+            message = self._mail_knowledge.ingest_hook_run(
                 hook,
-                run,
+                hook_run,
                 self._teams.get_team_run(cycle.team_run_id),
                 cycle.id,
             )
-            mail_message = self._mail_projector.project_safely(mail_message)
-            if mail_message.projection_status != "projected":
+            projected = self._mail_projector.project_safely(message)
+            if projected.projection_status != "projected":
                 raise RuntimeError("Email Team Hook context projection failed")
-        blockers = [
-            candidate
-            for candidate in self._teams.list_cycles(cycle.team_run_id)
-            if candidate.sequence < cycle.sequence
-            and candidate.status
-            not in {"completed", "completed_with_failures", "failed", "canceled"}
-        ]
-        if blockers or self._team_orchestrator.is_running(cycle.team_run_id):
-            await self._publish(run.hook_id, run.id, "queued")
-            return
-        if cycle.status == "waiting_for_user":
-            self._hook_runs.mark_waiting_for_user(run.id)
-            await self._publish(run.hook_id, run.id, "waiting_for_user")
-            return
-        if cycle.status == "interrupted":
-            self._hook_runs.mark_interrupted(
-                run.id, "Team Run Cycle requires explicit resume"
-            )
-            await self._publish(run.hook_id, run.id, "interrupted")
-            return
-
-        self._hook_runs.mark_running(run.id)
-        instruction = (
-            build_mail_team_instruction(mail_message, hook.prompt_template)
-            if mail_message is not None
-            else render_prompt(hook.prompt_template, run.trigger_payload)
-        )
-        await self._team_orchestrator.run_cycle(
-            cycle.team_run_id, cycle.id, instruction
-        )
+            return build_mail_team_instruction(projected, hook.prompt_template)
+        except Exception as exc:
+            self._hook_runs.mark_failed(hook_run.id, str(exc))
+            raise
 
     async def on_team_run_settled(
         self, _team_run: TeamRun, cycle_id: str | None
     ) -> None:
         if cycle_id is None or self._teams is None:
             return
-        run = self._hook_runs.get_run_for_cycle(cycle_id)
+        cycle = self._teams.get_cycle(cycle_id)
+        if cycle.request_id is None:
+            return
+        run = self._hook_runs.get_run_for_cycle_request(cycle.request_id)
         if run is None:
             return
-        cycle = self._teams.get_cycle(cycle_id)
         if (
             self._mail_knowledge is not None
             and self._mail_projector is not None
@@ -232,15 +256,6 @@ class HookRunner:
         else:
             return
         await self._publish(run.hook_id, run.id, status)
-        if cycle.status in {
-            "completed",
-            "completed_with_failures",
-            "failed",
-            "canceled",
-        }:
-            queued = self._hook_runs.next_queued_for_team_run(cycle.team_run_id)
-            if queued is not None:
-                await self.enqueue(queued.id)
 
     def reconcile_linked_runs(self) -> None:
         if self._teams is None:
@@ -250,6 +265,8 @@ class HookRunner:
                 run = self._hook_runs.get_run(cycle.source_id)
             except KeyError:
                 continue
+            if cycle.request_id is not None and run.team_cycle_request_id is None:
+                run = self._hook_runs.link_cycle_request(run.id, cycle.request_id)
             if run.team_run_cycle_id is None:
                 run = self._hook_runs.link_cycle(run.id, cycle.id)
             if run.team_run_cycle_id != cycle.id:

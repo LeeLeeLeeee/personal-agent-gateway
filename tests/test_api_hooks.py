@@ -120,6 +120,7 @@ def test_create_hook_can_target_continuous_team_run(tmp_path: Path) -> None:
         "plan_and_execute",
         1,
         lifecycle_mode="continuous",
+        execution_policy="triggered",
     )
     body = _create_body()
     body.update(
@@ -160,6 +161,7 @@ def test_create_hook_rejects_incompatible_team_run_targets(tmp_path: Path) -> No
             "planning_only",
             1,
             lifecycle_mode="continuous",
+            execution_policy="triggered",
         ),
     ]
 
@@ -178,8 +180,73 @@ def test_create_hook_rejects_incompatible_team_run_targets(tmp_path: Path) -> No
 
         assert response.status_code == 400
         assert response.json()["detail"] == (
-            "Hook target must be a continuous plan_and_execute Team Run"
+            "Hook target must be a continuous plan_and_execute TRIGGERED Team Run"
         )
+
+
+def test_create_hook_rejects_auto_team_run_target(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    personas = client.app.state.persona_service
+    leader = personas.create_persona("Mail lead", "lead", "d", [], [])
+    team_run = client.app.state.team_run_service.create_team_run(
+        "mailbox",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    client.app.state.database.execute(
+        "update team_runs set execution_policy = 'auto' where id = ?",
+        (team_run.id,),
+    )
+    body = _create_body()
+    body.update(
+        target_kind="team_run",
+        target_team_run_id=team_run.id,
+        target_backend="",
+        target_model="",
+    )
+
+    response = client.post("/api/hooks", json=body)
+
+    assert response.status_code == 400
+    assert "TRIGGERED" in response.json()["detail"]
+
+
+def test_enable_hook_rejects_auto_team_run_target(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    personas = client.app.state.persona_service
+    leader = personas.create_persona("Mail lead", "lead", "d", [], [])
+    team_run = client.app.state.team_run_service.create_team_run(
+        "mailbox",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    body = _create_body()
+    body.update(
+        target_kind="team_run",
+        target_team_run_id=team_run.id,
+        target_backend="",
+        target_model="",
+    )
+    hook_id = client.post("/api/hooks", json=body).json()["hook"]["id"]
+    assert client.patch(f"/api/hooks/{hook_id}", json={"enabled": False}).status_code == 200
+    client.app.state.database.execute(
+        "update team_runs set execution_policy = 'auto' where id = ?",
+        (team_run.id,),
+    )
+
+    response = client.patch(f"/api/hooks/{hook_id}", json={"enabled": True})
+
+    assert response.status_code == 400
+    assert "TRIGGERED" in response.json()["detail"]
+    assert client.get(f"/api/hooks/{hook_id}").json()["hook"]["enabled"] is False
 
 
 def test_get_and_list_and_delete(tmp_path: Path) -> None:

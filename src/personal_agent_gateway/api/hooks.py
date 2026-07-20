@@ -130,7 +130,10 @@ def update_hook(
     principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
     _require(request, hook_id)
-    hook = request.app.state.hook_service.set_enabled(hook_id, payload.enabled)
+    try:
+        hook = request.app.state.hook_service.set_enabled(hook_id, payload.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     record_domain_audit(
         request,
         principal,
