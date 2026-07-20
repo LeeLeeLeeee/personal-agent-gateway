@@ -6,6 +6,70 @@ from datetime import datetime, timezone
 Migration = tuple[int, str, Callable[[sqlite3.Connection], None]]
 
 
+TEAM_CYCLE_POLICY_TABLES_SQL = """
+create table if not exists team_run_auto_series (
+    id text primary key,
+    team_run_id text not null references team_runs(id) on delete cascade,
+    series_number integer not null,
+    status text not null,
+    target_slots integer not null check (target_slots > 0),
+    settled_slots integer not null default 0 check (settled_slots >= 0),
+    interval_seconds integer not null check (interval_seconds >= 60),
+    next_run_at text,
+    pause_reason text,
+    paused_cycle_id text references team_run_cycles(id) on delete set null,
+    created_at text not null,
+    started_at text not null,
+    completed_at text,
+    updated_at text not null,
+    unique (team_run_id, series_number)
+);
+
+create table if not exists team_cycle_requests (
+    id text primary key,
+    team_run_id text not null references team_runs(id) on delete cascade,
+    auto_series_id text references team_run_auto_series(id) on delete cascade,
+    slot_ordinal integer check (slot_ordinal is null or slot_ordinal > 0),
+    source_type text not null,
+    source_id text not null,
+    status text not null,
+    instruction text not null,
+    previous_cycle_id text references team_run_cycles(id) on delete set null,
+    previous_summary_text text,
+    retry_of_request_id text references team_cycle_requests(id) on delete set null,
+    created_at text not null,
+    claimed_at text,
+    settled_at text,
+    updated_at text not null,
+    unique (team_run_id, source_type, source_id)
+);
+"""
+
+TEAM_CYCLE_POLICY_INDEXES_SQL = """
+create unique index if not exists idx_team_auto_series_one_active
+on team_run_auto_series(team_run_id)
+where status in (
+    'running', 'waiting_interval', 'paused_failure',
+    'paused_user', 'paused_interrupted'
+);
+
+create unique index if not exists idx_team_cycle_requests_one_dispatching
+on team_cycle_requests(team_run_id)
+where status = 'dispatching';
+
+create index if not exists idx_team_cycle_requests_run_status_created
+on team_cycle_requests(team_run_id, status, created_at, id);
+
+create unique index if not exists idx_team_run_cycles_request
+on team_run_cycles(request_id)
+where request_id is not null;
+
+create unique index if not exists idx_hook_runs_cycle_request
+on hook_runs(team_cycle_request_id)
+where team_cycle_request_id is not null;
+"""
+
+
 def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
     return {row["name"] for row in connection.execute(f"pragma table_info({table})")}
 
@@ -359,6 +423,27 @@ def _migration_10_transcript_origins(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_11_team_cycle_policies(connection: sqlite3.Connection) -> None:
+    if "execution_policy" not in _columns(connection, "team_runs"):
+        connection.execute("alter table team_runs add column execution_policy text")
+    connection.executescript(TEAM_CYCLE_POLICY_TABLES_SQL)
+    if "request_id" not in _columns(connection, "team_run_cycles"):
+        connection.execute(
+            "alter table team_run_cycles add column request_id text "
+            "references team_cycle_requests(id) on delete set null"
+        )
+    if "team_cycle_request_id" not in _columns(connection, "hook_runs"):
+        connection.execute(
+            "alter table hook_runs add column team_cycle_request_id text "
+            "references team_cycle_requests(id) on delete set null"
+        )
+    connection.executescript(TEAM_CYCLE_POLICY_INDEXES_SQL)
+    connection.execute(
+        "update team_runs set execution_policy = 'triggered' "
+        "where lifecycle_mode = 'continuous' and execution_policy is null"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -370,6 +455,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (8, "mail-knowledge", _migration_8_mail_knowledge),
     (9, "hook-persona-targets", _migration_9_hook_persona_targets),
     (10, "transcript-origins", _migration_10_transcript_origins),
+    (11, "team-cycle-policies", _migration_11_team_cycle_policies),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

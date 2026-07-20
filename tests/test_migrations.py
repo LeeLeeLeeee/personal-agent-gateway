@@ -5,7 +5,12 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.migrations import (
     LATEST_SCHEMA_VERSION,
     _migration_6_team_run_cycles,
+    _migration_11_team_cycle_policies,
 )
+
+
+def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in connection.execute(f"pragma table_info({table})")}
 
 
 def _versions(db: Database) -> list[int]:
@@ -139,6 +144,58 @@ def test_team_run_cycle_migration_preserves_existing_team_records() -> None:
     assert connection.execute(
         "select name from sqlite_master where name = 'team_run_cycles'"
     ).fetchone() is not None
+
+
+def test_migration_11_adds_cycle_policy_queue_and_backfills_continuous() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        create table team_runs (
+            id text primary key, goal text not null, status text not null,
+            run_mode text not null, lifecycle_mode text not null,
+            max_workers integer not null, workspace_root text not null,
+            created_at text not null, updated_at text not null
+        );
+        create table team_run_cycles (
+            id text primary key, team_run_id text not null,
+            sequence integer not null, source_type text not null,
+            source_id text not null, status text not null,
+            rounds_budget integer not null, rounds_used integer not null default 0,
+            created_at text not null, updated_at text not null
+        );
+        create table hook_runs (
+            id text primary key, hook_id text not null, status text not null
+        );
+        """
+    )
+    connection.execute(
+        "insert into team_runs "
+        "(id, goal, status, run_mode, lifecycle_mode, max_workers, workspace_root, "
+        "created_at, updated_at) "
+        "values ('legacy-standard','g','completed','plan_and_execute','standard',"
+        "1,'w','t','t'), "
+        "('legacy-continuous','g','draft','plan_and_execute','continuous',"
+        "1,'w','t','t')"
+    )
+
+    _migration_11_team_cycle_policies(connection)
+
+    rows = connection.execute(
+        "select id, execution_policy from team_runs order by id"
+    ).fetchall()
+    assert [(row["id"], row["execution_policy"]) for row in rows] == [
+        ("legacy-continuous", "triggered"),
+        ("legacy-standard", None),
+    ]
+    assert {"team_run_auto_series", "team_cycle_requests"} <= {
+        row["name"]
+        for row in connection.execute(
+            "select name from sqlite_master where type = 'table'"
+        )
+    }
+    assert "request_id" in _columns(connection, "team_run_cycles")
+    assert "team_cycle_request_id" in _columns(connection, "hook_runs")
 
 
 def test_schema_v5_database_reaches_latest_before_cycle_indexes_are_created(

@@ -23,7 +23,7 @@ def test_initialize_creates_hook_tables(tmp_path: Path) -> None:
     assert _table_columns(db, "hook_runs") == {
         "id", "hook_id", "dedup_key", "trigger_summary", "trigger_payload_json",
         "status", "result_text", "error_message",
-        "team_run_cycle_id",
+        "team_run_cycle_id", "team_cycle_request_id",
         "created_at", "started_at", "finished_at",
     }
 

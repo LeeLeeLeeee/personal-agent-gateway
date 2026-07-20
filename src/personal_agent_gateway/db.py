@@ -113,6 +113,7 @@ create table if not exists team_runs (
     status text not null,
     run_mode text not null,
     lifecycle_mode text not null default 'standard',
+    execution_policy text,
     leader_agent_id text,
     max_workers integer not null,
     rounds_budget integer not null default 8,
@@ -131,6 +132,7 @@ create table if not exists team_runs (
 create table if not exists team_run_cycles (
     id text primary key,
     team_run_id text not null,
+    request_id text,
     sequence integer not null,
     source_type text not null,
     source_id text not null,
@@ -144,8 +146,46 @@ create table if not exists team_run_cycles (
     finished_at text,
     updated_at text not null,
     foreign key (team_run_id) references team_runs(id) on delete cascade,
+    foreign key (request_id) references team_cycle_requests(id) on delete set null,
     unique(team_run_id, sequence),
     unique(team_run_id, source_type, source_id)
+);
+
+create table if not exists team_run_auto_series (
+    id text primary key,
+    team_run_id text not null references team_runs(id) on delete cascade,
+    series_number integer not null,
+    status text not null,
+    target_slots integer not null check (target_slots > 0),
+    settled_slots integer not null default 0 check (settled_slots >= 0),
+    interval_seconds integer not null check (interval_seconds >= 60),
+    next_run_at text,
+    pause_reason text,
+    paused_cycle_id text references team_run_cycles(id) on delete set null,
+    created_at text not null,
+    started_at text not null,
+    completed_at text,
+    updated_at text not null,
+    unique (team_run_id, series_number)
+);
+
+create table if not exists team_cycle_requests (
+    id text primary key,
+    team_run_id text not null references team_runs(id) on delete cascade,
+    auto_series_id text references team_run_auto_series(id) on delete cascade,
+    slot_ordinal integer check (slot_ordinal is null or slot_ordinal > 0),
+    source_type text not null,
+    source_id text not null,
+    status text not null,
+    instruction text not null,
+    previous_cycle_id text references team_run_cycles(id) on delete set null,
+    previous_summary_text text,
+    retry_of_request_id text references team_cycle_requests(id) on delete set null,
+    created_at text not null,
+    claimed_at text,
+    settled_at text,
+    updated_at text not null,
+    unique (team_run_id, source_type, source_id)
 );
 
 create table if not exists team_agents (
@@ -292,11 +332,13 @@ create table if not exists hook_runs (
     result_text text,
     error_message text,
     team_run_cycle_id text unique,
+    team_cycle_request_id text,
     created_at text not null,
     started_at text,
     finished_at text,
     foreign key (hook_id) references hooks(id) on delete cascade,
     foreign key (team_run_cycle_id) references team_run_cycles(id) on delete set null,
+    foreign key (team_cycle_request_id) references team_cycle_requests(id) on delete set null,
     unique(hook_id, dedup_key)
 );
 
