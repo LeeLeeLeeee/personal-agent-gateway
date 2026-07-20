@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.redaction import redact_text
@@ -15,6 +16,18 @@ CyclePreparer = Callable[
     [TeamCycleRequest, TeamRunCycle],
     Awaitable[str | None],
 ]
+
+_TERMINAL_CYCLE_STATUSES = {
+    "completed",
+    "completed_with_failures",
+    "failed",
+    "canceled",
+}
+_PAUSE_ACTIONS = {
+    "paused_failure": ["retry", "continue"],
+    "paused_user": ["answer"],
+    "paused_interrupted": ["resume"],
+}
 
 
 class TeamCycleDispatcher:
@@ -91,8 +104,10 @@ class TeamCycleDispatcher:
                 {
                     "type": "team.cycle.started",
                     "team_run_id": team_run_id,
+                    "request_id": request.id,
                     "cycle_id": cycle.id,
-                    "cycle_request_id": request.id,
+                    "series_id": request.auto_series_id,
+                    "slot_ordinal": request.slot_ordinal,
                 }
             )
             await self._orchestrator.run_cycle(
@@ -100,7 +115,12 @@ class TeamCycleDispatcher:
                 cycle.id,
                 instruction,
             )
+        except asyncio.CancelledError:
+            await self._interrupt_cycle(team_run_id, cycle.id)
+            raise
         except Exception as exc:
+            if self._teams.get_cycle(cycle.id).status in _TERMINAL_CYCLE_STATUSES:
+                raise
             self._teams.set_cycle_status(
                 cycle.id,
                 "failed",
@@ -118,16 +138,17 @@ class TeamCycleDispatcher:
     ) -> None:
         if cycle_id is None:
             return
+        cycle = self._teams.get_cycle(cycle_id)
         result = self._cycles.settle_cycle(cycle_id)
-        await self._event_bus.publish(
-            {
-                "type": "team.cycle.settled",
-                "team_run_id": run.id,
-                "cycle_id": cycle_id,
-                "cycle_request_id": result.request.id,
-                "policy_status": self._cycles.policy_status(run.id),
-            }
-        )
+        if cycle.status in _TERMINAL_CYCLE_STATUSES:
+            await self._event_bus.publish(
+                {
+                    "type": "team.cycle.settled",
+                    **_cycle_lineage(cycle, result.request),
+                    "status": cycle.status,
+                    "duration_seconds": _duration_seconds(cycle),
+                }
+            )
         if (
             result.series is not None
             and result.series.status
@@ -141,8 +162,9 @@ class TeamCycleDispatcher:
                 {
                     "type": "team.auto_series.paused",
                     "team_run_id": run.id,
-                    "auto_series_id": result.series.id,
-                    "status": result.series.status,
+                    "series_id": result.series.id,
+                    "reason": result.series.pause_reason,
+                    "available_actions": _PAUSE_ACTIONS[result.series.status],
                 }
             )
         if (
@@ -153,14 +175,41 @@ class TeamCycleDispatcher:
                 {
                     "type": "team.auto_series.completed",
                     "team_run_id": run.id,
-                    "auto_series_id": result.series.id,
+                    "series_id": result.series.id,
+                    "settled_slots": result.series.settled_slots,
+                    "target_slots": result.series.target_slots,
                 }
             )
         if result.queue_ready:
             await self.enqueue_run(run.id)
 
     def reconcile(self) -> list[str]:
+        for request in self._cycles.list_dispatching_requests():
+            cycle = self._teams.get_cycle_for_request(request.id)
+            if cycle is not None and cycle.status in {"queued", "running"}:
+                self._teams.set_cycle_status(cycle.id, "interrupted")
         return self._cycles.reconcile(self._teams)
+
+    async def _interrupt_cycle(
+        self,
+        team_run_id: str,
+        cycle_id: str,
+    ) -> None:
+        cycle = self._teams.get_cycle(cycle_id)
+        if cycle.status in {"completed", "completed_with_failures", "failed"}:
+            request = self._cycles.get_request(cycle.request_id)
+            if request.status == "dispatching":
+                await self.on_team_run_settled(
+                    self._teams.get_team_run(team_run_id),
+                    cycle_id,
+                )
+            return
+        if cycle.status not in {"waiting_for_user", "interrupted"}:
+            self._teams.set_cycle_status(cycle_id, "interrupted")
+        await self.on_team_run_settled(
+            self._teams.get_team_run(team_run_id),
+            cycle_id,
+        )
 
     async def _run_loop(self) -> None:
         while True:
@@ -177,3 +226,22 @@ class TeamCycleDispatcher:
                 )
             finally:
                 self._queue.task_done()
+
+
+def _cycle_lineage(
+    cycle: TeamRunCycle,
+    request: TeamCycleRequest,
+) -> dict[str, object]:
+    return {
+        "team_run_id": cycle.team_run_id,
+        "request_id": request.id,
+        "cycle_id": cycle.id,
+        "series_id": request.auto_series_id,
+        "slot_ordinal": request.slot_ordinal,
+    }
+
+
+def _duration_seconds(cycle: TeamRunCycle) -> float:
+    started_at = datetime.fromisoformat(cycle.started_at or cycle.created_at)
+    finished_at = datetime.fromisoformat(cycle.finished_at or cycle.updated_at)
+    return max(0.0, (finished_at - started_at).total_seconds())

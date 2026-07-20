@@ -5,10 +5,12 @@ from pathlib import Path
 import pytest
 
 from personal_agent_gateway.events import EventBus
+from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.run_state import TeamRunRegistry
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
+from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamRun, TeamRunService
 from team_cycle_helpers import RecordingOrchestrator, make_cycle_services
 
@@ -119,6 +121,9 @@ async def test_nonterminal_cycle_keeps_request_until_same_cycle_completes(
     )
 
     assert services.cycles.get_request(request.id).status == "dispatching"
+    assert "team.cycle.settled" not in {
+        event["type"] for event in services.event_bus.recent()
+    }
 
     services.teams.set_cycle_status(
         cycle.id,
@@ -131,6 +136,108 @@ async def test_nonterminal_cycle_keeps_request_until_same_cycle_completes(
     )
 
     assert services.cycles.get_request(request.id).status == "settled"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_in_preparer_interrupts_same_cycle_and_request(
+    tmp_path: Path,
+) -> None:
+    services = make_dispatcher_services(tmp_path)
+    request = services.cycles.enqueue_request(
+        services.run.id,
+        "manual",
+        "client-1",
+        "work",
+        previous_cycle_id=None,
+    )
+    entered = asyncio.Event()
+
+    async def gated_preparer(*_args):
+        entered.set()
+        await asyncio.Event().wait()
+
+    services.dispatcher.add_preparer(gated_preparer)
+    task = asyncio.create_task(services.dispatcher.run_one(services.run.id))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    cycle = services.teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    assert cycle.status == "interrupted"
+    assert services.cycles.get_request(request.id).status == "dispatching"
+    assert "team.cycle.settled" not in {
+        event["type"] for event in services.event_bus.recent()
+    }
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_real_leader_add_work_preserves_cycle(
+    tmp_path: Path,
+) -> None:
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    entered = asyncio.Event()
+
+    class GatedLeaderModel:
+        async def complete(self, _messages):
+            entered.set()
+            await asyncio.Event().wait()
+            return ModelResponse(content="[]", tool_calls=[])
+
+    runtime = TeamRuntime(teams, lambda _agent: GatedLeaderModel())
+    orchestrator = TeamRunOrchestrator(TeamRunRegistry(), lambda: runtime)
+    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, EventBus())
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "client-1",
+        "work",
+        previous_cycle_id=None,
+    )
+    task = asyncio.create_task(dispatcher.run_one(run.id))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    cycle = teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    assert cycle.status == "interrupted"
+    assert cycles.get_request(request.id).status == "dispatching"
+    assert teams.list_tasks(run.id, cycle.id) == []
+
+
+def test_reconcile_interrupts_linked_queued_cycle_for_explicit_resume(
+    tmp_path: Path,
+) -> None:
+    _db, teams, cycles, run = make_cycle_services(
+        tmp_path,
+        "auto",
+        auto_repeat_count=1,
+    )
+    request = cycles.claim_next(run.id)
+    assert request is not None
+    cycle = teams.create_cycle(
+        run.id,
+        request.source_type,
+        request.source_id,
+        request_id=request.id,
+    )
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        RecordingOrchestrator(teams),
+        EventBus(),
+    )
+
+    assert dispatcher.reconcile() == []
+
+    assert teams.get_cycle(cycle.id).status == "interrupted"
+    assert cycles.get_request(request.id).status == "dispatching"
+    assert cycles.get_active_series(run.id).status == "paused_interrupted"
 
 
 @pytest.mark.asyncio
@@ -270,6 +377,63 @@ async def test_real_orchestrator_notifies_dispatcher_observer_before_return(
 
 
 @pytest.mark.asyncio
+async def test_later_observer_error_preserves_dispatcher_settlement(
+    tmp_path: Path,
+) -> None:
+    _db, teams, cycles, run = make_cycle_services(
+        tmp_path,
+        "auto",
+        auto_repeat_count=1,
+    )
+    event_bus = EventBus()
+
+    class CompletingRuntime:
+        async def add_work(
+            self,
+            _team_run_id: str,
+            _instruction: str,
+            cycle_id: str | None = None,
+        ) -> list[object]:
+            assert cycle_id is not None
+            teams.set_cycle_status(cycle_id, "running")
+            return []
+
+        async def resume(
+            self,
+            team_run_id: str,
+            cycle_id: str | None = None,
+        ) -> TeamRun:
+            assert cycle_id is not None
+            teams.set_cycle_status(cycle_id, "completed", summary="done")
+            return teams.get_team_run(team_run_id)
+
+    orchestrator = TeamRunOrchestrator(
+        TeamRunRegistry(),
+        CompletingRuntime,
+    )
+    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, event_bus)
+    orchestrator.add_observer(dispatcher.on_team_run_settled)
+
+    async def fail_later_observer(_run, _cycle_id):
+        raise RuntimeError("later observer failed")
+
+    orchestrator.add_observer(fail_later_observer)
+    request = cycles.list_requests(run.id)[0]
+
+    with pytest.raises(RuntimeError, match="later observer failed"):
+        await dispatcher.run_one(run.id)
+
+    cycle = teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    assert cycle.status == "completed"
+    assert cycles.get_request(request.id).status == "settled"
+    assert cycles.policy_status(run.id) == "auto_completed"
+    assert [
+        event["type"] for event in event_bus.recent()
+    ].count("team.cycle.settled") == 1
+
+
+@pytest.mark.asyncio
 async def test_dispatcher_lifecycle_reports_redacted_loop_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -352,9 +516,58 @@ async def test_auto_settlement_publishes_series_event(
 
     events = event_bus.recent()
     assert expected_event in [event["type"] for event in events]
+    started = next(
+        event
+        for event in events
+        if event["type"] == "team.cycle.started"
+    )
+    assert {
+        key: started[key]
+        for key in (
+            "team_run_id",
+            "request_id",
+            "cycle_id",
+            "series_id",
+            "slot_ordinal",
+        )
+    } == {
+        "team_run_id": run.id,
+        "request_id": request.id,
+        "cycle_id": cycle.id,
+        "series_id": request.auto_series_id,
+        "slot_ordinal": 1,
+    }
     settled = next(
         event
         for event in events
         if event["type"] == "team.cycle.settled"
     )
-    assert settled["policy_status"] == expected_policy_status
+    assert {
+        key: settled[key]
+        for key in (
+            "team_run_id",
+            "request_id",
+            "cycle_id",
+            "series_id",
+            "slot_ordinal",
+            "status",
+        )
+    } == {
+        "team_run_id": run.id,
+        "request_id": request.id,
+        "cycle_id": cycle.id,
+        "series_id": request.auto_series_id,
+        "slot_ordinal": 1,
+        "status": cycle_status,
+    }
+    assert settled["duration_seconds"] >= 0
+    series_event = next(
+        event for event in events if event["type"] == expected_event
+    )
+    if expected_event == "team.auto_series.paused":
+        assert series_event["reason"] == "boom"
+        assert series_event["available_actions"] == ["retry", "continue"]
+    else:
+        assert series_event["settled_slots"] == 1
+        assert series_event["target_slots"] == 1
+    assert cycles.policy_status(run.id) == expected_policy_status
