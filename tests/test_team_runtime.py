@@ -918,6 +918,7 @@ async def test_continuous_run_executes_and_synthesizes_each_cycle_in_isolation(t
         "plan_and_execute",
         1,
         lifecycle_mode="continuous",
+        execution_policy="triggered",
     )
     first_cycle = teams.create_cycle(run.id, "hook", "hook-run-1")
     second_cycle = teams.create_cycle(run.id, "hook", "hook-run-2")
@@ -961,6 +962,56 @@ async def test_continuous_run_executes_and_synthesizes_each_cycle_in_isolation(t
 
 
 @pytest.mark.asyncio
+async def test_previous_cycle_summary_is_only_added_to_leader_instruction(
+    tmp_path,
+):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    worker = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run(
+        "mailbox",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "client-1")
+    leader_model = ScriptedModel(
+        [
+            '[{"title":"New work","description":"process the next item"}]',
+            "done",
+        ]
+    )
+    worker_model = ScriptedModel(["worker result"])
+    runtime = TeamRuntime(
+        teams,
+        lambda agent: (
+            leader_model
+            if agent.role == "leader"
+            else worker_model
+        ),
+    )
+    instruction = (
+        "next work\n\nPREVIOUS CYCLE SUMMARY\nprevious result"
+    )
+
+    await runtime.add_work(run.id, instruction, cycle.id)
+    await runtime.resume(run.id, cycle.id)
+
+    assert "PREVIOUS CYCLE SUMMARY" in (
+        leader_model.messages[0][0]["content"]
+    )
+    assert "PREVIOUS CYCLE SUMMARY" not in (
+        worker_model.messages[0][0]["content"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_continuous_run_uses_cycle_round_budget_instead_of_run_total(tmp_path):
     db = Database(tmp_path / "app.db")
     db.initialize()
@@ -975,6 +1026,7 @@ async def test_continuous_run_uses_cycle_round_budget_instead_of_run_total(tmp_p
         "plan_and_execute",
         1,
         lifecycle_mode="continuous",
+        execution_policy="triggered",
     )
     exhausted_cycle = teams.create_cycle(
         run.id, "hook", "hook-run-1", rounds_budget=1

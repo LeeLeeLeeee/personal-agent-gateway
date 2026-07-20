@@ -63,3 +63,18 @@ def make_auto_run(
         auto_repeat_count=target_slots,
         auto_interval_seconds=interval_seconds,
     )
+
+
+class RecordingOrchestrator:
+    def __init__(self, teams: TeamRunService) -> None:
+        self.teams = teams
+        self.calls: list[tuple[str, str, str]] = []
+
+    async def run_cycle(
+        self,
+        team_run_id: str,
+        cycle_id: str,
+        instruction: str,
+    ) -> TeamRun:
+        self.calls.append((team_run_id, cycle_id, instruction))
+        return self.teams.get_team_run(team_run_id)
