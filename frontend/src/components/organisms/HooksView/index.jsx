@@ -1,19 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
-import { AgentPicker } from "../AgentPicker/index.jsx";
+import { PersonaPicker } from "../PersonaPicker/index.jsx";
 import { useConfirm } from "../../providers/UiProvider/index.jsx";
 import { fmtDateTime } from "../../../lib/time.js";
-
-function seedAgentConfig(agents) {
-  const agent = agents.find((candidate) => candidate.available) || agents[0] || null;
-  if (!agent) return null;
-  return {
-    agent_id: agent.id,
-    model: agent.default_model,
-    options: { ...(agent.defaults || {}) },
-    editable: true
-  };
-}
 
 function targetSummary(hook, teamRuns) {
   const bits = [];
@@ -23,13 +12,15 @@ function targetSummary(hook, teamRuns) {
   if (hook.target_kind === "team_run") {
     const target = teamRuns.find((run) => run.id === hook.target_team_run_id);
     bits.push(`team:${target?.goal || hook.target_team_run_id || "missing"}`);
+  } else if (hook.target_kind === "persona") {
+    bits.push(`persona:${hook.target_persona_snapshot?.name || hook.target_persona_id || "missing"}`);
   } else {
     bits.push(`${hook.target_backend}/${hook.target_model}`);
   }
   return bits.join(" · ");
 }
 
-function HookForm({ agents, teamRuns, onCreate, onTestConnection }) {
+function HookForm({ personas, teamRuns, onCreate, onTestConnection }) {
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("993");
@@ -40,15 +31,11 @@ function HookForm({ agents, teamRuns, onCreate, onTestConnection }) {
   const [folder, setFolder] = useState("INBOX");
   const [promptTemplate, setPromptTemplate] = useState("");
   const [intervalMinutes, setIntervalMinutes] = useState(5);
-  const [agentConfig, setAgentConfig] = useState(null);
-  const [targetKind, setTargetKind] = useState("agent");
+  const [targetPersonaId, setTargetPersonaId] = useState("");
+  const [targetKind, setTargetKind] = useState("persona");
   const [targetTeamRunId, setTargetTeamRunId] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
-
-  useEffect(() => {
-    if (!agentConfig && agents.length) setAgentConfig(seedAgentConfig(agents));
-  }, [agents, agentConfig]);
 
   const continuousRuns = teamRuns.filter(
     (run) => run.lifecycle_mode === "continuous" && run.run_mode === "plan_and_execute"
@@ -57,7 +44,12 @@ function HookForm({ agents, teamRuns, onCreate, onTestConnection }) {
   const selectedTargetTeamRunId = continuousRuns.some(
     (run) => run.id === targetTeamRunId
   ) ? targetTeamRunId : (continuousRuns[0]?.id || "");
-  const targetReady = targetKind === "team_run" ? selectedTargetTeamRunId : agentConfig;
+  const selectedTargetPersonaId = personas.some(
+    (persona) => persona.id === targetPersonaId
+  ) ? targetPersonaId : (personas[0]?.id || "");
+  const targetReady = targetKind === "team_run"
+    ? selectedTargetTeamRunId
+    : selectedTargetPersonaId;
 
   const canSubmit =
     name.trim() && host.trim() && username.trim() && password
@@ -98,10 +90,11 @@ function HookForm({ agents, teamRuns, onCreate, onTestConnection }) {
         folder: folder.trim() || "INBOX"
       },
       target_kind: targetKind,
+      target_persona_id: targetKind === "persona" ? selectedTargetPersonaId : null,
       target_team_run_id: targetKind === "team_run" ? selectedTargetTeamRunId : null,
-      target_backend: targetKind === "agent" ? agentConfig.agent_id : "",
-      target_model: targetKind === "agent" ? agentConfig.model : "",
-      target_options: targetKind === "agent" ? (agentConfig.options || {}) : {},
+      target_backend: "",
+      target_model: "",
+      target_options: {},
       prompt_template: promptTemplate.trim(),
       poll_interval_seconds: (Number(intervalMinutes) || 1) * 60
     });
@@ -116,7 +109,7 @@ function HookForm({ agents, teamRuns, onCreate, onTestConnection }) {
   }
 
   return (
-    <form className="schedule-form" onSubmit={submit} aria-label="New hook">
+    <form id="new-hook-form" className="schedule-form" onSubmit={submit} aria-label="New hook">
       <div className="schedule-form-head mono">NEW HOOK</div>
       <div className="schedule-form-body">
         <label className="schedule-field">
@@ -170,10 +163,10 @@ function HookForm({ agents, teamRuns, onCreate, onTestConnection }) {
         <div className="tp-mode" role="group" aria-label="Hook target">
           <button
             type="button"
-            className={`tp-mode-btn${targetKind === "agent" ? " active" : ""}`}
-            aria-pressed={targetKind === "agent"}
-            onClick={() => setTargetKind("agent")}
-          >AGENT</button>
+            className={`tp-mode-btn${targetKind === "persona" ? " active" : ""}`}
+            aria-pressed={targetKind === "persona"}
+            onClick={() => setTargetKind("persona")}
+          >PERSONA</button>
           <button
             type="button"
             className={`tp-mode-btn${targetKind === "team_run" ? " active" : ""}`}
@@ -182,8 +175,12 @@ function HookForm({ agents, teamRuns, onCreate, onTestConnection }) {
             onClick={() => setTargetKind("team_run")}
           >TEAM RUN</button>
         </div>
-        {targetKind === "agent" ? (
-          <AgentPicker agents={agents} config={agentConfig} onChange={setAgentConfig} />
+        {targetKind === "persona" ? (
+          <PersonaPicker
+            personas={personas}
+            value={selectedTargetPersonaId}
+            onChange={setTargetPersonaId}
+          />
         ) : (
           <label className="schedule-field">
             <span className="schedule-field-label">Target team run</span>
@@ -299,6 +296,7 @@ export function HooksView({
   hooks = [],
   hookRuns = [],
   agents = [],
+  personas = [],
   teamRuns = [],
   openHookRunsId = null,
   onCreate,
@@ -310,11 +308,23 @@ export function HooksView({
   onTestConnection,
   onOpenTeamRun
 }) {
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const openHook = hooks.find((hook) => hook.id === openHookRunsId) || null;
   return (
-    <div className="schedules-view">
+    <div className={`schedules-view${showCreateForm ? "" : " hooks-view-list-only"}`}>
       <div className="schedules-main">
-        <h1 className="headline">Hooks</h1>
+        <div className="hooks-view-head">
+          <h1 className="headline">Hooks</h1>
+          <button
+            type="button"
+            className={`btn btn-sm${showCreateForm ? " btn-primary" : ""}`}
+            aria-controls="new-hook-form"
+            aria-expanded={showCreateForm}
+            onClick={() => setShowCreateForm((visible) => !visible)}
+          >
+            CREATE NEW
+          </button>
+        </div>
         <div className="schedules-sub mono">{hooks.length} shown</div>
         {hooks.length ? (
           <div className="schedule-list">
@@ -343,12 +353,14 @@ export function HooksView({
         ) : null}
       </div>
 
-      <HookForm
-        agents={agents}
-        teamRuns={teamRuns}
-        onCreate={onCreate}
-        onTestConnection={onTestConnection}
-      />
+      {showCreateForm ? (
+        <HookForm
+          personas={personas}
+          teamRuns={teamRuns}
+          onCreate={onCreate}
+          onTestConnection={onTestConnection}
+        />
+      ) : null}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { fmtDateTime, fmtElapsed } from "../../../lib/time.js";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 import { Composer } from "../../molecules/Composer/index.jsx";
-import { AgentPicker } from "../AgentPicker/index.jsx";
+import { PersonaPicker } from "../PersonaPicker/index.jsx";
 import { SessionRail } from "../SessionRail/index.jsx";
 import { Timeline } from "../Timeline/index.jsx";
 
@@ -45,8 +45,12 @@ function agentLabel(agents, config) {
 
 function CompactLockedStatus({ agents, config, entries, busy, turnStart, turnEnd }) {
   const live = deriveLive({ entries, busy, turnStart, turnEnd });
+  const personaName = config.persona_snapshot?.name;
   const chips = [
-    { k: "AGENT", v: agentLabel(agents, config) },
+    personaName
+      ? { k: "PERSONA", v: personaName }
+      : { k: "AGENT", v: agentLabel(agents, config) },
+    ...(personaName ? [{ k: "BACKEND", v: agentLabel(agents, config) }] : []),
     { k: "MODEL", v: config.model },
     ...Object.entries(config.options || {})
       .filter(([, value]) => value)
@@ -110,6 +114,7 @@ function WorkingIndicator({ turnStart }) {
 
 export function ChatView({
   agents,
+  personas = [],
   sessions,
   sessionConfig,
   sessionConfigError,
@@ -176,13 +181,20 @@ export function ChatView({
           <CompactLockedStatus agents={agents} config={sessionConfig} entries={entries} busy={busy} turnStart={turnStart} turnEnd={turnEnd} />
         ) : (
           <>
-            <AgentPicker
-              agents={agents}
-              config={sessionConfig}
-              error={sessionConfigError}
-              onChange={onSessionConfigChange}
-              onRetry={onSessionConfigRetry}
+            <PersonaPicker
+              personas={personas}
+              value={sessionConfig?.persona_id || ""}
+              onChange={(personaId) => onSessionConfigChange({ persona_id: personaId })}
             />
+            {sessionConfigError ? (
+              <div className="config-bar-error">
+                <span className="config-bar-error-k mono">CONFIG UPDATE FAILED</span>
+                <span className="config-bar-error-msg mono">{sessionConfigError}</span>
+                {onSessionConfigRetry ? (
+                  <button type="button" className="config-bar-retry" onClick={onSessionConfigRetry}>RETRY</button>
+                ) : null}
+              </div>
+            ) : null}
             <LiveStatusSummary entries={entries} busy={busy} turnStart={turnStart} turnEnd={turnEnd} />
           </>
         )}

@@ -177,7 +177,7 @@ def _backup_payload(backup: BackupRecord) -> dict[str, object]:
 
 def _session_items(request: Request) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
-    for session in request.app.state.transcript_store.list_sessions():
+    for session in request.app.state.transcript_store.list_sessions(origin="chat"):
         status = (
             "running"
             if request.app.state.run_registry.is_running(session.id)

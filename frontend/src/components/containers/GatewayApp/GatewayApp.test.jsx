@@ -710,7 +710,7 @@ describe("GatewayApp", () => {
     expect(screen.getAllByText("streamed once")).toHaveLength(1);
   });
 
-  it("loads editable agent config for an empty session and saves changes", async () => {
+  it("loads Personas for an empty session and saves the selected Persona", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
       "GET /api/status": { ...status, session_config: { agent_id: "codex", model: "default", options: {}, editable: true } },
@@ -721,17 +721,29 @@ describe("GatewayApp", () => {
         { id: "claude", label: "Claude Code", available: true, models: ["sonnet"], default_model: "sonnet", defaults: { effort: "medium" }, options_schema: [{ name: "effort", kind: "select", choices: ["medium", "high"] }] }
       ] },
       "GET /api/sessions/active/config": { config: { agent_id: "codex", model: "default", options: {}, editable: true } },
-      "PUT /api/sessions/active/config": { config: { agent_id: "claude", model: "sonnet", options: { effort: "medium" }, editable: true } }
+      "GET /api/personas": { personas: [{
+        id: "p1", name: "Mail Manager", role: "Inbox triage",
+        default_backend: "claude", default_model: "sonnet", default_options: { effort: "medium" }
+      }] },
+      "PUT /api/sessions/active/config": {
+        config: {
+          persona_id: "p1", persona_snapshot: { id: "p1", name: "Mail Manager" },
+          agent_id: "claude", model: "sonnet", options: { effort: "medium" }, editable: true
+        }
+      }
     });
 
     render(<GatewayApp />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Agent" }));
-    await userEvent.click(await screen.findByRole("button", { name: /Claude Code/ }));
+    await screen.findByRole("option", { name: "Mail Manager — Inbox triage" });
+    await userEvent.selectOptions(await screen.findByLabelText("Persona"), "p1");
 
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(
       "/api/sessions/active/config",
-      expect.objectContaining({ method: "PUT" })
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ persona_id: "p1" })
+      })
     ));
   });
 
@@ -749,6 +761,10 @@ describe("GatewayApp", () => {
         { id: "claude", label: "Claude Code", available: true, models: ["sonnet"], default_model: "sonnet", defaults: { effort: "medium" }, options_schema: [{ name: "effort", kind: "select", choices: ["medium", "high"] }] }
       ] },
       "GET /api/sessions/active/config": { config: { agent_id: "codex", model: "default", options: {}, editable: true } },
+      "GET /api/personas": { personas: [{
+        id: "p1", name: "Mail Manager", role: "Inbox triage",
+        default_backend: "claude", default_model: "sonnet", default_options: { effort: "medium" }
+      }] },
       "PUT /api/sessions/active/config": response({}, false),
       "POST /api/sessions/session-2/activate": {
         session_id: "session-2",
@@ -758,8 +774,8 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Agent" }));
-    await userEvent.click(await screen.findByRole("button", { name: /Claude Code/ }));
+    await screen.findByRole("option", { name: "Mail Manager — Inbox triage" });
+    await userEvent.selectOptions(await screen.findByLabelText("Persona"), "p1");
     expect(await screen.findByText("Config update failed")).toBeInTheDocument();
 
     await userEvent.click(await screen.findByText("Old chat"));
@@ -1342,6 +1358,7 @@ describe("GatewayApp", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Hooks" }));
     expect(await screen.findByRole("heading", { name: "Hooks" })).toBeInTheDocument();
     expect(await screen.findByText("Invoice Watcher")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "CREATE NEW" }));
     await userEvent.click(screen.getByRole("button", { name: "TEAM RUN" }));
     expect(screen.getByRole("option", { name: "Mail inbox" })).toBeInTheDocument();
   });

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from personal_agent_gateway.agents import AgentDescriptor, AgentOption
 from personal_agent_gateway.api.dependencies import session_dependency
+from personal_agent_gateway.personas import persona_snapshot
 from personal_agent_gateway.session_config import SessionAgentConfigService
 
 
@@ -13,8 +14,9 @@ session_config_router = APIRouter(prefix="/api/sessions/active/config", tags=["a
 
 
 class SessionConfigRequest(BaseModel):
-    agent_id: str
-    model: str
+    persona_id: str | None = None
+    agent_id: str | None = None
+    model: str | None = None
     options: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -43,8 +45,29 @@ def set_active_session_config(
     _session: None = session_dependency,
 ) -> dict[str, dict[str, object]]:
     registry = request.app.state.agent_registry
+    selected_persona = None
+    if payload.persona_id:
+        try:
+            selected_persona = request.app.state.persona_service.get_persona(
+                payload.persona_id
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail="Persona not found") from exc
+        requested_agent = selected_persona.default_backend
+        requested_model = selected_persona.default_model
+        requested_options = selected_persona.default_options
+    else:
+        if not payload.agent_id or not payload.model:
+            raise HTTPException(status_code=400, detail="Persona or Agent config is required")
+        requested_agent = payload.agent_id
+        requested_model = payload.model
+        requested_options = payload.options
     try:
-        validated = registry.validate_config(payload.agent_id, payload.model, payload.options)
+        validated = registry.validate_config(
+            requested_agent,
+            requested_model,
+            requested_options,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -55,6 +78,12 @@ def set_active_session_config(
             validated["agent_id"],
             validated["model"],
             validated["options"],
+            persona_id=selected_persona.id if selected_persona is not None else None,
+            persona_snapshot=(
+                persona_snapshot(selected_persona)
+                if selected_persona is not None
+                else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

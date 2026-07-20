@@ -434,6 +434,7 @@ describe("TeamRunDetail", () => {
     />);
 
     expect(screen.getByRole("region", { name: "Input needed" })).toBeInTheDocument();
+    expect(screen.getByText(/Independent work is complete/)).toBeInTheDocument();
     expect(screen.getByText("Recommended: Staging")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
@@ -450,6 +451,34 @@ describe("TeamRunDetail", () => {
       "Q-002": "Release team"
     });
     expect(submit).toBeDisabled();
+  });
+
+  it.each([
+    ["planning", "Planning is paused for your decision. Answer every open question to start the work."],
+    ["synthesis", "Work is complete. Answer every open question to finalize the response."]
+  ])("shows the correct %s decision stage guidance", (stage, guidance) => {
+    render(<TeamRunDetail
+      detail={{
+        run: { id: "r1", goal: "Ship", status: "waiting_for_user", run_mode: "plan_and_execute" },
+        agents: [],
+        tasks: [],
+        messages: [],
+        decisionRequest: {
+          id: "d1",
+          revision: 1,
+          status: "awaiting_user",
+          items: [{
+            id: "Q-001",
+            stage,
+            topic: "Scope",
+            question: "Which scope?",
+            options: []
+          }]
+        }
+      }}
+    />);
+
+    expect(screen.getByText(guidance)).toBeInTheDocument();
   });
 
   it("shows a recoverable message when a waiting run has no active request", () => {

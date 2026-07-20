@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatView } from "./index.jsx";
 
@@ -14,6 +15,7 @@ const sessions = [{
 function props(entries) {
   return {
     agents: [],
+    personas: [],
     sessions,
     sessionConfig: null,
     sessionConfigError: "",
@@ -34,6 +36,56 @@ function props(entries) {
     onResolveApproval: vi.fn()
   };
 }
+
+describe("ChatView Persona config", () => {
+  it("selects a Persona instead of a runtime Agent for an editable session", async () => {
+    const onSessionConfigChange = vi.fn();
+    const personas = [{
+      id: "p1",
+      name: "Mail Manager",
+      role: "Inbox triage",
+      default_backend: "codex",
+      default_model: "gpt-5"
+    }];
+    render(
+      <ChatView
+        {...props([])}
+        personas={personas}
+        sessionConfig={{
+          persona_id: null,
+          persona_snapshot: null,
+          agent_id: "codex",
+          model: "default",
+          options: {},
+          editable: true
+        }}
+        onSessionConfigChange={onSessionConfigChange}
+      />
+    );
+
+    expect(screen.queryByLabelText("Agent")).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Persona"), "p1");
+    expect(onSessionConfigChange).toHaveBeenCalledWith({ persona_id: "p1" });
+  });
+
+  it("shows the snapshotted Persona name after the session is locked", () => {
+    render(
+      <ChatView
+        {...props([])}
+        sessionConfig={{
+          persona_id: "p1",
+          persona_snapshot: { id: "p1", name: "Mail Manager" },
+          agent_id: "codex",
+          model: "gpt-5",
+          options: {},
+          editable: false
+        }}
+      />
+    );
+
+    expect(screen.getByLabelText("Locked session status")).toHaveTextContent(/PERSONA\s*Mail Manager/);
+  });
+});
 
 function sizeTranscript(node, scrollHeight = 500, clientHeight = 100) {
   Object.defineProperty(node, "scrollHeight", { configurable: true, value: scrollHeight });

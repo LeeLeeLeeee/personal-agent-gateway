@@ -26,8 +26,10 @@ class ScriptedModel:
 
     def __post_init__(self):
         self._calls = 0
+        self.messages = []
 
     async def complete(self, messages):
+        self.messages.append(messages)
         idx = min(self._calls, len(self.responses) - 1)
         self._calls += 1
         value = self.responses[idx]
@@ -390,6 +392,124 @@ async def test_user_decisions_batch_after_independent_tasks_and_resume_with_answ
         "deployed to staging",
         "notified release team",
     ]
+
+
+@pytest.mark.asyncio
+async def test_leader_can_request_user_decision_during_planning_and_resume(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("Deploy the service", leader.id, [member.id], "plan_and_execute", 1)
+    ask_environment = json.dumps(
+        {
+            "resolution": {
+                "kind": "ask_user",
+                "topic": "deployment environment",
+                "question": "Deploy to staging or production?",
+                "why_needed": "The target changes the execution plan.",
+                "options": [
+                    {"id": "staging", "label": "Staging", "impact": "Lower risk."},
+                    {"id": "production", "label": "Production", "impact": "User-facing."},
+                ],
+                "recommended_option_id": "staging",
+                "blocking_scope": "run",
+            }
+        }
+    )
+    plan = '[{"title":"Deploy staging","description":"Deploy to staging"}]'
+    leader_model = ScriptedModel([ask_environment, plan, "Deployment completed."])
+    worker_model = ScriptedModel(["deployed"])
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=lambda agent: leader_model if agent.role == "leader" else worker_model,
+    )
+
+    waiting = await runtime.start(run.id)
+
+    assert waiting.status == "waiting_for_user"
+    assert teams.list_tasks(run.id) == []
+    request = teams.get_active_decision_request(run.id)
+    assert request is not None
+    assert request.items[0]["stage"] == "planning"
+    assert request.items[0]["blocking_task_ids"] == []
+
+    teams.answer_decision_request(
+        run.id,
+        request.id,
+        request.revision,
+        {"Q-001": "staging"},
+    )
+    completed = await runtime.resume(run.id)
+
+    assert completed.status == "completed"
+    assert completed.summary == "Deployment completed."
+    assert [task.title for task in teams.list_tasks(run.id)] == ["Deploy staging"]
+    assert "Q: Deploy to staging or production?\nA: staging" in (
+        leader_model.messages[1][0]["content"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_leader_can_request_user_decision_before_final_synthesis(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("Prepare release report", leader.id, [member.id], "plan_and_execute", 1)
+    ask_detail = json.dumps(
+        {
+            "resolution": {
+                "kind": "ask_user",
+                "topic": "report detail",
+                "question": "Should the final report include internal diagnostics?",
+                "why_needed": "This changes the final report content.",
+                "options": [
+                    {"id": "omit", "label": "Omit", "impact": "Concise report."},
+                    {"id": "include", "label": "Include", "impact": "More detail."},
+                ],
+                "recommended_option_id": "omit",
+                "blocking_scope": "run",
+            }
+        }
+    )
+    leader_model = ScriptedModel([
+        '[{"title":"Collect results","description":"Collect release results"}]',
+        ask_detail,
+        "Final report without internal diagnostics.",
+    ])
+    worker_model = ScriptedModel(["results collected"])
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=lambda agent: leader_model if agent.role == "leader" else worker_model,
+    )
+
+    waiting = await runtime.start(run.id)
+
+    assert waiting.status == "waiting_for_user"
+    request = teams.get_active_decision_request(run.id)
+    assert request is not None
+    assert request.items[0]["stage"] == "synthesis"
+    assert [task.status for task in teams.list_tasks(run.id)] == ["completed"]
+
+    teams.answer_decision_request(
+        run.id,
+        request.id,
+        request.revision,
+        {"Q-001": "omit"},
+    )
+    completed = await runtime.resume(run.id)
+
+    assert completed.status == "completed"
+    assert completed.summary == "Final report without internal diagnostics."
+    assert [message.kind for message in teams.list_messages(run.id)].count("agent_output") == 1
+    assert "Q: Should the final report include internal diagnostics?\nA: omit" in (
+        leader_model.messages[2][0]["content"]
+    )
 
 
 @pytest.mark.asyncio

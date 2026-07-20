@@ -949,94 +949,14 @@ class TeamRunService:
 
             team_run_id = task["team_run_id"]
             cycle_id = task["cycle_id"]
-            cycle_clause = "cycle_id is null" if cycle_id is None else "cycle_id = ?"
-            cycle_parameters: tuple[object, ...] = (
-                (team_run_id,) if cycle_id is None else (team_run_id, cycle_id)
-            )
-            row = connection.execute(
-                f"""
-                select * from team_decision_requests
-                where team_run_id = ? and {cycle_clause}
-                  and status in ('collecting', 'awaiting_user')
-                order by created_at desc limit 1
-                """,
-                cycle_parameters,
-            ).fetchone()
-            if row is not None and row["status"] != "collecting":
-                raise ValueError("Decision request is already awaiting user input")
-
-            if row is None:
-                request_id = uuid4().hex
-                items: list[dict[str, object]] = []
-                revision = 0
-                connection.execute(
-                    """
-                    insert into team_decision_requests (
-                        id, team_run_id, cycle_id, status, revision, items_json, answers_json,
-                        file_path, created_at, published_at, answered_at, updated_at
-                    ) values (?, ?, ?, 'collecting', 0, '[]', '{}', 'USER_DECISIONS.md', ?, null, null, ?)
-                    """,
-                    (request_id, team_run_id, cycle_id, now, now),
-                )
-            else:
-                request_id = row["id"]
-                items = json.loads(row["items_json"])
-                revision = row["revision"]
-
-            topic = str(decision.get("topic") or "").strip()
-            question = str(decision.get("question") or "").strip()
-            if not question:
-                raise ValueError("User decision requires a question")
-            duplicate = next(
-                (
-                    item
-                    for item in items
-                    if item.get("topic") == topic and item.get("question") == question
-                ),
-                None,
-            )
-            if duplicate is not None:
-                blocking_ids = list(duplicate.get("blocking_task_ids") or [])
-                if task_id not in blocking_ids:
-                    blocking_ids.append(task_id)
-                duplicate["blocking_task_ids"] = blocking_ids
-                query_ids = list(duplicate.get("query_message_ids") or [])
-                query_message_id = decision.get("query_message_id")
-                if isinstance(query_message_id, str) and query_message_id not in query_ids:
-                    query_ids.append(query_message_id)
-                duplicate["query_message_ids"] = query_ids
-            else:
-                item_id = f"Q-{len(items) + 1:03d}"
-                query_message_id = decision.get("query_message_id")
-                items.append(
-                    {
-                        "id": item_id,
-                        "topic": topic,
-                        "question": question,
-                        "why_needed": str(decision.get("why_needed") or "").strip(),
-                        "options": list(decision.get("options") or []),
-                        "recommended_option_id": decision.get("recommended_option_id"),
-                        "blocking_scope": (
-                            "run" if decision.get("blocking_scope") == "run" else "task"
-                        ),
-                        "blocking_task_ids": [task_id],
-                        "query_message_ids": (
-                            [query_message_id] if isinstance(query_message_id, str) else []
-                        ),
-                    }
-                )
-
-            connection.execute(
-                """
-                update team_decision_requests
-                set items_json = ?, revision = ?, updated_at = ? where id = ?
-                """,
-                (
-                    json.dumps(items, ensure_ascii=False, sort_keys=True),
-                    revision + 1,
-                    now,
-                    request_id,
-                ),
+            request_id = self._append_decision_item(
+                connection,
+                team_run_id,
+                cycle_id,
+                decision,
+                now,
+                blocking_task_id=task_id,
+                stage="task",
             )
             connection.execute(
                 """
@@ -1057,6 +977,137 @@ class TeamRunService:
         request = self._get_decision_request(request_id)
         self._project_decisions_safely(team_run_id)
         return request
+
+    def defer_run_for_user_decision(
+        self,
+        team_run_id: str,
+        decision: dict[str, object],
+        *,
+        stage: Literal["planning", "synthesis"],
+        cycle_id: str | None = None,
+    ) -> TeamDecisionRequest:
+        self.get_team_run(team_run_id)
+        if cycle_id is not None:
+            self._require_cycle_for_run(team_run_id, cycle_id)
+        now = _now()
+        with self._db.connection() as connection:
+            request_id = self._append_decision_item(
+                connection,
+                team_run_id,
+                cycle_id,
+                decision,
+                now,
+                blocking_task_id=None,
+                stage=stage,
+            )
+        request = self._get_decision_request(request_id)
+        self._project_decisions_safely(team_run_id)
+        return request
+
+    def _append_decision_item(
+        self,
+        connection,
+        team_run_id: str,
+        cycle_id: str | None,
+        decision: dict[str, object],
+        now: str,
+        *,
+        blocking_task_id: str | None,
+        stage: Literal["task", "planning", "synthesis"],
+    ) -> str:
+        cycle_clause = "cycle_id is null" if cycle_id is None else "cycle_id = ?"
+        parameters: tuple[object, ...] = (
+            (team_run_id,) if cycle_id is None else (team_run_id, cycle_id)
+        )
+        row = connection.execute(
+            f"""
+            select * from team_decision_requests
+            where team_run_id = ? and {cycle_clause}
+              and status in ('collecting', 'awaiting_user')
+            order by created_at desc limit 1
+            """,
+            parameters,
+        ).fetchone()
+        if row is not None and row["status"] != "collecting":
+            raise ValueError("Decision request is already awaiting user input")
+
+        if row is None:
+            request_id = uuid4().hex
+            items: list[dict[str, object]] = []
+            revision = 0
+            connection.execute(
+                """
+                insert into team_decision_requests (
+                    id, team_run_id, cycle_id, status, revision, items_json, answers_json,
+                    file_path, created_at, published_at, answered_at, updated_at
+                ) values (?, ?, ?, 'collecting', 0, '[]', '{}', 'USER_DECISIONS.md', ?, null, null, ?)
+                """,
+                (request_id, team_run_id, cycle_id, now, now),
+            )
+        else:
+            request_id = row["id"]
+            items = json.loads(row["items_json"])
+            revision = row["revision"]
+
+        topic = str(decision.get("topic") or "").strip()
+        question = str(decision.get("question") or "").strip()
+        if not question:
+            raise ValueError("User decision requires a question")
+        duplicate = next(
+            (
+                item
+                for item in items
+                if item.get("topic") == topic and item.get("question") == question
+            ),
+            None,
+        )
+        query_message_id = decision.get("query_message_id")
+        if duplicate is not None:
+            blocking_ids = list(duplicate.get("blocking_task_ids") or [])
+            if blocking_task_id is not None and blocking_task_id not in blocking_ids:
+                blocking_ids.append(blocking_task_id)
+            duplicate["blocking_task_ids"] = blocking_ids
+            query_ids = list(duplicate.get("query_message_ids") or [])
+            if isinstance(query_message_id, str) and query_message_id not in query_ids:
+                query_ids.append(query_message_id)
+            duplicate["query_message_ids"] = query_ids
+        else:
+            items.append(
+                {
+                    "id": f"Q-{len(items) + 1:03d}",
+                    "stage": stage,
+                    "topic": topic,
+                    "question": question,
+                    "why_needed": str(decision.get("why_needed") or "").strip(),
+                    "options": list(decision.get("options") or []),
+                    "recommended_option_id": decision.get("recommended_option_id"),
+                    "blocking_scope": (
+                        "run"
+                        if blocking_task_id is None or decision.get("blocking_scope") == "run"
+                        else "task"
+                    ),
+                    "blocking_task_ids": (
+                        [blocking_task_id] if blocking_task_id is not None else []
+                    ),
+                    "query_message_ids": (
+                        [query_message_id] if isinstance(query_message_id, str) else []
+                    ),
+                }
+            )
+
+        connection.execute(
+            """
+            update team_decision_requests
+            set items_json = ?, revision = ?, updated_at = ? where id = ?
+            """,
+            (
+                json.dumps(items, ensure_ascii=False, sort_keys=True),
+                revision + 1,
+                now,
+                request_id,
+            ),
+        )
+        return request_id
 
     def publish_decision_request(
         self, team_run_id: str, cycle_id: str | None = None
@@ -1285,6 +1336,25 @@ class TeamRunService:
                 continue
             for item in request.items:
                 if task_id not in item.get("blocking_task_ids", []):
+                    continue
+                answer = request.answers.get(str(item.get("id")))
+                if answer:
+                    lines.append(f"Q: {item.get('question', '')}\nA: {answer}")
+        return "\n\n".join(lines)
+
+    def decision_context_for_run(
+        self,
+        team_run_id: str,
+        *,
+        stage: Literal["planning", "synthesis"],
+        cycle_id: str | None = None,
+    ) -> str:
+        lines: list[str] = []
+        for request in self.list_decision_requests(team_run_id):
+            if request.status != "resolved" or request.cycle_id != cycle_id:
+                continue
+            for item in request.items:
+                if item.get("stage") != stage:
                     continue
                 answer = request.answers.get(str(item.get("id")))
                 if answer:
@@ -1535,6 +1605,7 @@ class TeamRunService:
                         f"### {item_id} — {item.get('topic') or 'Decision'}",
                         "",
                         f"- Status: {'answered' if answer else 'open'}",
+                        f"- Stage: {item.get('stage') or 'task'}",
                         f"- Blocks: {', '.join(item.get('blocking_task_ids') or []) or '-'}",
                         f"- Why now: {item.get('why_needed') or '-'}",
                         f"- Question: {item.get('question') or '-'}",

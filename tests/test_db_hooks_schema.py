@@ -14,7 +14,8 @@ def test_initialize_creates_hook_tables(tmp_path: Path) -> None:
     assert _table_columns(db, "hooks") == {
         "id", "name", "source_type", "connection_ref", "filter_json",
         "target_backend", "target_model", "target_options_json",
-        "target_kind", "target_team_run_id",
+        "target_kind", "target_persona_id", "target_persona_snapshot_json",
+        "target_team_run_id",
         "prompt_template", "poll_interval_seconds", "enabled",
         "cursor_json", "last_polled_at", "last_error",
         "created_at", "updated_at",

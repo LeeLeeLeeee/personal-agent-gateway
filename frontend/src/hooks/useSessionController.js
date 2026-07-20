@@ -234,11 +234,14 @@ export function useSessionController({
     setSessionConfigError("");
     let saved;
     try {
-      saved = await api.updateActiveSessionConfig({
-        agent_id: nextConfig.agent_id,
-        model: nextConfig.model,
-        options: nextConfig.options || {}
-      });
+      const payload = nextConfig.persona_id
+        ? { persona_id: nextConfig.persona_id }
+        : {
+          agent_id: nextConfig.agent_id,
+          model: nextConfig.model,
+          options: nextConfig.options || {}
+        };
+      saved = await api.updateActiveSessionConfig(payload);
     } catch (_error) {
       setSessionConfigError("Config update failed");
       return;

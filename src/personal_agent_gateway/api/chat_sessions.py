@@ -48,7 +48,7 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
     router = APIRouter(tags=["chat-sessions"])
 
     def require_session_id(session_id: str) -> str:
-        if not context.transcript.exists(session_id):
+        if context.transcript.session_origin(session_id) != "chat":
             raise HTTPException(status_code=404, detail="Session not found")
         return session_id
 
@@ -186,7 +186,7 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
     ) -> dict[str, object]:
         try:
             page, next_cursor = context.transcript.page_sessions(
-                limit=limit, cursor=cursor
+                limit=limit, cursor=cursor, origin="chat"
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid cursor") from exc
@@ -208,7 +208,7 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
             return {"sessions": [], "next_cursor": None}
         try:
             page, next_cursor = context.transcript.page_sessions(
-                limit=limit, cursor=cursor, query=q
+                limit=limit, cursor=cursor, query=q, origin="chat"
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid cursor") from exc
@@ -316,6 +316,7 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
     def activate_session(
         session_id: str, _session: None = session_dependency
     ) -> dict[str, object]:
+        require_session_id(session_id)
         if not context.transcript.activate(session_id):
             raise HTTPException(status_code=404, detail="Session not found")
         return {
@@ -334,6 +335,7 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
         title = payload.title.strip()
         if not title:
             raise HTTPException(status_code=400, detail="Title is required")
+        require_session_id(session_id)
         if not context.transcript.set_title(session_id, title[:120]):
             raise HTTPException(status_code=404, detail="Session not found")
         return {"session_id": session_id, "title": title[:120]}
@@ -344,6 +346,7 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
         request: Request,
         _session: None = session_dependency,
     ) -> dict[str, object]:
+        require_session_id(session_id)
         try:
             deleted = context.run_registry.delete_if_idle(
                 session_id, lambda: context.transcript.delete(session_id)

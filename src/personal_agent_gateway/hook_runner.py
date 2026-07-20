@@ -9,6 +9,7 @@ from personal_agent_gateway.mail_knowledge import (
     MailWorkspaceProjector,
     build_mail_team_instruction,
 )
+from personal_agent_gateway.personas import persona_system_prompt
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
@@ -103,9 +104,21 @@ class HookRunner:
             return
         self._hook_runs.mark_running(run_id)
         prompt = render_prompt(hook.prompt_template, run.trigger_payload)
-        runtime = self._runtime_factory.create_headless_runtime(
-            hook.target_backend, hook.target_model, hook.target_options
-        )
+        if hook.target_kind == "persona":
+            runtime = self._runtime_factory.create_headless_runtime(
+                hook.target_backend,
+                hook.target_model,
+                hook.target_options,
+                hook_run_id=run_id,
+                system_prompt=persona_system_prompt(hook.target_persona_snapshot),
+            )
+        else:
+            runtime = self._runtime_factory.create_headless_runtime(
+                hook.target_backend,
+                hook.target_model,
+                hook.target_options,
+                hook_run_id=run_id,
+            )
         result = await runtime.handle_user_message(prompt)
         if result.pending_approval is not None:
             self._hook_runs.mark_failed(

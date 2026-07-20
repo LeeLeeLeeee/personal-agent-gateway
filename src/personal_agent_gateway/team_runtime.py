@@ -9,10 +9,15 @@ from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.teams import TeamAgent, TeamRun, TeamRunService, TeamTask
 
 PLANNING_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
-Return ONLY JSON array of task objects.
-Each object must have "title" and "description".
 Goal: {goal}
-Persona snapshot: {persona_snapshot_json}"""
+Persona snapshot: {persona_snapshot_json}
+
+Before creating tasks, identify any consequential choice that only the user can make.
+First resolve ambiguity from the goal, frozen rules, and prior user decisions.
+Return ONLY one of:
+1. A JSON array of task objects. Each object must have "title" and "description".
+2. {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why planning cannot safely continue","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
+Use ask_user only when the choice materially changes the plan and cannot be inferred safely."""
 
 WORKER_PROMPT = """You are an agent in a personal-agent-gateway Team Run.
 Persona:
@@ -35,11 +40,18 @@ Otherwise, return a concise final result tailored to the assigned task and cite 
 evidence you used."""
 
 SYNTHESIS_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
-Summarize the outcome for the user.
 Goal: {goal}
 Task results:
 {results}
-Write a concise summary of what was accomplished and note any failures."""
+
+Before finalizing, identify any consequential choice that only the user can make to
+produce an accurate final response. First use the goal, frozen rules, prior user
+decisions, and task results.
+Return either:
+1. A concise plain-text summary of what was accomplished, including any failures.
+2. ONLY {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the final response cannot be completed accurately","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
+At this stage, ask only about final interpretation or presentation that does not
+require additional worker execution."""
 
 MEDIATION_PROMPT = """You are the leader mediating a Team Run.
 Goal: {goal}
@@ -121,7 +133,15 @@ class TeamRuntime:
             leader = self._teams.set_agent_status(leader.id, "running")
             await self._publish({"type": "team.run.started", "team_run_id": run.id})
 
-            await self._plan(run, leader, cycle_id)
+            planning_result = await self._plan(run, leader, cycle_id)
+            if isinstance(planning_result, UserDecisionResolution):
+                self._teams.defer_run_for_user_decision(
+                    run.id,
+                    planning_result.decision,
+                    stage="planning",
+                    cycle_id=cycle_id,
+                )
+                return await self._publish_user_decision_request(run, cycle_id)
 
             run = self._teams.get_team_run(run.id)
             if run.run_mode != "plan_and_execute":
@@ -161,16 +181,27 @@ class TeamRuntime:
 
     async def _plan(
         self, run: TeamRun, leader: TeamAgent, cycle_id: str | None = None
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, str]] | UserDecisionResolution:
         leader_agent = self._teams.get_agent(leader.id)
         model = self._model_factory(leader_agent)
         prompt = _rules_block(run.rules_snapshot, include_persona_baseline=False) + PLANNING_PROMPT.format(
             goal=run.goal,
             persona_snapshot_json=json.dumps(leader_agent.persona_snapshot, ensure_ascii=False),
         )
+        decision_context = self._teams.decision_context_for_run(
+            run.id, stage="planning", cycle_id=cycle_id
+        )
+        if decision_context:
+            prompt += (
+                "\n\nResolved user decisions for planning:\n"
+                f"{decision_context}\nDo not ask these resolved questions again."
+            )
         response = await model.complete([{"role": "user", "content": prompt}])
         if response.upstream_session_id:
             self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
+        resolution = _parse_mediation_resolution(response.content)
+        if resolution["kind"] == "ask_user":
+            return UserDecisionResolution(resolution)
         try:
             tasks = _parse_task_plan(response.content)
         except ValueError:
@@ -391,19 +422,7 @@ class TeamRuntime:
             await self._execute(run, leader, workers, cycle_id)
             request = self._teams.get_active_decision_request(run.id, cycle_id)
             if request is not None and request.status == "collecting":
-                request = self._teams.publish_decision_request(run.id, cycle_id)
-                if cycle_id is not None:
-                    self._teams.set_cycle_status(cycle_id, "waiting_for_user")
-                run = self._teams.get_team_run(run.id)
-                await self._publish(
-                    {
-                        "type": "team.run.input_requested",
-                        "team_run_id": run.id,
-                        "decision_request_id": request.id,
-                        "question_count": len(request.items),
-                    }
-                )
-                return run
+                return await self._publish_user_decision_request(run, cycle_id)
             tasks = self._teams.list_tasks(run.id, cycle_id)
             status = _terminal_status(tasks)
             if status == "failed":
@@ -417,7 +436,15 @@ class TeamRuntime:
                 return run
             run = self._teams.set_run_status(run.id, "summarizing")
             await self._publish({"type": "team.run.summarizing", "team_run_id": run.id})
-            summary = await self._leader_synthesis(run, leader, tasks)
+            summary = await self._leader_synthesis(run, leader, tasks, cycle_id)
+            if isinstance(summary, UserDecisionResolution):
+                self._teams.defer_run_for_user_decision(
+                    run.id,
+                    summary.decision,
+                    stage="synthesis",
+                    cycle_id=cycle_id,
+                )
+                return await self._publish_user_decision_request(run, cycle_id)
             if any(
                 task.status == "pending"
                 for task in self._teams.list_tasks(run.id, cycle_id)
@@ -517,19 +544,47 @@ class TeamRuntime:
         )
         return created
 
-    async def _leader_synthesis(self, run: TeamRun, leader: TeamAgent, tasks: list[TeamTask]) -> str:
+    async def _leader_synthesis(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        tasks: list[TeamTask],
+        cycle_id: str | None = None,
+    ) -> str | UserDecisionResolution:
         results = "\n\n".join(
             f"[{task.status}] {task.title}\n{task.result or task.error_message or ''}"
             for task in tasks
         )
         leader_agent = self._teams.get_agent(leader.id)
         model = self._model_factory(leader_agent)
+        prompt = _rules_block(
+            run.rules_snapshot, include_persona_baseline=False
+        ) + SYNTHESIS_PROMPT.format(goal=run.goal, results=results)
+        decision_context = "\n\n".join(
+            context
+            for context in (
+                self._teams.decision_context_for_run(
+                    run.id, stage="planning", cycle_id=cycle_id
+                ),
+                self._teams.decision_context_for_run(
+                    run.id, stage="synthesis", cycle_id=cycle_id
+                ),
+            )
+            if context
+        )
+        if decision_context:
+            prompt += (
+                "\n\nResolved user decisions for final synthesis:\n"
+                f"{decision_context}\nDo not ask these resolved questions again."
+            )
         response = await model.complete(
-            [{"role": "user", "content": SYNTHESIS_PROMPT.format(goal=run.goal, results=results)}]
+            [{"role": "user", "content": prompt}]
         )
         if response.upstream_session_id:
             self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
-        cycle_id = tasks[0].cycle_id if tasks else None
+        resolution = _parse_mediation_resolution(response.content)
+        if resolution["kind"] == "ask_user":
+            return UserDecisionResolution(resolution)
         self._teams.append_message(
             run.id,
             leader.id,
@@ -540,6 +595,25 @@ class TeamRuntime:
             cycle_id=cycle_id,
         )
         return response.content
+
+    async def _publish_user_decision_request(
+        self,
+        run: TeamRun,
+        cycle_id: str | None,
+    ) -> TeamRun:
+        request = self._teams.publish_decision_request(run.id, cycle_id)
+        if cycle_id is not None:
+            self._teams.set_cycle_status(cycle_id, "waiting_for_user")
+        run = self._teams.get_team_run(run.id)
+        await self._publish(
+            {
+                "type": "team.run.input_requested",
+                "team_run_id": run.id,
+                "decision_request_id": request.id,
+                "question_count": len(request.items),
+            }
+        )
+        return run
 
     def _settle_canceled(self, run: TeamRun, cycle_id: str | None = None) -> None:
         for task in self._teams.list_tasks(run.id, cycle_id):

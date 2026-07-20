@@ -7,6 +7,16 @@ const agents = [
   { id: "codex", label: "Codex", available: true, default_model: "gpt-5", defaults: {}, options_schema: [], model_options: [{ id: "gpt-5", label: "gpt-5", efforts: [] }] }
 ];
 
+const personas = [{
+  id: "p1",
+  name: "Mail Manager",
+  role: "Inbox triage",
+  description: "Classifies incoming mail.",
+  default_backend: "codex",
+  default_model: "gpt-5",
+  default_options: {}
+}];
+
 const hooks = [
   {
     id: "h1", name: "Inbox watcher", enabled: true,
@@ -32,9 +42,25 @@ describe("HooksView", () => {
     expect(screen.getByText(/codex\/gpt-5/)).toBeInTheDocument();
   });
 
-  it("builds an email hook from the form (minutes -> seconds, filter, target)", async () => {
+  it("shows the create form only after CREATE NEW is selected", async () => {
+    render(<HooksView hooks={hooks} agents={agents} onCreate={noop} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} />);
+    const createButton = screen.getByRole("button", { name: "CREATE NEW" });
+
+    expect(createButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("form", { name: "New hook" })).not.toBeInTheDocument();
+
+    await userEvent.click(createButton);
+    expect(createButton).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("form", { name: "New hook" })).toBeInTheDocument();
+
+    await userEvent.click(createButton);
+    expect(screen.queryByRole("form", { name: "New hook" })).not.toBeInTheDocument();
+  });
+
+  it("builds a Persona email hook from the form (minutes -> seconds, filter, target)", async () => {
     const onCreate = vi.fn();
-    render(<HooksView hooks={[]} agents={agents} onCreate={onCreate} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} />);
+    render(<HooksView hooks={[]} agents={agents} personas={personas} onCreate={onCreate} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} />);
+    await userEvent.click(screen.getByRole("button", { name: "CREATE NEW" }));
     await userEvent.type(screen.getByLabelText("Name"), "Inbox watcher");
     await userEvent.type(screen.getByLabelText("Host"), "imap.gmail.com");
     await userEvent.type(screen.getByLabelText("Username"), "me@gmail.com");
@@ -49,9 +75,10 @@ describe("HooksView", () => {
       source_type: "email",
       connection: { host: "imap.gmail.com", port: 993, username: "me@gmail.com" },
       secret: "app-pw",
-      target_backend: "codex",
-      target_model: "gpt-5",
-      target_kind: "agent",
+      target_backend: "",
+      target_model: "",
+      target_kind: "persona",
+      target_persona_id: "p1",
       target_team_run_id: null,
       prompt_template: "요약: {{subject}}",
       poll_interval_seconds: 300
@@ -61,7 +88,8 @@ describe("HooksView", () => {
 
   it("creates a hook targeting an existing continuous Team Run", async () => {
     const onCreate = vi.fn();
-    render(<HooksView hooks={[]} agents={agents} teamRuns={teamRuns} onCreate={onCreate} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} />);
+    render(<HooksView hooks={[]} agents={agents} personas={personas} teamRuns={teamRuns} onCreate={onCreate} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} />);
+    await userEvent.click(screen.getByRole("button", { name: "CREATE NEW" }));
     await userEvent.click(screen.getByRole("button", { name: "TEAM RUN" }));
     expect(screen.getByRole("option", { name: "Mail inbox" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "One-off" })).not.toBeInTheDocument();
@@ -84,6 +112,7 @@ describe("HooksView", () => {
   it("shows the result of a connection test", async () => {
     const onTestConnection = vi.fn().mockResolvedValue({ ok: false, error: "auth failed" });
     render(<HooksView hooks={[]} agents={agents} onCreate={noop} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={onTestConnection} />);
+    await userEvent.click(screen.getByRole("button", { name: "CREATE NEW" }));
     await userEvent.type(screen.getByLabelText("Host"), "imap.gmail.com");
     await userEvent.type(screen.getByLabelText("Username"), "me@gmail.com");
     await userEvent.type(screen.getByLabelText("App password"), "wrong");

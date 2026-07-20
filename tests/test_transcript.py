@@ -17,6 +17,28 @@ def test_start_new_creates_new_active_transcript_id(tmp_path: Path) -> None:
     }
 
 
+def test_start_new_hook_session_preserves_active_chat_and_metadata(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    store = TranscriptStore(tmp_path / "sessions", db)
+    chat_session_id = store.start_new()
+
+    hook_session_id = store.start_new(
+        origin="hook",
+        hook_run_id="hook-run-1",
+        activate=False,
+    )
+    reloaded = TranscriptStore(tmp_path / "sessions", db)
+
+    assert reloaded.active_id() == chat_session_id
+    hook_session = reloaded.list_sessions(origin="hook")[0]
+    assert hook_session.id == hook_session_id
+    assert hook_session.origin == "hook"
+    assert hook_session.hook_run_id == "hook-run-1"
+
+
 def test_active_id_returns_none_before_session_exists(tmp_path: Path) -> None:
     store = TranscriptStore(tmp_path)
 
@@ -222,6 +244,27 @@ def test_search_sessions_matches_transcript_payload_text(tmp_path: Path) -> None
 
     assert [result.id for result in results] == [first_id]
     assert results[0].title == "find the billing regression"
+
+
+def test_session_queries_filter_by_origin(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path)
+    chat_session_id = store.start_new()
+    store.append_to(chat_session_id, "user", {"content": "shared keyword chat"})
+    hook_session_id = store.start_new(
+        origin="hook",
+        hook_run_id="hook-run-1",
+        activate=False,
+    )
+    store.append_to(hook_session_id, "user", {"content": "shared keyword hook"})
+
+    chat_sessions, _cursor = store.page_sessions(origin="chat")
+    hook_sessions, _cursor = store.page_sessions(origin="hook")
+
+    assert [session.id for session in chat_sessions] == [chat_session_id]
+    assert [session.id for session in hook_sessions] == [hook_session_id]
+    assert [
+        session.id for session in store.search_sessions("shared", origin="chat")
+    ] == [chat_session_id]
 
 
 def test_metadata_index_lists_and_pages_without_reloading_transcript_bodies(

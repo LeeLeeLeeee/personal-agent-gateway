@@ -4,6 +4,7 @@ from personal_agent_gateway.config import AppConfig, ConfigError
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelClient, OpenAIModelClient
+from personal_agent_gateway.personas import persona_system_prompt
 from personal_agent_gateway.runtime import AgentRuntime
 from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.tools import WorkspaceTools
@@ -27,7 +28,13 @@ class AgentRuntimeFactory:
         return self._create_runtime_for_app_config()
 
     def create_headless_runtime(
-        self, backend: str, model: str, options: dict[str, object]
+        self,
+        backend: str,
+        model: str,
+        options: dict[str, object],
+        *,
+        hook_run_id: str,
+        system_prompt: str | None = None,
     ) -> AgentRuntime:
         workspace_root = self._config.workspace_root
         if backend == "claude":
@@ -42,7 +49,16 @@ class AgentRuntimeFactory:
                 agent=str(options["agent"]) if options.get("agent") else None,
                 timeout_seconds=self._config.codex_timeout_seconds,
             )
-            return self._runtime(client, session_id=None)
+            session_id = self._transcript.start_new(
+                origin="hook",
+                hook_run_id=hook_run_id,
+                activate=False,
+            )
+            return self._runtime(
+                client,
+                session_id=session_id,
+                system_prompt=system_prompt,
+            )
         if backend == "codex":
             client = CodexModelClient(
                 binary=self._config.codex_binary,
@@ -57,7 +73,16 @@ class AgentRuntimeFactory:
                 timeout_seconds=self._config.codex_timeout_seconds,
                 idle_timeout_seconds=self._config.codex_idle_timeout_seconds,
             )
-            return self._runtime(client, session_id=None)
+            session_id = self._transcript.start_new(
+                origin="hook",
+                hook_run_id=hook_run_id,
+                activate=False,
+            )
+            return self._runtime(
+                client,
+                session_id=session_id,
+                system_prompt=system_prompt,
+            )
         raise ConfigError(f"Unsupported hook backend: {backend}")
 
     def create_runtime_for_active_session(self) -> AgentRuntime:
@@ -78,6 +103,7 @@ class AgentRuntimeFactory:
 
         session_config = SessionAgentConfigService(self._transcript).effective_config(session_id)
         agent_id, model, options = self._effective_session_runtime_config(session_config)
+        system_prompt = persona_system_prompt(session_config.persona_snapshot)
         link_service = AgentSessionLinkService(self._transcript)
         link = link_service.latest(
             session_id=session_id,
@@ -119,6 +145,7 @@ class AgentRuntimeFactory:
                 history_mode=history_mode,
                 on_upstream_session_id=record_upstream_session,
                 session_id=session_id,
+                system_prompt=system_prompt,
             )
 
         if agent_id == "claude":
@@ -136,6 +163,7 @@ class AgentRuntimeFactory:
                 history_mode=history_mode,
                 on_upstream_session_id=record_upstream_session,
                 session_id=session_id,
+                system_prompt=system_prompt,
             )
 
         raise ConfigError(f"Unsupported session agent: {agent_id}")
@@ -182,6 +210,7 @@ class AgentRuntimeFactory:
         history_mode: str = "full",
         on_upstream_session_id=None,
         session_id: str | None = None,
+        system_prompt: str | None = None,
     ) -> AgentRuntime:
         return AgentRuntime(
             transcript=self._transcript,
@@ -192,6 +221,7 @@ class AgentRuntimeFactory:
             history_mode=history_mode,
             on_upstream_session_id=on_upstream_session_id,
             session_id=session_id,
+            system_prompt=system_prompt,
         )
 
     def _effective_session_runtime_config(self, session_config) -> tuple[str, str, dict[str, object]]:

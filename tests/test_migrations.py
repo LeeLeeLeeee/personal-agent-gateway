@@ -63,6 +63,13 @@ def test_legacy_database_preserves_rows_while_reaching_latest_schema(tmp_path: P
     assert db.fetchone(
         "select name from sqlite_master where name = 'idx_transcript_metadata_updated'"
     ) is not None
+    assert {row["name"] for row in db.fetchall(
+        "pragma table_info(transcript_metadata)"
+    )} >= {"origin", "hook_run_id"}
+    assert db.fetchone(
+        "select name from sqlite_master "
+        "where name = 'idx_transcript_metadata_origin_updated'"
+    ) is not None
     assert db.fetchone(
         "select name from sqlite_master where name = 'team_decision_requests'"
     ) is not None

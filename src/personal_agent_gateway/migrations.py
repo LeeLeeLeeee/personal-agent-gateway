@@ -109,7 +109,9 @@ def _migration_3_read_path_indexes(connection: sqlite3.Connection) -> None:
             model text not null,
             options_json text not null,
             editable integer not null,
-            pending_approval_ids_json text not null
+            pending_approval_ids_json text not null,
+            origin text not null default 'chat',
+            hook_run_id text
         );
 
         create index if not exists idx_transcript_metadata_updated
@@ -313,6 +315,50 @@ def _migration_8_mail_knowledge(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_9_hook_persona_targets(connection: sqlite3.Connection) -> None:
+    hook_columns = _columns(connection, "hooks")
+    if "target_persona_id" not in hook_columns:
+        connection.execute(
+            "alter table hooks add column target_persona_id text "
+            "references personas(id) on delete set null"
+        )
+    if "target_persona_snapshot_json" not in hook_columns:
+        connection.execute(
+            "alter table hooks add column target_persona_snapshot_json "
+            "text not null default '{}'"
+        )
+    connection.execute(
+        "create index if not exists idx_hooks_target_persona "
+        "on hooks(target_persona_id) where target_persona_id is not null"
+    )
+
+
+def _migration_10_transcript_origins(connection: sqlite3.Connection) -> None:
+    metadata_columns = _columns(connection, "transcript_metadata")
+    if not metadata_columns:
+        _migration_3_read_path_indexes(connection)
+        metadata_columns = _columns(connection, "transcript_metadata")
+    if "origin" not in metadata_columns:
+        connection.execute(
+            "alter table transcript_metadata "
+            "add column origin text not null default 'chat'"
+        )
+    if "hook_run_id" not in metadata_columns:
+        connection.execute(
+            "alter table transcript_metadata add column hook_run_id text"
+        )
+    connection.executescript(
+        """
+        create index if not exists idx_transcript_metadata_origin_updated
+        on transcript_metadata(origin, updated_at desc, id desc);
+
+        create index if not exists idx_transcript_metadata_hook_run
+        on transcript_metadata(hook_run_id)
+        where hook_run_id is not null;
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -322,6 +368,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     (6, "team-run-cycles", _migration_6_team_run_cycles),
     (7, "hook-team-run-targets", _migration_7_hook_team_run_targets),
     (8, "mail-knowledge", _migration_8_mail_knowledge),
+    (9, "hook-persona-targets", _migration_9_hook_persona_targets),
+    (10, "transcript-origins", _migration_10_transcript_origins),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

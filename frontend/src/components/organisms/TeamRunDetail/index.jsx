@@ -217,6 +217,11 @@ function DecisionRequestPanel({ request, onSubmit }) {
   const [submitting, setSubmitting] = useState(false);
   const items = request.items || [];
   const complete = items.length > 0 && items.every((item) => String(answers[item.id] || "").trim());
+  const intro = items.some((item) => item.stage === "planning")
+    ? "Planning is paused for your decision. Answer every open question to start the work."
+    : items.some((item) => item.stage === "synthesis")
+      ? "Work is complete. Answer every open question to finalize the response."
+      : "Independent work is complete. Answer every open question once, then the blocked tasks resume.";
 
   return (
     <section className="team-decision-panel" role="region" aria-label="Input needed">
@@ -228,7 +233,7 @@ function DecisionRequestPanel({ request, onSubmit }) {
         <span className="mono team-decision-revision">REV {request.revision}</span>
       </div>
       <p className="team-decision-intro">
-        Independent work is complete. Answer every open question once, then the blocked tasks resume.
+        {intro}
       </p>
       <p className="team-decision-secret-warning">
         Do not enter passwords, tokens, recovery codes, or private keys here.

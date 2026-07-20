@@ -267,6 +267,8 @@ create table if not exists hooks (
     target_model text not null,
     target_options_json text not null default '{}',
     target_kind text not null default 'agent',
+    target_persona_id text,
+    target_persona_snapshot_json text not null default '{}',
     target_team_run_id text,
     prompt_template text not null,
     poll_interval_seconds integer not null default 300,
@@ -276,6 +278,7 @@ create table if not exists hooks (
     last_error text,
     created_at text not null,
     updated_at text not null,
+    foreign key (target_persona_id) references personas(id) on delete set null,
     foreign key (target_team_run_id) references team_runs(id) on delete set null
 );
 

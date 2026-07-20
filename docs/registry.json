@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 104,
+  "document_count": 113,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -384,7 +384,7 @@
         "user-input",
         "decision-request"
       ],
-      "updated_at": "2026-07-16",
+      "updated_at": "2026-07-20",
       "headings": [
         {
           "level": 1,
@@ -404,7 +404,7 @@
         },
         {
           "level": 3,
-          "text": "1. 내부 질문과 사용자 결정을 분리한다"
+          "text": "1. 내부 질문과 LEAD의 선제 사용자 결정을 분리한다"
         },
         {
           "level": 3,
@@ -1083,6 +1083,96 @@
       "excerpt": "- Root: `frontend/src/components/organisms/AgentPicker/index.jsx` - Modes: `api-state`, `test` - Verdict: 컴포넌트는 이미 `agents[].models`와 `options_schema`를 일반화해 렌더링한다. 로컬 CLI 탐지 결과를 `GET /api/agents`에 연결하면 UI 구조 변경 없이 mod..."
     },
     {
+      "path": "docs/component-inspector/ChatView/2026-07-20-1113.md",
+      "title": "ChatView Persona Targeting Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "chat-persona-targeting",
+      "status": "done",
+      "aliases": [
+        "ChatView Persona analysis",
+        "Chat Persona 선택 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "chat",
+        "persona"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "ChatView Persona Targeting Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 효과"
+        },
+        {
+          "level": 2,
+          "text": "외부 primitive와 주입 동작"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용"
+        },
+        {
+          "level": 2,
+          "text": "API와 상태 추적"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 3,
+          "text": "책임과 소유권"
+        },
+        {
+          "level": 3,
+          "text": "코드 수준 검사"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "증거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/ChatView/index.jsx` - Modes: `understand`, `api-state`, `test`, `refactor` - Verdict: 단일 Chat의 상위 선택 단위를 runtime `Agent`에서 `Persona`로 바꾸되,   기존 session config의 backend/model/..."
+    },
+    {
       "path": "docs/component-inspector/GatewayApp/2026-07-14-1526.md",
       "title": "GatewayApp Component Analysis",
       "type": "report",
@@ -1636,6 +1726,251 @@
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `api-state`, `test` - Verdict: 현재 단일 `EventSource`와 local React state 소유권은 유지하고, stream identity   기반 bounded dedup과 Team/Hook collection의 eve..."
     },
     {
+      "path": "docs/component-inspector/HooksView/2026-07-20-1037.md",
+      "title": "HooksView Create Form Disclosure Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "hooks-view-create-form",
+      "status": "done",
+      "aliases": [
+        "HooksView analysis",
+        "Hooks 생성 폼 노출 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "hooks"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "HooksView Create Form Disclosure Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 효과"
+        },
+        {
+          "level": 2,
+          "text": "외부 primitive와 주입 동작"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 3,
+          "text": "책임과 소유권"
+        },
+        {
+          "level": 3,
+          "text": "코드 수준 검사"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "증거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/HooksView/index.jsx` - Modes: `understand`, `refactor` - Verdict: 현재 소유권과 API 경계는 유지하고, `HooksView`에 생성 폼 표시 상태만 추가한다."
+    },
+    {
+      "path": "docs/component-inspector/HooksView/2026-07-20-1053.md",
+      "title": "HooksView Team Run Target Label Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "hooks-team-run-target-label",
+      "status": "done",
+      "aliases": [
+        "Hooks Team Run label analysis",
+        "Hook Target 표시값 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "hooks",
+        "team-run"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "HooksView Team Run Target Label Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 효과"
+        },
+        {
+          "level": 2,
+          "text": "외부 primitive와 주입 동작"
+        },
+        {
+          "level": 2,
+          "text": "상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "API와 상태 추적"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "증거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/HooksView/index.jsx` - Modes: `understand`, `api-state` - Verdict: Target option은 Team `description`이 아니라 Team Run `goal`을 표시한다.   현재 list API에는 Team 이름이나 description이 없으므로 U..."
+    },
+    {
+      "path": "docs/component-inspector/HooksView/2026-07-20-1113.md",
+      "title": "HooksView Persona Targeting Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "hooks-persona-targeting",
+      "status": "done",
+      "aliases": [
+        "HooksView Persona analysis",
+        "Hook Persona 선택 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "hooks",
+        "persona"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "HooksView Persona Targeting Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 효과"
+        },
+        {
+          "level": 2,
+          "text": "외부 primitive와 주입 동작"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용"
+        },
+        {
+          "level": 2,
+          "text": "API와 상태 추적"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 3,
+          "text": "책임과 소유권"
+        },
+        {
+          "level": 3,
+          "text": "코드 수준 검사"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "증거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/HooksView/index.jsx` - Modes: `understand`, `api-state`, `test`, `refactor` - Verdict: Team Run 분기는 유지하고, 현재 `AGENT` 분기를 Persona snapshot 기반   분기로 대체한다. 기존 저장 Hook의 `agent` t..."
+    },
+    {
       "path": "docs/component-inspector/JobsView/2026-07-15-1057.md",
       "title": "JobsView Retry and Lineage Analysis",
       "type": "report",
@@ -1792,6 +2127,116 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/PersonaLibrary/index.jsx` - Modes: `api-state`, `test` - Verdict: Persona의 `default_backend`와 `default_model`이 현재 free-text라 탐지된 catalog를 활용하지 않는다. `GatewayApp`이 이미 로드한 `agen..."
+    },
+    {
+      "path": "docs/component-inspector/PersonaPicker/2026-07-20-1207.md",
+      "title": "PersonaPicker Fixed Width Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "persona-picker-width",
+      "status": "done",
+      "aliases": [
+        "PersonaPicker fixed width",
+        "Persona 셀렉터 고정 폭"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "style"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PersonaPicker Fixed Width Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "스타일 / 레이아웃"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/PersonaPicker/index.jsx` - Modes: `style` - Verdict: Persona 전용 selector에 고정 폭을 부여하되 작은 화면에서는 가용 폭에 맞춰 축소하는 것이 적절하다."
+    },
+    {
+      "path": "docs/component-inspector/RulesView/2026-07-20-1517.md",
+      "title": "RulesView Global Enforcement Typography Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "rules-view-global-enforcement",
+      "status": "done",
+      "aliases": [
+        "RulesView global font size",
+        "Rules 글로벌 폰트 크기"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "typography"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "RulesView Global Enforcement Typography Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "스타일 / 레이아웃"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/RulesView/index.jsx` - Modes: `style` - Verdict: 오른쪽 메타 패널의 설명 행에만 `font-size: 11px`를 지정하는 최소 수정이 적절하다."
     },
     {
       "path": "docs/component-inspector/SchedulesView/2026-07-15-1057.md",
@@ -2297,6 +2742,76 @@
       "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: 기존 `detail` read model과 injected callback 경계를 유지하며 `decision_request`와 `onAnswerDecision`만 추가하는 것이 가장 작은 변경이다..."
     },
     {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-20-1356.md",
+      "title": "TeamRunDetail Leader Decision Stage Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-leader-decision-stage",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail Leader proactive question",
+        "Team Run 계획 단계 사용자 질문 UI"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "user-input"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Leader Decision Stage Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "API / state 추적"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 3,
+          "text": "기존 보호 범위"
+        },
+        {
+          "level": 3,
+          "text": "추가할 회귀 사례"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: backend decision item의 `stage`를 별도 state나 API mapping 없이 읽어 `DecisionRequestPanel` 안내문만 단계별로 파생하는 것이 가장 작은 변경이다."
+    },
+    {
       "path": "docs/component-inspector/TeamsView/2026-07-15-1250.md",
       "title": "TeamsView Persona Card Selection Component Analysis",
       "type": "report",
@@ -2397,7 +2912,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [OperationsView Backup Recoverability — 2026-07-20 09:20](./OperationsView/2026-07-20-0920.md) - [GatewayApp SSE Collection Reconciliation — 2026-07-20 09:14](./GatewayApp/2026-07-20-0914.md) - [GatewayApp Mail Team..."
+      "excerpt": "- [RulesView Global Enforcement Typography — 2026-07-20 15:17](./RulesView/2026-07-20-1517.md) - [TeamRunDetail Leader Decision Stage — 2026-07-20 13:56](./TeamRunDetail/2026-07-20-1356.md) - [PersonaPicker Fixed Widt..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -2737,7 +3252,7 @@
         "decision-request",
         "resume"
       ],
-      "updated_at": "2026-07-16",
+      "updated_at": "2026-07-20",
       "headings": [
         {
           "level": 1,
@@ -2792,7 +3307,7 @@
           "text": "Related"
         }
       ],
-      "excerpt": "Worker 질문은 먼저 Leader가 처리한다. Leader도 결정할 수 없는 질문은 `USER_DECISIONS.md`에 누적하고, 독립 작업을 마친 뒤 한 batch로 공개한다. 사용자는 Team Run의 `INPUT NEEDED` panel에서 모든 질문에 답하고 `ANSWER & RESUME`으로 Run을 재개한다."
+      "excerpt": "Leader는 초기 planning, Worker 질문 중재, 최종 synthesis에서 사용자만 결정할 수 있는 선택을 확인한다. Worker 질문은 먼저 Leader가 처리하고, 해결할 수 없는 질문은 batch로 모은다. 사용자는 Team Run의 `INPUT NEEDED` panel에서 모든 질문에 답하고 `ANSWER & RESUME`으로 해당 단계를 재개한다."
     },
     {
       "path": "docs/knowledge/2026-07-08-full-access-security-operating-model.md",
@@ -3743,7 +4258,7 @@
         "decision-request",
         "implementation"
       ],
-      "updated_at": "2026-07-16",
+      "updated_at": "2026-07-20",
       "headings": [
         {
           "level": 1,
@@ -3774,7 +4289,7 @@
           "text": "Related"
         }
       ],
-      "excerpt": "Worker가 요청한 정보 중 Leader가 내부적으로 답할 수 없는 질문을 하나의 decision batch로 모으고, Run이 더 진행할 수 없을 때 사용자에게 한 번에 요청하는 흐름을 구현했다. 답변 대기 중에는 실행 process가 없으며, 모든 질문을 제출하면 관련 blocked Task만 자동 재개한다."
+      "excerpt": "Leader가 planning, Worker 질문 중재, synthesis에서 사용자만 결정할 수 있는 선택을 같은 decision request로 요청한다. Worker 질문은 batch로 모으고, planning/synthesis 질문은 즉시 Run 전체를 대기시킨다. 답변 대기 중에는 실행 process가 없으며, 모든 질문을 제출하면 관련 Task 또는 LEAD 단계가 자동 재개된다."
     },
     {
       "path": "docs/reports/2026-07-20-architecture-consistency-improvements.md",
@@ -4926,6 +5441,108 @@
         }
       ],
       "excerpt": "- 작성일: 2026-07-08 - 출처: `feat/persona-agent-teams` 백엔드 구현(→ `main` `bcc96b5`로 머지)의 태스크별 리뷰 + 전체 브랜치 리뷰(opus)에서 도출한 **비차단(non-blocking) 후속 과제**. - 관련: `docs/superpowers/plans/completed_2026-07-08-persona-agent-teams.md..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-20-continuous-team-run-cycle-policies.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Continuous Team Run Cycle Policies Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "신규 파일"
+        },
+        {
+          "level": 3,
+          "text": "수정 파일"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Schema v11과 레거시 마이그레이션"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: TeamCycleService 저장소와 상태 전이"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: 신규 Run의 원자적 정책 생성"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Dispatcher, AUTO Loop, leader-only 이전 컨텍스트"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: HookRunner를 공통 CycleRequest 큐로 전환"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: API, startup recovery, Operations 배선"
+        },
+        {
+          "level": 3,
+          "text": "Task 7: TeamPicker와 프론트엔드 API/controller"
+        },
+        {
+          "level": 3,
+          "text": "Task 8: TeamRunDetail 정책 제어와 Hook target 필터"
+        },
+        {
+          "level": 3,
+          "text": "Task 9: 재시작 복구, 전체 회귀, 운영 문서"
+        },
+        {
+          "level": 1,
+          "text": "Continuous Team Run Cycle Policies 구현 결과"
+        },
+        {
+          "level": 2,
+          "text": "구현 범위"
+        },
+        {
+          "level": 2,
+          "text": "상태 및 데이터 마이그레이션"
+        },
+        {
+          "level": 2,
+          "text": "API와 UI"
+        },
+        {
+          "level": 2,
+          "text": "재시작 복구"
+        },
+        {
+          "level": 2,
+          "text": "검증 결과"
+        },
+        {
+          "level": 2,
+          "text": "남은 제한"
+        },
+        {
+          "level": 2,
+          "text": "Final Acceptance Checklist"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
     },
     {
       "path": "docs/superpowers/plans/archived_2026-07-07-live-status-sse-backlog.md",
@@ -6281,6 +6898,214 @@
         }
       ],
       "excerpt": "- 작성일: 2026-07-15 - 상태: 구현 완료 - 선행: `2026-07-15-event-hooks-design.md`(백엔드, main에 머지 완료 — HEAD 09aa771) - 관련 화면: Sidebar NAV(Automation 그룹), GatewayApp 컨테이너"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-20-continuous-team-run-cycle-policies-design.md",
+      "title": "Continuous Team Run Cycle Policies Design",
+      "type": "adr",
+      "domain": "team-run",
+      "feature": "continuous-cycle-policies",
+      "status": "active",
+      "aliases": [
+        "Continuous Team Run AUTO TRIGGERED",
+        "Team Run 반복 실행 정책",
+        "팀 사이클 자동 및 트리거 실행"
+      ],
+      "tags": [
+        "team-run",
+        "continuous",
+        "cycle",
+        "automation",
+        "queue"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Continuous Team Run Cycle Policies 설계"
+        },
+        {
+          "level": 2,
+          "text": "1. 배경"
+        },
+        {
+          "level": 2,
+          "text": "2. 목표와 범위"
+        },
+        {
+          "level": 3,
+          "text": "목표"
+        },
+        {
+          "level": 3,
+          "text": "범위 밖"
+        },
+        {
+          "level": 2,
+          "text": "3. 확정된 결정"
+        },
+        {
+          "level": 2,
+          "text": "4. 아키텍처"
+        },
+        {
+          "level": 3,
+          "text": "책임 경계"
+        },
+        {
+          "level": 2,
+          "text": "5. 상태 모델"
+        },
+        {
+          "level": 3,
+          "text": "5.1 Cycle 실행 상태"
+        },
+        {
+          "level": 3,
+          "text": "5.2 AUTO Series 제어 상태"
+        },
+        {
+          "level": 3,
+          "text": "5.3 TRIGGERED 제어 상태"
+        },
+        {
+          "level": 2,
+          "text": "6. 데이터 모델"
+        },
+        {
+          "level": 3,
+          "text": "6.1 `team_runs` 확장"
+        },
+        {
+          "level": 3,
+          "text": "6.2 `team_run_auto_series`"
+        },
+        {
+          "level": 3,
+          "text": "6.3 `team_cycle_requests`"
+        },
+        {
+          "level": 3,
+          "text": "6.4 `team_run_cycles` 연결"
+        },
+        {
+          "level": 2,
+          "text": "7. 실행 흐름"
+        },
+        {
+          "level": 3,
+          "text": "7.1 AUTO 생성 및 반복"
+        },
+        {
+          "level": 3,
+          "text": "7.2 실패와 사용자 결정"
+        },
+        {
+          "level": 3,
+          "text": "7.3 TRIGGER CYCLE"
+        },
+        {
+          "level": 3,
+          "text": "7.4 Hook Trigger"
+        },
+        {
+          "level": 2,
+          "text": "8. 서비스와 프로세스 수명주기"
+        },
+        {
+          "level": 3,
+          "text": "`TeamCycleRequestService`"
+        },
+        {
+          "level": 3,
+          "text": "`TeamAutoSeriesService`"
+        },
+        {
+          "level": 3,
+          "text": "`TeamCycleDispatcher`"
+        },
+        {
+          "level": 3,
+          "text": "`TeamCycleLoop`"
+        },
+        {
+          "level": 2,
+          "text": "9. API"
+        },
+        {
+          "level": 3,
+          "text": "생성 및 조회"
+        },
+        {
+          "level": 3,
+          "text": "TRIGGERED"
+        },
+        {
+          "level": 3,
+          "text": "AUTO actions"
+        },
+        {
+          "level": 3,
+          "text": "오류 계약"
+        },
+        {
+          "level": 2,
+          "text": "10. UI"
+        },
+        {
+          "level": 3,
+          "text": "TeamPicker"
+        },
+        {
+          "level": 3,
+          "text": "TeamRunDetail"
+        },
+        {
+          "level": 3,
+          "text": "Hooks"
+        },
+        {
+          "level": 2,
+          "text": "11. 재시작 복구"
+        },
+        {
+          "level": 2,
+          "text": "12. 이벤트, Audit, Operations"
+        },
+        {
+          "level": 2,
+          "text": "13. 테스트 전략"
+        },
+        {
+          "level": 3,
+          "text": "Domain / Store"
+        },
+        {
+          "level": 3,
+          "text": "Queue / Runtime"
+        },
+        {
+          "level": 3,
+          "text": "API"
+        },
+        {
+          "level": 3,
+          "text": "UI"
+        },
+        {
+          "level": 3,
+          "text": "Recovery"
+        },
+        {
+          "level": 2,
+          "text": "14. 완료 조건"
+        },
+        {
+          "level": 2,
+          "text": "15. 근거 파일"
+        }
+      ],
+      "excerpt": "- 작성일: 2026-07-20 - 상태: 설계 승인, 구현 계획 대기 - 관련 도메인: Team Run, Hooks, Scheduler, Operations"
     },
     {
       "path": "docs/superpowers/specs/completed_2026-07-06-otp-setup-ui-design.md",

@@ -389,7 +389,10 @@ def _attach_local_services(
     assert config.hooks_dir is not None
     hook_secret_store = HookSecretStore(config.hooks_dir)
     hook_service = HookService(
-        db, hook_secret_store, {"email": ImapEmailAdapter()}
+        db,
+        hook_secret_store,
+        {"email": ImapEmailAdapter()},
+        personas=persona_service,
     )
     hook_run_service = HookRunService(db)
     hook_runner = HookRunner(hook_service, hook_run_service, runtime_factory, event_bus)

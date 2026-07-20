@@ -35,6 +35,7 @@ class AgentRuntime:
         history_mode: Literal["full", "latest_user"] = "full",
         on_upstream_session_id: Callable[[str], None] | None = None,
         session_id: str | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         self._transcript = transcript
         self._tools = tools
@@ -44,6 +45,7 @@ class AgentRuntime:
         self._history_mode = history_mode
         self._on_upstream_session_id = on_upstream_session_id
         self._session_id = session_id
+        self._system_prompt = system_prompt
 
     def attach_event_bus(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
@@ -58,6 +60,7 @@ class AgentRuntime:
             history_mode=self._history_mode,
             on_upstream_session_id=self._on_upstream_session_id,
             session_id=session_id,
+            system_prompt=self._system_prompt,
         )
 
     async def handle_user_message(self, content: str) -> RuntimeResult:
@@ -145,12 +148,13 @@ class AgentRuntime:
 
     async def _run_model_loop(self, session_id: str) -> RuntimeResult:
         for _iteration in range(8):
-            response = await self._model.complete(
-                _events_to_messages(
-                    self._transcript.load(session_id),
-                    latest_user_only=self._history_mode == "latest_user",
-                )
+            messages = _events_to_messages(
+                self._transcript.load(session_id),
+                latest_user_only=self._history_mode == "latest_user",
             )
+            if self._system_prompt:
+                messages.insert(0, {"role": "system", "content": self._system_prompt})
+            response = await self._model.complete(messages)
             if response.upstream_session_id and self._on_upstream_session_id is not None:
                 self._on_upstream_session_id(response.upstream_session_id)
 
@@ -286,7 +290,13 @@ def _events_to_messages(
                     "content": "denied",
                 }
             )
-        elif event.kind in {"approval", "runtime_error", "agent_session_link", "session_config_set"}:
+        elif event.kind in {
+            "approval",
+            "runtime_error",
+            "agent_session_link",
+            "session_config_set",
+            "session_metadata_set",
+        }:
             continue
         else:
             messages.append(

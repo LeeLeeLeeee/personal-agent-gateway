@@ -19,9 +19,11 @@ TranscriptKind = Literal[
     "runtime_error",
     "session_rename",
     "session_config_set",
+    "session_metadata_set",
     "agent_session_link",
 ]
 SessionStatus = Literal["idle", "waiting_approval", "failed"]
+SessionOrigin = Literal["chat", "hook"]
 
 
 class TranscriptEvent(BaseModel):
@@ -44,6 +46,8 @@ class SessionSummary(BaseModel):
     model: str = "default"
     options: dict[str, object] = Field(default_factory=dict)
     editable: bool = True
+    origin: SessionOrigin = "chat"
+    hook_run_id: str | None = None
 
 
 class TranscriptStore:
@@ -57,12 +61,26 @@ class TranscriptStore:
         self._database = database
         self._rebuild_metadata_index()
 
-    def start_new(self) -> str:
+    def start_new(
+        self,
+        *,
+        origin: SessionOrigin = "chat",
+        hook_run_id: str | None = None,
+        activate: bool = True,
+    ) -> str:
         transcript_id = uuid4().hex
         self._session_dir.mkdir(parents=True, exist_ok=True)
         self._transcript_path(transcript_id).touch(exist_ok=True)
-        self._write_active(transcript_id)
-        self._refresh_metadata(transcript_id)
+        if activate:
+            self._write_active(transcript_id)
+        if origin != "chat" or hook_run_id is not None:
+            self.append_to(
+                transcript_id,
+                "session_metadata_set",
+                {"origin": origin, "hook_run_id": hook_run_id},
+            )
+        else:
+            self._refresh_metadata(transcript_id)
         return transcript_id
 
     def active_id(self) -> str | None:
@@ -71,17 +89,23 @@ class TranscriptStore:
     def exists(self, transcript_id: str) -> bool:
         return self._transcript_path(transcript_id).exists()
 
-    def list_sessions(self) -> list[SessionSummary]:
+    def list_sessions(self, origin: SessionOrigin | None = None) -> list[SessionSummary]:
         active_id = self._read_active_id()
         if self._database is not None:
+            where = "where origin = ?" if origin is not None else ""
+            parameters = (origin,) if origin is not None else ()
             rows = self._database.fetchall(
-                "select * from transcript_metadata order by updated_at desc, id desc"
+                f"select * from transcript_metadata {where} "
+                "order by updated_at desc, id desc",
+                parameters,
             )
             return [_metadata_summary(row, active_id) for row in rows]
         sessions = [
             self._session_summary(transcript_id, active_id)
             for transcript_id in self._known_session_ids(active_id)
         ]
+        if origin is not None:
+            sessions = [session for session in sessions if session.origin == origin]
         return sorted(sessions, key=lambda session: session.updated_at, reverse=True)
 
     def page_sessions(
@@ -89,14 +113,22 @@ class TranscriptStore:
         limit: int = 100,
         cursor: str | None = None,
         query: str | None = None,
+        origin: SessionOrigin | None = None,
     ) -> tuple[list[SessionSummary], str | None]:
         normalized_limit = max(1, min(limit, 200))
         if self._database is None:
-            sessions = self.search_sessions(query) if query else self.list_sessions()
+            sessions = (
+                self.search_sessions(query, origin=origin)
+                if query
+                else self.list_sessions(origin=origin)
+            )
             return sessions[:normalized_limit], None
 
         clauses: list[str] = []
         parameters: list[object] = []
+        if origin is not None:
+            clauses.append("origin = ?")
+            parameters.append(origin)
         if query:
             clauses.append("lower(title) like ?")
             parameters.append(f"%{query.strip().lower()}%")
@@ -122,16 +154,25 @@ class TranscriptStore:
             next_cursor = encode_cursor(last["updated_at"], last["id"])
         return sessions, next_cursor
 
-    def search_sessions(self, query: str) -> list[SessionSummary]:
+    def search_sessions(
+        self,
+        query: str,
+        origin: SessionOrigin | None = None,
+    ) -> list[SessionSummary]:
         normalized_query = query.strip().lower()
         if not normalized_query:
             return []
 
         if self._database is not None:
+            clauses = ["lower(title) like ?"]
+            parameters: list[object] = [f"%{normalized_query}%"]
+            if origin is not None:
+                clauses.append("origin = ?")
+                parameters.append(origin)
             rows = self._database.fetchall(
-                "select * from transcript_metadata where lower(title) like ? "
+                f"select * from transcript_metadata where {' and '.join(clauses)} "
                 "order by updated_at desc, id desc",
-                (f"%{normalized_query}%",),
+                parameters,
             )
             active_id = self._read_active_id()
             return [_metadata_summary(row, active_id) for row in rows]
@@ -144,8 +185,23 @@ class TranscriptStore:
                 json.dumps(event.payload, ensure_ascii=False).lower() for event in events
             )
             if normalized_query in haystack:
-                matched_sessions.append(self._session_summary(transcript_id, active_id))
+                summary = self._session_summary(transcript_id, active_id)
+                if origin is None or summary.origin == origin:
+                    matched_sessions.append(summary)
         return sorted(matched_sessions, key=lambda session: session.updated_at, reverse=True)
+
+    def session_origin(self, transcript_id: str) -> SessionOrigin | None:
+        if not self.exists(transcript_id):
+            return None
+        if self._database is not None:
+            row = self._database.fetchone(
+                "select origin from transcript_metadata where id = ?",
+                (transcript_id,),
+            )
+            if row is not None:
+                return row["origin"]
+        origin, _hook_run_id = _session_metadata(self._load(transcript_id))
+        return origin
 
     def activate(self, transcript_id: str) -> bool:
         if not self._transcript_path(transcript_id).exists():
@@ -291,6 +347,7 @@ class TranscriptStore:
         created_at = _created_at(events, self._transcript_path(transcript_id))
         updated_at = events[-1].created_at if events else created_at
         agent_id, model, options = _session_agent_config(events)
+        origin, hook_run_id = _session_metadata(events)
         return SessionSummary(
             id=transcript_id,
             title=_session_title(events),
@@ -303,6 +360,8 @@ class TranscriptStore:
             model=model,
             options=options,
             editable=_is_session_editable(events),
+            origin=origin,
+            hook_run_id=hook_run_id,
         )
 
     def _rebuild_metadata_index(self) -> None:
@@ -362,6 +421,8 @@ class TranscriptStore:
         agent_id = str(row["agent_id"])
         model = str(row["model"])
         options = json.loads(row["options_json"])
+        origin = str(row["origin"])
+        hook_run_id = row["hook_run_id"]
         if event.kind == "session_config_set":
             value = event.payload.get("agent_id")
             agent_id = value if isinstance(value, str) else "codex"
@@ -369,6 +430,11 @@ class TranscriptStore:
             model = value if isinstance(value, str) else "default"
             value = event.payload.get("options")
             options = dict(value) if isinstance(value, dict) else {}
+        elif event.kind == "session_metadata_set":
+            value = event.payload.get("origin")
+            origin = value if value in {"chat", "hook"} else "chat"
+            value = event.payload.get("hook_run_id")
+            hook_run_id = value if isinstance(value, str) and value else None
 
         status: SessionStatus
         if event.kind == "runtime_error":
@@ -382,7 +448,7 @@ class TranscriptStore:
             update transcript_metadata
             set title = ?, updated_at = ?, message_count = ?, status = ?,
                 agent_id = ?, model = ?, options_json = ?, editable = ?,
-                pending_approval_ids_json = ?
+                pending_approval_ids_json = ?, origin = ?, hook_run_id = ?
             where id = ?
             """,
             (
@@ -394,9 +460,12 @@ class TranscriptStore:
                 model,
                 json.dumps(options, ensure_ascii=False, sort_keys=True),
                 int(bool(row["editable"]) and event.kind in {
-                    "session_config_set", "session_rename", "agent_session_link"
+                    "session_config_set", "session_metadata_set",
+                    "session_rename", "agent_session_link"
                 }),
                 json.dumps(sorted(pending)),
+                origin,
+                hook_run_id,
                 event.transcript_id,
             ),
         )
@@ -455,9 +524,29 @@ def _session_agent_config(events: list[TranscriptEvent]) -> tuple[str, str, dict
     return "codex", "default", {}
 
 
+def _session_metadata(
+    events: list[TranscriptEvent],
+) -> tuple[SessionOrigin, str | None]:
+    for event in reversed(events):
+        if event.kind != "session_metadata_set":
+            continue
+        origin = event.payload.get("origin")
+        hook_run_id = event.payload.get("hook_run_id")
+        return (
+            origin if origin in {"chat", "hook"} else "chat",
+            hook_run_id if isinstance(hook_run_id, str) and hook_run_id else None,
+        )
+    return "chat", None
+
+
 def _is_session_editable(events: list[TranscriptEvent]) -> bool:
     return all(
-        event.kind in {"session_config_set", "session_rename", "agent_session_link"}
+        event.kind in {
+            "session_config_set",
+            "session_metadata_set",
+            "session_rename",
+            "agent_session_link",
+        }
         for event in events
     )
 
@@ -482,8 +571,9 @@ def _upsert_metadata(connection, summary: SessionSummary, pending: set[str]) -> 
         """
         insert into transcript_metadata (
             id, title, created_at, updated_at, message_count, status,
-            agent_id, model, options_json, editable, pending_approval_ids_json
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            agent_id, model, options_json, editable, pending_approval_ids_json,
+            origin, hook_run_id
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         on conflict(id) do update set
             title = excluded.title,
             created_at = excluded.created_at,
@@ -494,7 +584,9 @@ def _upsert_metadata(connection, summary: SessionSummary, pending: set[str]) -> 
             model = excluded.model,
             options_json = excluded.options_json,
             editable = excluded.editable,
-            pending_approval_ids_json = excluded.pending_approval_ids_json
+            pending_approval_ids_json = excluded.pending_approval_ids_json,
+            origin = excluded.origin,
+            hook_run_id = excluded.hook_run_id
         """,
         (
             summary.id,
@@ -508,6 +600,8 @@ def _upsert_metadata(connection, summary: SessionSummary, pending: set[str]) -> 
             json.dumps(summary.options, ensure_ascii=False, sort_keys=True),
             int(summary.editable),
             json.dumps(sorted(pending)),
+            summary.origin,
+            summary.hook_run_id,
         ),
     )
 
@@ -525,4 +619,6 @@ def _metadata_summary(row: object, active_id: str | None) -> SessionSummary:
         model=row["model"],
         options=json.loads(row["options_json"]),
         editable=bool(row["editable"]),
+        origin=row["origin"],
+        hook_run_id=row["hook_run_id"],
     )

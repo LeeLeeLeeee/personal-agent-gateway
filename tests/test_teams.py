@@ -552,6 +552,45 @@ def test_answer_decision_request_requeues_only_listed_tasks_and_rejects_stale_su
         )
 
 
+def test_run_level_decision_request_records_stage_and_resolved_context(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [], "planning_only", 1)
+    leader_agent = teams.list_agents(run.id)[0]
+    teams.set_run_status(run.id, "planning")
+    teams.set_agent_status(leader_agent.id, "running")
+
+    collecting = teams.defer_run_for_user_decision(
+        run.id,
+        {
+            "topic": "scope",
+            "question": "Which scope?",
+            "why_needed": "Changes the plan.",
+            "options": [],
+            "recommended_option_id": None,
+            "blocking_scope": "run",
+        },
+        stage="planning",
+    )
+
+    assert collecting.status == "collecting"
+    assert collecting.items[0]["stage"] == "planning"
+    assert collecting.items[0]["blocking_task_ids"] == []
+
+    request = teams.publish_decision_request(run.id)
+    teams.answer_decision_request(
+        run.id,
+        request.id,
+        request.revision,
+        {"Q-001": "backend only"},
+    )
+
+    assert teams.decision_context_for_run(run.id, stage="planning") == (
+        "Q: Which scope?\nA: backend only"
+    )
+    assert teams.decision_context_for_run(run.id, stage="synthesis") == ""
+
+
 def test_create_team_run_from_team_snapshots_roster_and_rules(tmp_path):
     (tmp_path / "workspace").mkdir()
     personas, teams = make_services(tmp_path)

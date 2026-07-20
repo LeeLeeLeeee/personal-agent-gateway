@@ -7,6 +7,7 @@ from uuid import uuid4
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.hook_runs import HookRun, HookRunService
 from personal_agent_gateway.hook_secrets import HookSecretStore
+from personal_agent_gateway.personas import PersonaService, persona_snapshot
 from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.sources.base import SourceAdapter
 
@@ -22,7 +23,9 @@ class Hook:
     target_backend: str
     target_model: str
     target_options: dict[str, object]
-    target_kind: Literal["agent", "team_run"]
+    target_kind: Literal["agent", "persona", "team_run"]
+    target_persona_id: str | None
+    target_persona_snapshot: dict[str, object]
     target_team_run_id: str | None
     prompt_template: str
     poll_interval_seconds: int
@@ -40,10 +43,12 @@ class HookService:
         db: Database,
         secret_store: HookSecretStore,
         adapters: dict[str, SourceAdapter],
+        personas: PersonaService | None = None,
     ) -> None:
         self._db = db
         self._secret_store = secret_store
         self._adapters = adapters
+        self._personas = personas
 
     def create_hook(
         self,
@@ -58,12 +63,27 @@ class HookService:
         prompt_template: str,
         poll_interval_seconds: int,
         now: datetime | None = None,
-        target_kind: Literal["agent", "team_run"] = "agent",
+        target_kind: Literal["agent", "persona", "team_run"] = "agent",
+        target_persona_id: str | None = None,
         target_team_run_id: str | None = None,
     ) -> Hook:
         if source_type not in self._adapters:
             raise ValueError(f"Unsupported source type: {source_type}")
-        if target_kind == "team_run":
+        target_persona_snapshot: dict[str, object] = {}
+        if target_kind == "persona":
+            if not target_persona_id:
+                raise ValueError("Persona target is required")
+            if self._personas is None:
+                raise ValueError("Persona targets are unavailable")
+            try:
+                persona = self._personas.get_persona(target_persona_id)
+            except KeyError as exc:
+                raise ValueError("Persona target not found") from exc
+            target_persona_snapshot = persona_snapshot(persona)
+            target_backend = persona.default_backend
+            target_model = persona.default_model
+            target_options = dict(persona.default_options)
+        elif target_kind == "team_run":
             if not target_team_run_id:
                 raise ValueError("Team Run target is required")
             target = self._db.fetchone(
@@ -92,11 +112,12 @@ class HookService:
             insert into hooks (
                 id, name, source_type, connection_ref, filter_json,
                 target_backend, target_model, target_options_json, prompt_template,
-                target_kind, target_team_run_id,
+                target_kind, target_persona_id, target_persona_snapshot_json,
+                target_team_run_id,
                 poll_interval_seconds, enabled, cursor_json, last_polled_at, last_error,
                 created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, null, null, null, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, null, null, null, ?, ?)
             """,
             (
                 hook_id,
@@ -109,6 +130,8 @@ class HookService:
                 json.dumps(target_options, sort_keys=True),
                 prompt_template,
                 target_kind,
+                target_persona_id,
+                json.dumps(target_persona_snapshot, ensure_ascii=False, sort_keys=True),
                 target_team_run_id,
                 poll_interval_seconds,
                 stamp,
@@ -237,6 +260,19 @@ def _hook_from_row(row: object) -> Hook:
         target_model=row["target_model"],
         target_options=json.loads(row["target_options_json"]),
         target_kind=row["target_kind"] if "target_kind" in row.keys() else "agent",
+        target_persona_id=(
+            row["target_persona_id"]
+            if "target_persona_id" in row.keys()
+            else None
+        ),
+        target_persona_snapshot=(
+            json.loads(row["target_persona_snapshot_json"])
+            if (
+                "target_persona_snapshot_json" in row.keys()
+                and row["target_persona_snapshot_json"]
+            )
+            else {}
+        ),
         target_team_run_id=(
             row["target_team_run_id"]
             if "target_team_run_id" in row.keys()

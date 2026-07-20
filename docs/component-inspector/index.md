@@ -14,6 +14,13 @@ updated_at: 2026-07-20
 
 # Component Inspector Reports
 
+- [RulesView Global Enforcement Typography — 2026-07-20 15:17](./RulesView/2026-07-20-1517.md)
+- [TeamRunDetail Leader Decision Stage — 2026-07-20 13:56](./TeamRunDetail/2026-07-20-1356.md)
+- [PersonaPicker Fixed Width — 2026-07-20 12:07](./PersonaPicker/2026-07-20-1207.md)
+- [ChatView Persona Targeting — 2026-07-20 11:13](./ChatView/2026-07-20-1113.md)
+- [HooksView Persona Targeting — 2026-07-20 11:13](./HooksView/2026-07-20-1113.md)
+- [HooksView Team Run Target Label — 2026-07-20 10:53](./HooksView/2026-07-20-1053.md)
+- [HooksView Create Form Disclosure — 2026-07-20 10:37](./HooksView/2026-07-20-1037.md)
 - [OperationsView Backup Recoverability — 2026-07-20 09:20](./OperationsView/2026-07-20-0920.md)
 - [GatewayApp SSE Collection Reconciliation — 2026-07-20 09:14](./GatewayApp/2026-07-20-0914.md)
 - [GatewayApp Mail Team Run UI — 2026-07-16 15:36](./GatewayApp/2026-07-16-1536.md)

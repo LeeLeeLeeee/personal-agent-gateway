@@ -265,6 +265,7 @@ export function GatewayApp() {
       load(api.artifacts(), setArtifacts);
     } else if (screen === "chat") {
       load(api.artifacts(), setArtifacts);
+      api.personas().then(setPersonas).catch(() => {});
     } else if (screen === "jobs") {
       load(api.jobs(), setJobs);
     } else if (screen === "schedules") {
@@ -273,6 +274,7 @@ export function GatewayApp() {
     } else if (screen === "hooks") {
       load(api.listHooks(), setHooks);
       load(api.teamRuns(), setTeamRuns);
+      api.personas().then(setPersonas).catch(() => {});
       setHooksBadge(0);
     } else if (screen === "operations") {
       loadOperations();
@@ -704,6 +706,7 @@ export function GatewayApp() {
       {screen === "chat" ? (
         <ChatView
           agents={agents}
+          personas={personas}
           sessions={sessions}
           sessionConfig={sessionConfig}
           sessionConfigError={sessionConfigError}
@@ -907,6 +910,7 @@ export function GatewayApp() {
             hooks={hooks}
             hookRuns={hookRuns}
             agents={agents}
+            personas={personas}
             teamRuns={teamRuns}
             openHookRunsId={openHookRunsId}
             onCreate={handleCreateHook}

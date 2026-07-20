@@ -99,6 +99,29 @@ async def test_plain_assistant_output_is_appended_as_assistant_event(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_runtime_prepends_persona_system_prompt_to_every_model_call(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    transcript = TranscriptStore(tmp_path / "sessions")
+    tools = WorkspaceTools(root=workspace, approvals=ApprovalStore())
+    model = FakeModelClient([ModelResponse(content="answer", tool_calls=[])])
+    runtime = AgentRuntime(
+        transcript,
+        tools,
+        model,
+        history_mode="latest_user",
+        system_prompt="Persona: Mail Manager",
+    )
+
+    await runtime.handle_user_message("classify this")
+
+    assert model.calls[0][0] == {
+        "role": "system",
+        "content": "Persona: Mail Manager",
+    }
+
+
+@pytest.mark.asyncio
 async def test_runtime_writes_entire_turn_to_starting_session_when_active_changes(tmp_path: Path) -> None:
     transcript = TranscriptStore(tmp_path / "sessions")
     session_id = transcript.start_new()

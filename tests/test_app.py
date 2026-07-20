@@ -407,6 +407,28 @@ def test_sessions_api_lists_activate_delete_and_searches_sessions(tmp_path: Path
     assert client.get("/api/sessions").json()["sessions"][0]["id"] == second_id
 
 
+def test_sessions_api_hides_hook_transcripts_from_chat_routes(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    chat_session_id = store.start_new()
+    store.append_to(chat_session_id, "user", {"content": "visible shared chat"})
+    hook_session_id = store.start_new(
+        origin="hook",
+        hook_run_id="hook-run-1",
+        activate=False,
+    )
+    store.append_to(hook_session_id, "user", {"content": "hidden shared hook"})
+    client = auth_client(config, FakeRuntime())
+
+    sessions = client.get("/api/sessions").json()["sessions"]
+    search = client.get("/api/sessions/search?q=shared").json()["sessions"]
+
+    assert [session["id"] for session in sessions] == [chat_session_id]
+    assert [session["id"] for session in search] == [chat_session_id]
+    assert client.get(f"/api/sessions/{hook_session_id}/history").status_code == 404
+    assert client.post(f"/api/sessions/{hook_session_id}/activate").status_code == 404
+
+
 def test_session_explicit_history_status_and_activity_do_not_activate_session(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     store = TranscriptStore(config.session_dir)

@@ -26,7 +26,8 @@ class CreateHookRequest(BaseModel):
     target_backend: str = ""
     target_model: str = ""
     target_options: dict[str, object] = Field(default_factory=dict)
-    target_kind: Literal["agent", "team_run"] = "agent"
+    target_kind: Literal["agent", "persona", "team_run"] = "agent"
+    target_persona_id: str | None = None
     target_team_run_id: str | None = None
     prompt_template: str
     poll_interval_seconds: int = 300
@@ -67,6 +68,7 @@ def create_hook(
             prompt_template=payload.prompt_template,
             poll_interval_seconds=payload.poll_interval_seconds,
             target_kind=payload.target_kind,
+            target_persona_id=payload.target_persona_id,
             target_team_run_id=payload.target_team_run_id,
         )
     except ValueError as exc:
@@ -224,6 +226,8 @@ def _hook_payload(hook: Hook) -> dict[str, object]:
         "target_model": hook.target_model,
         "target_options": hook.target_options,
         "target_kind": hook.target_kind,
+        "target_persona_id": hook.target_persona_id,
+        "target_persona_snapshot": hook.target_persona_snapshot,
         "target_team_run_id": hook.target_team_run_id,
         "prompt_template": hook.prompt_template,
         "poll_interval_seconds": hook.poll_interval_seconds,
