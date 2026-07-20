@@ -66,10 +66,12 @@ def test_operations_projects_domain_states_with_stable_deep_links(tmp_path: Path
     }
     assert {component["name"] for component in body["health"]} == {
         "database",
-        "worker",
-        "scheduler",
-        "cli",
-        "intake",
+            "worker",
+            "scheduler",
+            "hook_loop",
+            "hook_runner",
+            "cli",
+            "intake",
     }
     items = {(item["domain"], item["id"]): item for item in body["items"]}
     assert items[("session", session_id)]["target"] == {

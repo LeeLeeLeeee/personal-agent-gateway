@@ -38,7 +38,18 @@ const data = {
     }
   ],
   backups: [
-    { id: "backup-1", created_at: "2026-07-15T00:00:00Z", schema_version: 2, database_size_bytes: 1024 }
+    {
+      id: "backup-1",
+      created_at: "2026-07-15T00:00:00Z",
+      schema_version: 2,
+      database_size_bytes: 1024,
+      profile: "database-only",
+      recoverability: {
+        database: "included",
+        auth: "metadata-only",
+        hook_secrets: "reference-only"
+      }
+    }
   ]
 };
 
@@ -88,6 +99,8 @@ describe("OperationsView", () => {
     await userEvent.click(screen.getByRole("button", { name: /create backup/i }));
     await userEvent.click(screen.getByRole("button", { name: /verify backup-1/i }));
 
+    expect(screen.getByText(/database-only/)).toBeInTheDocument();
+    expect(screen.getByText(/Not fully recoverable.*auth: metadata-only/)).toBeInTheDocument();
     expect(viewProps.onEmergencyStop).toHaveBeenCalledTimes(1);
     expect(viewProps.onCreateBackup).toHaveBeenCalledTimes(1);
     expect(viewProps.onVerifyBackup).toHaveBeenCalledWith("backup-1");

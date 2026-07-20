@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pyotp
 
+from personal_agent_gateway.private_json import write_private_json
+
 
 @dataclass(frozen=True)
 class TotpSetup:
@@ -106,14 +108,16 @@ class AuthStore:
     def _read_json(self, path: Path) -> dict[str, object]:
         if not path.exists():
             return {}
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
         if not isinstance(payload, dict):
             return {}
         return {str(key): value for key, value in payload.items()}
 
     def _write_json(self, path: Path, payload: dict[str, object]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        write_private_json(path, payload)
 
 
 def _hash_code(code: str) -> str:

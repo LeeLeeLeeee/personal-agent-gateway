@@ -4,6 +4,20 @@ import { entryFromSse, normalizeApproval, timelineFromSession } from "../lib/tim
 import { nowDateTime } from "../lib/time.js";
 import { emptyChatSessionState, withSessionConfigStatus } from "./sessionState.js";
 
+export const SSE_DEDUP_LIMIT = 512;
+
+export function rememberSseEvent(seen, event, limit = SSE_DEDUP_LIMIT) {
+  if (event.id == null) return true;
+  const streamId = event.stream_id == null ? "legacy" : String(event.stream_id);
+  const key = `${streamId}:${String(event.id)}`;
+  if (seen.has(key)) return false;
+  seen.set(key, true);
+  while (seen.size > limit) {
+    seen.delete(seen.keys().next().value);
+  }
+  return true;
+}
+
 function appendOrReconcileCommand(entries, entry) {
   if (entry.type !== "command") return [...entries, entry];
   const index = entries.findIndex(
@@ -89,7 +103,7 @@ export function useSessionController({
 }) {
   const [sessionConfigError, setSessionConfigError] = useState("");
   const [sseState, setSseState] = useState("idle");
-  const seenSseEventIdsRef = useRef(new Set());
+  const seenSseEventIdsRef = useRef(new Map());
   const activeSessionState = activeSessionId
     ? (sessionStateById[activeSessionId] || emptyChatSessionState())
     : emptyChatSessionState();
@@ -108,11 +122,7 @@ export function useSessionController({
       } catch (_error) {
         return;
       }
-      if (parsed.id != null) {
-        const eventId = String(parsed.id);
-        if (seenSseEventIdsRef.current.has(eventId)) return;
-        seenSseEventIdsRef.current.add(eventId);
-      }
+      if (!rememberSseEvent(seenSseEventIdsRef.current, parsed)) return;
       if (parsed.type?.startsWith("team.") && parsed.team_run_id) {
         onTeamEvent(parsed);
         return;

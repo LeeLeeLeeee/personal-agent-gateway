@@ -115,7 +115,7 @@ def test_poll_hook_creates_runs_and_advances_cursor(tmp_path: Path) -> None:
 
 def test_poll_hook_failure_records_error_without_cursor_advance(tmp_path: Path) -> None:
     adapter = StubAdapter()
-    adapter.error = RuntimeError("auth failed")
+    adapter.error = RuntimeError("auth failed with app-pw")
     hook_service, run_service = _service(tmp_path, adapter)
     hook_id = _create(hook_service)
 
@@ -125,6 +125,8 @@ def test_poll_hook_failure_records_error_without_cursor_advance(tmp_path: Path) 
     hook = hook_service.get_hook(hook_id)
     assert hook.cursor is None
     assert "auth failed" in hook.last_error
+    assert "app-pw" not in hook.last_error
+    assert "[redacted]" in hook.last_error
 
 
 def test_poll_due_skips_recently_polled(tmp_path: Path) -> None:

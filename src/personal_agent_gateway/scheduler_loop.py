@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.intake import IntakeGate
+from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.schedules import ScheduleService
 
 
@@ -64,5 +65,5 @@ class SchedulerLoop:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._last_error = str(exc)[:2000] or type(exc).__name__
+                self._last_error = redact_text(exc) or type(exc).__name__
             await asyncio.sleep(self._interval_seconds)

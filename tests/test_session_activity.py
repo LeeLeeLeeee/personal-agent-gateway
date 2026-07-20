@@ -238,7 +238,12 @@ def test_session_activity_publisher_keeps_sse_ids_monotonic_when_team_events_int
         )
     )
 
-    assert team_event == {"id": 1, "type": "team.run.started", "team_run_id": "run-1"}
+    assert team_event == {
+        "stream_id": bus.stream_id,
+        "id": 1,
+        "type": "team.run.started",
+        "team_run_id": "run-1",
+    }
     assert chat_event["id"] == 2
     assert chat_event["activity_id"] == 1
     assert chat_event["event_seq"] == 1
@@ -266,5 +271,10 @@ def test_session_activity_publisher_keeps_team_events_out_of_chat_activity(tmp_p
         )
     )
 
-    assert published == {"id": 1, "type": "team.run.started", "team_run_id": "run-1"}
+    assert published == {
+        "stream_id": bus.stream_id,
+        "id": 1,
+        "type": "team.run.started",
+        "team_run_id": "run-1",
+    }
     assert service.list("run-1") == []

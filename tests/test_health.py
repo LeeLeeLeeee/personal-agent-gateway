@@ -40,6 +40,8 @@ def test_live_is_public_and_ready_reports_component_status(tmp_path: Path) -> No
         "database",
         "worker",
         "scheduler",
+        "hook_loop",
+        "hook_runner",
         "cli",
         "intake",
     }
@@ -63,6 +65,30 @@ def test_one_failed_component_makes_only_ready_fail(tmp_path: Path) -> None:
     scheduler = next(item for item in ready.json()["components"] if item["name"] == "scheduler")
     assert scheduler == {"name": "scheduler", "ready": False, "detail": "not running"}
     assert live.status_code == 200
+
+
+def test_hook_provider_error_is_degraded_but_alive_component_remains_ready(
+    tmp_path: Path,
+) -> None:
+    app = create_app(make_config(tmp_path))
+    app.state.agent_registry.catalog = _available_codex
+
+    with TestClient(app) as client:
+        app.state.health_service._hook_loop = SimpleNamespace(
+            alive=True,
+            last_error="provider unavailable",
+        )
+        ready = client.get("/health/ready")
+
+    assert ready.status_code == 200
+    hook_loop = next(
+        item for item in ready.json()["components"] if item["name"] == "hook_loop"
+    )
+    assert hook_loop == {
+        "name": "hook_loop",
+        "ready": True,
+        "detail": "degraded: provider unavailable",
+    }
 
 
 def test_unhandled_error_returns_and_logs_redacted_correlation_id(

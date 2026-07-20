@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from personal_agent_gateway.hook_runner import HookRunner
 from personal_agent_gateway.hook_runs import HookRunService
 from personal_agent_gateway.hooks import HookService
+from personal_agent_gateway.intake import IntakeGate
+from personal_agent_gateway.redaction import redact_text
 
 
 class HookLoop:
@@ -13,11 +15,13 @@ class HookLoop:
         hook_runs: HookRunService,
         runner: HookRunner,
         interval_seconds: float = 30.0,
+        intake_gate: IntakeGate | None = None,
     ) -> None:
         self._hooks = hooks
         self._hook_runs = hook_runs
         self._runner = runner
         self._interval_seconds = interval_seconds
+        self._intake_gate = intake_gate
         self._task: asyncio.Task[None] | None = None
         self._last_error: str | None = None
 
@@ -44,6 +48,8 @@ class HookLoop:
         self._task = None
 
     async def tick(self) -> None:
+        if self._intake_gate is not None and not self._intake_gate.is_open:
+            return
         runs = await asyncio.to_thread(
             self._hooks.poll_due, self._hook_runs, datetime.now(timezone.utc)
         )
@@ -58,5 +64,5 @@ class HookLoop:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._last_error = str(exc)[:2000] or type(exc).__name__
+                self._last_error = redact_text(exc) or type(exc).__name__
             await asyncio.sleep(self._interval_seconds)

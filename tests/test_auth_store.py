@@ -30,3 +30,14 @@ def test_recovery_code_is_single_use(tmp_path):
 
     assert store.use_recovery_code(recovery_code) is True
     assert store.use_recovery_code(recovery_code) is False
+
+
+def test_malformed_auth_state_fails_closed(tmp_path):
+    root = tmp_path / "auth"
+    root.mkdir()
+    (root / "totp.json").write_text("{", encoding="utf-8")
+
+    store = AuthStore(root)
+
+    assert store.is_totp_enabled() is False
+    assert store.verify_login_code("123456") is False

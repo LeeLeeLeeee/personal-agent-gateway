@@ -7,6 +7,7 @@ from personal_agent_gateway.hook_loop import HookLoop
 from personal_agent_gateway.hook_runs import HookRunService
 from personal_agent_gateway.hook_secrets import HookSecretStore
 from personal_agent_gateway.hooks import HookService
+from personal_agent_gateway.intake import IntakeGate
 from personal_agent_gateway.sources.base import HookEvent, PollResult
 
 
@@ -46,3 +47,36 @@ async def test_tick_creates_runs_and_enqueues(tmp_path: Path) -> None:
 
     assert len(runner.enqueued) == 1
     assert len(runs.list_runs(hooks.list_hooks()[0].id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_does_not_poll_while_intake_is_closed_and_resumes_once(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    adapter = StubAdapter([HookEvent("email:1:2", "s", {"subject": "hi"})])
+    hooks = HookService(db, HookSecretStore(tmp_path / "hooks"), {"email": adapter})
+    hook = hooks.create_hook(
+        name="w", source_type="email",
+        connection={"host": "h", "port": 993, "username": "u"}, secret="pw",
+        filter={}, target_backend="codex", target_model="default",
+        target_options={}, prompt_template="t", poll_interval_seconds=300,
+    )
+    runs = HookRunService(db)
+    runner = RecordingRunner()
+    gate = IntakeGate()
+    loop = HookLoop(hooks, runs, runner, intake_gate=gate)
+
+    gate.close()
+    await loop.tick()
+
+    assert runs.list_runs(hook.id) == []
+    assert runner.enqueued == []
+
+    gate.open()
+    await loop.tick()
+    await loop.tick()
+
+    assert len(runs.list_runs(hook.id)) == 1
+    assert len(runner.enqueued) == 1

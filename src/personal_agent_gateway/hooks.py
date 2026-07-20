@@ -7,6 +7,7 @@ from uuid import uuid4
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.hook_runs import HookRun, HookRunService
 from personal_agent_gateway.hook_secrets import HookSecretStore
+from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.sources.base import SourceAdapter
 
 
@@ -174,9 +175,10 @@ class HookService:
         try:
             result = adapter.poll(hook.connection, secret, hook.cursor, hook.filter)
         except Exception as exc:
+            message = redact_text(exc, secrets=[secret])
             self._db.execute(
                 "update hooks set last_error = ?, updated_at = ? where id = ?",
-                (str(exc)[:2000] or type(exc).__name__, stamp, hook_id),
+                (message or type(exc).__name__, stamp, hook_id),
             )
             return []
         created: list[HookRun] = []
@@ -205,6 +207,11 @@ class HookService:
             raise ValueError(f"Connection test not supported for source: {source_type}")
         folder = str(filter.get("folder") or "INBOX")
         adapter.verify(connection, secret, folder)
+
+    def redact_error(self, hook_id: str, value: object) -> str:
+        hook = self.get_hook(hook_id)
+        secret = self._secret_store.load(hook.connection_ref)
+        return redact_text(value, secrets=[secret] if secret else [])
 
 
 def render_prompt(template: str, payload: dict[str, object]) -> str:

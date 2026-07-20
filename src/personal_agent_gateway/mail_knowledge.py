@@ -11,6 +11,7 @@ from uuid import uuid4
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.hook_runs import HookRun
 from personal_agent_gateway.hooks import Hook
+from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.teams import TeamRun
 
 
@@ -246,7 +247,7 @@ class MailWorkspaceProjector:
             self._project(message)
         except (OSError, ValueError) as exc:
             return self._knowledge.mark_projection_failed(
-                message.id, str(exc) or type(exc).__name__
+                message.id, redact_text(exc) or type(exc).__name__
             )
         return self._knowledge.mark_projected(message.id)
 

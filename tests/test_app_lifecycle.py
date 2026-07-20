@@ -143,3 +143,27 @@ async def test_scheduler_survives_one_tick_exception() -> None:
     assert schedules.calls >= 2
     assert loop.alive is True
     await loop.stop()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_redacts_environment_secret_from_last_error(
+    monkeypatch,
+) -> None:
+    class FailingSchedules:
+        def create_due_jobs(self, _jobs, now):
+            raise RuntimeError("scheduler leaked scheduler-secret")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "scheduler-secret")
+    loop = SchedulerLoop(
+        FailingSchedules(),
+        object(),
+        object(),
+        interval_seconds=60,
+    )
+
+    await loop.start()
+    await asyncio.sleep(0.01)
+
+    assert "scheduler-secret" not in (loop.last_error or "")
+    assert "[redacted]" in (loop.last_error or "")
+    await loop.stop()

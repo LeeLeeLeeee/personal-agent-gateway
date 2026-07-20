@@ -23,6 +23,8 @@ class BackupRecord:
     schema_version: int
     database_sha256: str
     database_size_bytes: int
+    profile: str
+    recoverability: dict[str, str]
     directory: Path
 
     @property
@@ -41,6 +43,10 @@ class BackupValidation:
     schema_version: int
     database_sha256: str
     target_path: Path | None
+    profile: str
+    recoverability: dict[str, str]
+    warnings: list[str]
+    missing_hook_connection_refs: list[str]
 
 
 class BackupService:
@@ -53,6 +59,7 @@ class BackupService:
         session_dir: Path,
         artifact_root: Path,
         workspace_root: Path,
+        hooks_dir: Path,
         intake_gate: IntakeGate,
     ) -> None:
         self._database = database
@@ -61,6 +68,7 @@ class BackupService:
         self._session_dir = session_dir.resolve()
         self._artifact_root = artifact_root.resolve()
         self._workspace_root = workspace_root.resolve()
+        self._hooks_dir = hooks_dir.resolve()
         self._intake_gate = intake_gate
 
     def create_backup(self) -> BackupRecord:
@@ -75,11 +83,21 @@ class BackupService:
                     source.backup(target)
             database_sha256 = _sha256(database_path)
             schema_version = _schema_version(database_path)
+            recoverability = {
+                "database": "included",
+                "auth": "metadata-only",
+                "sessions": "metadata-only",
+                "artifacts": "metadata-only",
+                "workspace": "excluded",
+                "hook_secrets": "reference-only",
+            }
             manifest = {
-                "manifest_version": 1,
+                "manifest_version": 2,
                 "backup_id": backup_id,
                 "created_at": created_at.isoformat(),
                 "schema_version": schema_version,
+                "profile": "database-only",
+                "recoverability": recoverability,
                 "file_bodies_included": False,
                 "database": {
                     "file": database_path.name,
@@ -93,6 +111,7 @@ class BackupService:
                     "exists": self._workspace_root.exists(),
                     "writable": os.access(self._workspace_root, os.W_OK),
                 },
+                "hook_credentials": self._hook_credential_manifest(),
             }
             (directory / "manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
@@ -109,12 +128,20 @@ class BackupService:
         database = manifest.get("database")
         if not isinstance(database, dict):
             raise BackupError("Backup manifest database entry is invalid")
+        recoverability = manifest.get("recoverability")
+        if not isinstance(recoverability, dict):
+            recoverability = {}
         return BackupRecord(
             id=backup_id,
             created_at=str(manifest.get("created_at") or ""),
             schema_version=int(manifest.get("schema_version") or 0),
             database_sha256=str(database.get("sha256") or ""),
             database_size_bytes=int(database.get("size_bytes") or 0),
+            profile=str(manifest.get("profile") or "legacy"),
+            recoverability={
+                str(name): str(level)
+                for name, level in recoverability.items()
+            },
             directory=directory,
         )
 
@@ -139,7 +166,7 @@ class BackupService:
     ) -> BackupValidation:
         record = self.get_backup(backup_id)
         manifest = _load_manifest(record.manifest_path)
-        if manifest.get("manifest_version") != 1:
+        if manifest.get("manifest_version") not in {1, 2}:
             raise BackupError("Unsupported backup manifest version")
         database = manifest.get("database")
         if not isinstance(database, dict) or database.get("file") != "gateway.sqlite":
@@ -153,6 +180,18 @@ class BackupService:
         if schema_version != int(manifest.get("schema_version") or -1):
             raise BackupError("Backup schema version mismatch")
         _integrity_check(record.database_path)
+        missing_hook_refs: list[str] = []
+        warnings: list[str] = []
+        if manifest.get("manifest_version") == 2:
+            missing_hook_refs = _missing_hook_connection_refs(
+                record.database_path,
+                manifest.get("hook_credentials"),
+            )
+            if missing_hook_refs:
+                warnings.append(
+                    f"{len(missing_hook_refs)} enabled Hook credential reference(s) "
+                    "were missing when the backup was created"
+                )
 
         resolved_target = target_path.resolve() if target_path is not None else None
         if resolved_target is not None:
@@ -168,6 +207,10 @@ class BackupService:
             schema_version=schema_version,
             database_sha256=actual_sha256,
             target_path=resolved_target,
+            profile=record.profile,
+            recoverability=record.recoverability,
+            warnings=warnings,
+            missing_hook_connection_refs=missing_hook_refs,
         )
 
     def restore_to(self, backup_id: str, target_path: Path) -> Path:
@@ -214,6 +257,32 @@ class BackupService:
                 for row in rows
             ],
         }
+
+    def _hook_credential_manifest(self) -> dict[str, object]:
+        entries: list[dict[str, object]] = []
+        for row in self._database.fetchall(
+            "select connection_ref, enabled from hooks order by connection_ref"
+        ):
+            connection_ref = str(row["connection_ref"])
+            path = self._hooks_dir / f"{connection_ref}.json"
+            entry: dict[str, object] = {
+                "connection_ref": connection_ref,
+                "enabled": bool(row["enabled"]),
+                "present": path.is_file(),
+            }
+            if path.is_file():
+                stat = path.stat()
+                entry.update(
+                    {
+                        "size_bytes": stat.st_size,
+                        "modified_at": datetime.fromtimestamp(
+                            stat.st_mtime,
+                            tz=timezone.utc,
+                        ).isoformat(),
+                    }
+                )
+            entries.append(entry)
+        return {"values_included": False, "references": entries}
 
 
 def _directory_manifest(root: Path) -> dict[str, object]:
@@ -278,3 +347,31 @@ def _integrity_check(path: Path) -> None:
         raise BackupError("Backup database integrity check failed") from exc
     if row is None or row[0] != "ok":
         raise BackupError("Backup database integrity check failed")
+
+
+def _missing_hook_connection_refs(
+    database_path: Path,
+    manifest_entry: object,
+) -> list[str]:
+    if not isinstance(manifest_entry, dict):
+        raise BackupError("Backup Hook credential inventory is invalid")
+    references = manifest_entry.get("references")
+    if not isinstance(references, list):
+        raise BackupError("Backup Hook credential inventory is invalid")
+    inventory: dict[str, bool] = {}
+    for entry in references:
+        if not isinstance(entry, dict) or not isinstance(entry.get("connection_ref"), str):
+            raise BackupError("Backup Hook credential inventory is invalid")
+        inventory[str(entry["connection_ref"])] = bool(entry.get("present"))
+    try:
+        with sqlite3.connect(database_path) as connection:
+            rows = connection.execute(
+                "select connection_ref from hooks where enabled = 1 order by connection_ref"
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise BackupError("Backup Hook credential references cannot be read") from exc
+    return [
+        str(row[0])
+        for row in rows
+        if not inventory.get(str(row[0]), False)
+    ]

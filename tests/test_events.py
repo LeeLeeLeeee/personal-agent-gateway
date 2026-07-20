@@ -14,7 +14,12 @@ async def test_event_bus_fans_out_events_with_monotonic_ids() -> None:
     try:
         published = await bus.publish({"type": "runtime.started", "session_id": "session-1"})
 
-        assert published == {"id": 1, "type": "runtime.started", "session_id": "session-1"}
+        assert published == {
+            "stream_id": bus.stream_id,
+            "id": 1,
+            "type": "runtime.started",
+            "session_id": "session-1",
+        }
         assert await asyncio.wait_for(first.get(), timeout=1) == published
         assert await asyncio.wait_for(second.get(), timeout=1) == published
         assert bus.recent() == [published]
@@ -35,3 +40,27 @@ async def test_event_bus_replays_events_after_last_event_id() -> None:
         assert await asyncio.wait_for(subscriber.get(), timeout=1) == second
     finally:
         bus.unsubscribe(subscriber)
+
+
+@pytest.mark.asyncio
+async def test_event_bus_uses_a_new_stream_identity_after_restart() -> None:
+    first_bus = EventBus()
+    second_bus = EventBus()
+
+    first = await first_bus.publish({"type": "runtime.started"})
+    second = await second_bus.publish({"type": "runtime.started"})
+
+    assert first["id"] == second["id"] == 1
+    assert first["stream_id"] != second["stream_id"]
+
+
+@pytest.mark.asyncio
+async def test_event_bus_owns_stream_and_event_identity_fields() -> None:
+    bus = EventBus()
+
+    published = await bus.publish(
+        {"type": "runtime.started", "stream_id": "caller", "id": "caller"}
+    )
+
+    assert published["stream_id"] == bus.stream_id
+    assert published["id"] == 1

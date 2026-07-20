@@ -1,16 +1,22 @@
 import asyncio
 from collections import deque
 from typing import Any
+from uuid import uuid4
 
 
 class EventBus:
     def __init__(self, history_limit: int = 200) -> None:
+        self.stream_id = uuid4().hex
         self._next_id = 1
         self._history: deque[dict[str, Any]] = deque(maxlen=history_limit)
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
 
     async def publish(self, event: dict[str, object]) -> dict[str, Any]:
-        published = {"id": self._next_id, **event}
+        published = {
+            **event,
+            "stream_id": self.stream_id,
+            "id": self._next_id,
+        }
         self._next_id += 1
         self._history.append(published)
         for subscriber in list(self._subscribers):

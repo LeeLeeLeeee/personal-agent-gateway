@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelClient
+from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.teams import TeamAgent, TeamRun, TeamRunService, TeamTask
 
 PLANNING_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
@@ -149,12 +150,13 @@ class TeamRuntime:
                 self._settle_canceled(run, cycle_id)
             raise
         except Exception as exc:  # noqa: BLE001
-            run = self._teams.set_run_status(run.id, "failed", error_message=str(exc))
+            error = redact_text(exc) or type(exc).__name__
+            run = self._teams.set_run_status(run.id, "failed", error_message=error)
             if cycle_id is not None:
-                self._teams.set_cycle_status(cycle_id, "failed", error_message=str(exc))
+                self._teams.set_cycle_status(cycle_id, "failed", error_message=error)
             if leader is not None:
                 self._teams.set_agent_status(leader.id, "failed")
-            await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": str(exc)})
+            await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
             return run
 
     async def _plan(
@@ -257,8 +259,9 @@ class TeamRuntime:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                error = redact_text(exc) or type(exc).__name__
                 task, worker = self._teams.finish_task(
-                    task.id, worker.id, "failed", error_message=str(exc)
+                    task.id, worker.id, "failed", error_message=error
                 )
             await self._publish(
                 {
@@ -460,12 +463,13 @@ class TeamRuntime:
                 self._settle_canceled(run, cycle_id)
             raise
         except Exception as exc:  # noqa: BLE001
-            run = self._teams.set_run_status(run.id, "failed", error_message=str(exc))
+            error = redact_text(exc) or type(exc).__name__
+            run = self._teams.set_run_status(run.id, "failed", error_message=error)
             if cycle_id is not None:
-                self._teams.set_cycle_status(cycle_id, "failed", error_message=str(exc))
+                self._teams.set_cycle_status(cycle_id, "failed", error_message=error)
             if leader is not None:
                 self._teams.set_agent_status(leader.id, "failed")
-            await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": str(exc)})
+            await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
             return run
 
     async def add_work(

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from personal_agent_gateway.audit import AuditService
 from personal_agent_gateway.intake import IntakeGate
+from personal_agent_gateway.hook_runner import HookRunner
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.run_state import SessionRunRegistry, TeamRunRegistry
 from personal_agent_gateway.teams import TeamRunService
@@ -15,6 +16,7 @@ class EmergencyStopResult:
     session_ids: list[str]
     team_run_ids: list[str]
     job_ids: list[str]
+    hook_run_ids: list[str]
     failures: list[str]
 
 
@@ -27,6 +29,7 @@ class EmergencyStopService:
         team_runs: TeamRunRegistry,
         team_run_service: TeamRunService,
         job_worker: JobWorker,
+        hook_runner: HookRunner,
         audit: AuditService,
     ) -> None:
         self._intake_gate = intake_gate
@@ -34,6 +37,7 @@ class EmergencyStopService:
         self._team_runs = team_runs
         self._team_run_service = team_run_service
         self._job_worker = job_worker
+        self._hook_runner = hook_runner
         self._audit = audit
 
     async def stop(
@@ -47,6 +51,7 @@ class EmergencyStopService:
         session_ids: list[str] = []
         team_run_ids: list[str] = []
         job_ids: list[str] = []
+        hook_run_ids: list[str] = []
 
         try:
             session_ids = await self._session_runs.cancel_all()
@@ -68,6 +73,10 @@ class EmergencyStopService:
             job_ids = await self._job_worker.emergency_stop()
         except Exception as exc:
             failures.append(f"jobs:{type(exc).__name__}")
+        try:
+            hook_run_ids = await self._hook_runner.emergency_stop()
+        except Exception as exc:
+            failures.append(f"hooks:{type(exc).__name__}")
 
         stopped_at = datetime.now(timezone.utc).isoformat()
         self._audit.record(
@@ -84,6 +93,7 @@ class EmergencyStopService:
                 "session_count": len(session_ids),
                 "team_run_count": len(team_run_ids),
                 "job_count": len(job_ids),
+                "hook_run_count": len(hook_run_ids),
                 "failures": failures,
             },
         )
@@ -93,6 +103,7 @@ class EmergencyStopService:
             session_ids=session_ids,
             team_run_ids=team_run_ids,
             job_ids=job_ids,
+            hook_run_ids=hook_run_ids,
             failures=failures,
         )
 

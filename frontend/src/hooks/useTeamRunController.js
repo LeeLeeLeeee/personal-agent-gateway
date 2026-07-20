@@ -57,17 +57,22 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
   }, [selectedTeamRunId, setScreenError]);
 
   const handleTeamEvent = useCallback((event) => {
-    if (event.team_run_id !== selectedTeamRunIdRef.current) return;
-    const hasDelta = event.run || event.task || event.agent;
-    if (hasDelta) {
-      setTeamRunDetail((current) => applyTeamRunDelta(current, event));
-    }
     const requiresRefresh = [
       "team.run.completed",
       "team.run.failed",
       "team.run.input_requested",
       "team.run.input_resolved"
     ].includes(event.type);
+    if (requiresRefresh) {
+      api.teamRuns()
+        .then(setTeamRuns)
+        .catch(setScreenError);
+    }
+    if (event.team_run_id !== selectedTeamRunIdRef.current) return;
+    const hasDelta = event.run || event.task || event.agent;
+    if (hasDelta) {
+      setTeamRunDetail((current) => applyTeamRunDelta(current, event));
+    }
     if (!hasDelta || requiresRefresh) {
       api.teamRunDetail(event.team_run_id)
         .then(setTeamRunDetail)

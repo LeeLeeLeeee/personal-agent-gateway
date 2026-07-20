@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>보안 경계 구조 리뷰</title>
+  <style>
+    :root{color-scheme:light;--ink:#172033;--muted:#5f6b7a;--line:#d9e0e8;--paper:#fff;--wash:#f4f7fb;--accent:#265d97}
+    *{box-sizing:border-box}body{margin:0;background:var(--wash);color:var(--ink);font:15px/1.55 system-ui,sans-serif}
+    main{max-width:1080px;margin:auto;padding:32px 20px 64px}header,section{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:22px;margin:0 0 16px}
+    h1{margin:0 0 8px;font-size:28px}h2{margin:0 0 14px;font-size:20px}h3{font-size:16px}p{margin:8px 0}.muted{color:var(--muted)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.card{border-left:4px solid var(--accent);padding:10px 14px;background:#f8fbff}
+    table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;vertical-align:top;border:1px solid var(--line);padding:8px}th{background:#edf3f9}
+    code{background:#eef2f6;padding:1px 4px;border-radius:4px}ul{padding-left:21px}.trace{font-family:ui-monospace,monospace}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>보안 경계 구조 리뷰</h1>
+    <p class="muted">2026-07-20 · Auth/Hook secret storage와 runtime error redaction</p>
+    <p>결정 질문: 로컬 파일 기반 보안 모델을 유지하면서 private atomic write와 domain
+      error redaction을 추가할지, credential vault와 전역 오류 계층으로 확장할지 결정한다.</p>
+  </header>
+
+  <section>
+    <h2>확인된 구조</h2>
+    <div class="grid">
+      <div class="card"><strong>기본 인증 경계</strong><br>session token은 hash 저장되고
+        cookie는 HttpOnly·SameSite=Strict이다.</div>
+      <div class="card"><strong>Secret 파일</strong><br>TOTP와 Hook secret은 DB와 분리되지만
+        최종 JSON 파일에 직접 덮어쓰고 권한을 명시하지 않는다.</div>
+      <div class="card"><strong>오류 경계</strong><br>Audit에는 공용 redaction이 있으나
+        Hook·Team·Scheduler 일부는 raw exception을 저장·전달한다.</div>
+    </div>
+    <p><strong>해석:</strong> 인증 구조를 교체할 필요는 없지만, secret 파일의 손상·접근
+      정책과 provider 오류의 사용자 노출 경계를 로컬하게 보강할 필요가 있다.</p>
+    <p><strong>미확인:</strong> 공식 배포 계정/ACL, provider의 safe-error 계약,
+      외부 mail payload 보존 요구는 확인되지 않았다.</p>
+  </section>
+
+  <section>
+    <h2>F-01 · Secret-bearing JSON</h2>
+    <p>결정 질문: OS 기본 경계, private atomic writer, credential vault 중 어느 수준이
+      현재 위협 모델에 맞는가?</p>
+    <table>
+      <thead><tr><th>Option</th><th>Benefit</th><th>Cost</th><th>Risk</th><th>Applicable when</th></tr></thead>
+      <tbody>
+        <tr><td>O-01/A OS 기본 경계</td><td>코드 변경 없음</td><td>배포별 ACL 절차</td><td>partial write·상속 권한</td><td>잠긴 단일 사용자 장비</td></tr>
+        <tr><td>O-01/B private atomic writer</td><td>손상 감소, 정책 단일화</td><td>플랫폼 분기와 fault test</td><td>Windows 보장 과대표현</td><td>파일 기반 store 유지</td></tr>
+        <tr><td>O-01/C credential vault</td><td>secret 원문 파일 제거</td><td>key lifecycle·이식성</td><td>복구 복잡성</td><td>다중 사용자 위협 모델</td></tr>
+      </tbody>
+    </table>
+    <p><strong>권고:</strong> O-01/B. temp write, flush, replace와 private permission 검증을
+      AuthStore와 HookSecretStore가 공유한다. Vault와 key 복구가 공식 요구가 되면 O-01/C로 전환한다.</p>
+  </section>
+
+  <section>
+    <h2>F-02 · Runtime/provider 오류 redaction</h2>
+    <p>결정 질문: provider 오류 계약에 의존할지, domain 저장/event 직전에 redaction할지,
+      전역 middleware로 통합할지 결정한다.</p>
+    <table>
+      <thead><tr><th>Option</th><th>Benefit</th><th>Cost</th><th>Risk</th><th>Applicable when</th></tr></thead>
+      <tbody>
+        <tr><td>O-02/A provider-safe 계약</td><td>코드가 가장 작음</td><td>모든 adapter 검증</td><td>새 adapter 누락</td><td>backend가 완전히 통제됨</td></tr>
+        <tr><td>O-02/B domain 경계 redaction</td><td>DB·SSE·API 동시 보호</td><td>secret context·correlation</td><td>진단 정보 과잉 제거</td><td>현재 runtime 구조 유지</td></tr>
+        <tr><td>O-02/C 전역 middleware</td><td>HTTP 형식 단순화</td><td>background 경계 별도 처리</td><td>보호 범위 오해</td><td>HTTP 오류 통일도 목표임</td></tr>
+      </tbody>
+    </table>
+    <p><strong>권고:</strong> O-02/B. Hook·Team·Scheduler가 DB나 event에 오류를 넘기기 전에
+      공용 <code>redact_text</code>를 적용하고 Hook secret을 explicit context로 전달한다.</p>
+  </section>
+
+  <section>
+    <h2>추적성과 변경 요청</h2>
+    <p class="trace">B-02 → F-01 → O-01/B → CR-01</p>
+    <p class="trace">B-03,B-04 → F-02 → O-02/B → CR-02</p>
+    <ul>
+      <li><strong>CR-01:</strong> secret-bearing JSON에 private atomic write 적용.</li>
+      <li><strong>CR-02:</strong> domain 오류 persistence/event 경계에 공용 redaction 적용.</li>
+    </ul>
+    <p><strong>보존할 동작:</strong> 기존 JSON schema/path, secret round-trip, 실패 상태와
+      사용자용 오류 요약, retry/resume와 event type.</p>
+  </section>
+
+  <section>
+    <h2>범위와 검증</h2>
+    <p>포함: AuthStore, HookSecretStore, redaction, Hook/Team/Scheduler 오류 경계.
+      제외: 인증 UX, 암호 알고리즘 교체, payload 보존정책, TLS/OS 침해 대응.</p>
+    <ul>
+      <li>atomic replace 전 fault에서 기존 파일이 보존되는지 검증한다.</li>
+      <li>지원 플랫폼의 새 파일 private permission을 검증한다.</li>
+      <li>fake secret이 포함된 exception이 DB·API·SSE·health에 남지 않는지 검증한다.</li>
+    </ul>
+    <p><strong>Review:</strong> <code>VERDICT: PASS</code> (self-review fallback)</p>
+  </section>
+</main>
+</body>
+</html>

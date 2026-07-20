@@ -168,9 +168,13 @@ export function GatewayApp() {
       );
       if (screenRef.current !== "hooks") setHooksBadge((count) => count + 1);
     }
+    const refreshes = [
+      api.listHooks().then(setHooks)
+    ];
     if (event.hook_id === openHookRunsIdRef.current) {
-      try { setHookRuns(await api.listHookRuns(event.hook_id)); } catch (_error) { /* ignore */ }
+      refreshes.push(api.listHookRuns(event.hook_id).then(setHookRuns));
     }
+    await Promise.allSettled(refreshes);
   }, [toast]);
 
   const {

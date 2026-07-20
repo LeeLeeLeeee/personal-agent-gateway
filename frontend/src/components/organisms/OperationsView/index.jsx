@@ -118,14 +118,24 @@ function Backups({ backups = [], busyKey, onCreateBackup, onVerifyBackup }) {
         </button>
       </div>
       <div className="operations-list">
-        {backups.map((backup) => (
+        {backups.map((backup) => {
+          const limitedStores = Object.entries(backup.recoverability || {})
+            .filter(([, level]) => level !== "included")
+            .map(([name, level]) => `${name.replaceAll("_", " ")}: ${level}`);
+          return (
           <div className="operations-row" key={backup.id}>
             <div className="operations-row-main">
               <div className="operations-row-title mono">{backup.id}</div>
               <div className="operations-row-meta mono">
                 {fmtDateTime(backup.created_at)} · schema {backup.schema_version}
                 {` · ${backup.database_size_bytes} bytes`}
+                {` · ${backup.profile || "legacy"}`}
               </div>
+              {limitedStores.length ? (
+                <div className="operations-row-meta">
+                  Not fully recoverable · {limitedStores.join(" · ")}
+                </div>
+              ) : null}
             </div>
             <button
               type="button"
@@ -137,7 +147,8 @@ function Backups({ backups = [], busyKey, onCreateBackup, onVerifyBackup }) {
               Verify
             </button>
           </div>
-        ))}
+          );
+        })}
         {!backups.length ? <div className="planned">NO BACKUPS</div> : null}
       </div>
     </section>

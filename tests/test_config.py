@@ -1,4 +1,7 @@
-from personal_agent_gateway.config import AppConfig
+import pytest
+from pydantic import ValidationError
+
+from personal_agent_gateway.config import AppConfig, ConfigError
 
 
 def test_claude_permission_mode_default(tmp_path):
@@ -36,3 +39,19 @@ def test_codex_timeout_defaults_and_idle_timeout_from_env(tmp_path):
     })
     assert configured.codex_timeout_seconds == 7200
     assert configured.codex_idle_timeout_seconds == 900
+
+
+def test_job_worker_concurrency_rejects_unsupported_values(tmp_path):
+    with pytest.raises(ValidationError, match="currently supports only 1"):
+        AppConfig(
+            workspace_root=tmp_path,
+            session_dir=tmp_path / "sessions",
+            job_worker_concurrency=2,
+        )
+
+    with pytest.raises(ConfigError, match="currently supports only 1"):
+        AppConfig.from_env({
+            "AGENT_WORKSPACE_ROOT": str(tmp_path),
+            "AGENT_SESSION_DIR": str(tmp_path / "sessions"),
+            "AGENT_JOB_WORKER_CONCURRENCY": "2",
+        })

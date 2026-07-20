@@ -9,11 +9,13 @@ aliases:
 tags:
   - component
   - analysis
-updated_at: 2026-07-15
+updated_at: 2026-07-20
 ---
 
 # Component Inspector Reports
 
+- [OperationsView Backup Recoverability — 2026-07-20 09:20](./OperationsView/2026-07-20-0920.md)
+- [GatewayApp SSE Collection Reconciliation — 2026-07-20 09:14](./GatewayApp/2026-07-20-0914.md)
 - [GatewayApp Mail Team Run UI — 2026-07-16 15:36](./GatewayApp/2026-07-16-1536.md)
 - [TeamRunDetail User Decision — 2026-07-16 11:07](./TeamRunDetail/2026-07-16-1107.md)
 - [GatewayApp Browser Notification — 2026-07-16 08:55](./GatewayApp/2026-07-16-0855.md)

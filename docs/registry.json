@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 91,
+  "document_count": 104,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -496,6 +496,534 @@
         }
       ],
       "excerpt": "현재 Team Run의 `needs_info`는 Worker가 Leader에게 질문하고 Leader가 답하는 내부 협업 계약이다. Leader가 답할 수 없는 질문을 사용자에게 전달하는 상태, 저장소, API는 없다. `interrupted`는 Gateway 프로세스 중단 뒤 명시적으로 재개하는 복구 상태이므로 사용자 답변 대기에 재사용할 수 없다."
+    },
+    {
+      "path": "docs/code-structure-review/api-sse-ui-consistency/2026-07-20-0859/analysis.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "API·SSE·UI 상태 정합성 구조 리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Decision question"
+        },
+        {
+          "level": 2,
+          "text": "Confirmed facts"
+        },
+        {
+          "level": 2,
+          "text": "Interpretation"
+        },
+        {
+          "level": 2,
+          "text": "Unknowns"
+        },
+        {
+          "level": 2,
+          "text": "Options"
+        },
+        {
+          "level": 3,
+          "text": "F-01 · SSE event identity를 process restart에 안전하게 만들 것인가"
+        },
+        {
+          "level": 3,
+          "text": "F-02 · Detail과 collection 상태를 어떻게 동기화할 것인가"
+        },
+        {
+          "level": 2,
+          "text": "Recommendation"
+        },
+        {
+          "level": 2,
+          "text": "Reversal conditions"
+        },
+        {
+          "level": 2,
+          "text": "Scope and excluded boundaries"
+        },
+        {
+          "level": 2,
+          "text": "Feature behavior and code paths"
+        },
+        {
+          "level": 2,
+          "text": "Current diagrams"
+        },
+        {
+          "level": 2,
+          "text": "Evidence inventory"
+        },
+        {
+          "level": 2,
+          "text": "Analysis limits and next questions"
+        },
+        {
+          "level": 2,
+          "text": "Review result"
+        }
+      ],
+      "excerpt": "현재 SSE delta + 선택 화면 재조회 방식을 유지하면서 event identity와 collection 갱신만 보완할지, 전역 client cache/state layer로 재설계할지 결정한다."
+    },
+    {
+      "path": "docs/code-structure-review/api-sse-ui-consistency/2026-07-20-0859/change-requests.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Change Requests"
+        },
+        {
+          "level": 2,
+          "text": "CR-01 · SSE stream epoch와 bounded dedup 도입"
+        },
+        {
+          "level": 2,
+          "text": "CR-02 · Team/Hook collection을 background event와 정합화"
+        }
+      ],
+      "excerpt": "- Linked evidence: `B-01`, `B-02`, `F-01`, `O-01/B` - Purpose: server restart 후 재사용된 숫자 ID의 새 event를 client가 버리지 않게 한다. - Target scope: EventBus payload, SSE tests, `useSessionController` dedup state. - Non-goals: dur..."
+    },
+    {
+      "path": "docs/code-structure-review/execution-lifecycle-cancellation/2026-07-20-0859/analysis.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "실행 lifecycle과 취소 구조 리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Decision question"
+        },
+        {
+          "level": 2,
+          "text": "Confirmed facts"
+        },
+        {
+          "level": 2,
+          "text": "Interpretation"
+        },
+        {
+          "level": 2,
+          "text": "Unknowns"
+        },
+        {
+          "level": 2,
+          "text": "Options"
+        },
+        {
+          "level": 3,
+          "text": "F-01 · `job_worker_concurrency` 계약을 유지할 것인가"
+        },
+        {
+          "level": 3,
+          "text": "F-02 · Hook Run과 Team Cycle 실패 전이를 어디서 소유할 것인가"
+        },
+        {
+          "level": 2,
+          "text": "Recommendation"
+        },
+        {
+          "level": 2,
+          "text": "Reversal conditions"
+        },
+        {
+          "level": 2,
+          "text": "Scope and excluded boundaries"
+        },
+        {
+          "level": 2,
+          "text": "Feature behavior and code paths"
+        },
+        {
+          "level": 2,
+          "text": "Current diagrams"
+        },
+        {
+          "level": 2,
+          "text": "Evidence inventory"
+        },
+        {
+          "level": 2,
+          "text": "Analysis limits and next questions"
+        },
+        {
+          "level": 2,
+          "text": "Review result"
+        }
+      ],
+      "excerpt": "현재 단일 queue/task 실행 모델을 유지하면서 노출 계약과 복구 정합성만 보완할지, worker pool 또는 통합 실행 상태 머신으로 재설계할지 결정한다."
+    },
+    {
+      "path": "docs/code-structure-review/execution-lifecycle-cancellation/2026-07-20-0859/change-requests.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Change Requests"
+        },
+        {
+          "level": 2,
+          "text": "CR-01 · Job worker concurrency를 effective 1로 정합화"
+        },
+        {
+          "level": 2,
+          "text": "CR-02 · Hook Run과 Team Cycle 연동 전이 coordinator 추가"
+        }
+      ],
+      "excerpt": "- Linked evidence: `B-01`, `F-01`, `O-01/B` - Purpose: 설정·Settings 응답과 실제 consumer 수를 일치시킨다. - Target scope: AppConfig validation, env loading, Settings payload, 관련 문서·테스트. - Non-goals: worker pool, capability별 concur..."
+    },
+    {
+      "path": "docs/code-structure-review/operations-policy-coverage/2026-07-20-0859/analysis.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "운영 정책 적용 범위 구조 리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Decision question"
+        },
+        {
+          "level": 2,
+          "text": "Confirmed facts"
+        },
+        {
+          "level": 2,
+          "text": "Interpretation"
+        },
+        {
+          "level": 2,
+          "text": "Unknowns"
+        },
+        {
+          "level": 2,
+          "text": "Options"
+        },
+        {
+          "level": 3,
+          "text": "F-01 · Hook 실행을 Intake와 Emergency Stop에 포함할 것인가"
+        },
+        {
+          "level": 3,
+          "text": "F-02 · Hook 상태를 readiness에 포함할 것인가"
+        },
+        {
+          "level": 3,
+          "text": "F-03 · 변경 API의 audit 적용을 어디까지 맞출 것인가"
+        },
+        {
+          "level": 2,
+          "text": "Recommendation"
+        },
+        {
+          "level": 2,
+          "text": "Reversal conditions"
+        },
+        {
+          "level": 2,
+          "text": "Scope and excluded boundaries"
+        },
+        {
+          "level": 2,
+          "text": "Feature behavior and code paths"
+        },
+        {
+          "level": 2,
+          "text": "Current diagrams"
+        },
+        {
+          "level": 2,
+          "text": "Evidence inventory"
+        },
+        {
+          "level": 2,
+          "text": "Analysis limits and next questions"
+        },
+        {
+          "level": 2,
+          "text": "Review result"
+        }
+      ],
+      "excerpt": "Chat, Job, Schedule, Team Run, Hook에 적용되는 Intake, Emergency Stop, Health, Audit 정책을 현재처럼 각 API와 서비스가 개별 배선할지, 공통 실행 도메인 계약으로 확장할지 결정한다."
+    },
+    {
+      "path": "docs/code-structure-review/operations-policy-coverage/2026-07-20-0859/change-requests.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Change Requests"
+        },
+        {
+          "level": 2,
+          "text": "CR-01 · Hook 실행을 Intake와 Emergency Stop에 통합"
+        },
+        {
+          "level": 2,
+          "text": "CR-02 · Hook lifecycle을 readiness에 노출"
+        },
+        {
+          "level": 2,
+          "text": "CR-03 · 위험 기반 Hook audit 추가"
+        }
+      ],
+      "excerpt": "- Linked evidence: `B-01`, `B-02`, `F-01`, `O-01/B` - Purpose: Emergency Stop 후 자동·수동 Hook 실행이 새로 시작되지 않게 한다. - Target scope: `HookLoop`, Hook `run-now`, `EmergencyStopService`, composition, tests. - Non-goals: 범용 exe..."
+    },
+    {
+      "path": "docs/code-structure-review/persistence-recovery-consistency/2026-07-20-0859/analysis.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "저장·복구 일관성 구조 리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Decision question"
+        },
+        {
+          "level": 2,
+          "text": "Confirmed facts"
+        },
+        {
+          "level": 2,
+          "text": "Interpretation"
+        },
+        {
+          "level": 2,
+          "text": "Unknowns"
+        },
+        {
+          "level": 2,
+          "text": "Options"
+        },
+        {
+          "level": 3,
+          "text": "F-01 · Backup의 복구 단위를 DB로 유지할 것인가"
+        },
+        {
+          "level": 3,
+          "text": "F-02 · Hook credential을 backup inventory에 포함할 것인가"
+        },
+        {
+          "level": 2,
+          "text": "Recommendation"
+        },
+        {
+          "level": 2,
+          "text": "Reversal conditions"
+        },
+        {
+          "level": 2,
+          "text": "Scope and excluded boundaries"
+        },
+        {
+          "level": 2,
+          "text": "Feature behavior and code paths"
+        },
+        {
+          "level": 2,
+          "text": "Current diagrams"
+        },
+        {
+          "level": 2,
+          "text": "Evidence inventory"
+        },
+        {
+          "level": 2,
+          "text": "Analysis limits and next questions"
+        },
+        {
+          "level": 2,
+          "text": "Review result"
+        }
+      ],
+      "excerpt": "현재 `BackupService`를 SQLite 상태 백업으로 명확히 유지할지, Gateway의 DB와 파일 저장소를 함께 복구 가능한 bundle 경계로 확장할지 결정한다."
+    },
+    {
+      "path": "docs/code-structure-review/persistence-recovery-consistency/2026-07-20-0859/change-requests.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Change Requests"
+        },
+        {
+          "level": 2,
+          "text": "CR-01 · Backup 복구 profile과 저장소 recoverability 명시"
+        },
+        {
+          "level": 2,
+          "text": "CR-02 · Hook credential 참조 무결성 dry-run 추가"
+        }
+      ],
+      "excerpt": "- Linked evidence: `B-01`, `B-02`, `F-01`, `O-01/B` - Purpose: DB backup 성공과 전체 Gateway 복구 가능성을 구분한다. - Target scope: Backup manifest schema, dry-run payload, Operations UI 문구와 테스트. - Non-goals: 파일 본문 복사, live DB 교체, ..."
+    },
+    {
+      "path": "docs/code-structure-review/security-boundaries/2026-07-20-0859/analysis.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "보안 경계 구조 리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Decision question"
+        },
+        {
+          "level": 2,
+          "text": "Confirmed facts"
+        },
+        {
+          "level": 2,
+          "text": "Interpretation"
+        },
+        {
+          "level": 2,
+          "text": "Unknowns"
+        },
+        {
+          "level": 2,
+          "text": "Options"
+        },
+        {
+          "level": 3,
+          "text": "F-01 · Secret-bearing JSON의 쓰기·접근 경계를 어디에 둘 것인가"
+        },
+        {
+          "level": 3,
+          "text": "F-02 · Runtime/provider 오류를 어느 경계에서 redaction할 것인가"
+        },
+        {
+          "level": 2,
+          "text": "Recommendation"
+        },
+        {
+          "level": 2,
+          "text": "Reversal conditions"
+        },
+        {
+          "level": 2,
+          "text": "Scope and excluded boundaries"
+        },
+        {
+          "level": 2,
+          "text": "Feature behavior and code paths"
+        },
+        {
+          "level": 2,
+          "text": "Current diagrams"
+        },
+        {
+          "level": 2,
+          "text": "Evidence inventory"
+        },
+        {
+          "level": 2,
+          "text": "Analysis limits and next questions"
+        },
+        {
+          "level": 2,
+          "text": "Review result"
+        }
+      ],
+      "excerpt": "현재의 단일 사용자·로컬 파일 시스템 보안 모델을 유지하면서 비밀 파일의 내구성과 오류 redaction 경계를 보완할지, OS credential vault와 전역 오류 계층까지 확장할지 결정한다."
+    },
+    {
+      "path": "docs/code-structure-review/security-boundaries/2026-07-20-0859/change-requests.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Change Requests"
+        },
+        {
+          "level": 2,
+          "text": "CR-01 · Secret-bearing JSON에 private atomic write 적용"
+        },
+        {
+          "level": 2,
+          "text": "CR-02 · Domain 오류 persistence/event 경계에 공용 redaction 적용"
+        }
+      ],
+      "excerpt": "- Linked evidence: `B-02`, `F-01`, `O-01/B` - Purpose: Auth/Hook secret 파일이 중간 상태로 손상되거나 플랫폼 기본 권한에만 의존하지   않게 한다. - Target scope: AuthStore, HookSecretStore, 최소 공용 file helper와 fault/permission tests. - Non-goals: OS..."
     },
     {
       "path": "docs/component-inspector/AgentPicker/2026-07-14-1626.md",
@@ -1042,6 +1570,72 @@
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `api-state`, `test` - 범위: `GatewayApp`가 합성하는 `TeamPicker`, `HooksView`, `TeamRunDetail`의 Mail Team Run 생성·선택·Cycle lineage 경로 - Verdict: 기존 컴포..."
     },
     {
+      "path": "docs/component-inspector/GatewayApp/2026-07-20-0914.md",
+      "title": "GatewayApp SSE Collection Reconciliation Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "gateway-sse-state",
+      "status": "done",
+      "aliases": [
+        "GatewayApp SSE collection analysis",
+        "GatewayApp SSE 목록 정합성 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "sse",
+        "state"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp SSE Collection Reconciliation Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 흐름"
+        },
+        {
+          "level": 3,
+          "text": "Runtime dependency trace"
+        },
+        {
+          "level": 2,
+          "text": "Side effects와 API 호출"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / 스토리"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `api-state`, `test` - Verdict: 현재 단일 `EventSource`와 local React state 소유권은 유지하고, stream identity   기반 bounded dedup과 Team/Hook collection의 eve..."
+    },
+    {
       "path": "docs/component-inspector/JobsView/2026-07-15-1057.md",
       "title": "JobsView Retry and Lineage Analysis",
       "type": "report",
@@ -1084,6 +1678,63 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/JobsView/index.jsx` (151 lines) - Modes: `understand`, `api-state`, `test` - Verdict: component ownership은 적절하다. `onRetry` callback과 lineage 표시만 추가하고 상태/endpoint orchestratio..."
+    },
+    {
+      "path": "docs/component-inspector/OperationsView/2026-07-20-0920.md",
+      "title": "OperationsView Backup Recoverability Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "backup-recoverability",
+      "status": "done",
+      "aliases": [
+        "OperationsView backup analysis",
+        "Operations 백업 복구 가능성 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "backup"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "OperationsView Backup Recoverability Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 흐름"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / 스토리"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/OperationsView/index.jsx` - Modes: `api-state`, `test` - Verdict: `Backups`는 전달받은 payload를 표시하는 presentational 경계다. 새 상태나 fetch   없이 `profile`과 recoverability warning을 각 row에..."
     },
     {
       "path": "docs/component-inspector/PersonaLibrary/2026-07-14-1626.md",
@@ -1739,14 +2390,14 @@
         "component",
         "analysis"
       ],
-      "updated_at": "2026-07-15",
+      "updated_at": "2026-07-20",
       "headings": [
         {
           "level": 1,
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [GatewayApp Mail Team Run UI — 2026-07-16 15:36](./GatewayApp/2026-07-16-1536.md) - [TeamRunDetail User Decision — 2026-07-16 11:07](./TeamRunDetail/2026-07-16-1107.md) - [GatewayApp Browser Notification — 2026-07-1..."
+      "excerpt": "- [OperationsView Backup Recoverability — 2026-07-20 09:20](./OperationsView/2026-07-20-0920.md) - [GatewayApp SSE Collection Reconciliation — 2026-07-20 09:14](./GatewayApp/2026-07-20-0914.md) - [GatewayApp Mail Team..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -1875,7 +2526,7 @@
         "restore",
         "recovery"
       ],
-      "updated_at": "2026-07-15",
+      "updated_at": "2026-07-20",
       "headings": [
         {
           "level": 1,
@@ -2252,7 +2903,7 @@
         "diagnostics",
         "recovery"
       ],
-      "updated_at": "2026-07-15",
+      "updated_at": "2026-07-20",
       "headings": [
         {
           "level": 1,
@@ -3124,6 +3775,53 @@
         }
       ],
       "excerpt": "Worker가 요청한 정보 중 Leader가 내부적으로 답할 수 없는 질문을 하나의 decision batch로 모으고, Run이 더 진행할 수 없을 때 사용자에게 한 번에 요청하는 흐름을 구현했다. 답변 대기 중에는 실행 process가 없으며, 모든 질문을 제출하면 관련 blocked Task만 자동 재개한다."
+    },
+    {
+      "path": "docs/reports/2026-07-20-architecture-consistency-improvements.md",
+      "title": "Architecture Consistency Improvements 구현 보고서",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "architecture-consistency",
+      "status": "done",
+      "aliases": [
+        "구조 개선 전체 구현",
+        "Hook 운영 복구 SSE 보안 개선"
+      ],
+      "tags": [
+        "architecture",
+        "operations",
+        "recovery",
+        "sse",
+        "security"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Architecture Consistency Improvements 구현 보고서"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Changes"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        },
+        {
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "excerpt": "2026-07-20 구조 리뷰의 5개 경계에서 도출한 11개 change request를 구현했다. 기존 단일 process, SQLite, local React state 구조를 유지하면서 누락된 운영·복구·상태·보안 경계를 보완했다."
     },
     {
       "path": "docs/specs/2026-07-08-observability-audit-log-spec.md",
@@ -6567,7 +7265,7 @@
           "text": "Related"
         }
       ],
-      "excerpt": "작성일: 2026-07-16   상태: done"
+      "excerpt": "작성일: 2026-07-16 상태: done"
     },
     {
       "path": "docs/todo/2026-07-16-r2-deferred-product-backlog.md",

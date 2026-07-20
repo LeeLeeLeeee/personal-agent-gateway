@@ -73,6 +73,7 @@ async def emergency_stop(
             "sessions": result.session_ids,
             "team_runs": result.team_run_ids,
             "jobs": result.job_ids,
+            "hook_runs": result.hook_run_ids,
         },
         "failures": result.failures,
     }
@@ -155,6 +156,10 @@ def verify_backup(
         "valid": result.valid,
         "schema_version": result.schema_version,
         "database_sha256": result.database_sha256,
+        "profile": result.profile,
+        "recoverability": result.recoverability,
+        "warnings": result.warnings,
+        "missing_hook_connection_refs": result.missing_hook_connection_refs,
     }
 
 
@@ -165,6 +170,8 @@ def _backup_payload(backup: BackupRecord) -> dict[str, object]:
         "schema_version": backup.schema_version,
         "database_sha256": backup.database_sha256,
         "database_size_bytes": backup.database_size_bytes,
+        "profile": backup.profile,
+        "recoverability": backup.recoverability,
     }
 
 

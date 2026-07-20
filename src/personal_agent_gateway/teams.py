@@ -306,6 +306,34 @@ class TeamRunService:
             )
         ]
 
+    def list_source_cycles(self, source_type: str) -> list[TeamRunCycle]:
+        return [
+            _team_run_cycle_from_row(row)
+            for row in self._db.fetchall(
+                """
+                select * from team_run_cycles
+                where source_type = ?
+                order by created_at asc, id asc
+                """,
+                (source_type,),
+            )
+        ]
+
+    def get_cycle_for_source(
+        self,
+        source_type: str,
+        source_id: str,
+    ) -> TeamRunCycle | None:
+        row = self._db.fetchone(
+            """
+            select * from team_run_cycles
+            where source_type = ? and source_id = ?
+            order by created_at asc, id asc limit 1
+            """,
+            (source_type, source_id),
+        )
+        return _team_run_cycle_from_row(row) if row is not None else None
+
     def increment_cycle_rounds_used(self, cycle_id: str) -> TeamRunCycle:
         self.get_cycle(cycle_id)
         self._db.execute(

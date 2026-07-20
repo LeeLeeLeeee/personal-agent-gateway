@@ -1092,6 +1092,7 @@ describe("GatewayApp", () => {
 
   it("creates and starts a team run, shows its detail, and refreshes on mixed team SSE events without adding chat entries", async () => {
     let taskCalls = 0;
+    let teamRunsCalls = 0;
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
       "GET /api/status": status,
@@ -1102,7 +1103,14 @@ describe("GatewayApp", () => {
       "GET /api/teams": {
         teams: [{ id: "t1", name: "Release Crew", leader: { name: "Tech Lead", avatar: null }, members: [] }]
       },
-      "GET /api/team-runs": { team_runs: [] },
+      "GET /api/team-runs": () => {
+        teamRunsCalls += 1;
+        return response({
+          team_runs: teamRunsCalls > 2
+            ? [{ id: "run-1", goal: "Ship it", status: "completed", run_mode: "planning_only" }]
+            : []
+        });
+      },
       "POST /api/team-runs": { team_run: { id: "run-1", goal: "Ship it", status: "draft", run_mode: "planning_only" } },
       "POST /api/team-runs/run-1/start": {
         team_run: { id: "run-1", goal: "Ship it", status: "running", run_mode: "planning_only" }
@@ -1159,8 +1167,17 @@ describe("GatewayApp", () => {
 
     expect(await screen.findByText("Define schema")).toBeInTheDocument();
 
+    act(() => {
+      source.emit({
+        stream_id: "boot-a",
+        id: 2,
+        type: "team.run.completed",
+        team_run_id: "run-1"
+      });
+    });
+    await waitFor(() => expect(teamRunsCalls).toBeGreaterThan(2));
     await userEvent.click(screen.getByText("← TEAM RUNS"));
-    expect(screen.queryByText("Ship it")).not.toBeInTheDocument();
+    expect(await screen.findByText("Ship it")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(screen.queryByText("should not enter chat")).not.toBeInTheDocument();
   });
@@ -1364,6 +1381,53 @@ describe("GatewayApp", () => {
 
     const hooksButton = screen.getByRole("button", { name: "Hooks" });
     expect(within(hooksButton).getByText("1")).toBeInTheDocument();
+  });
+
+  it("refreshes the Hook collection after a background hook event", async () => {
+    let hooksCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/team-runs": { team_runs: [] },
+      "GET /api/hooks": () => {
+        hooksCalls += 1;
+        return response({ hooks: [{
+          id: "hook-1",
+          name: "Invoice Watcher",
+          enabled: true,
+          target_backend: "codex",
+          target_model: "default",
+          prompt_template: "Summarize {{subject}}",
+          filter: { folder: "INBOX" },
+          last_polled_at: hooksCalls > 1 ? "2026-07-20T00:00:00Z" : null,
+          last_error: hooksCalls > 1 ? "Mailbox unavailable" : null
+        }] });
+      }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Hooks" }));
+    expect(await screen.findByText("Invoice Watcher")).toBeInTheDocument();
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit({
+        stream_id: "boot-a",
+        id: 3,
+        type: "hook.run.updated",
+        hook_id: "hook-1",
+        run_id: "run-1",
+        status: "failed"
+      });
+    });
+
+    expect(await screen.findByText("Mailbox unavailable")).toBeInTheDocument();
+    expect(hooksCalls).toBeGreaterThan(1);
   });
 
   it("sends one private terminal notification after opt-in and opens the Team Run on click", async () => {

@@ -105,7 +105,7 @@ def test_load_config_accepts_local_tool_and_auth_overrides(
     monkeypatch.setenv("AGENT_FFMPEG_BIN", "/opt/homebrew/bin/ffmpeg")
     monkeypatch.setenv("AGENT_FFPROBE_BIN", "/opt/homebrew/bin/ffprobe")
     monkeypatch.setenv("AGENT_CAPTURE_BIN", "screencapture-custom")
-    monkeypatch.setenv("AGENT_JOB_WORKER_CONCURRENCY", "2")
+    monkeypatch.setenv("AGENT_JOB_WORKER_CONCURRENCY", "1")
 
     config = load_config()
 
@@ -119,7 +119,7 @@ def test_load_config_accepts_local_tool_and_auth_overrides(
     assert config.ffmpeg_binary == "/opt/homebrew/bin/ffmpeg"
     assert config.ffprobe_binary == "/opt/homebrew/bin/ffprobe"
     assert config.capture_binary == "screencapture-custom"
-    assert config.job_worker_concurrency == 2
+    assert config.job_worker_concurrency == 1
 
 
 def test_default_codex_binary_uses_windows_cmd_shim() -> None:

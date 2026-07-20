@@ -34,6 +34,26 @@ def test_emergency_stop_cancels_jobs_and_blocks_new_execution_intake(tmp_path: P
         title="queued",
         input_json={"source_file": "demo.mov"},
     )
+    hook = client.post(
+        "/api/hooks",
+        json={
+            "name": "Inbox",
+            "source_type": "email",
+            "connection": {"host": "imap.test", "port": 993, "username": "me@test"},
+            "secret": "app-password",
+            "filter": {},
+            "target_backend": "codex",
+            "target_model": "default",
+            "prompt_template": "summarize",
+        },
+    ).json()["hook"]
+    hook_run = client.app.state.hook_run_service.create_run(
+        hook["id"],
+        "message-1",
+        "message",
+        {"subject": "hello"},
+    )
+    assert hook_run is not None
 
     response = client.post(
         "/api/operations/emergency-stop",
@@ -45,7 +65,9 @@ def test_emergency_stop_cancels_jobs_and_blocks_new_execution_intake(tmp_path: P
     assert result["intake_open"] is False
     assert result["changed"] is True
     assert result["canceled"]["jobs"] == [queued.id]
+    assert result["canceled"]["hook_runs"] == [hook_run.id]
     assert client.app.state.job_service.get_job(queued.id).status == "canceled"
+    assert client.app.state.hook_run_service.get_run(hook_run.id).status == "interrupted"
 
     blocked_job = client.post(
         "/api/jobs",
@@ -66,13 +88,14 @@ def test_emergency_stop_cancels_jobs_and_blocks_new_execution_intake(tmp_path: P
         },
     )
     blocked_chat = client.post("/api/chat", json={"message": "blocked"})
+    blocked_hook = client.post(f"/api/hooks/{hook['id']}/run-now")
 
     assert blocked_job.status_code == 409
     assert blocked_schedule.status_code == 409
     assert blocked_chat.status_code == 409
     assert all(
         response.json()["detail"] == "Execution intake is stopped"
-        for response in (blocked_job, blocked_schedule, blocked_chat)
+        for response in (blocked_job, blocked_schedule, blocked_chat, blocked_hook)
     )
 
     events = client.get(

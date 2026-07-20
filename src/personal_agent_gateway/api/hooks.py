@@ -4,9 +4,15 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from personal_agent_gateway.api.dependencies import session_dependency
+from personal_agent_gateway.api.dependencies import (
+    record_domain_audit,
+    require_intake_open,
+    session_dependency,
+)
+from personal_agent_gateway.auth_sessions import SessionPrincipal
 from personal_agent_gateway.hook_runs import HookRun
 from personal_agent_gateway.hooks import Hook
+from personal_agent_gateway.redaction import redact_text
 
 router = APIRouter(prefix="/api/hooks", tags=["hooks"])
 
@@ -44,7 +50,9 @@ def list_hooks(request: Request, _session: None = session_dependency) -> dict[st
 
 @router.post("")
 def create_hook(
-    request: Request, payload: CreateHookRequest, _session: None = session_dependency
+    request: Request,
+    payload: CreateHookRequest,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
     try:
         hook = request.app.state.hook_service.create_hook(
@@ -62,7 +70,25 @@ def create_hook(
             target_team_run_id=payload.target_team_run_id,
         )
     except ValueError as exc:
+        record_domain_audit(
+            request,
+            principal,
+            event_type="automation.hook_create_rejected",
+            action="hooks.create",
+            resource_type="hook",
+            resource_id="new",
+            status="rejected",
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="automation.hook_created",
+        action="hooks.create",
+        resource_type="hook",
+        resource_id=hook.id,
+        metadata={"source_type": hook.source_type, "target_kind": hook.target_kind},
+    )
     return {"hook": _hook_payload(hook)}
 
 
@@ -81,7 +107,11 @@ async def test_connection(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 — surface connection failure as ok:false
-        return {"ok": False, "error": str(exc)[:500] or type(exc).__name__}
+        return {
+            "ok": False,
+            "error": redact_text(exc, secrets=[payload.secret], limit=500)
+            or type(exc).__name__,
+        }
     return {"ok": True}
 
 
@@ -92,25 +122,64 @@ def get_hook(request: Request, hook_id: str, _session: None = session_dependency
 
 @router.patch("/{hook_id}")
 def update_hook(
-    request: Request, hook_id: str, payload: UpdateHookRequest, _session: None = session_dependency
+    request: Request,
+    hook_id: str,
+    payload: UpdateHookRequest,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
     _require(request, hook_id)
     hook = request.app.state.hook_service.set_enabled(hook_id, payload.enabled)
+    record_domain_audit(
+        request,
+        principal,
+        event_type="automation.hook_enabled" if hook.enabled else "automation.hook_disabled",
+        action="hooks.enable" if hook.enabled else "hooks.disable",
+        resource_type="hook",
+        resource_id=hook.id,
+        metadata={"enabled": hook.enabled},
+    )
     return {"hook": _hook_payload(hook)}
 
 
 @router.delete("/{hook_id}")
-def delete_hook(request: Request, hook_id: str, _session: None = session_dependency) -> dict[str, bool]:
+def delete_hook(
+    request: Request,
+    hook_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, bool]:
     _require(request, hook_id)
     request.app.state.hook_service.delete(hook_id)
+    record_domain_audit(
+        request,
+        principal,
+        event_type="automation.hook_deleted",
+        action="hooks.delete",
+        resource_type="hook",
+        resource_id=hook_id,
+    )
     return {"deleted": True}
 
 
 @router.post("/{hook_id}/run-now")
 async def run_hook_now(
-    request: Request, hook_id: str, _session: None = session_dependency
+    request: Request,
+    hook_id: str,
+    principal: SessionPrincipal = session_dependency,
 ) -> dict[str, int]:
     _require(request, hook_id)
+    try:
+        require_intake_open(request)
+    except HTTPException:
+        record_domain_audit(
+            request,
+            principal,
+            event_type="automation.hook_run_rejected",
+            action="hooks.run_now",
+            resource_type="hook",
+            resource_id=hook_id,
+            status="rejected",
+        )
+        raise
     runs = await asyncio.to_thread(
         request.app.state.hook_service.poll_hook,
         hook_id,
@@ -118,6 +187,15 @@ async def run_hook_now(
     )
     for run in runs:
         await request.app.state.hook_runner.enqueue(run.id)
+    record_domain_audit(
+        request,
+        principal,
+        event_type="automation.hook_run_requested",
+        action="hooks.run_now",
+        resource_type="hook",
+        resource_id=hook_id,
+        metadata={"created_count": len(runs)},
+    )
     return {"created": len(runs)}
 
 

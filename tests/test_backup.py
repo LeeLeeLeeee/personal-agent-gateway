@@ -34,6 +34,7 @@ def make_service(tmp_path: Path) -> tuple[BackupService, Database, IntakeGate]:
         session_dir=data / "sessions",
         artifact_root=data / "artifacts",
         workspace_root=tmp_path / "workspace",
+        hooks_dir=data / "hooks",
         intake_gate=gate,
     )
     return service, db, gate
@@ -53,11 +54,23 @@ def test_backup_round_trip_uses_manifest_and_separate_restore_target(tmp_path: P
     manifest_text = backup.manifest_path.read_text(encoding="utf-8")
     manifest = json.loads(manifest_text)
 
-    assert manifest["manifest_version"] == 1
+    assert manifest["manifest_version"] == 2
+    assert manifest["profile"] == "database-only"
+    assert manifest["recoverability"] == {
+        "database": "included",
+        "auth": "metadata-only",
+        "sessions": "metadata-only",
+        "artifacts": "metadata-only",
+        "workspace": "excluded",
+        "hook_secrets": "reference-only",
+    }
     assert manifest["file_bodies_included"] is False
     assert manifest["database"]["sha256"]
     assert "must-not-enter-manifest" not in manifest_text
-    assert service.dry_run(backup.id).valid is True
+    validation = service.dry_run(backup.id)
+    assert validation.valid is True
+    assert validation.profile == "database-only"
+    assert validation.warnings == []
 
     target = tmp_path / "restore" / "restored.sqlite"
     gate.close()
@@ -85,6 +98,35 @@ def test_backup_dry_run_rejects_checksum_tamper_and_target_conflict(tmp_path: Pa
     gate.close()
     with pytest.raises(BackupError, match="already exists"):
         service.restore_to(clean.id, target)
+
+
+def test_backup_inventory_warns_about_missing_enabled_hook_secret_without_values(
+    tmp_path: Path,
+) -> None:
+    service, db, _gate = make_service(tmp_path)
+    db.execute(
+        """
+        insert into hooks (
+            id, name, source_type, connection_ref, filter_json, target_backend,
+            target_model, target_options_json, prompt_template,
+            poll_interval_seconds, enabled, cursor_json, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "hook-1", "Inbox", "email", "missing-ref", "{}", "codex",
+            "default", "{}", "summarize", 300, 1, "{}",
+            "2026-07-20T00:00:00+00:00", "2026-07-20T00:00:00+00:00",
+        ),
+    )
+
+    backup = service.create_backup()
+    manifest_text = backup.manifest_path.read_text(encoding="utf-8")
+    validation = service.dry_run(backup.id)
+
+    assert '"values_included": false' in manifest_text
+    assert validation.missing_hook_connection_refs == ["missing-ref"]
+    assert validation.warnings
+    assert "secret-value" not in manifest_text
 
 
 def test_restore_requires_closed_intake(tmp_path: Path) -> None:

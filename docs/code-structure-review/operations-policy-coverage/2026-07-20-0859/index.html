@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>운영 정책 적용 범위 구조 리뷰</title>
+  <style>
+    :root{color-scheme:light dark;--bg:#f4f2ed;--surface:#fffdf8;--surface2:#ece8df;--text:#202522;--muted:#65706a;--line:#d8d3c8;--accent:#155d4a}
+    @media(prefers-color-scheme:dark){:root{--bg:#111613;--surface:#18201c;--surface2:#222c27;--text:#edf3ef;--muted:#aebbb4;--line:#34423b;--accent:#72d7b0}}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 system-ui,sans-serif}.layout{display:grid;grid-template-columns:240px 1fr;min-height:100vh}.sidebar{padding:2rem 1rem;background:var(--surface);border-right:1px solid var(--line)}nav{display:grid;gap:.4rem}a{color:var(--accent)}main{max-width:1100px;padding:3rem}section{margin:0 0 1.4rem;padding:1.5rem;background:var(--surface);border:1px solid var(--line);border-radius:1rem}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.card,pre{padding:1rem;background:var(--surface2);border-radius:.7rem;overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:.65rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.muted{color:var(--muted)}@media(max-width:800px){.layout{grid-template-columns:1fr}.sidebar{border-right:0}.grid{grid-template-columns:1fr}main{padding:1rem}}
+  </style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"><h2>구조 리뷰</h2><nav><a href="#summary">요약</a><a href="#behaviors">행동</a><a href="#diagrams">현재 구조</a><a href="#decisions">선택지</a><a href="#evidence">근거</a><a href="#requests">수정 요청</a><a href="#limits">한계</a></nav></aside>
+  <main>
+    <header><h1>운영 정책 적용 범위</h1><p class="muted">Chat, Job, Schedule, Team Run, Hook의 Intake, Emergency Stop, Health, Audit 배선을 검토한다.</p></header>
+    <section id="summary"><h2>60초 요약</h2><p>Background executor는 하나의 lifespan에서 시작되지만 운영 정책은 도메인별 목록으로 반복된다. Hook은 Intake/Emergency Stop, readiness, mutation audit 일부에서 빠져 있다. 현재 구조를 유지하면서 Hook 로컬 배선을 보완하는 선택을 비교한다.</p><p>실제 운영에서 Hook의 필수도와 health 503 정책은 확인되지 않았다.</p></section>
+    <section id="behaviors"><h2>사용자·도메인 행동</h2><div class="grid"><div class="card"><h3>B-01/B-02</h3><p>Emergency Stop이 새 실행을 차단하고 active 작업을 중단한다. HookLoop는 외부 이벤트를 polling해 HookRunner로 전달한다.</p></div><div class="card"><h3>B-03/B-04</h3><p>Health가 실행 component 생존을 알리고, 중요 mutation은 actor와 correlation ID를 audit에 남긴다.</p></div></div></section>
+    <section id="diagrams"><h2>현재 구조</h2><p>결정 질문: 어떤 background 실행기가 운영 정책 경계 밖에 있는가?</p><pre>Execution APIs → IntakeGate → Chat / Job·Schedule / Team Run
+Hook run-now ── bypass ──→ HookRunner
+HookLoop ────── bypass ──→ HookRunner
+EmergencyStop → Chat / Job / Team Run
+HealthService → Worker / Scheduler
+EmergencyStop, HealthService - - no edge - - HookRunner</pre><p class="muted">Mermaid를 실행하지 않는 환경을 위한 텍스트 fallback이다. 점선 의미는 분석 문서의 확인된 bypass 또는 누락 edge와 같다.</p></section>
+    <section id="decisions"><h2>선택을 위한 비교</h2>
+      <h3>F-01 Hook 실행 중단</h3><table><tr><th>Option</th><th>Benefit</th><th>Cost</th><th>Risk</th><th>Applicable when</th></tr><tr><td>O-01/A 유지</td><td>변경 없음</td><td>예외 문서화</td><td>Stop 후 실행</td><td>Hook이 kill switch 밖인 경우</td></tr><tr><td>O-01/B 로컬 배선</td><td>기존 Gate 재사용</td><td>상태·테스트 추가</td><td>재처리 정책 오류</td><td>현재 단일 프로세스</td></tr><tr><td>O-01/C registry</td><td>향후 누락 방지</td><td>재설계</td><td>과도한 추상화</td><td>executor가 계속 증가</td></tr></table><p><strong>Recommendation:</strong> O-01/B. 세 번째 신규 executor가 추가되거나 누락이 재발하면 O-01/C를 재검토한다.</p>
+      <h3>F-02 readiness</h3><table><tr><th>Option</th><th>Benefit</th><th>Cost</th><th>Risk</th><th>Applicable when</th></tr><tr><td>O-02/A 유지</td><td>health 계약 불변</td><td>Hook 관측 별도 필요</td><td>죽은 task 미탐지</td><td>Hook 비필수</td></tr><tr><td>O-02/B Hook lifecycle 추가</td><td>현재 component 직접 관측</td><td>상태·테스트 추가</td><td>provider 장애와 task 사망 혼동</td><td>현재 lifespan 구조</td></tr><tr><td>O-02/C health registry</td><td>executor 확장 일관성</td><td>등록 규약 재설계</td><td>현재 규모에 과함</td><td>component가 계속 증가</td></tr></table><p><strong>Recommendation:</strong> O-02/B. Hook이 선택 기능이고 503이 재시작을 유발하면 degraded detail로만 노출한다.</p>
+      <h3>F-03 audit</h3><table><tr><th>Option</th><th>Benefit</th><th>Cost</th><th>Risk</th><th>Applicable when</th></tr><tr><td>O-03/A 실행 API만 유지</td><td>audit volume 최소</td><td>예외 정책 문서화</td><td>설정 변경 추적 공백</td><td>실행만 중요 event</td></tr><tr><td>O-03/B 위험 기반 확대</td><td>중요 Hook 변경 추적</td><td>endpoint별 명시 코드</td><td>새 mutation 누락</td><td>현재 명시적 router 구조</td></tr><tr><td>O-03/C 모든 mutation 자동 audit</td><td>포괄성</td><td>before/after·redaction 설계</td><td>저가치·민감 데이터 증가</td><td>전 mutation 추적 의무</td></tr></table><p><strong>Recommendation:</strong> O-03/B. 모든 변경의 법적 추적 의무가 확인되면 명시적 event 목록을 먼저 정의한다.</p>
+    </section>
+    <section id="evidence"><h2>근거</h2><ul><li>app.py lifespan 91-121</li><li>emergency_stop.py 45-68</li><li>health.py 34-55</li><li>api/hooks.py 45-124</li><li>tests/test_emergency_stop.py 29-78</li><li>tests/test_health.py 41-46</li></ul></section>
+    <section id="requests"><h2>후속 수정 요청</h2><ol><li>CR-01 Hook 실행을 Intake와 Emergency Stop에 통합</li><li>CR-02 Hook lifecycle을 readiness에 노출</li><li>CR-03 위험 기반 Hook audit 추가</li></ol><p>각 요청의 비목표, 사용자 결정, 완료 기준과 검증은 change-requests.md에 있다.</p></section>
+    <section id="limits"><h2>분석 한계와 다음 질문</h2><p>Hook 중요도, provider fetch 취소 수준, health 503 배포 정책, audit 보존 요구는 코드에서 확인되지 않았다. Persistence, queue 내부, SSE, secret 저장은 다음 독립 리뷰 범위다.</p></section>
+  </main>
+</div>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -129,10 +130,14 @@ async def test_sse_events_formats_published_events() -> None:
     async for chunk in _sse_events(DisconnectAfterEventRequest(), bus, subscriber):
         chunks.append(chunk)
 
-    assert chunks == [
-        ": connected\n\n",
-        'id: 1\ndata: {"id": 1, "type": "runtime.started"}\n\n',
-    ]
+    assert chunks[0] == ": connected\n\n"
+    assert chunks[1].startswith("id: 1\ndata: ")
+    payload = json.loads(chunks[1].split("data: ", 1)[1])
+    assert payload == {
+        "stream_id": bus.stream_id,
+        "id": 1,
+        "type": "runtime.started",
+    }
 
 
 def test_query_token_is_not_required_to_load_browser_shell(tmp_path: Path) -> None:

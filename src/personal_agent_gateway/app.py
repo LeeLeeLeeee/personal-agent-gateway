@@ -98,6 +98,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         ):
             await application.state.job_worker.enqueue(job.id)
         application.state.hook_run_service.recover_interrupted_runs()
+        application.state.hook_runner.reconcile_linked_runs()
         application.state.mail_workspace_projector.project_pending()
         await application.state.scheduler_loop.start()
         await application.state.hook_runner.start()
@@ -154,6 +155,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         team_runs=team_run_registry,
         team_run_service=app.state.team_run_service,
         job_worker=app.state.job_worker,
+        hook_runner=app.state.hook_runner,
         audit=app.state.audit_service,
     )
     app.state.backup_service = BackupService(
@@ -163,6 +165,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         session_dir=app_config.session_dir,
         artifact_root=app_config.artifact_root,
         workspace_root=app_config.workspace_root,
+        hooks_dir=app_config.hooks_dir,
         intake_gate=app.state.intake_gate,
     )
     app.state.team_runtime = TeamRuntime(
@@ -401,6 +404,7 @@ def _attach_local_services(
         hook_run_service,
         hook_runner,
         interval_seconds=config.hook_poll_interval_seconds,
+        intake_gate=intake_gate,
     )
     agent_registry = AgentRegistry(config)
     audit_service = AuditService(db, retention_days=config.audit_retention_days)
@@ -412,6 +416,8 @@ def _attach_local_services(
         agent_registry,
         config.model_provider,
         intake_gate,
+        hook_loop,
+        hook_runner,
     )
     app.state.app_config = config
     app.state.database = db

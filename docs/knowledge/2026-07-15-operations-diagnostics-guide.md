@@ -13,7 +13,7 @@ tags:
   - operations
   - diagnostics
   - recovery
-updated_at: 2026-07-15
+updated_at: 2026-07-20
 ---
 
 # Personal Agent Gateway Operations 진단 가이드
@@ -29,6 +29,8 @@ Sidebar의 **Operations**에서 서비스 준비 상태, 실행 상태, 중단·
 | Database | `COMPLETED / ready` | DB path·권한·migration 오류를 local log의 correlation ID로 확인 |
 | Worker | `COMPLETED / ready` | Job 자동 실행이 멈춘 상태이므로 gateway lifecycle과 worker last error 확인 |
 | Scheduler | `COMPLETED / ready` | 예약 실행이 시작되지 않으므로 scheduler lifecycle과 cron/timezone 확인 |
+| Hook loop | `COMPLETED / ready` | 외부 event polling task의 생존과 degraded provider 오류 확인 |
+| Hook runner | `COMPLETED / ready` | queued Hook Run consumer lifecycle과 last error 확인 |
 | CLI | `COMPLETED / ready` | 선택된 필수 agent CLI 설치·로그인·탐지 결과 확인 |
 | Intake | `COMPLETED / open` | Emergency Stop 상태다. 원인을 확인한 뒤 `Resume intake` 수행 |
 | Cookie | 외부 HTTPS 사용 시 `SECURE` | 원격 노출 전에 HTTPS/tunnel과 secure cookie 설정을 먼저 맞춤 |
@@ -50,7 +52,7 @@ Sidebar의 **Operations**에서 서비스 준비 상태, 실행 상태, 중단·
 ## Emergency Stop과 재개
 
 1. 위험하거나 꼬인 실행이 있으면 Operations의 `Emergency stop`을 누른다.
-2. 확인 후 새 intake가 닫히고 active Chat, Team Run, Job cancel을 시도한다.
+2. 확인 후 새 intake가 닫히고 active Chat, Team Run, Job, Hook Run cancel을 시도한다.
 3. Operations 목록과 audit에서 중단 결과와 개별 실패를 확인한다.
 4. 원인이 해결되기 전에는 intake를 열지 않는다.
 5. 준비 상태가 정상일 때 `Resume intake`를 누른다. 중단된 Team Run은 별도로 `Resume`해야 한다.
@@ -61,11 +63,15 @@ Emergency Stop은 gateway process나 Schedule 정의를 삭제하지 않는다. 
 
 1. Operations에서 `Create backup`을 실행한다.
 2. 생성된 backup의 schema와 크기를 확인하고 `Verify`를 실행한다.
-3. Verify는 manifest version, SHA-256, schema version, SQLite integrity를 검사한다.
+3. Verify는 manifest version, SHA-256, schema version, SQLite integrity와 Hook credential
+   reference inventory를 검사한다.
 4. 실제 restore는 먼저 Emergency Stop으로 intake를 닫는다.
 5. live DB가 아닌 별도 target path에 복원해 initialize/read 검증을 통과시킨 뒤 운영자가 전환한다.
 
-실행 중인 live DB를 HTTP 요청으로 바로 덮어쓰는 기능은 제공하지 않는다. Backup은 SQLite 본문과 auth/session/artifact metadata manifest를 포함하지만 workspace와 artifact 파일 본문 전체를 기본 복제하지 않는다.
+실행 중인 live DB를 HTTP 요청으로 바로 덮어쓰는 기능은 제공하지 않는다. Backup은
+`database-only` profile이다. SQLite 본문과 auth/session/artifact metadata, Hook credential
+reference inventory를 포함하지만 workspace, artifact, auth, session, Hook secret 파일 본문은
+복제하지 않는다. Operations의 `Not fully recoverable` 목록을 전체 복구 전에 확인한다.
 
 ## Audit 조회
 

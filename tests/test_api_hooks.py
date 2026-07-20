@@ -57,6 +57,13 @@ def test_create_hook_hides_secret(tmp_path: Path) -> None:
     serialized = response.text
     assert "app-password" not in serialized
     assert "connection_ref" not in hook
+    events = client.get(
+        "/api/audit/events",
+        params={"resource_type": "hook"},
+    ).json()["events"]
+    assert events[0]["action"] == "hooks.create"
+    assert events[0]["resource_id"] == hook["id"]
+    assert "app-password" not in str(events)
 
 
 def test_create_hook_can_target_continuous_team_run(tmp_path: Path) -> None:
@@ -150,6 +157,11 @@ def test_patch_toggles_enabled(tmp_path: Path) -> None:
     response = client.patch(f"/api/hooks/{hook_id}", json={"enabled": False})
     assert response.status_code == 200
     assert response.json()["hook"]["enabled"] is False
+    events = client.get(
+        "/api/audit/events",
+        params={"resource_type": "hook"},
+    ).json()["events"]
+    assert events[0]["action"] == "hooks.disable"
 
 
 def test_get_missing_hook_returns_404(tmp_path: Path) -> None:
@@ -167,6 +179,31 @@ def test_run_now_returns_created_count(tmp_path: Path) -> None:
     runs = client.get(f"/api/hooks/{hook_id}/runs")
     assert runs.status_code == 200
     assert runs.json()["runs"] == []
+    events = client.get(
+        "/api/audit/events",
+        params={"resource_type": "hook"},
+    ).json()["events"]
+    assert events[0]["action"] == "hooks.run_now"
+
+
+def test_run_now_rejection_is_audited_without_hook_secret(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    hook_id = client.post("/api/hooks", json=_create_body()).json()["hook"]["id"]
+    client.post("/api/operations/emergency-stop")
+
+    response = client.post(
+        f"/api/hooks/{hook_id}/run-now",
+        headers={"X-Correlation-ID": "hook-stop"},
+    )
+
+    assert response.status_code == 409
+    events = client.get(
+        "/api/audit/events",
+        params={"correlation_id": "hook-stop"},
+    ).json()["events"]
+    assert events[0]["action"] == "hooks.run_now"
+    assert events[0]["status"] == "rejected"
+    assert "app-password" not in str(events)
 
 
 def test_test_connection_unreachable_returns_ok_false(tmp_path: Path) -> None:
@@ -183,6 +220,31 @@ def test_test_connection_unreachable_returns_ok_false(tmp_path: Path) -> None:
     body = response.json()
     assert body["ok"] is False
     assert "app-password" not in response.text
+
+
+def test_test_connection_redacts_submitted_secret_from_provider_error(
+    tmp_path: Path,
+) -> None:
+    client = authenticated_client(tmp_path)
+
+    def fail_connection(_source_type, _connection, secret, _filter):
+        raise RuntimeError(f"provider leaked {secret}")
+
+    client.app.state.hook_service.verify_connection = fail_connection
+
+    response = client.post(
+        "/api/hooks/test-connection",
+        json={
+            "connection": {"host": "imap.test", "port": 993, "username": "me@test"},
+            "secret": "submitted-secret",
+            "filter": {"folder": "INBOX"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert "submitted-secret" not in response.text
+    assert "[redacted]" in response.json()["error"]
 
 
 def test_test_connection_unsupported_source_returns_400(tmp_path: Path) -> None:

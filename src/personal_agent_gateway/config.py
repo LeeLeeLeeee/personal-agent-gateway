@@ -78,6 +78,13 @@ class AppConfig(BaseModel):
             return value
         raise ValueError("AGENT_WEB_HOST must be 127.0.0.1 or localhost")
 
+    @field_validator("job_worker_concurrency")
+    @classmethod
+    def validate_job_worker_concurrency(cls, value: int) -> int:
+        if value != 1:
+            raise ValueError("AGENT_JOB_WORKER_CONCURRENCY currently supports only 1")
+        return value
+
     @field_validator(
         "workspace_root",
         "session_dir",

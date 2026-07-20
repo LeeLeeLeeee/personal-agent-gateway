@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,6 +89,25 @@ async def test_run_one_pending_approval_marks_failed(tmp_path: Path) -> None:
     assert runs.get_run(run.id).status == "failed"
 
 
+@pytest.mark.asyncio
+async def test_run_loop_redacts_hook_secret_from_runtime_error(tmp_path: Path) -> None:
+    class ErrorRuntime:
+        async def handle_user_message(self, _message):
+            raise RuntimeError("runtime leaked pw")
+
+    runner, runs, run, _hook, _bus = _setup(tmp_path, ErrorRuntime())
+
+    await runner.start()
+    await runner.enqueue(run.id)
+    await asyncio.wait_for(runner._queue.join(), timeout=1)
+    await runner.stop()
+
+    updated = runs.get_run(run.id)
+    assert updated.status == "failed"
+    assert "pw" not in (updated.error_message or "")
+    assert "[redacted]" in (updated.error_message or "")
+
+
 class FakeTeamRuntime:
     def __init__(self, teams: TeamRunService) -> None:
         self.teams = teams
@@ -110,6 +130,88 @@ class FakeTeamRuntime:
             return self.teams.set_run_status(team_run_id, "waiting_for_user")
         self.teams.set_cycle_status(cycle_id, "completed", summary="processed")
         return self.teams.set_run_status(team_run_id, "completed", summary="processed")
+
+
+def _setup_team_hook(tmp_path: Path):
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    team_run = teams.create_team_run(
+        "mailbox",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+    )
+    hooks = HookService(db, HookSecretStore(tmp_path / "hooks"), {"email": object()})
+    hook = hooks.create_hook(
+        name="mail-team",
+        source_type="email",
+        connection={},
+        secret="pw",
+        filter={},
+        target_backend="",
+        target_model="",
+        target_options={},
+        prompt_template="Process {{subject}}",
+        poll_interval_seconds=300,
+        target_kind="team_run",
+        target_team_run_id=team_run.id,
+    )
+    runs = HookRunService(db)
+    run = runs.create_run(hook.id, "k", "s", {"subject": "one"})
+    assert run is not None
+    runtime = FakeTeamRuntime(teams)
+    orchestrator = TeamRunOrchestrator(TeamRunRegistry(), lambda: runtime)
+    runner = HookRunner(
+        hooks,
+        runs,
+        FakeFactory(FakeRuntime(FakeRuntimeResult([], None))),
+        EventBus(),
+    )
+    runner.attach_team_runtime(teams, orchestrator)
+    return runner, runs, teams, team_run, run
+
+
+@pytest.mark.asyncio
+async def test_team_hook_projection_failure_interrupts_linked_run_and_cycle(
+    tmp_path: Path,
+) -> None:
+    runner, runs, teams, team_run, run = _setup_team_hook(tmp_path)
+
+    class FailingKnowledge:
+        def ingest_hook_run(self, *_args):
+            raise RuntimeError("projection failed")
+
+    runner.attach_mail_knowledge(FailingKnowledge(), object())
+
+    with pytest.raises(RuntimeError, match="projection failed"):
+        await runner.run_one(run.id)
+
+    updated = runs.get_run(run.id)
+    cycle = teams.list_cycles(team_run.id)[0]
+    assert updated.team_run_cycle_id == cycle.id
+    assert updated.status == "interrupted"
+    assert cycle.status == "interrupted"
+    assert cycle.error_message == "projection failed"
+
+
+def test_startup_reconciliation_repairs_link_and_projects_cycle_status(
+    tmp_path: Path,
+) -> None:
+    runner, runs, teams, team_run, run = _setup_team_hook(tmp_path)
+    cycle = teams.create_cycle(team_run.id, "hook", run.id)
+    teams.set_cycle_status(cycle.id, "interrupted", error_message="restart")
+
+    runner.reconcile_linked_runs()
+
+    updated = runs.get_run(run.id)
+    assert updated.team_run_cycle_id == cycle.id
+    assert updated.status == "interrupted"
+    assert updated.error_message == "restart"
 
 
 @pytest.mark.asyncio

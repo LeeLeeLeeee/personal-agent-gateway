@@ -117,6 +117,7 @@ def test_settings_returns_non_secret_config_snapshot(tmp_path: Path) -> None:
     assert settings["automation_ready"] is False
     assert settings["team_review_supported"] is False
     assert settings["team_execution_mode"] == "sequential"
+    assert settings["job_worker_concurrency"] == 1
     assert settings["effective_job_concurrency"] == 1
     assert "web_token" not in settings
     assert "openai_api_key" not in settings

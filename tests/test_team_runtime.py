@@ -111,6 +111,36 @@ async def test_planning_failure_fails_run_and_settles_leader(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_runtime_failure_redacts_environment_secret_from_state_and_event(
+    tmp_path,
+    monkeypatch,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, workspace)
+    leader = personas.create_persona("Tech Lead", "Planning", "Plans work.", ["Plan"], [])
+    run = teams.create_team_run("Build teams", leader.id, [], "planning_only", 1)
+    bus = EventBus()
+    monkeypatch.setenv("OPENAI_API_KEY", "backend-secret")
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=lambda _agent: ScriptedModel(
+            [RuntimeError("backend leaked backend-secret")]
+        ),
+        event_bus=bus,
+    )
+
+    failed = await runtime.start(run.id)
+
+    assert "backend-secret" not in (failed.error_message or "")
+    assert "[redacted]" in (failed.error_message or "")
+    assert "backend-secret" not in str(bus.recent())
+
+
+@pytest.mark.asyncio
 async def test_plan_and_execute_assigns_tasks_to_workers(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
