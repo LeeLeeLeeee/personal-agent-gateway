@@ -81,6 +81,7 @@ class TeamRunCycle:
     started_at: str | None
     finished_at: str | None
     updated_at: str
+    request_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -236,6 +237,7 @@ class TeamRunService:
         source_type: str,
         source_id: str,
         rounds_budget: int | None = None,
+        request_id: str | None = None,
     ) -> TeamRunCycle:
         run = self.get_team_run(team_run_id)
         if run.lifecycle_mode != "continuous":
@@ -250,6 +252,21 @@ class TeamRunService:
 
         with self._db.connection() as connection:
             connection.execute("begin immediate")
+            if request_id is not None:
+                request = connection.execute(
+                    "select team_run_id from team_cycle_requests where id = ?",
+                    (request_id,),
+                ).fetchone()
+                if request is None:
+                    raise KeyError(f"Team cycle request not found: {request_id}")
+                if request["team_run_id"] != team_run_id:
+                    raise ValueError("Cycle request belongs to a different team run")
+                existing = connection.execute(
+                    "select * from team_run_cycles where request_id = ?",
+                    (request_id,),
+                ).fetchone()
+                if existing is not None:
+                    return _team_run_cycle_from_row(existing)
             existing = connection.execute(
                 """
                 select * from team_run_cycles
@@ -258,6 +275,8 @@ class TeamRunService:
                 (team_run_id, normalized_source_type, normalized_source_id),
             ).fetchone()
             if existing is not None:
+                if request_id is not None and existing["request_id"] != request_id:
+                    raise ValueError("Cycle source is linked to a different request")
                 return _team_run_cycle_from_row(existing)
             row = connection.execute(
                 "select coalesce(max(sequence), 0) + 1 as next from team_run_cycles "
@@ -270,14 +289,15 @@ class TeamRunService:
             connection.execute(
                 """
                 insert into team_run_cycles (
-                    id, team_run_id, sequence, source_type, source_id, status,
+                    id, team_run_id, request_id, sequence, source_type, source_id, status,
                     rounds_budget, rounds_used, summary, error_message,
                     created_at, started_at, finished_at, updated_at
-                ) values (?, ?, ?, ?, ?, 'queued', ?, 0, null, null, ?, null, null, ?)
+                ) values (?, ?, ?, ?, ?, ?, 'queued', ?, 0, null, null, ?, null, null, ?)
                 """,
                 (
                     cycle_id,
                     team_run_id,
+                    request_id,
                     sequence,
                     normalized_source_type,
                     normalized_source_id,
@@ -287,6 +307,12 @@ class TeamRunService:
                 ),
             )
         return self.get_cycle(cycle_id)
+
+    def get_cycle_for_request(self, request_id: str) -> TeamRunCycle | None:
+        row = self._db.fetchone(
+            "select * from team_run_cycles where request_id = ?", (request_id,)
+        )
+        return _team_run_cycle_from_row(row) if row is not None else None
 
     def get_cycle(self, cycle_id: str) -> TeamRunCycle:
         row = self._db.fetchone(
@@ -1707,6 +1733,7 @@ def _team_run_cycle_from_row(row: object) -> TeamRunCycle:
         started_at=row["started_at"],
         finished_at=row["finished_at"],
         updated_at=row["updated_at"],
+        request_id=row["request_id"] if "request_id" in row.keys() else None,
     )
 
 

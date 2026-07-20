@@ -223,6 +223,46 @@ def test_continuous_team_run_cycles_are_ordered_and_idempotent(tmp_path):
     assert teams.increment_cycle_rounds_used(first.id).rounds_used == 1
 
 
+def test_continuous_cycle_is_idempotent_by_request(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, workspace_root=tmp_path / "workspace")
+    leader = personas.create_persona("L", "role", "d", [], [])
+    run = teams.create_team_run(
+        "mailbox",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+    )
+    db.execute(
+        "update team_runs set execution_policy = 'triggered' where id = ?",
+        (run.id,),
+    )
+    db.execute(
+        """
+        insert into team_cycle_requests (
+            id, team_run_id, source_type, source_id, status, instruction,
+            created_at, updated_at
+        ) values ('request-1', ?, 'manual', 'client-1', 'dispatching', 'go', 't', 't')
+        """,
+        (run.id,),
+    )
+
+    first = teams.create_cycle(
+        run.id, "manual", "client-1", request_id="request-1"
+    )
+    duplicate = teams.create_cycle(
+        run.id, "manual", "different-source", request_id="request-1"
+    )
+
+    assert duplicate.id == first.id
+    assert first.request_id == "request-1"
+    assert teams.get_cycle_for_request("request-1").id == first.id
+
+
 def test_standard_team_run_rejects_explicit_cycles(tmp_path):
     personas, teams = make_services(tmp_path)
     leader = personas.create_persona("L", "role", "d", [], [])
