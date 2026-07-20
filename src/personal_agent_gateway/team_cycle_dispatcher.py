@@ -120,6 +120,12 @@ class TeamCycleDispatcher:
             raise
         except Exception as exc:
             if self._teams.get_cycle(cycle.id).status in _TERMINAL_CYCLE_STATUSES:
+                current_request = self._cycles.get_request(request.id)
+                if current_request.status == "dispatching":
+                    await self.on_team_run_settled(
+                        self._teams.get_team_run(team_run_id),
+                        cycle.id,
+                    )
                 raise
             self._teams.set_cycle_status(
                 cycle.id,
@@ -140,6 +146,8 @@ class TeamCycleDispatcher:
             return
         cycle = self._teams.get_cycle(cycle_id)
         result = self._cycles.settle_cycle(cycle_id)
+        if not result.transitioned:
+            return
         if cycle.status in _TERMINAL_CYCLE_STATUSES:
             await self._event_bus.publish(
                 {

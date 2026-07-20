@@ -377,6 +377,48 @@ async def test_real_orchestrator_notifies_dispatcher_observer_before_return(
 
 
 @pytest.mark.asyncio
+async def test_duplicate_terminal_callback_emits_and_wakes_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    services = make_dispatcher_services(tmp_path)
+    first = services.cycles.enqueue_request(
+        services.run.id,
+        "manual",
+        "client-1",
+        "first",
+        previous_cycle_id=None,
+    )
+    second = services.cycles.enqueue_request(
+        services.run.id,
+        "manual",
+        "client-2",
+        "second",
+        previous_cycle_id=None,
+    )
+    await services.dispatcher.run_one(services.run.id)
+    cycle = services.teams.get_cycle_for_request(first.id)
+    assert cycle is not None
+    services.teams.set_cycle_status(cycle.id, "completed", summary="done")
+    enqueued: list[str] = []
+
+    async def record_enqueue(team_run_id: str) -> None:
+        enqueued.append(team_run_id)
+
+    monkeypatch.setattr(services.dispatcher, "enqueue_run", record_enqueue)
+
+    await services.dispatcher.on_team_run_settled(services.run, cycle.id)
+    await services.dispatcher.on_team_run_settled(services.run, cycle.id)
+
+    assert [
+        event["type"] for event in services.event_bus.recent()
+    ].count("team.cycle.settled") == 1
+    assert enqueued == [services.run.id]
+    assert services.cycles.get_request(first.id).status == "settled"
+    assert services.cycles.get_request(second.id).status == "queued"
+
+
+@pytest.mark.asyncio
 async def test_later_observer_error_preserves_dispatcher_settlement(
     tmp_path: Path,
 ) -> None:
@@ -428,6 +470,80 @@ async def test_later_observer_error_preserves_dispatcher_settlement(
     assert cycle.status == "completed"
     assert cycles.get_request(request.id).status == "settled"
     assert cycles.policy_status(run.id) == "auto_completed"
+    assert [
+        event["type"] for event in event_bus.recent()
+    ].count("team.cycle.settled") == 1
+
+
+@pytest.mark.asyncio
+async def test_earlier_observer_error_settles_terminal_dispatching_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    event_bus = EventBus()
+
+    class CompletingRuntime:
+        async def add_work(
+            self,
+            _team_run_id: str,
+            _instruction: str,
+            cycle_id: str | None = None,
+        ) -> list[object]:
+            assert cycle_id is not None
+            teams.set_cycle_status(cycle_id, "running")
+            return []
+
+        async def resume(
+            self,
+            team_run_id: str,
+            cycle_id: str | None = None,
+        ) -> TeamRun:
+            assert cycle_id is not None
+            teams.set_cycle_status(cycle_id, "completed", summary="done")
+            return teams.get_team_run(team_run_id)
+
+    orchestrator = TeamRunOrchestrator(
+        TeamRunRegistry(),
+        CompletingRuntime,
+    )
+    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, event_bus)
+    enqueued: list[str] = []
+
+    async def record_enqueue(team_run_id: str) -> None:
+        enqueued.append(team_run_id)
+
+    monkeypatch.setattr(dispatcher, "enqueue_run", record_enqueue)
+
+    async def fail_earlier_observer(_run, _cycle_id):
+        raise RuntimeError("earlier observer failed")
+
+    orchestrator.add_observer(fail_earlier_observer)
+    orchestrator.add_observer(dispatcher.on_team_run_settled)
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "client-1",
+        "first",
+        previous_cycle_id=None,
+    )
+    queued = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "client-2",
+        "second",
+        previous_cycle_id=None,
+    )
+
+    with pytest.raises(RuntimeError, match="earlier observer failed"):
+        await dispatcher.run_one(run.id)
+
+    cycle = teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    assert cycle.status == "completed"
+    assert cycles.get_request(request.id).status == "settled"
+    assert cycles.get_request(queued.id).status == "queued"
+    assert enqueued == [run.id]
     assert [
         event["type"] for event in event_bus.recent()
     ].count("team.cycle.settled") == 1
@@ -513,9 +629,12 @@ async def test_auto_settlement_publishes_series_event(
     )
 
     await dispatcher.on_team_run_settled(run, cycle.id)
+    await dispatcher.on_team_run_settled(run, cycle.id)
 
     events = event_bus.recent()
-    assert expected_event in [event["type"] for event in events]
+    event_types = [event["type"] for event in events]
+    assert event_types.count(expected_event) == 1
+    assert event_types.count("team.cycle.settled") == 1
     started = next(
         event
         for event in events

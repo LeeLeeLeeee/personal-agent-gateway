@@ -81,6 +81,7 @@ class CycleSettlement:
     request: TeamCycleRequest
     series: TeamAutoSeries | None
     queue_ready: bool
+    transitioned: bool
 
 
 class TeamCycleService:
@@ -302,7 +303,8 @@ class TeamCycleService:
                 return CycleSettlement(
                     request,
                     series,
-                    self._queue_ready(connection, request.team_run_id),
+                    False,
+                    False,
                 )
             if request.status != "dispatching":
                 raise ValueError("Cycle request must be dispatching before settlement")
@@ -349,6 +351,7 @@ class TeamCycleService:
                 request,
                 series,
                 self._queue_ready(connection, request.team_run_id),
+                True,
             )
 
     def continue_failed(
@@ -935,7 +938,13 @@ class TeamCycleService:
     ) -> CycleSettlement:
         if request.status != "dispatching":
             raise ValueError("Only a dispatching cycle request can be paused")
+        transitioned = False
         if series is not None:
+            transitioned = (
+                series.status != series_status
+                or series.pause_reason != pause_reason
+                or series.paused_cycle_id != cycle["id"]
+            )
             connection.execute(
                 """
                 update team_run_auto_series
@@ -945,7 +954,7 @@ class TeamCycleService:
                 (series_status, pause_reason, cycle["id"], now, series.id),
             )
             series = self._get_series(connection, series.id)
-        return CycleSettlement(request, series, False)
+        return CycleSettlement(request, series, False, transitioned)
 
     def _settle_auto_slot(
         self,

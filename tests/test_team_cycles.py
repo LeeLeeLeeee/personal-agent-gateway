@@ -266,6 +266,8 @@ def test_auto_state_ownership_and_repeated_settlement_are_idempotent(
     first = cycles.settle_cycle(cycle.id)
     duplicate = cycles.settle_cycle(cycle.id)
 
+    assert first.transitioned is True
+    assert duplicate.transitioned is False
     assert first.series.settled_slots == 1
     assert duplicate.series.settled_slots == 1
     assert duplicate.series.status == "auto_completed"
