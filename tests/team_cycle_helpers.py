@@ -14,12 +14,20 @@ def dt(value: str) -> datetime:
 def make_cycle_services(
     tmp_path: Path,
     execution_policy: str,
+    *,
+    auto_repeat_count: int = 2,
+    auto_interval_seconds: int = 300,
 ) -> tuple[Database, TeamRunService, TeamCycleService, TeamRun]:
     db = Database(tmp_path / "app.db")
     db.initialize()
     personas = PersonaService(db)
     cycles = TeamCycleService(db)
-    teams = TeamRunService(db, personas, workspace_root=tmp_path / "workspace")
+    teams = TeamRunService(
+        db,
+        personas,
+        workspace_root=tmp_path / "workspace",
+        cycle_service=cycles,
+    )
     leader = personas.create_persona("Lead", "lead", "d", [], [])
     worker = personas.create_persona("Worker", "worker", "d", [], [])
     run = teams.create_team_run(
@@ -29,17 +37,29 @@ def make_cycle_services(
         "plan_and_execute",
         1,
         lifecycle_mode="continuous",
+        execution_policy=execution_policy,
+        auto_repeat_count=(
+            auto_repeat_count if execution_policy == "auto" else None
+        ),
+        auto_interval_seconds=(
+            auto_interval_seconds if execution_policy == "auto" else None
+        ),
     )
-    db.execute(
-        "update team_runs set execution_policy = ? where id = ?",
-        (execution_policy, run.id),
-    )
-    return db, teams, cycles, teams.get_team_run(run.id)
+    return db, teams, cycles, run
 
 
 def make_triggered_run(tmp_path: Path):
     return make_cycle_services(tmp_path, "triggered")
 
 
-def make_auto_run(tmp_path: Path):
-    return make_cycle_services(tmp_path, "auto")
+def make_auto_run(
+    tmp_path: Path,
+    target_slots: int = 2,
+    interval_seconds: int = 300,
+):
+    return make_cycle_services(
+        tmp_path,
+        "auto",
+        auto_repeat_count=target_slots,
+        auto_interval_seconds=interval_seconds,
+    )

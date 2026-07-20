@@ -5,6 +5,7 @@ import pytest
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.rule_sets import RuleSetService
+from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.teams import TeamRunService
 
@@ -15,6 +16,148 @@ def make_services(tmp_path):
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, workspace_root=tmp_path / "workspace")
     return personas, teams
+
+
+def make_policy_services(tmp_path: Path):
+    db = Database(tmp_path / "policy.db")
+    db.initialize()
+    personas = PersonaService(db)
+    cycle_service = TeamCycleService(db)
+    teams = TeamRunService(
+        db,
+        personas,
+        workspace_root=tmp_path / "policy-workspace",
+        cycle_service=cycle_service,
+    )
+    leader = personas.create_persona("Policy Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Policy Worker", "worker", "d", [], [])
+    return db, teams, cycle_service, leader.id, worker.id
+
+
+def test_new_auto_run_is_continuous_and_creates_first_request_atomically(
+    tmp_path: Path,
+) -> None:
+    db, teams, cycle_service, leader_id, worker_id = make_policy_services(tmp_path)
+
+    run = teams.create_team_run(
+        "goal",
+        leader_id,
+        [worker_id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="auto",
+        auto_repeat_count=3,
+        auto_interval_seconds=600,
+    )
+
+    assert run.lifecycle_mode == "continuous"
+    assert run.execution_policy == "auto"
+    series = cycle_service.get_active_series(run.id)
+    assert (series.target_slots, series.interval_seconds) == (3, 600)
+    assert [
+        request.slot_ordinal for request in cycle_service.list_requests(run.id)
+    ] == [1]
+
+
+def test_auto_initialization_failure_rolls_back_team_run_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, teams, cycle_service, leader_id, worker_id = make_policy_services(tmp_path)
+    workspace_root = tmp_path / "policy-workspace"
+    workspace_root.mkdir()
+    sentinel = workspace_root / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(
+        cycle_service,
+        "initialize_auto_series",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        teams.create_team_run(
+            "goal",
+            leader_id,
+            [worker_id],
+            "plan_and_execute",
+            1,
+            lifecycle_mode="continuous",
+            execution_policy="auto",
+            auto_repeat_count=2,
+            auto_interval_seconds=60,
+        )
+
+    assert db.fetchone("select id from team_runs") is None
+    assert db.fetchone("select id from team_agents") is None
+    assert db.fetchone("select id from team_run_auto_series") is None
+    assert db.fetchone("select id from team_cycle_requests") is None
+    assert list(workspace_root.iterdir()) == [sentinel]
+
+
+@pytest.mark.parametrize(
+    ("execution_policy", "auto_repeat_count", "auto_interval_seconds", "message"),
+    [
+        (None, None, None, "requires an execution policy"),
+        ("auto", 0, 60, "repeat count must be positive"),
+        ("auto", 2, 59, "interval must be at least 60 seconds"),
+        ("triggered", 2, None, "does not accept AUTO settings"),
+    ],
+)
+def test_continuous_run_validates_execution_policy_settings(
+    tmp_path: Path,
+    execution_policy,
+    auto_repeat_count,
+    auto_interval_seconds,
+    message: str,
+) -> None:
+    _, teams, _, leader_id, worker_id = make_policy_services(tmp_path)
+
+    with pytest.raises(ValueError, match=message):
+        teams.create_team_run(
+            "goal",
+            leader_id,
+            [worker_id],
+            "plan_and_execute",
+            1,
+            lifecycle_mode="continuous",
+            execution_policy=execution_policy,
+            auto_repeat_count=auto_repeat_count,
+            auto_interval_seconds=auto_interval_seconds,
+        )
+
+
+def test_create_team_run_from_team_forwards_auto_policy(tmp_path: Path) -> None:
+    db, teams, cycle_service, leader_id, worker_id = make_policy_services(tmp_path)
+    personas = PersonaService(db)
+    directory = TeamService(db, personas)
+    rules = RuleSetService(db)
+    rules.seed_defaults()
+    team = directory.create_team(
+        "Policy Team",
+        "continuous work",
+        leader_id,
+        [worker_id],
+    )
+
+    run = teams.create_team_run_from_team(
+        directory,
+        rules,
+        team.id,
+        "goal",
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="auto",
+        auto_repeat_count=2,
+        auto_interval_seconds=300,
+    )
+
+    assert run.execution_policy == "auto"
+    assert cycle_service.get_active_series(run.id).target_slots == 2
+    assert [request.slot_ordinal for request in cycle_service.list_requests(run.id)] == [
+        1
+    ]
 
 
 def test_create_team_run_snapshots_personas(tmp_path):
@@ -193,6 +336,7 @@ def test_new_run_has_default_budget(tmp_path):
     assert run.rounds_budget == 8
     assert run.rounds_used == 0
     assert run.lifecycle_mode == "standard"
+    assert run.execution_policy is None
 
 
 def test_continuous_team_run_cycles_are_ordered_and_idempotent(tmp_path):
@@ -206,6 +350,7 @@ def test_continuous_team_run_cycles_are_ordered_and_idempotent(tmp_path):
         1,
         rounds_budget=6,
         lifecycle_mode="continuous",
+        execution_policy="triggered",
     )
 
     first = teams.create_cycle(run.id, "hook", "hook-run-1")
@@ -236,10 +381,7 @@ def test_continuous_cycle_is_idempotent_by_request(tmp_path):
         "plan_and_execute",
         1,
         lifecycle_mode="continuous",
-    )
-    db.execute(
-        "update team_runs set execution_policy = 'triggered' where id = ?",
-        (run.id,),
+        execution_policy="triggered",
     )
     db.execute(
         """
@@ -276,10 +418,7 @@ def test_cycle_request_must_be_dispatching_and_match_source(tmp_path):
         "plan_and_execute",
         1,
         lifecycle_mode="continuous",
-    )
-    db.execute(
-        "update team_runs set execution_policy = 'triggered' where id = ?",
-        (run.id,),
+        execution_policy="triggered",
     )
     db.execute(
         """
@@ -329,6 +468,7 @@ def test_task_and_message_keep_cycle_lineage(tmp_path):
         "plan_and_execute",
         1,
         lifecycle_mode="continuous",
+        execution_policy="triggered",
     )
     cycle = teams.create_cycle(run.id, "hook", "hook-run-1")
 
@@ -351,10 +491,22 @@ def test_cycle_lineage_rejects_another_team_run_and_cascades(tmp_path):
     personas, teams = make_services(tmp_path)
     leader = personas.create_persona("L", "role", "d", [], [])
     first_run = teams.create_team_run(
-        "first", leader.id, [], "plan_and_execute", 1, lifecycle_mode="continuous"
+        "first",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
     )
     second_run = teams.create_team_run(
-        "second", leader.id, [], "plan_and_execute", 1, lifecycle_mode="continuous"
+        "second",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
     )
     cycle = teams.create_cycle(first_run.id, "hook", "hook-run-1")
 

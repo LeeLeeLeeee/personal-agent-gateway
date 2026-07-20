@@ -84,13 +84,10 @@ def test_auto_series_counts_continue_and_keeps_retry_in_same_slot(
     tmp_path: Path,
 ) -> None:
     db, teams, cycles, run = make_auto_run(tmp_path)
-    series, first = cycles.create_auto_series(
-        run.id,
-        target_slots=2,
-        interval_seconds=300,
-        now=dt("2026-07-20T00:00:00+00:00"),
-    )
+    series = cycles.get_active_series(run.id)
+    initial = cycles.list_requests(run.id)[0]
     first = cycles.claim_next(run.id)
+    assert first.id == initial.id
     cycle = teams.create_cycle(run.id, "auto", first.source_id, request_id=first.id)
     teams.set_cycle_status(cycle.id, "failed", error_message="boom")
 
@@ -114,13 +111,10 @@ def test_retry_preserves_failed_slots_previous_cycle_snapshot(
     tmp_path: Path,
 ) -> None:
     db, teams, cycles, run = make_auto_run(tmp_path)
-    series, first = cycles.create_auto_series(
-        run.id,
-        target_slots=2,
-        interval_seconds=300,
-        now=dt("2026-07-20T00:00:00+00:00"),
-    )
+    series = cycles.get_active_series(run.id)
+    initial = cycles.list_requests(run.id)[0]
     first = cycles.claim_next(run.id)
+    assert first.id == initial.id
     first_cycle = teams.create_cycle(run.id, "auto", first.source_id, request_id=first.id)
     teams.set_cycle_status(first_cycle.id, "completed", summary="slot one snapshot")
     cycles.settle_cycle(first_cycle.id, now=dt("2026-07-20T00:01:00+00:00"))
@@ -146,9 +140,10 @@ def test_retry_preserves_failed_slots_previous_cycle_snapshot(
 
 @pytest.mark.parametrize("status", ["completed", "completed_with_failures"])
 def test_completed_cycle_statuses_settle_auto_slot(tmp_path: Path, status: str) -> None:
-    db, teams, cycles, run = make_auto_run(tmp_path)
-    series, request = cycles.create_auto_series(run.id, 1, 300)
+    db, teams, cycles, run = make_auto_run(tmp_path, target_slots=1)
+    initial = cycles.list_requests(run.id)[0]
     request = cycles.claim_next(run.id)
+    assert request.id == initial.id
     cycle = teams.create_cycle(run.id, "auto", request.source_id, request_id=request.id)
     teams.set_cycle_status(cycle.id, status, summary="done")
 
@@ -162,9 +157,10 @@ def test_completed_cycle_statuses_settle_auto_slot(tmp_path: Path, status: str) 
 def test_terminal_cycle_cannot_first_settle_a_queued_request(
     tmp_path: Path,
 ) -> None:
-    db, teams, cycles, run = make_auto_run(tmp_path)
-    series, request = cycles.create_auto_series(run.id, 1, 300)
+    db, teams, cycles, run = make_auto_run(tmp_path, target_slots=1)
+    initial = cycles.list_requests(run.id)[0]
     request = cycles.claim_next(run.id)
+    assert request.id == initial.id
     cycle = teams.create_cycle(run.id, "auto", request.source_id, request_id=request.id)
     teams.set_cycle_status(cycle.id, "completed", summary="done")
     db.execute(
@@ -205,8 +201,9 @@ def test_request_policy_and_lineage_validation_snapshots_previous_cycle(
 def test_public_auto_enqueue_rejects_invalid_slot_retry_and_inactive_series(
     tmp_path: Path,
 ) -> None:
-    db, teams, cycles, run = make_auto_run(tmp_path)
-    series, first = cycles.create_auto_series(run.id, 1, 300)
+    db, teams, cycles, run = make_auto_run(tmp_path, target_slots=1)
+    series = cycles.get_active_series(run.id)
+    first = cycles.list_requests(run.id)[0]
 
     with pytest.raises(ValueError, match="slot"):
         cycles.enqueue_request(
@@ -250,8 +247,9 @@ def test_public_auto_enqueue_rejects_invalid_slot_retry_and_inactive_series(
 def test_auto_state_ownership_and_repeated_settlement_are_idempotent(
     tmp_path: Path,
 ) -> None:
-    db, teams, cycles, run = make_auto_run(tmp_path / "first")
-    series, request = cycles.create_auto_series(run.id, 1, 300)
+    db, teams, cycles, run = make_auto_run(tmp_path / "first", target_slots=1)
+    series = cycles.get_active_series(run.id)
+    request = cycles.list_requests(run.id)[0]
     other_db, other_teams, other_cycles, other_run = make_auto_run(tmp_path / "second")
 
     with pytest.raises(ValueError, match="different team run"):
@@ -259,7 +257,9 @@ def test_auto_state_ownership_and_repeated_settlement_are_idempotent(
     with pytest.raises(ValueError, match="paused"):
         cycles.continue_failed(run.id, series.id)
 
+    initial = request
     request = cycles.claim_next(run.id)
+    assert request.id == initial.id
     cycle = teams.create_cycle(run.id, "auto", request.source_id, request_id=request.id)
     teams.set_cycle_status(cycle.id, "completed", summary="done")
 
@@ -274,7 +274,8 @@ def test_auto_state_ownership_and_repeated_settlement_are_idempotent(
 
 def test_auto_due_slot_read_models_and_restart(tmp_path: Path) -> None:
     db, teams, cycles, run = make_auto_run(tmp_path)
-    series, first = cycles.create_auto_series(run.id, 2, 300, now=dt("2026-07-20T00:00:00+00:00"))
+    series = cycles.get_active_series(run.id)
+    first = cycles.list_requests(run.id)[0]
 
     assert cycles.get_active_series(run.id).id == series.id
     assert cycles.get_request(first.id) == first
@@ -311,15 +312,17 @@ def test_auto_due_slot_read_models_and_restart(tmp_path: Path) -> None:
 
 def test_due_comparison_normalizes_equivalent_offset_instants(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db, teams, cycles, run = make_auto_run(tmp_path)
-    series, request = cycles.create_auto_series(
-        run.id,
-        2,
-        300,
-        now=dt("2026-07-20T09:00:00+09:00"),
+    monkeypatch.setattr(
+        "personal_agent_gateway.teams._now",
+        lambda: "2026-07-20T00:00:00+00:00",
     )
+    db, teams, cycles, run = make_auto_run(tmp_path)
+    series = cycles.get_active_series(run.id)
+    initial = cycles.list_requests(run.id)[0]
     request = cycles.claim_next(run.id)
+    assert request.id == initial.id
     cycle = teams.create_cycle(run.id, "auto", request.source_id, request_id=request.id)
     teams.set_cycle_status(cycle.id, "completed", summary="one")
 
@@ -348,9 +351,10 @@ def test_explicit_naive_datetime_is_rejected(tmp_path: Path) -> None:
 def test_pause_and_reconcile_preserve_or_requeue_dispatching_request(
     tmp_path: Path,
 ) -> None:
-    db, teams, cycles, run = make_auto_run(tmp_path / "auto")
-    series, request = cycles.create_auto_series(run.id, 1, 300)
+    db, teams, cycles, run = make_auto_run(tmp_path / "auto", target_slots=1)
+    initial = cycles.list_requests(run.id)[0]
     request = cycles.claim_next(run.id)
+    assert request.id == initial.id
     cycle = teams.create_cycle(run.id, "auto", request.source_id, request_id=request.id)
     teams.set_cycle_status(cycle.id, "waiting_for_user")
 
@@ -368,9 +372,13 @@ def test_pause_and_reconcile_preserve_or_requeue_dispatching_request(
     assert cycles.get_request(request.id).status == "queued"
     assert cycles.requeue_claim(cycles.claim_next(run.id).id).status == "queued"
 
-    db, teams, cycles, run = make_auto_run(tmp_path / "interrupted")
-    series, request = cycles.create_auto_series(run.id, 1, 300)
+    db, teams, cycles, run = make_auto_run(
+        tmp_path / "interrupted",
+        target_slots=1,
+    )
+    initial = cycles.list_requests(run.id)[0]
     request = cycles.claim_next(run.id)
+    assert request.id == initial.id
     cycle = teams.create_cycle(run.id, "auto", request.source_id, request_id=request.id)
     teams.set_cycle_status(cycle.id, "interrupted")
 

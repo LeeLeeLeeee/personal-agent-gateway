@@ -1,14 +1,18 @@
 import json
 import shutil
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.pagination import decode_cursor, encode_cursor
 from personal_agent_gateway.personas import Persona, PersonaService
+
+if TYPE_CHECKING:
+    from personal_agent_gateway.team_cycles import ExecutionPolicy, TeamCycleService
 
 
 TeamRunStatus = Literal[
@@ -63,6 +67,7 @@ class TeamRun:
     updated_at: str
     team_id: str | None = None
     rules_snapshot: dict | None = None
+    execution_policy: Literal["auto", "triggered"] | None = None
 
 
 @dataclass(frozen=True)
@@ -152,10 +157,17 @@ class TeamDecisionRequest:
 
 
 class TeamRunService:
-    def __init__(self, db: Database, personas: PersonaService, workspace_root: Path) -> None:
+    def __init__(
+        self,
+        db: Database,
+        personas: PersonaService,
+        workspace_root: Path,
+        cycle_service: "TeamCycleService | None" = None,
+    ) -> None:
         self._db = db
         self._personas = personas
         self._workspace_root = workspace_root
+        self._cycle_service = cycle_service
 
     def create_team_run(
         self,
@@ -168,34 +180,95 @@ class TeamRunService:
         team_id: str | None = None,
         rules_snapshot_json: str | None = None,
         lifecycle_mode: LifecycleMode = "standard",
+        execution_policy: "ExecutionPolicy | None" = None,
+        auto_repeat_count: int | None = None,
+        auto_interval_seconds: int | None = None,
     ) -> TeamRun:
+        if (
+            lifecycle_mode == "continuous"
+            and execution_policy not in {"auto", "triggered"}
+        ):
+            raise ValueError("Continuous Team Run requires an execution policy")
+        if execution_policy == "auto":
+            if not auto_repeat_count or auto_repeat_count < 1:
+                raise ValueError("AUTO repeat count must be positive")
+            if not auto_interval_seconds or auto_interval_seconds < 60:
+                raise ValueError("AUTO interval must be at least 60 seconds")
+            if self._cycle_service is None:
+                raise RuntimeError("AUTO Team Run requires a cycle service")
+        elif auto_repeat_count is not None or auto_interval_seconds is not None:
+            raise ValueError("TRIGGERED Team Run does not accept AUTO settings")
+
         team_run_id = uuid4().hex
         now = _now()
         workspace_root_path = self._workspace_root / team_run_id
         workspace_root_path.mkdir(parents=True)
         workspace_root = str(workspace_root_path)
-        self._db.execute(
-            """
-            insert into team_runs (
-                id, goal, status, run_mode, lifecycle_mode, leader_agent_id, max_workers,
-                rounds_budget, rounds_used, workspace_root, summary, error_message,
-                created_at, started_at, finished_at, updated_at, team_id, rules_snapshot_json
-            )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                team_run_id, goal, "draft", run_mode, lifecycle_mode, None, max_workers,
-                rounds_budget, 0, workspace_root, None, None,
-                now, None, None, now, team_id, rules_snapshot_json,
-            ),
-        )
-        leader_agent = self._create_agent(team_run_id, leader_persona_id, "leader")
-        for member_persona_id in member_persona_ids:
-            self._create_agent(team_run_id, member_persona_id, "member")
-        self._db.execute(
-            "update team_runs set leader_agent_id = ?, updated_at = ? where id = ?",
-            (leader_agent.id, _now(), team_run_id),
-        )
+        try:
+            with self._db.connection() as connection:
+                connection.execute("begin immediate")
+                connection.execute(
+                    """
+                    insert into team_runs (
+                        id, goal, status, run_mode, lifecycle_mode, execution_policy,
+                        leader_agent_id, max_workers, rounds_budget, rounds_used,
+                        workspace_root, summary, error_message, created_at, started_at,
+                        finished_at, updated_at, team_id, rules_snapshot_json
+                    )
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        team_run_id,
+                        goal,
+                        "draft",
+                        run_mode,
+                        lifecycle_mode,
+                        execution_policy,
+                        None,
+                        max_workers,
+                        rounds_budget,
+                        0,
+                        workspace_root,
+                        None,
+                        None,
+                        now,
+                        None,
+                        None,
+                        now,
+                        team_id,
+                        rules_snapshot_json,
+                    ),
+                )
+                leader_agent = self._insert_agent(
+                    connection,
+                    team_run_id,
+                    leader_persona_id,
+                    "leader",
+                    _now(),
+                )
+                for member_persona_id in member_persona_ids:
+                    self._insert_agent(
+                        connection,
+                        team_run_id,
+                        member_persona_id,
+                        "member",
+                        _now(),
+                    )
+                connection.execute(
+                    "update team_runs set leader_agent_id = ?, updated_at = ? where id = ?",
+                    (leader_agent.id, now, team_run_id),
+                )
+                if execution_policy == "auto":
+                    self._cycle_service.initialize_auto_series(
+                        connection,
+                        team_run_id,
+                        target_slots=auto_repeat_count,
+                        interval_seconds=auto_interval_seconds,
+                        now=now,
+                    )
+        except Exception:
+            shutil.rmtree(workspace_root_path)
+            raise
         return self.get_team_run(team_run_id)
 
     def create_team_run_from_team(
@@ -208,6 +281,9 @@ class TeamRunService:
         max_workers: int,
         rounds_budget: int = 8,
         lifecycle_mode: LifecycleMode = "standard",
+        execution_policy: "ExecutionPolicy | None" = None,
+        auto_repeat_count: int | None = None,
+        auto_interval_seconds: int | None = None,
     ) -> TeamRun:
         team = team_service.get_team(team_id)
         snapshot = rule_set_service.snapshot_for_team(team_id)
@@ -223,6 +299,9 @@ class TeamRunService:
             team_id=team_id,
             rules_snapshot_json=json.dumps(snapshot, ensure_ascii=False),
             lifecycle_mode=lifecycle_mode,
+            execution_policy=execution_policy,
+            auto_repeat_count=auto_repeat_count,
+            auto_interval_seconds=auto_interval_seconds,
         )
 
     def get_team_run(self, team_run_id: str) -> TeamRun:
@@ -1557,11 +1636,17 @@ class TeamRunService:
             updated += 1
         return updated
 
-    def _create_agent(self, team_run_id: str, persona_id: str, role: str) -> TeamAgent:
+    def _insert_agent(
+        self,
+        connection: sqlite3.Connection,
+        team_run_id: str,
+        persona_id: str,
+        role: str,
+        now: str,
+    ) -> TeamAgent:
         persona = self._personas.get_persona(persona_id)
         agent_id = uuid4().hex
-        now = _now()
-        self._db.execute(
+        connection.execute(
             """
             insert into team_agents (
                 id, team_run_id, name, role, persona_id, persona_snapshot_json,
@@ -1579,7 +1664,11 @@ class TeamRunService:
                 None, None, now, now,
             ),
         )
-        return self._get_agent(agent_id)
+        row = connection.execute(
+            "select * from team_agents where id = ?",
+            (agent_id,),
+        ).fetchone()
+        return _team_agent_from_row(row)
 
     def _get_decision_request(self, request_id: str) -> TeamDecisionRequest:
         row = self._db.fetchone(
@@ -1723,6 +1812,9 @@ def _team_run_from_row(row: object) -> TeamRun:
             json.loads(row["rules_snapshot_json"])
             if "rules_snapshot_json" in row.keys() and row["rules_snapshot_json"]
             else None
+        ),
+        execution_policy=(
+            row["execution_policy"] if "execution_policy" in row.keys() else None
         ),
     )
 
