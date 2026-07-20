@@ -242,19 +242,12 @@ class TeamRunService:
         run = self.get_team_run(team_run_id)
         if run.lifecycle_mode != "continuous":
             raise ValueError("Cycles require a continuous team run")
-        normalized_source_type = source_type.strip()
-        normalized_source_id = source_id.strip()
-        if not normalized_source_type or not normalized_source_id:
-            raise ValueError("Cycle source type and source id are required")
-        normalized_budget = run.rounds_budget if rounds_budget is None else rounds_budget
-        if normalized_budget < 1:
-            raise ValueError("Cycle rounds budget must be positive")
 
         with self._db.connection() as connection:
             connection.execute("begin immediate")
             if request_id is not None:
                 request = connection.execute(
-                    "select team_run_id from team_cycle_requests where id = ?",
+                    "select * from team_cycle_requests where id = ?",
                     (request_id,),
                 ).fetchone()
                 if request is None:
@@ -267,6 +260,23 @@ class TeamRunService:
                 ).fetchone()
                 if existing is not None:
                     return _team_run_cycle_from_row(existing)
+            normalized_source_type = source_type.strip()
+            normalized_source_id = source_id.strip()
+            if not normalized_source_type or not normalized_source_id:
+                raise ValueError("Cycle source type and source id are required")
+            normalized_budget = (
+                run.rounds_budget if rounds_budget is None else rounds_budget
+            )
+            if normalized_budget < 1:
+                raise ValueError("Cycle rounds budget must be positive")
+            if request_id is not None:
+                if request["status"] != "dispatching":
+                    raise ValueError("Cycle request must be dispatching")
+                if (
+                    request["source_type"] != normalized_source_type
+                    or request["source_id"] != normalized_source_id
+                ):
+                    raise ValueError("Cycle source does not match the cycle request")
             existing = connection.execute(
                 """
                 select * from team_run_cycles

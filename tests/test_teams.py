@@ -255,12 +255,59 @@ def test_continuous_cycle_is_idempotent_by_request(tmp_path):
         run.id, "manual", "client-1", request_id="request-1"
     )
     duplicate = teams.create_cycle(
-        run.id, "manual", "different-source", request_id="request-1"
+        run.id, "", "", rounds_budget=0, request_id="request-1"
     )
 
     assert duplicate.id == first.id
     assert first.request_id == "request-1"
     assert teams.get_cycle_for_request("request-1").id == first.id
+
+
+def test_cycle_request_must_be_dispatching_and_match_source(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, workspace_root=tmp_path / "workspace")
+    leader = personas.create_persona("L", "role", "d", [], [])
+    run = teams.create_team_run(
+        "mailbox",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+    )
+    db.execute(
+        "update team_runs set execution_policy = 'triggered' where id = ?",
+        (run.id,),
+    )
+    db.execute(
+        """
+        insert into team_cycle_requests (
+            id, team_run_id, source_type, source_id, status, instruction,
+            created_at, updated_at
+        ) values ('request-1', ?, 'manual', 'client-1', 'queued', 'go', 't', 't')
+        """,
+        (run.id,),
+    )
+
+    with pytest.raises(ValueError, match="dispatching"):
+        teams.create_cycle(
+            run.id, "manual", "client-1", request_id="request-1"
+        )
+
+    db.execute(
+        "update team_cycle_requests set status = 'dispatching' where id = 'request-1'"
+    )
+    with pytest.raises(ValueError, match="source"):
+        teams.create_cycle(
+            run.id, "hook", "hook-1", request_id="request-1"
+        )
+
+    cycle = teams.create_cycle(
+        run.id, "manual", "client-1", request_id="request-1"
+    )
+    assert cycle.request_id == "request-1"
 
 
 def test_standard_team_run_rejects_explicit_cycles(tmp_path):

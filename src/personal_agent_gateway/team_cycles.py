@@ -143,6 +143,7 @@ class TeamCycleService:
         interval_seconds: int,
         now: str,
     ) -> tuple[TeamAutoSeries, TeamCycleRequest]:
+        now = _timestamp(datetime.fromisoformat(now))
         if target_slots < 1:
             raise ValueError("AUTO repeat count must be positive")
         if interval_seconds < 60:
@@ -238,7 +239,7 @@ class TeamCycleService:
                 """
                 select * from team_cycle_requests
                 where team_run_id = ? and status = 'queued'
-                order by created_at asc, id asc limit 1
+                order by created_at asc, rowid asc limit 1
                 """,
                 (team_run_id,),
             ).fetchone()
@@ -303,6 +304,8 @@ class TeamCycleService:
                     series,
                     self._queue_ready(connection, request.team_run_id),
                 )
+            if request.status != "dispatching":
+                raise ValueError("Cycle request must be dispatching before settlement")
             request_status = "canceled" if cycle["status"] == "canceled" else "settled"
             connection.execute(
                 """
@@ -397,14 +400,6 @@ class TeamCycleService:
                 (series_id, failed["slot_ordinal"]),
             ).fetchone()
             attempt = int(attempt_row["next"])
-            connection.execute(
-                """
-                update team_run_auto_series
-                set status = 'running', next_run_at = null, pause_reason = null,
-                    paused_cycle_id = null, updated_at = ? where id = ?
-                """,
-                (timestamp, series_id),
-            )
             return self._enqueue_request(
                 connection,
                 team_run_id,
@@ -473,7 +468,7 @@ class TeamCycleService:
             for row in self._db.fetchall(
                 """
                 select * from team_cycle_requests
-                where team_run_id = ? order by created_at asc, id asc
+                where team_run_id = ? order by created_at asc, rowid asc
                 """,
                 (team_run_id,),
             )
@@ -616,17 +611,24 @@ class TeamCycleService:
         request = self.get_request(request_id)
         if request.status != "queued":
             return 0
+        insertion = self._db.fetchone(
+            "select rowid as insertion_order from team_cycle_requests where id = ?",
+            (request_id,),
+        )
         row = self._db.fetchone(
             """
             select count(*) as total from team_cycle_requests
             where team_run_id = ? and status = 'queued'
-              and (created_at < ? or (created_at = ? and id <= ?))
+              and (
+                  created_at < ?
+                  or (created_at = ? and rowid <= ?)
+              )
             """,
             (
                 request.team_run_id,
                 request.created_at,
                 request.created_at,
-                request.id,
+                insertion["insertion_order"],
             ),
         )
         return int(row["total"])
@@ -655,7 +657,7 @@ class TeamCycleService:
             for row in self._db.fetchall(
                 """
                 select * from team_cycle_requests where status = 'dispatching'
-                order by created_at asc, id asc
+                order by created_at asc, rowid asc
                 """
             )
         ]
@@ -742,6 +744,15 @@ class TeamCycleService:
         else:
             raise ValueError(f"Unsupported cycle request source: {normalized_source_type}")
         self._require_policy(connection, team_run_id, expected_policy)
+        existing = connection.execute(
+            """
+            select * from team_cycle_requests
+            where team_run_id = ? and source_type = ? and source_id = ?
+            """,
+            (team_run_id, normalized_source_type, normalized_source_id),
+        ).fetchone()
+        if existing is not None:
+            return _request_from_row(existing)
         if normalized_source_type in {"auto", "retry"} and auto_series_id is None:
             raise ValueError("AUTO cycle requests require an AUTO series")
         if normalized_source_type in {"manual", "hook"} and auto_series_id is not None:
@@ -769,6 +780,14 @@ class TeamCycleService:
                 raise ValueError("AUTO series belongs to a different team run")
             if slot_ordinal is None:
                 raise ValueError("AUTO cycle requests require a slot ordinal")
+            if series.status not in _ACTIVE_SERIES_STATUSES:
+                raise ValueError("AUTO cycle requests require an active AUTO series")
+            if (
+                slot_ordinal < 1
+                or slot_ordinal > series.target_slots
+                or slot_ordinal != series.settled_slots + 1
+            ):
+                raise ValueError("AUTO cycle request slot is outside the current series slot")
         elif slot_ordinal is not None or retry_of_request_id is not None:
             raise ValueError("Non-AUTO cycle requests cannot have AUTO lineage")
         if retry_of_request_id is not None:
@@ -779,6 +798,30 @@ class TeamCycleService:
                 or retry_of.slot_ordinal != slot_ordinal
             ):
                 raise ValueError("Retry request lineage does not match the AUTO slot")
+            failed_cycle = connection.execute(
+                "select * from team_run_cycles where request_id = ?",
+                (retry_of_request_id,),
+            ).fetchone()
+            if (
+                series.status != "paused_failure"
+                or retry_of.status != "settled"
+                or failed_cycle is None
+                or failed_cycle["status"] != "failed"
+                or series.paused_cycle_id != failed_cycle["id"]
+            ):
+                raise ValueError("Retry lineage must reference the paused failed cycle")
+        elif auto_series_id is not None:
+            if series.status not in {"running", "waiting_interval"}:
+                raise ValueError("AUTO series is not ready to enqueue an automatic slot")
+            occupied = connection.execute(
+                """
+                select id from team_cycle_requests
+                where auto_series_id = ? and slot_ordinal = ?
+                """,
+                (auto_series_id, slot_ordinal),
+            ).fetchone()
+            if occupied is not None:
+                raise ValueError("AUTO series slot already has a cycle request")
         request_id = uuid4().hex
         try:
             connection.execute(
@@ -816,6 +859,24 @@ class TeamCycleService:
             if existing is None:
                 raise
             return _request_from_row(existing)
+        if normalized_source_type == "retry":
+            connection.execute(
+                """
+                update team_run_auto_series
+                set status = 'running', next_run_at = null, pause_reason = null,
+                    paused_cycle_id = null, updated_at = ? where id = ?
+                """,
+                (now, auto_series_id),
+            )
+        elif normalized_source_type == "auto" and series.status == "waiting_interval":
+            connection.execute(
+                """
+                update team_run_auto_series
+                set status = 'running', next_run_at = null, updated_at = ?
+                where id = ?
+                """,
+                (now, auto_series_id),
+            )
         return self._get_request(connection, request_id)
 
     def _pause_by_id(
@@ -980,7 +1041,10 @@ class TeamCycleService:
 
 
 def _timestamp(value: datetime | None = None) -> str:
-    return (value or datetime.now(timezone.utc)).isoformat()
+    timestamp = value or datetime.now(timezone.utc)
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        raise ValueError("Cycle timestamps must be timezone-aware")
+    return timestamp.astimezone(timezone.utc).isoformat()
 
 
 def _auto_source_id(series_id: str, slot_ordinal: int, attempt: int) -> str:

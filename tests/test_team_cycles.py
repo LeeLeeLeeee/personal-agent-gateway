@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -41,6 +42,44 @@ def test_concurrent_enqueue_and_claim_keep_one_request_and_dispatcher(
     assert cycles.get_dispatching(run.id).id == requests[0].id
 
 
+def test_equal_created_at_keeps_persistent_insertion_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, teams, cycles, run = make_triggered_run(tmp_path)
+    request_ids = iter(["z-request", "a-request"])
+    monkeypatch.setattr(
+        "personal_agent_gateway.team_cycles.uuid4",
+        lambda: SimpleNamespace(hex=next(request_ids)),
+    )
+    now = dt("2026-07-20T00:00:00+00:00")
+
+    first = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "client-1",
+        "first",
+        previous_cycle_id=None,
+        now=now,
+    )
+    second = cycles.enqueue_request(
+        run.id,
+        "hook",
+        "hook-1",
+        "second",
+        previous_cycle_id=None,
+        now=now,
+    )
+
+    assert [request.id for request in cycles.list_requests(run.id)] == [
+        first.id,
+        second.id,
+    ]
+    assert cycles.queue_position(first.id) == 1
+    assert cycles.queue_position(second.id) == 2
+    assert cycles.claim_next(run.id, now=now).id == first.id
+
+
 def test_auto_series_counts_continue_and_keeps_retry_in_same_slot(
     tmp_path: Path,
 ) -> None:
@@ -51,6 +90,7 @@ def test_auto_series_counts_continue_and_keeps_retry_in_same_slot(
         interval_seconds=300,
         now=dt("2026-07-20T00:00:00+00:00"),
     )
+    first = cycles.claim_next(run.id)
     cycle = teams.create_cycle(run.id, "auto", first.source_id, request_id=first.id)
     teams.set_cycle_status(cycle.id, "failed", error_message="boom")
 
@@ -60,6 +100,7 @@ def test_auto_series_counts_continue_and_keeps_retry_in_same_slot(
     assert retry.slot_ordinal == 1
     assert retry.retry_of_request_id == first.id
 
+    retry = cycles.claim_next(run.id)
     retry_cycle = teams.create_cycle(run.id, "retry", retry.source_id, request_id=retry.id)
     teams.set_cycle_status(retry_cycle.id, "failed", error_message="again")
     cycles.settle_cycle(retry_cycle.id, now=dt("2026-07-20T00:03:00+00:00"))
@@ -82,6 +123,23 @@ def test_completed_cycle_statuses_settle_auto_slot(tmp_path: Path, status: str) 
     assert settled.series.status == "auto_completed"
     assert settled.series.settled_slots == 1
     assert settled.request.status == "settled"
+
+
+def test_terminal_cycle_cannot_first_settle_a_queued_request(
+    tmp_path: Path,
+) -> None:
+    db, teams, cycles, run = make_auto_run(tmp_path)
+    series, request = cycles.create_auto_series(run.id, 1, 300)
+    request = cycles.claim_next(run.id)
+    cycle = teams.create_cycle(run.id, "auto", request.source_id, request_id=request.id)
+    teams.set_cycle_status(cycle.id, "completed", summary="done")
+    db.execute(
+        "update team_cycle_requests set status = 'queued' where id = ?",
+        (request.id,),
+    )
+
+    with pytest.raises(ValueError, match="dispatching"):
+        cycles.settle_cycle(cycle.id)
 
 
 def test_request_policy_and_lineage_validation_snapshots_previous_cycle(
@@ -108,6 +166,76 @@ def test_request_policy_and_lineage_validation_snapshots_previous_cycle(
     db, teams, cycles, run = make_auto_run(tmp_path / "auto")
     with pytest.raises(ValueError, match="series"):
         cycles.enqueue_request(run.id, "auto", "missing-series", "work", previous_cycle_id=None)
+
+
+def test_public_auto_enqueue_rejects_invalid_slot_retry_and_inactive_series(
+    tmp_path: Path,
+) -> None:
+    db, teams, cycles, run = make_auto_run(tmp_path)
+    series, first = cycles.create_auto_series(run.id, 1, 300)
+
+    with pytest.raises(ValueError, match="slot"):
+        cycles.enqueue_request(
+            run.id,
+            "auto",
+            "out-of-range",
+            "work",
+            previous_cycle_id=None,
+            auto_series_id=series.id,
+            slot_ordinal=2,
+        )
+    with pytest.raises(ValueError, match="failed"):
+        cycles.enqueue_request(
+            run.id,
+            "retry",
+            "not-failed",
+            "work",
+            previous_cycle_id=None,
+            auto_series_id=series.id,
+            slot_ordinal=1,
+            retry_of_request_id=first.id,
+        )
+
+    first = cycles.claim_next(run.id)
+    cycle = teams.create_cycle(run.id, "auto", first.source_id, request_id=first.id)
+    teams.set_cycle_status(cycle.id, "completed", summary="done")
+    cycles.settle_cycle(cycle.id)
+
+    with pytest.raises(ValueError, match="active"):
+        cycles.enqueue_request(
+            run.id,
+            "auto",
+            "inactive-series",
+            "work",
+            previous_cycle_id=cycle.id,
+            auto_series_id=series.id,
+            slot_ordinal=1,
+        )
+
+
+def test_auto_state_ownership_and_repeated_settlement_are_idempotent(
+    tmp_path: Path,
+) -> None:
+    db, teams, cycles, run = make_auto_run(tmp_path / "first")
+    series, request = cycles.create_auto_series(run.id, 1, 300)
+    other_db, other_teams, other_cycles, other_run = make_auto_run(tmp_path / "second")
+
+    with pytest.raises(ValueError, match="different team run"):
+        cycles.retry_failed(other_run.id, series.id)
+    with pytest.raises(ValueError, match="paused"):
+        cycles.continue_failed(run.id, series.id)
+
+    request = cycles.claim_next(run.id)
+    cycle = teams.create_cycle(run.id, "auto", request.source_id, request_id=request.id)
+    teams.set_cycle_status(cycle.id, "completed", summary="done")
+
+    first = cycles.settle_cycle(cycle.id)
+    duplicate = cycles.settle_cycle(cycle.id)
+
+    assert first.series.settled_slots == 1
+    assert duplicate.series.settled_slots == 1
+    assert duplicate.series.status == "auto_completed"
+    assert duplicate.request.status == "settled"
 
 
 def test_auto_due_slot_read_models_and_restart(tmp_path: Path) -> None:
@@ -145,6 +273,42 @@ def test_auto_due_slot_read_models_and_restart(tmp_path: Path) -> None:
     assert restarted.series_number == 2
     assert restarted.target_slots == 2
     assert restarted_request.slot_ordinal == 1
+
+
+def test_due_comparison_normalizes_equivalent_offset_instants(
+    tmp_path: Path,
+) -> None:
+    db, teams, cycles, run = make_auto_run(tmp_path)
+    series, request = cycles.create_auto_series(
+        run.id,
+        2,
+        300,
+        now=dt("2026-07-20T09:00:00+09:00"),
+    )
+    request = cycles.claim_next(run.id)
+    cycle = teams.create_cycle(run.id, "auto", request.source_id, request_id=request.id)
+    teams.set_cycle_status(cycle.id, "completed", summary="one")
+
+    settled = cycles.settle_cycle(cycle.id, now=dt("2026-07-20T09:01:00+09:00"))
+    due = cycles.enqueue_due_auto_requests(now=dt("2026-07-19T20:06:00-04:00"))
+
+    assert series.created_at == "2026-07-20T00:00:00+00:00"
+    assert settled.series.next_run_at == "2026-07-20T00:06:00+00:00"
+    assert [request.slot_ordinal for request in due] == [2]
+
+
+def test_explicit_naive_datetime_is_rejected(tmp_path: Path) -> None:
+    db, teams, cycles, run = make_triggered_run(tmp_path)
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        cycles.enqueue_request(
+            run.id,
+            "manual",
+            "client-1",
+            "work",
+            previous_cycle_id=None,
+            now=dt("2026-07-20T00:00:00"),
+        )
 
 
 def test_pause_and_reconcile_preserve_or_requeue_dispatching_request(
