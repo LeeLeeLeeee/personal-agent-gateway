@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { HooksView } from "./index.jsx";
@@ -59,17 +59,17 @@ describe("HooksView", () => {
 
   it("builds a Persona email hook from the form (minutes -> seconds, filter, target)", async () => {
     const onCreate = vi.fn();
+    const user = userEvent.setup();
     render(<HooksView hooks={[]} agents={agents} personas={personas} onCreate={onCreate} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} />);
-    await userEvent.click(screen.getByRole("button", { name: "CREATE NEW" }));
-    await userEvent.type(screen.getByLabelText("Name"), "Inbox watcher");
-    await userEvent.type(screen.getByLabelText("Host"), "imap.gmail.com");
-    await userEvent.type(screen.getByLabelText("Username"), "me@gmail.com");
-    await userEvent.type(screen.getByLabelText("App password"), "app-pw");
-    await userEvent.type(screen.getByLabelText("From contains"), "boss");
-    await userEvent.clear(screen.getByLabelText("Poll minutes"));
-    await userEvent.type(screen.getByLabelText("Poll minutes"), "5");
-    await userEvent.type(screen.getByLabelText("Prompt template"), "요약: {{{{subject}}");
-    await userEvent.click(screen.getByRole("button", { name: /create hook/i }));
+    await user.click(screen.getByRole("button", { name: "CREATE NEW" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Inbox watcher" } });
+    fireEvent.change(screen.getByLabelText("Host"), { target: { value: "imap.gmail.com" } });
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "me@gmail.com" } });
+    fireEvent.change(screen.getByLabelText("App password"), { target: { value: "app-pw" } });
+    fireEvent.change(screen.getByLabelText("From contains"), { target: { value: "boss" } });
+    fireEvent.change(screen.getByLabelText("Poll minutes"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Prompt template"), { target: { value: "요약: {{subject}}" } });
+    await user.click(screen.getByRole("button", { name: /create hook/i }));
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       name: "Inbox watcher",
       source_type: "email",
@@ -88,17 +88,18 @@ describe("HooksView", () => {
 
   it("creates a hook targeting an existing continuous Team Run", async () => {
     const onCreate = vi.fn();
+    const user = userEvent.setup();
     render(<HooksView hooks={[]} agents={agents} personas={personas} teamRuns={teamRuns} onCreate={onCreate} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} />);
-    await userEvent.click(screen.getByRole("button", { name: "CREATE NEW" }));
-    await userEvent.click(screen.getByRole("button", { name: "TEAM RUN" }));
+    await user.click(screen.getByRole("button", { name: "CREATE NEW" }));
+    await user.click(screen.getByRole("button", { name: "TEAM RUN" }));
     expect(screen.getByRole("option", { name: "Mail inbox" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "One-off" })).not.toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("Name"), "Mail team hook");
-    await userEvent.type(screen.getByLabelText("Host"), "imap.example.com");
-    await userEvent.type(screen.getByLabelText("Username"), "me@example.com");
-    await userEvent.type(screen.getByLabelText("App password"), "app-pw");
-    await userEvent.type(screen.getByLabelText("Prompt template"), "Process {{{{subject}}");
-    await userEvent.click(screen.getByRole("button", { name: /create hook/i }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Mail team hook" } });
+    fireEvent.change(screen.getByLabelText("Host"), { target: { value: "imap.example.com" } });
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "me@example.com" } });
+    fireEvent.change(screen.getByLabelText("App password"), { target: { value: "app-pw" } });
+    fireEvent.change(screen.getByLabelText("Prompt template"), { target: { value: "Process {{subject}}" } });
+    await user.click(screen.getByRole("button", { name: /create hook/i }));
 
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       target_kind: "team_run",
@@ -111,12 +112,13 @@ describe("HooksView", () => {
 
   it("shows the result of a connection test", async () => {
     const onTestConnection = vi.fn().mockResolvedValue({ ok: false, error: "auth failed" });
+    const user = userEvent.setup();
     render(<HooksView hooks={[]} agents={agents} onCreate={noop} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={onTestConnection} />);
-    await userEvent.click(screen.getByRole("button", { name: "CREATE NEW" }));
-    await userEvent.type(screen.getByLabelText("Host"), "imap.gmail.com");
-    await userEvent.type(screen.getByLabelText("Username"), "me@gmail.com");
-    await userEvent.type(screen.getByLabelText("App password"), "wrong");
-    await userEvent.click(screen.getByRole("button", { name: /test connection/i }));
+    await user.click(screen.getByRole("button", { name: "CREATE NEW" }));
+    fireEvent.change(screen.getByLabelText("Host"), { target: { value: "imap.gmail.com" } });
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "me@gmail.com" } });
+    fireEvent.change(screen.getByLabelText("App password"), { target: { value: "wrong" } });
+    await user.click(screen.getByRole("button", { name: /test connection/i }));
     expect(await screen.findByText(/auth failed/)).toBeInTheDocument();
     expect(onTestConnection).toHaveBeenCalled();
   });

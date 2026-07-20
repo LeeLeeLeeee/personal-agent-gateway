@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PersonaLibrary } from "./index.jsx";
@@ -66,15 +66,16 @@ describe("PersonaLibrary", () => {
 
   it("creates a new persona from the New persona panel", async () => {
     const onCreate = vi.fn();
+    const user = userEvent.setup();
     render(<PersonaLibrary personas={personas} onCreate={onCreate} onSave={vi.fn()} />);
 
-    await userEvent.click(screen.getByRole("button", { name: /new persona/i }));
+    await user.click(screen.getByRole("button", { name: /new persona/i }));
     expect(screen.getByLabelText("Name")).toHaveValue("");
 
-    await userEvent.type(screen.getByLabelText("Name"), "Growth Hacker");
-    await userEvent.type(screen.getByLabelText("Role"), "Growth");
-    await userEvent.type(screen.getByLabelText("Responsibilities"), "Find channels\nRun experiments");
-    await userEvent.click(screen.getByRole("button", { name: /create persona/i }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Growth Hacker" } });
+    fireEvent.change(screen.getByLabelText("Role"), { target: { value: "Growth" } });
+    fireEvent.change(screen.getByLabelText("Responsibilities"), { target: { value: "Find channels\nRun experiments" } });
+    await user.click(screen.getByRole("button", { name: /create persona/i }));
 
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       name: "Growth Hacker",
@@ -86,28 +87,29 @@ describe("PersonaLibrary", () => {
 
   it("selects backend, model and model-specific options through the chat-style picker", async () => {
     const onCreate = vi.fn();
+    const user = userEvent.setup();
     render(<PersonaLibrary personas={personas} agents={agents} onCreate={onCreate} onSave={vi.fn()} />);
 
-    await userEvent.click(screen.getByRole("button", { name: /new persona/i }));
-    await userEvent.type(screen.getByLabelText("Name"), "Local Agent");
+    await user.click(screen.getByRole("button", { name: /new persona/i }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Local Agent" } });
 
     // backend via the agent dropdown (chat-style, not a native <select>)
-    await userEvent.click(screen.getByRole("button", { name: "Agent" }));
-    await userEvent.click(screen.getByRole("button", { name: /Claude Code/i }));
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.click(screen.getByRole("button", { name: /Claude Code/i }));
 
     // model -> opus
-    await userEvent.click(screen.getByRole("button", { name: "Model" }));
-    await userEvent.click(screen.getByRole("button", { name: "Opus" }));
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    await user.click(screen.getByRole("button", { name: "Opus" }));
 
     // opus only offers high/max, so "low" is no longer a choice
     expect(screen.queryByRole("button", { name: "effort low" })).not.toBeInTheDocument();
 
     // effort segmented control (opus offers high/max), then permission mode dropdown -> plan
-    await userEvent.click(screen.getByRole("button", { name: "effort max" }));
-    await userEvent.click(screen.getByRole("button", { name: "permission mode" }));
-    await userEvent.click(screen.getByRole("button", { name: /^plan/ }));
+    await user.click(screen.getByRole("button", { name: "effort max" }));
+    await user.click(screen.getByRole("button", { name: "permission mode" }));
+    await user.click(screen.getByRole("button", { name: /^plan/ }));
 
-    await userEvent.click(screen.getByRole("button", { name: /create persona/i }));
+    await user.click(screen.getByRole("button", { name: /create persona/i }));
 
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       default_backend: "claude",
@@ -125,23 +127,25 @@ describe("PersonaLibrary", () => {
   it("creates (not updates) the first persona when the library is empty", async () => {
     const onCreate = vi.fn();
     const onSave = vi.fn();
+    const user = userEvent.setup();
     render(<PersonaLibrary personas={[]} onCreate={onCreate} onSave={onSave} />);
 
-    await userEvent.type(screen.getByLabelText("Name"), "박PM");
-    await userEvent.click(screen.getByRole("button", { name: /create persona/i }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "박PM" } });
+    await user.click(screen.getByRole("button", { name: /create persona/i }));
 
+    expect(onCreate).toHaveBeenCalledTimes(1);
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ name: "박PM" }));
     expect(onSave).not.toHaveBeenCalled();
   });
 
   it("saves edits to an existing persona", async () => {
     const onSave = vi.fn();
+    const user = userEvent.setup();
     render(<PersonaLibrary personas={personas} onCreate={vi.fn()} onSave={onSave} />);
 
     const name = screen.getByLabelText("Name");
-    await userEvent.clear(name);
-    await userEvent.type(name, "Lead Architect");
-    await userEvent.click(screen.getByRole("button", { name: /save persona/i }));
+    fireEvent.change(name, { target: { value: "Lead Architect" } });
+    await user.click(screen.getByRole("button", { name: /save persona/i }));
 
     expect(onSave).toHaveBeenCalledWith("p1", expect.objectContaining({ name: "Lead Architect" }));
   });
