@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -73,6 +74,9 @@ from personal_agent_gateway.security_settings import SecuritySettingsService
 from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
 from personal_agent_gateway.sources.email import ImapEmailAdapter
 from personal_agent_gateway.team_directory import TeamService
+from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
+from personal_agent_gateway.team_cycle_loop import TeamCycleLoop
+from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
@@ -90,6 +94,11 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         application.state.team_run_service.interrupt_active_runs()
+        team_run_ids = application.state.team_cycle_dispatcher.reconcile()
+        await application.state.team_cycle_dispatcher.start()
+        for team_run_id in team_run_ids:
+            await application.state.team_cycle_dispatcher.enqueue_run(team_run_id)
+        await application.state.team_cycle_loop.start()
         application.state.job_service.recover_interrupted_jobs()
         await application.state.job_worker.start()
         for job in application.state.job_service.list_jobs(
@@ -111,6 +120,8 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             await application.state.scheduler_loop.stop()
             await application.state.hook_loop.stop()
             await application.state.hook_runner.stop()
+            await application.state.team_cycle_loop.stop()
+            await application.state.team_cycle_dispatcher.stop()
             team_run_ids = await application.state.team_run_registry.cancel_all(
                 reason="shutdown"
             )
@@ -177,9 +188,41 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         team_run_registry,
         lambda: app.state.team_runtime,
     )
+    app.state.team_cycle_dispatcher = TeamCycleDispatcher(
+        app.state.team_cycle_service,
+        app.state.team_run_service,
+        app.state.team_run_orchestrator,
+        event_bus,
+    )
+    app.state.team_cycle_loop = TeamCycleLoop(
+        app.state.team_cycle_service,
+        app.state.team_cycle_dispatcher,
+    )
+    app.state.team_run_orchestrator.add_observer(
+        app.state.team_cycle_dispatcher.on_team_run_settled
+    )
+    app.state.team_cycle_dispatcher.add_preparer(
+        app.state.hook_runner.prepare_team_cycle
+    )
     app.state.hook_runner.attach_team_runtime(
         app.state.team_run_service,
         app.state.team_run_orchestrator,
+    )
+    app.state.hook_runner.attach_team_cycle_queue(
+        app.state.team_cycle_service,
+        app.state.team_cycle_dispatcher,
+    )
+    app.state.health_service = HealthService(
+        app.state.database,
+        app.state.job_worker,
+        app.state.scheduler_loop,
+        app.state.agent_registry,
+        app_config.model_provider,
+        app.state.intake_gate,
+        app.state.hook_loop,
+        app.state.hook_runner,
+        app.state.team_cycle_dispatcher,
+        app.state.team_cycle_loop,
     )
     app.state.team_run_service.backfill_agent_avatars()
 
@@ -254,7 +297,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
             content=_error_payload(
                 request,
                 code="validation_error",
-                detail=exc.errors(),
+                detail=jsonable_encoder(exc.errors()),
                 retryable=False,
             ),
         )
@@ -352,7 +395,13 @@ def _attach_local_services(
     session_activity_service = SessionActivityService(db)
     session_activity_publisher = SessionActivityPublisher(session_activity_service, event_bus)
     persona_service = PersonaService(db)
-    team_run_service = TeamRunService(db, persona_service, config.workspace_root)
+    team_cycle_service = TeamCycleService(db)
+    team_run_service = TeamRunService(
+        db,
+        persona_service,
+        config.workspace_root,
+        cycle_service=team_cycle_service,
+    )
     team_directory_service = TeamService(db, persona_service)
     rule_set_service = RuleSetService(db)
     rule_set_service.seed_defaults()
@@ -412,16 +461,6 @@ def _attach_local_services(
     agent_registry = AgentRegistry(config)
     audit_service = AuditService(db, retention_days=config.audit_retention_days)
     security_settings = SecuritySettingsService(db, config.access_mode)
-    health_service = HealthService(
-        db,
-        job_worker,
-        scheduler_loop,
-        agent_registry,
-        config.model_provider,
-        intake_gate,
-        hook_loop,
-        hook_runner,
-    )
     app.state.app_config = config
     app.state.database = db
     app.state.agent_registry = agent_registry
@@ -431,7 +470,6 @@ def _attach_local_services(
     app.state.audit_service = audit_service
     app.state.security_settings = security_settings
     app.state.intake_gate = intake_gate
-    app.state.health_service = health_service
     app.state.capability_registry = registry
     app.state.job_service = job_service
     app.state.schedule_service = schedule_service
@@ -442,6 +480,7 @@ def _attach_local_services(
     app.state.session_activity_publisher = session_activity_publisher
     app.state.session_activity_service = session_activity_service
     app.state.team_run_service = team_run_service
+    app.state.team_cycle_service = team_cycle_service
     app.state.team_directory_service = team_directory_service
     app.state.rule_set_service = rule_set_service
     app.state.hook_service = hook_service

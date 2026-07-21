@@ -70,6 +70,8 @@ def test_operations_projects_domain_states_with_stable_deep_links(tmp_path: Path
             "scheduler",
             "hook_loop",
             "hook_runner",
+            "team_cycle_dispatcher",
+            "team_cycle_loop",
             "cli",
             "intake",
     }
@@ -133,3 +135,40 @@ def test_operations_reports_interrupted_team_run(tmp_path: Path) -> None:
     assert item["status"] == "interrupted"
     assert item["resumable"] is True
     assert item["target"] == {"screen": "teams", "team_run_id": run.id}
+
+
+def test_operations_reports_policy_active_terminal_team_run(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    persona = client.app.state.persona_service.create_persona(
+        "Lead", "lead", "Plans", [], []
+    )
+    run = client.app.state.team_run_service.create_team_run(
+        goal="Continue this run",
+        leader_persona_id=persona.id,
+        member_persona_ids=[],
+        run_mode="plan_and_execute",
+        max_workers=1,
+        lifecycle_mode="continuous",
+        execution_policy="auto",
+        auto_repeat_count=2,
+        auto_interval_seconds=300,
+    )
+    request = client.app.state.team_cycle_service.claim_next(run.id)
+    cycle = client.app.state.team_run_service.create_cycle(
+        run.id, "auto", request.source_id, request_id=request.id
+    )
+    client.app.state.team_run_service.set_cycle_status(
+        cycle.id, "completed", summary="first"
+    )
+    client.app.state.team_run_service.set_run_status(run.id, "completed")
+    client.app.state.team_cycle_service.settle_cycle(cycle.id)
+
+    body = client.get("/api/operations").json()
+
+    item = next(entry for entry in body["items"] if entry["id"] == run.id)
+    assert item["execution_policy"] == "auto"
+    assert item["policy_status"] == "waiting_interval"
+    assert item["queue_count"] == 0
+    assert item["next_run_at"] is not None
+    assert item["pause_reason"] is None
+    assert item["active_cycle_id"] is None

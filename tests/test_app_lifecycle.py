@@ -49,15 +49,76 @@ def wait_for_status(app, job_id: str, expected: str) -> None:
 def test_lifespan_starts_and_stops_worker_and_scheduler(tmp_path: Path) -> None:
     app = create_app(make_config(tmp_path))
 
+    observers = app.state.team_run_orchestrator._observers
+    preparers = app.state.team_cycle_dispatcher._preparers
+    assert observers[0].__self__ is app.state.team_cycle_dispatcher
+    assert observers[1].__self__ is app.state.hook_runner
+    assert preparers[0].__self__ is app.state.hook_runner
     assert app.state.job_worker.alive is False
     assert app.state.scheduler_loop.alive is False
+    assert app.state.team_cycle_dispatcher.alive is False
+    assert app.state.team_cycle_loop.alive is False
 
     with TestClient(app):
         assert app.state.job_worker.alive is True
         assert app.state.scheduler_loop.alive is True
+        assert app.state.team_cycle_dispatcher.alive is True
+        assert app.state.team_cycle_loop.alive is True
 
     assert app.state.job_worker.alive is False
     assert app.state.scheduler_loop.alive is False
+    assert app.state.team_cycle_dispatcher.alive is False
+    assert app.state.team_cycle_loop.alive is False
+
+
+def test_lifespan_reconciles_and_orders_cycle_background_services(
+    tmp_path: Path,
+) -> None:
+    app = create_app(make_config(tmp_path))
+    calls: list[str] = []
+
+    app.state.team_run_service.interrupt_active_runs = lambda: calls.append("interrupt")
+    app.state.team_cycle_dispatcher.reconcile = lambda: (
+        calls.append("reconcile") or ["recovered"]
+    )
+
+    async def dispatcher_start() -> None:
+        calls.append("dispatcher.start")
+
+    async def dispatcher_enqueue(team_run_id: str) -> None:
+        calls.append(f"dispatcher.enqueue:{team_run_id}")
+
+    async def loop_start() -> None:
+        calls.append("loop.start")
+
+    async def loop_stop() -> None:
+        calls.append("loop.stop")
+
+    async def dispatcher_stop() -> None:
+        calls.append("dispatcher.stop")
+
+    async def registry_cancel_all(*, reason: str) -> list[str]:
+        calls.append(f"registry.cancel_all:{reason}")
+        return []
+
+    app.state.team_cycle_dispatcher.start = dispatcher_start
+    app.state.team_cycle_dispatcher.enqueue_run = dispatcher_enqueue
+    app.state.team_cycle_dispatcher.stop = dispatcher_stop
+    app.state.team_cycle_loop.start = loop_start
+    app.state.team_cycle_loop.stop = loop_stop
+    app.state.team_run_registry.cancel_all = registry_cancel_all
+
+    with TestClient(app):
+        assert calls[:5] == [
+            "interrupt",
+            "reconcile",
+            "dispatcher.start",
+            "dispatcher.enqueue:recovered",
+            "loop.start",
+        ]
+
+    assert calls.index("loop.stop") < calls.index("dispatcher.stop")
+    assert calls.index("dispatcher.stop") < calls.index("registry.cancel_all:shutdown")
 
 
 def test_lifespan_recovers_running_and_reenqueues_non_chat_queued_jobs(

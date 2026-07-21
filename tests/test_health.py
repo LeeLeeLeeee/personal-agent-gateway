@@ -42,6 +42,8 @@ def test_live_is_public_and_ready_reports_component_status(tmp_path: Path) -> No
         "scheduler",
         "hook_loop",
         "hook_runner",
+        "team_cycle_dispatcher",
+        "team_cycle_loop",
         "cli",
         "intake",
     }

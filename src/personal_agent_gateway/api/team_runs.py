@@ -1,12 +1,12 @@
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from personal_agent_gateway.api.dependencies import (
     record_domain_audit,
@@ -15,6 +15,7 @@ from personal_agent_gateway.api.dependencies import (
 )
 from personal_agent_gateway.auth_sessions import SessionPrincipal
 from personal_agent_gateway.pagination import decode_cursor, encode_cursor
+from personal_agent_gateway.team_cycles import TeamAutoSeries, TeamCycleRequest
 from personal_agent_gateway.teams import (
     TeamAgent,
     TeamDecisionRequest,
@@ -32,11 +33,38 @@ _TERMINAL = {"completed", "completed_with_failures", "failed", "canceled"}
 
 
 class CreateTeamRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     team_id: str
     goal: str
-    run_mode: Literal["planning_only", "plan_and_execute"] = "planning_only"
-    lifecycle_mode: Literal["standard", "continuous"] = "standard"
-    max_workers: Literal[1] = 1
+    execution_policy: Literal["auto", "triggered"]
+    auto_repeat_count: Annotated[int | None, Field(ge=1)] = None
+    auto_interval_minutes: Annotated[int | None, Field(ge=1)] = None
+
+    @model_validator(mode="after")
+    def validate_policy_settings(self) -> Self:
+        auto_fields = (self.auto_repeat_count, self.auto_interval_minutes)
+        if self.execution_policy == "auto" and None in auto_fields:
+            raise ValueError("AUTO requires repeat count and interval")
+        if self.execution_policy == "triggered" and any(
+            value is not None for value in auto_fields
+        ):
+            raise ValueError("TRIGGERED does not accept AUTO settings")
+        return self
+
+
+class TriggerCycleRequest(BaseModel):
+    instruction: Annotated[str, Field(min_length=1)]
+    client_request_id: Annotated[str, Field(min_length=1)]
+    previous_cycle_id: str | None = None
+
+    @field_validator("instruction", "client_request_id")
+    @classmethod
+    def reject_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
 
 
 class AddWorkRequest(BaseModel):
@@ -62,27 +90,51 @@ def list_team_runs(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+    for run in runs:
+        stored = request.app.state.team_run_service.get_team_run(str(run["id"]))
+        run["execution_policy"] = stored.execution_policy
     return {"team_runs": runs, "next_cursor": next_cursor}
 
 
 @router.post("")
-def create_team_run(
+async def create_team_run(
     request: Request,
     payload: CreateTeamRunRequest,
     principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
+    require_intake_open(request)
     try:
         run = request.app.state.team_run_service.create_team_run_from_team(
             request.app.state.team_directory_service,
             request.app.state.rule_set_service,
             team_id=payload.team_id,
             goal=payload.goal,
-            run_mode=payload.run_mode,
-            max_workers=payload.max_workers,
-            lifecycle_mode=payload.lifecycle_mode,
+            run_mode="plan_and_execute",
+            max_workers=1,
+            lifecycle_mode="continuous",
+            execution_policy=payload.execution_policy,
+            auto_repeat_count=payload.auto_repeat_count,
+            auto_interval_seconds=(
+                payload.auto_interval_minutes * 60
+                if payload.auto_interval_minutes is not None
+                else None
+            ),
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if payload.execution_policy == "auto":
+        first = request.app.state.team_cycle_service.list_requests(run.id)[0]
+        await request.app.state.event_bus.publish(
+            {
+                "type": "team.cycle_request.queued",
+                "team_run_id": run.id,
+                "cycle_request_id": first.id,
+                "source_type": "auto",
+            }
+        )
+        await request.app.state.team_cycle_dispatcher.enqueue_run(run.id)
     record_domain_audit(
         request,
         principal,
@@ -91,9 +143,161 @@ def create_team_run(
         resource_type="team_run",
         resource_id=run.id,
         team_run_id=run.id,
-        metadata={"run_mode": run.run_mode, "team_id": run.team_id},
+        metadata={
+            "run_mode": run.run_mode,
+            "team_id": run.team_id,
+            "execution_policy": run.execution_policy,
+        },
     )
     return {"team_run": _team_run_payload(run)}
+
+
+@router.post("/{team_run_id}/cycle-requests")
+async def trigger_cycle(
+    request: Request,
+    team_run_id: str,
+    payload: TriggerCycleRequest,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    require_intake_open(request)
+    try:
+        created = request.app.state.team_cycle_service.enqueue_request(
+            team_run_id,
+            "manual",
+            payload.client_request_id,
+            payload.instruction,
+            previous_cycle_id=payload.previous_cycle_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await request.app.state.event_bus.publish(
+        {
+            "type": "team.cycle_request.queued",
+            "team_run_id": team_run_id,
+            "cycle_request_id": created.id,
+            "source_type": "manual",
+        }
+    )
+    await request.app.state.team_cycle_dispatcher.enqueue_run(team_run_id)
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.cycle_request.queued",
+        action="team_runs.trigger_cycle",
+        resource_type="team_cycle_request",
+        resource_id=created.id,
+        team_run_id=team_run_id,
+    )
+    return {
+        "cycle_request": _cycle_request_payload(created),
+        "queue_position": request.app.state.team_cycle_service.queue_position(created.id),
+    }
+
+
+@router.post("/{team_run_id}/auto-series/{series_id}/retry")
+async def retry_auto_cycle(
+    request: Request,
+    team_run_id: str,
+    series_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    require_intake_open(request)
+    try:
+        created = request.app.state.team_cycle_service.retry_failed(
+            team_run_id, series_id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="AUTO Series not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await request.app.state.event_bus.publish(
+        {
+            "type": "team.cycle_request.queued",
+            "team_run_id": team_run_id,
+            "cycle_request_id": created.id,
+            "source_type": "retry",
+        }
+    )
+    await request.app.state.team_cycle_dispatcher.enqueue_run(team_run_id)
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.auto_series.retried",
+        action="team_runs.retry_auto_cycle",
+        resource_type="team_auto_series",
+        resource_id=series_id,
+        team_run_id=team_run_id,
+    )
+    return {"cycle_request": _cycle_request_payload(created)}
+
+
+@router.post("/{team_run_id}/auto-series/{series_id}/continue")
+def continue_auto_cycle(
+    request: Request,
+    team_run_id: str,
+    series_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    require_intake_open(request)
+    try:
+        series = request.app.state.team_cycle_service.continue_failed(
+            team_run_id, series_id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="AUTO Series not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.auto_series.continued",
+        action="team_runs.continue_auto_cycle",
+        resource_type="team_auto_series",
+        resource_id=series_id,
+        team_run_id=team_run_id,
+    )
+    return {"auto_series": _auto_series_payload(series)}
+
+
+@router.post("/{team_run_id}/auto-series/restart")
+async def restart_auto_series(
+    request: Request,
+    team_run_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    require_intake_open(request)
+    try:
+        series, created = request.app.state.team_cycle_service.restart_series(
+            team_run_id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await request.app.state.event_bus.publish(
+        {
+            "type": "team.cycle_request.queued",
+            "team_run_id": team_run_id,
+            "cycle_request_id": created.id,
+            "source_type": "auto",
+        }
+    )
+    await request.app.state.team_cycle_dispatcher.enqueue_run(team_run_id)
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.auto_series.restarted",
+        action="team_runs.restart_auto_series",
+        resource_type="team_auto_series",
+        resource_id=series.id,
+        team_run_id=team_run_id,
+    )
+    return {
+        "auto_series": _auto_series_payload(series),
+        "cycle_request": _cycle_request_payload(created),
+    }
 
 
 @router.get("/{team_run_id}")
@@ -123,6 +327,7 @@ def get_team_run_detail(
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     selected_tasks = tasks[-limit:]
     selected_messages = messages[-limit:]
+    cycle_service = request.app.state.team_cycle_service
     return {
         "team_run": _team_run_payload(run),
         "agents": [_agent_payload(agent) for agent in agents],
@@ -131,6 +336,14 @@ def get_team_run_detail(
         "cycles": [_cycle_payload(cycle) for cycle in cycles],
         "decision_request": _decision_request_payload(
             service.get_active_decision_request(team_run_id)
+        ),
+        "policy_status": cycle_service.policy_status(team_run_id),
+        "active_auto_series": _auto_series_payload(
+            cycle_service.get_active_series(team_run_id)
+        ),
+        "queue_count": cycle_service.count_queued(team_run_id),
+        "active_request": _cycle_request_payload(
+            cycle_service.get_dispatching(team_run_id)
         ),
         "document_summary": _document_summary(_resolved_workspace(run)),
         "truncated": {
@@ -153,6 +366,11 @@ async def start_team_run(
         run = service.get_team_run(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
+    if run.lifecycle_mode == "continuous":
+        raise HTTPException(
+            status_code=409,
+            detail="Continuous team runs start through the cycle request queue",
+        )
     if registry.is_running(team_run_id) or run.status in _ACTIVE:
         raise HTTPException(status_code=409, detail="Team run already running")
     if run.status != "draft":
@@ -340,6 +558,11 @@ async def add_work(
         run = service.get_team_run(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
+    if run.lifecycle_mode == "continuous":
+        raise HTTPException(
+            status_code=409,
+            detail="Continuous team runs accept work through cycle requests",
+        )
     if run.run_mode != "plan_and_execute":
         raise HTTPException(status_code=409, detail="Additional work is only supported for plan_and_execute runs")
     if run.status == "draft":
@@ -738,6 +961,7 @@ def _team_run_payload(run: TeamRun) -> dict[str, object]:
         "status": run.status,
         "run_mode": run.run_mode,
         "lifecycle_mode": run.lifecycle_mode,
+        "execution_policy": run.execution_policy,
         "leader_agent_id": run.leader_agent_id,
         "max_workers": 1,
         "configured_max_workers": run.max_workers,
@@ -843,4 +1067,51 @@ def _decision_request_payload(
         "published_at": decision_request.published_at,
         "answered_at": decision_request.answered_at,
         "updated_at": decision_request.updated_at,
+    }
+
+
+def _auto_series_payload(
+    series: TeamAutoSeries | None,
+) -> dict[str, object] | None:
+    if series is None:
+        return None
+    return {
+        "id": series.id,
+        "team_run_id": series.team_run_id,
+        "series_number": series.series_number,
+        "status": series.status,
+        "target_slots": series.target_slots,
+        "settled_slots": series.settled_slots,
+        "interval_seconds": series.interval_seconds,
+        "next_run_at": series.next_run_at,
+        "pause_reason": series.pause_reason,
+        "paused_cycle_id": series.paused_cycle_id,
+        "created_at": series.created_at,
+        "started_at": series.started_at,
+        "completed_at": series.completed_at,
+        "updated_at": series.updated_at,
+    }
+
+
+def _cycle_request_payload(
+    cycle_request: TeamCycleRequest | None,
+) -> dict[str, object] | None:
+    if cycle_request is None:
+        return None
+    return {
+        "id": cycle_request.id,
+        "team_run_id": cycle_request.team_run_id,
+        "auto_series_id": cycle_request.auto_series_id,
+        "slot_ordinal": cycle_request.slot_ordinal,
+        "source_type": cycle_request.source_type,
+        "source_id": cycle_request.source_id,
+        "status": cycle_request.status,
+        "instruction": cycle_request.instruction,
+        "previous_cycle_id": cycle_request.previous_cycle_id,
+        "previous_summary_text": cycle_request.previous_summary_text,
+        "retry_of_request_id": cycle_request.retry_of_request_id,
+        "created_at": cycle_request.created_at,
+        "claimed_at": cycle_request.claimed_at,
+        "settled_at": cycle_request.settled_at,
+        "updated_at": cycle_request.updated_at,
     }

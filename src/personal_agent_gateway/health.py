@@ -25,6 +25,8 @@ class HealthService:
         intake_gate: IntakeGate,
         hook_loop: object,
         hook_runner: object,
+        team_cycle_dispatcher: object,
+        team_cycle_loop: object,
     ) -> None:
         self._database = database
         self._worker = worker
@@ -34,6 +36,8 @@ class HealthService:
         self._intake_gate = intake_gate
         self._hook_loop = hook_loop
         self._hook_runner = hook_runner
+        self._team_cycle_dispatcher = team_cycle_dispatcher
+        self._team_cycle_loop = team_cycle_loop
 
     def components(self) -> list[ComponentHealth]:
         return [
@@ -50,6 +54,10 @@ class HealthService:
             ),
             self._background_health("hook_loop", self._hook_loop),
             self._background_health("hook_runner", self._hook_runner),
+            self._background_health(
+                "team_cycle_dispatcher", self._team_cycle_dispatcher
+            ),
+            self._background_health("team_cycle_loop", self._team_cycle_loop),
             self._cli_health(),
             ComponentHealth(
                 "intake",

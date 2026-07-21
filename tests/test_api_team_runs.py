@@ -1,9 +1,10 @@
 import asyncio
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from personal_agent_gateway.app import create_app
@@ -58,6 +59,249 @@ def create_team(client: TestClient, leader_id: str, member_ids: list[str] | None
     return response.json()["team"]["id"]
 
 
+def create_standard_run(
+    app,
+    leader_id: str,
+    member_ids: list[str] | None = None,
+    *,
+    goal: str = "g",
+    run_mode: str = "plan_and_execute",
+) -> dict[str, object]:
+    run = app.state.team_run_service.create_team_run(
+        goal,
+        leader_id,
+        member_ids or [],
+        run_mode,
+        1,
+    )
+    return asdict(run)
+
+
+def test_create_auto_run_enqueues_first_cycle_and_manual_trigger_snapshots_preview(
+    tmp_path: Path,
+) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Leader")
+    worker_id = create_persona(client, "Worker")
+    team_id = create_team(client, leader_id, [worker_id])
+
+    created = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Maintain gateway",
+            "execution_policy": "auto",
+            "auto_repeat_count": 3,
+            "auto_interval_minutes": 5,
+        },
+    )
+
+    assert created.status_code == 200
+    auto_run = created.json()["team_run"]
+    assert auto_run["lifecycle_mode"] == "continuous"
+    assert auto_run["run_mode"] == "plan_and_execute"
+    assert auto_run["execution_policy"] == "auto"
+    assert auto_run["configured_max_workers"] == 1
+    assert len(client.app.state.team_cycle_service.list_requests(auto_run["id"])) == 1
+    assert client.app.state.team_cycle_dispatcher._queue.qsize() == 1
+
+    triggered = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Triggered maintenance",
+            "execution_policy": "triggered",
+        },
+    ).json()["team_run"]
+    previous = client.app.state.team_run_service.create_cycle(
+        triggered["id"], "manual", "previous"
+    )
+    previous = client.app.state.team_run_service.set_cycle_status(
+        previous.id, "completed", summary="previous"
+    )
+    response = client.post(
+        f"/api/team-runs/{triggered['id']}/cycle-requests",
+        json={
+            "instruction": "next",
+            "client_request_id": "ui-1",
+            "previous_cycle_id": previous.id,
+        },
+    )
+
+    assert response.status_code == 200
+    cycle_request = response.json()["cycle_request"]
+    assert cycle_request["source_type"] == "manual"
+    assert cycle_request["source_id"] == "ui-1"
+    assert cycle_request["previous_summary_text"] == "previous"
+    assert response.json()["queue_position"] == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "team_id": "team",
+            "goal": "g",
+            "execution_policy": "auto",
+            "auto_repeat_count": 2,
+        },
+        {
+            "team_id": "team",
+            "goal": "g",
+            "execution_policy": "triggered",
+            "auto_repeat_count": 2,
+            "auto_interval_minutes": 5,
+        },
+        {"team_id": "team", "goal": "g"},
+    ],
+)
+def test_create_run_rejects_incomplete_or_mixed_policy_settings(
+    tmp_path: Path,
+    payload: dict[str, object],
+) -> None:
+    client = authenticated_client(tmp_path)
+
+    response = client.post("/api/team-runs", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_auto_actions_and_detail_read_model(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Leader")
+    worker_id = create_persona(client, "Worker")
+    team_id = create_team(client, leader_id, [worker_id])
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "AUTO maintenance",
+            "execution_policy": "auto",
+            "auto_repeat_count": 2,
+            "auto_interval_minutes": 5,
+        },
+    ).json()["team_run"]
+    cycle_service = client.app.state.team_cycle_service
+    team_service = client.app.state.team_run_service
+    series = cycle_service.get_active_series(run["id"])
+
+    queued_detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+    assert queued_detail["policy_status"] == "queued"
+    assert queued_detail["queue_count"] == 1
+    assert queued_detail["active_request"] is None
+
+    first = cycle_service.claim_next(run["id"])
+    failed_cycle = team_service.create_cycle(
+        run["id"], "auto", first.source_id, request_id=first.id
+    )
+    active_detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+    assert active_detail["policy_status"] == "running"
+    assert active_detail["active_request"]["id"] == first.id
+    team_service.set_cycle_status(failed_cycle.id, "failed", error_message="boom")
+    cycle_service.settle_cycle(failed_cycle.id)
+
+    detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+
+    assert detail["policy_status"] == "paused_failure"
+    assert detail["active_auto_series"]["settled_slots"] == 0
+    assert detail["queue_count"] == 0
+    assert detail["active_request"] is None
+
+    retried = client.post(
+        f"/api/team-runs/{run['id']}/auto-series/{series.id}/retry"
+    )
+    assert retried.status_code == 200
+    assert retried.json()["cycle_request"]["retry_of_request_id"] == first.id
+
+    retry_request = cycle_service.claim_next(run["id"])
+    retry_cycle = team_service.create_cycle(
+        run["id"], "retry", retry_request.source_id, request_id=retry_request.id
+    )
+    team_service.set_cycle_status(retry_cycle.id, "failed", error_message="again")
+    cycle_service.settle_cycle(retry_cycle.id)
+
+    continued = client.post(
+        f"/api/team-runs/{run['id']}/auto-series/{series.id}/continue"
+    )
+    assert continued.status_code == 200
+    assert continued.json()["auto_series"]["settled_slots"] == 1
+    assert continued.json()["auto_series"]["status"] == "waiting_interval"
+
+
+def test_restart_completed_auto_series_enqueues_first_cycle(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Leader")
+    team_id = create_team(client, leader_id)
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "AUTO once",
+            "execution_policy": "auto",
+            "auto_repeat_count": 1,
+            "auto_interval_minutes": 1,
+        },
+    ).json()["team_run"]
+    cycles = client.app.state.team_cycle_service
+    teams = client.app.state.team_run_service
+    first = cycles.claim_next(run["id"])
+    cycle = teams.create_cycle(run["id"], "auto", first.source_id, request_id=first.id)
+    teams.set_cycle_status(cycle.id, "completed", summary="done")
+    cycles.settle_cycle(cycle.id)
+
+    restarted = client.post(f"/api/team-runs/{run['id']}/auto-series/restart")
+
+    assert restarted.status_code == 200
+    assert restarted.json()["auto_series"]["series_number"] == 2
+    assert restarted.json()["cycle_request"]["slot_ordinal"] == 1
+
+
+def test_continuous_run_rejects_legacy_start_add_work_and_wrong_policy_actions(
+    tmp_path: Path,
+) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Leader")
+    team_id = create_team(client, leader_id)
+    triggered = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Triggered",
+            "execution_policy": "triggered",
+        },
+    ).json()["team_run"]
+    auto = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Auto",
+            "execution_policy": "auto",
+            "auto_repeat_count": 2,
+            "auto_interval_minutes": 5,
+        },
+    ).json()["team_run"]
+
+    assert client.post(f"/api/team-runs/{triggered['id']}/start").status_code == 409
+    assert (
+        client.post(
+            f"/api/team-runs/{triggered['id']}/add-work",
+            json={"instruction": "bypass"},
+        ).status_code
+        == 409
+    )
+    assert (
+        client.post(
+            f"/api/team-runs/{auto['id']}/cycle-requests",
+            json={"instruction": "wrong", "client_request_id": "ui-wrong"},
+        ).status_code
+        == 409
+    )
+    assert (
+        client.post(f"/api/team-runs/{triggered['id']}/auto-series/restart").status_code
+        == 409
+    )
+
+
 @dataclass
 class GatedModel:
     """gate가 set()될 때까지 complete()에서 블로킹하는 테스트 전용 모델.
@@ -96,21 +340,6 @@ async def _async_create_persona(client: httpx.AsyncClient, name: str) -> str:
     return response.json()["persona"]["id"]
 
 
-async def _async_create_team(
-    client: httpx.AsyncClient, leader_id: str, member_ids: list[str] | None = None
-) -> str:
-    response = await client.post(
-        "/api/teams",
-        json={
-            "name": "Team",
-            "description": "",
-            "leader_persona_id": leader_id,
-            "member_persona_ids": member_ids or [],
-        },
-    )
-    return response.json()["team"]["id"]
-
-
 async def _poll_until(predicate, timeout: float = 2.0, interval: float = 0.01) -> None:
     elapsed = 0.0
     while not predicate():
@@ -131,8 +360,7 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
         json={
             "team_id": team_id,
             "goal": "Design Agent Teams",
-            "run_mode": "planning_only",
-            "max_workers": 1,
+            "execution_policy": "triggered",
         },
     )
 
@@ -153,7 +381,9 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
     assert model._workspace_root == Path(run["workspace_root"]).resolve()
 
 
-def test_create_team_run_lifecycle_mode_roundtrip_and_default(tmp_path: Path) -> None:
+def test_create_team_run_is_continuous_and_standard_record_remains_readable(
+    tmp_path: Path,
+) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     team_id = create_team(client, leader_id)
@@ -163,13 +393,14 @@ def test_create_team_run_lifecycle_mode_roundtrip_and_default(tmp_path: Path) ->
         json={
             "team_id": team_id,
             "goal": "Watch inbox",
-            "run_mode": "plan_and_execute",
-            "lifecycle_mode": "continuous",
+            "execution_policy": "triggered",
         },
     )
-    standard = client.post(
-        "/api/team-runs",
-        json={"team_id": team_id, "goal": "One-off task"},
+    standard = create_standard_run(
+        client.app,
+        leader_id,
+        goal="One-off task",
+        run_mode="planning_only",
     )
 
     assert continuous.status_code == 200
@@ -177,8 +408,9 @@ def test_create_team_run_lifecycle_mode_roundtrip_and_default(tmp_path: Path) ->
     assert client.get(
         f"/api/team-runs/{continuous.json()['team_run']['id']}"
     ).json()["team_run"]["lifecycle_mode"] == "continuous"
-    assert standard.status_code == 200
-    assert standard.json()["team_run"]["lifecycle_mode"] == "standard"
+    standard_read = client.get(f"/api/team-runs/{standard['id']}")
+    assert standard_read.status_code == 200
+    assert standard_read.json()["team_run"]["lifecycle_mode"] == "standard"
 
 
 def test_list_team_runs_returns_enriched_fields(tmp_path: Path) -> None:
@@ -191,8 +423,7 @@ def test_list_team_runs_returns_enriched_fields(tmp_path: Path) -> None:
         json={
             "team_id": team_id,
             "goal": "Design Agent Teams",
-            "run_mode": "planning_only",
-            "max_workers": 1,
+            "execution_policy": "triggered",
         },
     ).json()["team_run"]["id"]
 
@@ -212,7 +443,11 @@ def test_documents_only_list_previewable_files_newest_first(tmp_path: Path) -> N
     team_id = create_team(client, leader_id)
     run = client.post(
         "/api/team-runs",
-        json={"team_id": team_id, "goal": "Preview documents"},
+        json={
+            "team_id": team_id,
+            "goal": "Preview documents",
+            "execution_policy": "triggered",
+        },
     ).json()["team_run"]
     workspace = Path(run["workspace_root"])
     (workspace / "docs").mkdir()
@@ -262,7 +497,12 @@ def test_html_and_image_documents_return_safe_preview_payloads(tmp_path: Path) -
     leader_id = create_persona(client, "Tech Lead")
     team_id = create_team(client, leader_id)
     run = client.post(
-        "/api/team-runs", json={"team_id": team_id, "goal": "Preview content"}
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Preview content",
+            "execution_policy": "triggered",
+        },
     ).json()["team_run"]
     workspace = Path(run["workspace_root"])
     (workspace / "page.html").write_text("<h1>Hello</h1>", encoding="utf-8")
@@ -302,7 +542,11 @@ def test_team_run_detail_aggregate_includes_documents_summary(tmp_path: Path) ->
     team_id = create_team(client, leader_id, [member_id])
     run = client.post(
         "/api/team-runs",
-        json={"team_id": team_id, "goal": "Aggregate detail"},
+        json={
+            "team_id": team_id,
+            "goal": "Aggregate detail",
+            "execution_policy": "triggered",
+        },
     ).json()["team_run"]
     workspace = Path(run["workspace_root"])
     workspace.mkdir(parents=True, exist_ok=True)
@@ -333,8 +577,7 @@ def test_team_run_detail_includes_complete_cycle_payload(tmp_path: Path) -> None
         json={
             "team_id": team_id,
             "goal": "Process inbox",
-            "run_mode": "plan_and_execute",
-            "lifecycle_mode": "continuous",
+            "execution_policy": "triggered",
         },
     ).json()["team_run"]
     service = client.app.state.team_run_service
@@ -378,18 +621,7 @@ async def test_answer_decision_request_rejects_stale_and_registers_one_resume(
         client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
         leader_id = await _async_create_persona(client, "Lead")
         member_id = await _async_create_persona(client, "Worker")
-        team_id = await _async_create_team(client, leader_id, [member_id])
-        run = (
-            await client.post(
-                "/api/team-runs",
-                json={
-                    "team_id": team_id,
-                    "goal": "g",
-                    "run_mode": "plan_and_execute",
-                    "max_workers": 1,
-                },
-            )
-        ).json()["team_run"]
+        run = create_standard_run(app, leader_id, [member_id])
         service = app.state.team_run_service
         worker = service.list_agents(run["id"])[1]
         task = service.create_task(run["id"], "Deploy", "choose target")
@@ -500,7 +732,11 @@ def test_team_run_list_uses_stable_cursor_pages(tmp_path: Path) -> None:
     created_ids = {
         client.post(
             "/api/team-runs",
-            json={"team_id": team_id, "goal": f"Run {index}"},
+            json={
+                "team_id": team_id,
+                "goal": f"Run {index}",
+                "execution_policy": "triggered",
+            },
         ).json()["team_run"]["id"]
         for index in range(3)
     }
@@ -563,7 +799,11 @@ def test_delete_team_run_removes_it(tmp_path: Path) -> None:
 
     run = client.post(
         "/api/team-runs",
-        json={"team_id": team_id, "goal": "Ship it"},
+        json={
+            "team_id": team_id,
+            "goal": "Ship it",
+            "execution_policy": "triggered",
+        },
     ).json()["team_run"]
     workspace = Path(run["workspace_root"])
     workspace.mkdir(parents=True, exist_ok=True)
@@ -584,7 +824,11 @@ def test_delete_running_team_run_keeps_workspace_and_record(tmp_path: Path) -> N
     team_id = create_team(client, leader_id)
     run = client.post(
         "/api/team-runs",
-        json={"team_id": team_id, "goal": "Temporary test run"},
+        json={
+            "team_id": team_id,
+            "goal": "Temporary test run",
+            "execution_policy": "triggered",
+        },
     ).json()["team_run"]
     workspace = Path(run["workspace_root"])
     workspace.mkdir(parents=True, exist_ok=True)
@@ -622,7 +866,7 @@ def test_retry_failed_team_task_api_requeues_task_for_manual_resume(tmp_path: Pa
         json={
             "team_id": team_id,
             "goal": "Ship it",
-            "run_mode": "plan_and_execute",
+            "execution_policy": "triggered",
         },
     ).json()["team_run"]
     service = client.app.state.team_run_service
@@ -644,7 +888,11 @@ def test_retry_team_task_api_rejects_missing_task(tmp_path: Path) -> None:
     team_id = create_team(client, leader_id)
     run = client.post(
         "/api/team-runs",
-        json={"team_id": team_id, "goal": "Ship it"},
+        json={
+            "team_id": team_id,
+            "goal": "Ship it",
+            "execution_policy": "triggered",
+        },
     ).json()["team_run"]
     client.app.state.team_run_service.set_run_status(run["id"], "failed")
 
@@ -657,16 +905,12 @@ def test_start_returns_immediately_without_blocking(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "QA Tester")
-    team_id = create_team(client, leader_id, [member_id])
-    created = client.post(
-        "/api/team-runs",
-        json={
-            "team_id": team_id,
-            "goal": "g",
-            "run_mode": "planning_only",
-            "max_workers": 1,
-        },
-    ).json()["team_run"]
+    created = create_standard_run(
+        client.app,
+        leader_id,
+        [member_id],
+        run_mode="planning_only",
+    )
 
     resp = client.post(f"/api/team-runs/{created['id']}/start")
 
@@ -678,16 +922,7 @@ def test_start_returns_immediately_without_blocking(tmp_path: Path) -> None:
 def test_double_start_conflicts(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
-    team_id = create_team(client, leader_id)
-    created = client.post(
-        "/api/team-runs",
-        json={
-            "team_id": team_id,
-            "goal": "g",
-            "run_mode": "planning_only",
-            "max_workers": 1,
-        },
-    ).json()["team_run"]
+    created = create_standard_run(client.app, leader_id, run_mode="planning_only")
     client.post(f"/api/team-runs/{created['id']}/start")
     second = client.post(f"/api/team-runs/{created['id']}/start")
     assert second.status_code in (200, 409)  # 이미 끝났으면 finished 409, 실행중이면 409
@@ -697,16 +932,7 @@ def test_cancel_does_not_overwrite_already_terminal_run(tmp_path: Path) -> None:
     """registry에 없는(이미 끝난) 팀런을 /cancel해도 실제 종료 상태가 덮어써지지 않아야 함."""
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
-    team_id = create_team(client, leader_id)
-    created = client.post(
-        "/api/team-runs",
-        json={
-            "team_id": team_id,
-            "goal": "g",
-            "run_mode": "planning_only",
-            "max_workers": 1,
-        },
-    ).json()["team_run"]
+    created = create_standard_run(client.app, leader_id, run_mode="planning_only")
     run_id = created["id"]
 
     service = client.app.state.team_run_service
@@ -734,18 +960,7 @@ async def test_start_returns_before_orchestration_completes(tmp_path: Path) -> N
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
         leader_id = await _async_create_persona(client, "Tech Lead")
-        team_id = await _async_create_team(client, leader_id)
-        created = (
-            await client.post(
-                "/api/team-runs",
-                json={
-                    "team_id": team_id,
-                    "goal": "g",
-                    "run_mode": "planning_only",
-                    "max_workers": 1,
-                },
-            )
-        ).json()["team_run"]
+        created = create_standard_run(app, leader_id, run_mode="planning_only")
         run_id = created["id"]
         registry = app.state.team_run_registry
 
@@ -769,16 +984,7 @@ async def test_start_returns_before_orchestration_completes(tmp_path: Path) -> N
 def test_add_work_rejects_non_execute_mode(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Lead")
-    team_id = create_team(client, leader_id)
-    run = client.post(
-        "/api/team-runs",
-        json={
-            "team_id": team_id,
-            "goal": "g",
-            "run_mode": "planning_only",
-            "max_workers": 1,
-        },
-    ).json()["team_run"]
+    run = create_standard_run(client.app, leader_id, run_mode="planning_only")
 
     resp = client.post(f"/api/team-runs/{run['id']}/add-work", json={"instruction": "x"})
     assert resp.status_code == 409
@@ -788,16 +994,7 @@ def test_add_work_rejects_draft_run(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Lead")
     member_id = create_persona(client, "Worker")
-    team_id = create_team(client, leader_id, [member_id])
-    run = client.post(
-        "/api/team-runs",
-        json={
-            "team_id": team_id,
-            "goal": "g",
-            "run_mode": "plan_and_execute",
-            "max_workers": 1,
-        },
-    ).json()["team_run"]
+    run = create_standard_run(client.app, leader_id, [member_id])
 
     resp = client.post(f"/api/team-runs/{run['id']}/add-work", json={"instruction": "x"})
     assert resp.status_code == 409  # draft: run not started yet
@@ -828,16 +1025,7 @@ def test_interrupted_run_rejects_start_and_add_work(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Lead")
     member_id = create_persona(client, "Worker")
-    team_id = create_team(client, leader_id, [member_id])
-    run = client.post(
-        "/api/team-runs",
-        json={
-            "team_id": team_id,
-            "goal": "g",
-            "run_mode": "plan_and_execute",
-            "max_workers": 1,
-        },
-    ).json()["team_run"]
+    run = create_standard_run(client.app, leader_id, [member_id])
     service = client.app.state.team_run_service
     service.set_run_status(run["id"], "running")
     service.interrupt_active_runs()
@@ -860,18 +1048,7 @@ async def test_resume_interrupted_run_registers_background_task_and_blocks_dupli
         client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
         leader_id = await _async_create_persona(client, "Lead")
         member_id = await _async_create_persona(client, "Worker")
-        team_id = await _async_create_team(client, leader_id, [member_id])
-        run = (
-            await client.post(
-                "/api/team-runs",
-                json={
-                    "team_id": team_id,
-                    "goal": "g",
-                    "run_mode": "plan_and_execute",
-                    "max_workers": 1,
-                },
-            )
-        ).json()["team_run"]
+        run = create_standard_run(app, leader_id, [member_id])
         service = app.state.team_run_service
         worker = service.list_agents(run["id"])[1]
         task = service.create_task(run["id"], "current", "d", worker.id)
@@ -929,18 +1106,7 @@ async def test_add_work_reopens_terminal_run(tmp_path: Path) -> None:
         client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
         leader_id = await _async_create_persona(client, "Lead")
         member_id = await _async_create_persona(client, "Worker")
-        team_id = await _async_create_team(client, leader_id, [member_id])
-        created = (
-            await client.post(
-                "/api/team-runs",
-                json={
-                    "team_id": team_id,
-                    "goal": "g",
-                    "run_mode": "plan_and_execute",
-                    "max_workers": 1,
-                },
-            )
-        ).json()["team_run"]
+        created = create_standard_run(app, leader_id, [member_id])
         run_id = created["id"]
         registry = app.state.team_run_registry
 
@@ -969,18 +1135,7 @@ async def test_cancel_endpoint_settles_blocked_run_as_canceled(tmp_path: Path) -
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
         leader_id = await _async_create_persona(client, "Tech Lead")
-        team_id = await _async_create_team(client, leader_id)
-        created = (
-            await client.post(
-                "/api/team-runs",
-                json={
-                    "team_id": team_id,
-                    "goal": "g",
-                    "run_mode": "planning_only",
-                    "max_workers": 1,
-                },
-            )
-        ).json()["team_run"]
+        created = create_standard_run(app, leader_id, run_mode="planning_only")
         run_id = created["id"]
         registry = app.state.team_run_registry
 

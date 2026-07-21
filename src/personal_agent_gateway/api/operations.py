@@ -202,11 +202,28 @@ def _session_items(request: Request) -> list[dict[str, object]]:
 
 def _team_run_items(request: Request) -> list[dict[str, object]]:
     visible = {"planning", "running", "summarizing", "interrupted", "failed"}
+    policy_active = {
+        "queued",
+        "running",
+        "waiting_interval",
+        "paused_failure",
+        "paused_user",
+        "paused_interrupted",
+    }
     items: list[dict[str, object]] = []
     for run in request.app.state.team_run_service.list_team_runs_enriched():
         status = str(run["status"])
-        if status not in visible:
+        stored = request.app.state.team_run_service.get_team_run(str(run["id"]))
+        policy_status = request.app.state.team_cycle_service.policy_status(stored.id)
+        if status not in visible and policy_status not in policy_active:
             continue
+        series = request.app.state.team_cycle_service.get_active_series(stored.id)
+        active_request = request.app.state.team_cycle_service.get_dispatching(stored.id)
+        active_cycle = (
+            request.app.state.team_run_service.get_cycle_for_request(active_request.id)
+            if active_request is not None
+            else None
+        )
         items.append(
             {
                 "domain": "team_run",
@@ -216,6 +233,14 @@ def _team_run_items(request: Request) -> list[dict[str, object]]:
                 "updated_at": run["updated_at"],
                 "retryable": False,
                 "resumable": status == "interrupted",
+                "execution_policy": stored.execution_policy,
+                "policy_status": policy_status,
+                "queue_count": request.app.state.team_cycle_service.count_queued(
+                    stored.id
+                ),
+                "next_run_at": series.next_run_at if series is not None else None,
+                "pause_reason": series.pause_reason if series is not None else None,
+                "active_cycle_id": active_cycle.id if active_cycle is not None else None,
                 "target": {"screen": "teams", "team_run_id": run["id"]},
             }
         )
