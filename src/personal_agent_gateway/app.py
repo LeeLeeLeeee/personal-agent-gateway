@@ -93,35 +93,41 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
-        application.state.team_run_service.interrupt_active_runs()
-        team_run_ids = application.state.team_cycle_dispatcher.reconcile()
-        await application.state.team_cycle_dispatcher.start()
-        for team_run_id in team_run_ids:
-            await application.state.team_cycle_dispatcher.enqueue_run(team_run_id)
-        await application.state.team_cycle_loop.start()
-        application.state.job_service.recover_interrupted_jobs()
-        await application.state.job_worker.start()
-        for job in application.state.job_service.list_jobs(
-            statuses=["queued"],
-            sources=["manual", "schedule", "api"],
-        ):
-            await application.state.job_worker.enqueue(job.id)
-        application.state.hook_run_service.recover_interrupted_runs()
-        application.state.hook_runner.reconcile_linked_runs()
-        application.state.mail_workspace_projector.project_pending()
-        await application.state.scheduler_loop.start()
-        await application.state.hook_runner.start()
-        for run in application.state.hook_run_service.list_queued_runs():
-            await application.state.hook_runner.enqueue(run.id)
-        await application.state.hook_loop.start()
+        started_components: list[object] = []
+
+        async def start_component(component: object) -> None:
+            await component.start()
+            started_components.append(component)
+
         try:
+            application.state.team_run_service.interrupt_active_runs()
+            team_run_ids = application.state.team_cycle_dispatcher.reconcile()
+            await start_component(application.state.team_cycle_dispatcher)
+            for team_run_id in team_run_ids:
+                await application.state.team_cycle_dispatcher.enqueue_run(team_run_id)
+            await start_component(application.state.team_cycle_loop)
+            application.state.job_service.recover_interrupted_jobs()
+            await start_component(application.state.job_worker)
+            for job in application.state.job_service.list_jobs(
+                statuses=["queued"],
+                sources=["manual", "schedule", "api"],
+            ):
+                await application.state.job_worker.enqueue(job.id)
+            application.state.hook_run_service.recover_interrupted_runs()
+            application.state.hook_runner.reconcile_linked_runs()
+            application.state.mail_workspace_projector.project_pending()
+            await start_component(application.state.scheduler_loop)
+            await start_component(application.state.hook_runner)
+            for run in application.state.hook_run_service.list_queued_runs():
+                await application.state.hook_runner.enqueue(run.id)
+            await start_component(application.state.hook_loop)
             yield
         finally:
-            await application.state.scheduler_loop.stop()
-            await application.state.hook_loop.stop()
-            await application.state.hook_runner.stop()
-            await application.state.team_cycle_loop.stop()
-            await application.state.team_cycle_dispatcher.stop()
+            for component in reversed(started_components):
+                try:
+                    await component.stop()
+                except Exception:
+                    _LOGGER.exception("Background component shutdown failed")
             team_run_ids = await application.state.team_run_registry.cancel_all(
                 reason="shutdown"
             )
@@ -130,7 +136,6 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
                     team_run_id,
                     include_canceled=True,
                 )
-            await application.state.job_worker.stop()
 
     app = FastAPI(lifespan=lifespan)
 

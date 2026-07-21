@@ -764,6 +764,7 @@ def test_create_team_run_rejects_unimplemented_review_mode(tmp_path: Path) -> No
         json={
             "team_id": team_id,
             "goal": "Review the workspace",
+            "execution_policy": "triggered",
             "run_mode": "review_only",
             "max_workers": 1,
         },
@@ -784,6 +785,7 @@ def test_create_team_run_rejects_concurrency_above_effective_limit(
         json={
             "team_id": team_id,
             "goal": "Ship sequentially",
+            "execution_policy": "triggered",
             "run_mode": "plan_and_execute",
             "max_workers": 2,
         },

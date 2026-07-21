@@ -121,6 +121,29 @@ def test_lifespan_reconciles_and_orders_cycle_background_services(
     assert calls.index("dispatcher.stop") < calls.index("registry.cancel_all:shutdown")
 
 
+@pytest.mark.asyncio
+async def test_lifespan_stops_cycle_tasks_when_later_startup_step_fails(
+    tmp_path: Path,
+) -> None:
+    app = create_app(make_config(tmp_path))
+
+    def fail_recovery() -> None:
+        raise RuntimeError("recovery failed")
+
+    app.state.job_service.recover_interrupted_jobs = fail_recovery
+
+    with pytest.raises(RuntimeError, match="recovery failed"):
+        async with app.router.lifespan_context(app):
+            pass
+
+    try:
+        assert app.state.team_cycle_dispatcher.alive is False
+        assert app.state.team_cycle_loop.alive is False
+    finally:
+        await app.state.team_cycle_loop.stop()
+        await app.state.team_cycle_dispatcher.stop()
+
+
 def test_lifespan_recovers_running_and_reenqueues_non_chat_queued_jobs(
     tmp_path: Path,
 ) -> None:
