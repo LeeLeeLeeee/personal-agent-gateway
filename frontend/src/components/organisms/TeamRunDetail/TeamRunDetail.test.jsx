@@ -292,6 +292,137 @@ describe("TeamRunDetail", () => {
       .toEqual(["CYCLE #2", "CYCLE #1"]);
   });
 
+  it("triggers from the latest settled Cycle and clears instructions only when accepted", async () => {
+    const onTriggerCycle = vi.fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    render(<TeamRunDetail
+      detail={{
+        run: {
+          id: "r1",
+          goal: "Maintain",
+          status: "running",
+          run_mode: "plan_and_execute",
+          lifecycle_mode: "continuous",
+          execution_policy: "triggered"
+        },
+        policyStatus: "running",
+        queueCount: 2,
+        activeRequest: { id: "request-9", status: "dispatching" },
+        agents: [], tasks: [], messages: [],
+        cycles: [
+          { id: "c9", sequence: 9, status: "queued", summary: "not settled" },
+          { id: "c7", sequence: 7, status: "completed", summary: "older result" },
+          { id: "c8", sequence: 8, status: "completed_with_failures", summary: "latest result" }
+        ]
+      }}
+      onTriggerCycle={onTriggerCycle}
+    />);
+
+    const policyPanel = screen.getByRole("region", { name: "Cycle policy" });
+    expect(within(policyPanel).getByText("latest result")).toBeInTheDocument();
+    expect(within(policyPanel).queryByText("older result")).not.toBeInTheDocument();
+    expect(within(policyPanel).getByText(/QUEUE · 2/)).toBeInTheDocument();
+    expect(within(policyPanel).getByText(/ACTIVE REQUEST · request-9/)).toBeInTheDocument();
+
+    const instruction = screen.getByLabelText("Cycle instruction");
+    await userEvent.type(instruction, "  next work  ");
+    await userEvent.click(screen.getByRole("button", { name: "Trigger cycle" }));
+    expect(onTriggerCycle).toHaveBeenLastCalledWith({
+      instruction: "next work",
+      previous_cycle_id: "c8"
+    });
+    expect(instruction).toHaveValue("");
+
+    await userEvent.type(instruction, "keep this draft");
+    await userEvent.click(screen.getByRole("button", { name: "Trigger cycle" }));
+    expect(instruction).toHaveValue("keep this draft");
+  });
+
+  it("shows AUTO progress and locks paused-failure actions while one is pending", async () => {
+    const onContinueAuto = vi.fn(() => new Promise(() => {}));
+    const onRetryAuto = vi.fn();
+    render(<TeamRunDetail
+      detail={{
+        run: {
+          id: "r1", goal: "Maintain", status: "failed",
+          run_mode: "plan_and_execute", lifecycle_mode: "continuous",
+          execution_policy: "auto"
+        },
+        policyStatus: "paused_failure",
+        queueCount: 1,
+        activeAutoSeries: {
+          id: "s1", target_slots: 5, settled_slots: 2,
+          status: "paused_failure", next_run_at: "2026-07-20T06:00:00Z"
+        },
+        cycles: [], tasks: [], agents: [], messages: []
+      }}
+      onContinueAuto={onContinueAuto}
+      onRetryAuto={onRetryAuto}
+      onAddWork={vi.fn()}
+    />);
+
+    expect(screen.getByText("2 / 5 SETTLED")).toBeInTheDocument();
+    expect(screen.getByText(/QUEUE · 1/)).toBeInTheDocument();
+    expect(screen.getByText(/NEXT ·/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+
+    const continueButton = screen.getByRole("button", { name: "Continue" });
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+    await userEvent.click(continueButton);
+    expect(onContinueAuto).toHaveBeenCalledWith("s1");
+    expect(continueButton).toBeDisabled();
+    expect(retryButton).toBeDisabled();
+  });
+
+  it("shows only the AUTO action group valid for completed and interrupted policies", async () => {
+    const onRestartAuto = vi.fn(() => new Promise(() => {}));
+    const onResume = vi.fn(() => new Promise(() => {}));
+    const detail = {
+      run: {
+        id: "r1", goal: "Maintain", status: "completed",
+        run_mode: "plan_and_execute", lifecycle_mode: "continuous",
+        execution_policy: "auto"
+      },
+      policyStatus: "auto_completed",
+      queueCount: 0,
+      activeAutoSeries: null,
+      cycles: [], tasks: [], agents: [], messages: []
+    };
+    const { rerender } = render(<TeamRunDetail
+      detail={detail}
+      onRestartAuto={onRestartAuto}
+      onContinueAuto={vi.fn()}
+      onRetryAuto={vi.fn()}
+    />);
+
+    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    const restart = screen.getByRole("button", { name: "Restart" });
+    await userEvent.click(restart);
+    expect(onRestartAuto).toHaveBeenCalledTimes(1);
+    expect(restart).toBeDisabled();
+
+    rerender(<TeamRunDetail
+      detail={{
+        ...detail,
+        run: { ...detail.run, status: "interrupted" },
+        policyStatus: "paused_interrupted",
+        activeAutoSeries: {
+          id: "s1", target_slots: 3, settled_slots: 2, status: "paused_interrupted"
+        }
+      }}
+      onResume={onResume}
+      onRestartAuto={vi.fn()}
+      onContinueAuto={vi.fn()}
+      onRetryAuto={vi.fn()}
+    />);
+    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restart" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
   it("orders results and activity newest first while keeping handoff pairs intact", async () => {
     const { container } = render(
       <TeamRunDetail detail={{

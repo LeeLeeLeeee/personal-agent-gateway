@@ -1210,10 +1210,43 @@ describe("GatewayApp", () => {
 
     expect(await screen.findByText("Define schema")).toBeInTheDocument();
 
+    const selectedDetailCalls = taskCalls;
     act(() => {
       source.emit({
         stream_id: "boot-a",
         id: 2,
+        type: "team.cycle.settled",
+        team_run_id: "another-run"
+      });
+    });
+    await waitFor(() => expect(teamRunsCalls).toBeGreaterThan(2));
+    expect(taskCalls).toBe(selectedDetailCalls);
+
+    const refreshEvents = [
+      "team.cycle_request.queued",
+      "team.cycle.started",
+      "team.cycle.settled",
+      "team.auto_series.paused",
+      "team.auto_series.completed"
+    ];
+    const listCallsBeforeCycles = teamRunsCalls;
+    act(() => {
+      refreshEvents.forEach((type, index) => source.emit({
+        stream_id: "boot-a",
+        id: 10 + index,
+        type,
+        team_run_id: "run-1"
+      }));
+    });
+    await waitFor(() => {
+      expect(teamRunsCalls).toBeGreaterThanOrEqual(listCallsBeforeCycles + refreshEvents.length);
+      expect(taskCalls).toBeGreaterThanOrEqual(selectedDetailCalls + refreshEvents.length);
+    });
+
+    act(() => {
+      source.emit({
+        stream_id: "boot-a",
+        id: 20,
         type: "team.run.completed",
         team_run_id: "run-1"
       });
@@ -1466,7 +1499,8 @@ describe("GatewayApp", () => {
         goal: "Mail inbox",
         status: "draft",
         run_mode: "plan_and_execute",
-        lifecycle_mode: "continuous"
+        lifecycle_mode: "continuous",
+        execution_policy: "triggered"
       }] }
     });
 

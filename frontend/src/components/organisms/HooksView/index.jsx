@@ -37,13 +37,15 @@ function HookForm({ personas, teamRuns, onCreate, onTestConnection }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
-  const continuousRuns = teamRuns.filter(
-    (run) => run.lifecycle_mode === "continuous" && run.run_mode === "plan_and_execute"
+  const triggeredRuns = teamRuns.filter(
+    (run) => run.lifecycle_mode === "continuous"
+      && run.run_mode === "plan_and_execute"
+      && run.execution_policy === "triggered"
   );
 
-  const selectedTargetTeamRunId = continuousRuns.some(
+  const selectedTargetTeamRunId = triggeredRuns.some(
     (run) => run.id === targetTeamRunId
-  ) ? targetTeamRunId : (continuousRuns[0]?.id || "");
+  ) ? targetTeamRunId : (triggeredRuns[0]?.id || "");
   const selectedTargetPersonaId = personas.some(
     (persona) => persona.id === targetPersonaId
   ) ? targetPersonaId : (personas[0]?.id || "");
@@ -171,7 +173,7 @@ function HookForm({ personas, teamRuns, onCreate, onTestConnection }) {
             type="button"
             className={`tp-mode-btn${targetKind === "team_run" ? " active" : ""}`}
             aria-pressed={targetKind === "team_run"}
-            disabled={!continuousRuns.length}
+            disabled={!triggeredRuns.length}
             onClick={() => setTargetKind("team_run")}
           >TEAM RUN</button>
         </div>
@@ -190,14 +192,14 @@ function HookForm({ personas, teamRuns, onCreate, onTestConnection }) {
               value={selectedTargetTeamRunId}
               onChange={(event) => setTargetTeamRunId(event.target.value)}
             >
-              {continuousRuns.map((run) => (
+              {triggeredRuns.map((run) => (
                 <option key={run.id} value={run.id}>{run.goal}</option>
               ))}
             </select>
           </label>
         )}
-        {!continuousRuns.length ? (
-          <div className="schedule-policy mono">Create a continuous plan-and-execute Team Run to enable TEAM RUN target.</div>
+        {!triggeredRuns.length ? (
+          <div className="schedule-policy mono">Create a TRIGGERED Team Run to enable TEAM RUN target.</div>
         ) : null}
 
         <label className="schedule-field">

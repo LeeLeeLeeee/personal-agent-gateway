@@ -319,10 +319,13 @@ function DecisionRequestPanel({ request, onSubmit }) {
 
 export function TeamRunDetail({
   detail, documents = [], onLoadDocument, onAddWork, onResume, onAnswerDecision,
-  onRetryTask, onCancel
+  onRetryTask, onCancel, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto
 }) {
   const [workInput, setWorkInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [cycleInstruction, setCycleInstruction] = useState("");
+  const [triggeringCycle, setTriggeringCycle] = useState(false);
+  const [autoAction, setAutoAction] = useState(null);
   const [resuming, setResuming] = useState(false);
   const [retryingTaskId, setRetryingTaskId] = useState(null);
   const [workDialogOpen, setWorkDialogOpen] = useState(false);
@@ -340,6 +343,11 @@ export function TeamRunDetail({
   const tasks = detail.tasks || [];
   const messages = detail.messages || [];
   const cycles = [...(detail.cycles || [])].sort((left, right) => right.sequence - left.sequence);
+  const previousCycle = cycles.find(
+    (cycle) => ["completed", "completed_with_failures"].includes(cycle.status)
+  );
+  const policyStatus = detail.policyStatus || "ready";
+  const activeAutoSeries = detail.activeAutoSeries;
   const leader = findAgent(agents, run.leader_agent_id);
   const reports = newestFirst(messages.filter((message) => message.kind === "agent_output"));
   const activity = newestFirst(messages);
@@ -355,6 +363,7 @@ export function TeamRunDetail({
   const canAddWork = Boolean(
     onAddWork
       && run.run_mode === "plan_and_execute"
+      && run.lifecycle_mode !== "continuous"
       && run.status !== "draft"
       && run.status !== "interrupted"
       && run.status !== "waiting_for_user"
@@ -420,6 +429,140 @@ export function TeamRunDetail({
           </div>
         </div>
       </div>
+
+      {run.lifecycle_mode === "continuous" ? (
+        <section className="team-policy-panel" aria-label="Cycle policy">
+          <div className="team-section-head">
+            <span className="mono team-section-label">
+              {String(run.execution_policy || "triggered").toUpperCase()}
+              {" · "}
+              {String(policyStatus).replaceAll("_", " ").toUpperCase()}
+            </span>
+            <span className="team-section-rule" />
+          </div>
+
+          {run.execution_policy === "triggered" ? (
+            <>
+              <div className="team-previous-cycle">
+                <div className="mono">
+                  {previousCycle ? `PREVIOUS CYCLE #${previousCycle.sequence}` : "NO SETTLED CYCLE"}
+                </div>
+                <div>{previousCycle?.summary || "No previous Cycle summary."}</div>
+              </div>
+              <form
+                className="team-cycle-trigger"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const instruction = cycleInstruction.trim();
+                  if (!instruction || !onTriggerCycle || triggeringCycle) return;
+                  setTriggeringCycle(true);
+                  try {
+                    const accepted = await onTriggerCycle({
+                      instruction,
+                      previous_cycle_id: previousCycle?.id || null
+                    });
+                    if (accepted) setCycleInstruction("");
+                  } finally {
+                    setTriggeringCycle(false);
+                  }
+                }}
+              >
+                <label className="schedule-field">
+                  <span className="schedule-field-label">Cycle instruction</span>
+                  <textarea
+                    className="schedule-textarea"
+                    aria-label="Cycle instruction"
+                    value={cycleInstruction}
+                    onChange={(event) => setCycleInstruction(event.target.value)}
+                  />
+                </label>
+                <Button
+                  type="submit"
+                  size="btn-sm"
+                  variant="primary"
+                  disabled={!cycleInstruction.trim() || triggeringCycle || !onTriggerCycle}
+                >
+                  {triggeringCycle ? "Triggering..." : "Trigger cycle"}
+                </Button>
+              </form>
+            </>
+          ) : null}
+
+          {run.execution_policy === "auto" ? (
+            <div className="team-auto-progress">
+              {activeAutoSeries ? (
+                <span className="mono">
+                  {activeAutoSeries.settled_slots || 0} / {activeAutoSeries.target_slots || 0} SETTLED
+                </span>
+              ) : null}
+              {activeAutoSeries?.next_run_at ? (
+                <span className="mono">NEXT · {fmtDateTime(activeAutoSeries.next_run_at)}</span>
+              ) : null}
+              {policyStatus === "paused_failure" && activeAutoSeries ? (
+                <>
+                  <Button
+                    size="btn-sm"
+                    variant="primary"
+                    disabled={Boolean(autoAction) || !onContinueAuto}
+                    onClick={async () => {
+                      if (!onContinueAuto || autoAction) return;
+                      setAutoAction("continue");
+                      try {
+                        await onContinueAuto(activeAutoSeries.id);
+                      } finally {
+                        setAutoAction(null);
+                      }
+                    }}
+                  >
+                    {autoAction === "continue" ? "Continuing..." : "Continue"}
+                  </Button>
+                  <Button
+                    size="btn-sm"
+                    variant="primary"
+                    disabled={Boolean(autoAction) || !onRetryAuto}
+                    onClick={async () => {
+                      if (!onRetryAuto || autoAction) return;
+                      setAutoAction("retry");
+                      try {
+                        await onRetryAuto(activeAutoSeries.id);
+                      } finally {
+                        setAutoAction(null);
+                      }
+                    }}
+                  >
+                    {autoAction === "retry" ? "Retrying..." : "Retry"}
+                  </Button>
+                </>
+              ) : null}
+              {["completed", "auto_completed"].includes(policyStatus) ? (
+                <Button
+                  size="btn-sm"
+                  variant="primary"
+                  disabled={Boolean(autoAction) || !onRestartAuto}
+                  onClick={async () => {
+                    if (!onRestartAuto || autoAction) return;
+                    setAutoAction("restart");
+                    try {
+                      await onRestartAuto();
+                    } finally {
+                      setAutoAction(null);
+                    }
+                  }}
+                >
+                  {autoAction === "restart" ? "Restarting..." : "Restart"}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
+          <span className="team-queue-count mono">QUEUE · {detail.queueCount || 0}</span>
+          {detail.activeRequest ? (
+            <span className="team-queue-count mono">
+              ACTIVE REQUEST · {detail.activeRequest.id}
+            </span>
+          ) : null}
+        </section>
+      ) : null}
 
       {run.lifecycle_mode === "continuous" ? (
         <section className="team-cycles" aria-label="Team Run cycles">

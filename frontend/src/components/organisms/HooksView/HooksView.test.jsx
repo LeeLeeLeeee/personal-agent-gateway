@@ -28,8 +28,10 @@ const hooks = [
 ];
 
 const teamRuns = [
-  { id: "standard-1", goal: "One-off", lifecycle_mode: "standard", run_mode: "plan_and_execute" },
-  { id: "mail-1", goal: "Mail inbox", lifecycle_mode: "continuous", run_mode: "plan_and_execute" }
+  { id: "standard-1", goal: "One-off", lifecycle_mode: "standard", run_mode: "plan_and_execute", execution_policy: "triggered" },
+  { id: "auto-1", goal: "AUTO inbox", lifecycle_mode: "continuous", run_mode: "plan_and_execute", execution_policy: "auto" },
+  { id: "planning-1", goal: "Planning only", lifecycle_mode: "continuous", run_mode: "planning_only", execution_policy: "triggered" },
+  { id: "mail-1", goal: "Mail inbox", lifecycle_mode: "continuous", run_mode: "plan_and_execute", execution_policy: "triggered" }
 ];
 
 function noop() {}
@@ -94,6 +96,8 @@ describe("HooksView", () => {
     await user.click(screen.getByRole("button", { name: "TEAM RUN" }));
     expect(screen.getByRole("option", { name: "Mail inbox" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "One-off" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "AUTO inbox" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Planning only" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Mail team hook" } });
     fireEvent.change(screen.getByLabelText("Host"), { target: { value: "imap.example.com" } });
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "me@example.com" } });
@@ -108,6 +112,33 @@ describe("HooksView", () => {
       target_model: "",
       target_options: {}
     }));
+  });
+
+  it("disables Team Run targets when no exact TRIGGERED candidate exists", async () => {
+    render(<HooksView
+      hooks={[]}
+      agents={agents}
+      personas={personas}
+      teamRuns={[{
+        id: "auto-1",
+        goal: "AUTO inbox",
+        lifecycle_mode: "continuous",
+        run_mode: "plan_and_execute",
+        execution_policy: "auto"
+      }]}
+      onCreate={noop}
+      onToggle={noop}
+      onRunNow={noop}
+      onDelete={noop}
+      onOpenRuns={noop}
+      onCloseRuns={noop}
+      onTestConnection={noop}
+    />);
+
+    await userEvent.click(screen.getByRole("button", { name: "CREATE NEW" }));
+    expect(screen.getByRole("button", { name: "TEAM RUN" })).toBeDisabled();
+    expect(screen.getByText("Create a TRIGGERED Team Run to enable TEAM RUN target."))
+      .toBeInTheDocument();
   });
 
   it("shows the result of a connection test", async () => {

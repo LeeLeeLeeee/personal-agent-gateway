@@ -14,6 +14,9 @@ updated_at: 2026-07-21
 
 # Component Inspector Reports
 
+- [OperationsView Team Run Policy Metadata — 2026-07-21 09:58](./OperationsView/2026-07-21-0958.md)
+- [HooksView Triggered Team Run Target — 2026-07-21 09:58](./HooksView/2026-07-21-0958.md)
+- [TeamRunDetail Cycle Policy Controls — 2026-07-21 09:58](./TeamRunDetail/2026-07-21-0958.md)
 - [TeamPicker Continuous Policy Creation — 2026-07-21 09:31](./TeamPicker/2026-07-21-0931.md)
 - [RulesView Global Enforcement Typography — 2026-07-20 15:17](./RulesView/2026-07-20-1517.md)
 - [TeamRunDetail Leader Decision Stage — 2026-07-20 13:56](./TeamRunDetail/2026-07-20-1356.md)

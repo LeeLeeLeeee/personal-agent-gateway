@@ -62,6 +62,17 @@ function OperationItems({ items = [], busyKey, onOpenTarget, onResumeItem, onRet
             <div className="operations-row-meta mono">
               {item.domain.replaceAll("_", " ")} · {item.id}
             </div>
+            {item.domain === "team_run" && item.execution_policy ? (
+              <div className="operations-row-meta mono">
+                {item.execution_policy.toUpperCase()}
+                {" · "}
+                {String(item.policy_status || "ready").replaceAll("_", " ").toUpperCase()}
+                {` · QUEUE ${item.queue_count || 0}`}
+                {item.active_cycle_id ? ` · CYCLE ${item.active_cycle_id}` : ""}
+                {item.next_run_at ? ` · NEXT ${fmtDateTime(item.next_run_at)}` : ""}
+                {item.pause_reason ? ` · ${item.pause_reason}` : ""}
+              </div>
+            ) : null}
           </div>
           <StatusBadge kind={item.status} />
           <div className="operations-row-actions">

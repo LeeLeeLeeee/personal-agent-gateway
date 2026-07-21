@@ -61,7 +61,12 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
       "team.run.completed",
       "team.run.failed",
       "team.run.input_requested",
-      "team.run.input_resolved"
+      "team.run.input_resolved",
+      "team.cycle_request.queued",
+      "team.cycle.started",
+      "team.cycle.settled",
+      "team.auto_series.paused",
+      "team.auto_series.completed"
     ].includes(event.type);
     if (requiresRefresh) {
       api.teamRuns()

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 114,
+  "document_count": 117,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -1971,6 +1971,65 @@
       "excerpt": "- Root: `frontend/src/components/organisms/HooksView/index.jsx` - Modes: `understand`, `api-state`, `test`, `refactor` - Verdict: Team Run 분기는 유지하고, 현재 `AGENT` 분기를 Persona snapshot 기반   분기로 대체한다. 기존 저장 Hook의 `agent` t..."
     },
     {
+      "path": "docs/component-inspector/HooksView/2026-07-21-0958.md",
+      "title": "HooksView Triggered Team Run Target Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "hook-team-run-target",
+      "status": "done",
+      "aliases": [
+        "HooksView triggered target",
+        "Hook TRIGGERED 팀 실행 필터"
+      ],
+      "tags": [
+        "[component, analysis, hooks, team-run]"
+      ],
+      "updated_at": "2026-07-21",
+      "headings": [
+        {
+          "level": 1,
+          "text": "HooksView Triggered Team Run Target Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 추적"
+        },
+        {
+          "level": 3,
+          "text": "Parent/API 흐름과 local dependencies"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / Stories"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Evidence"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/HooksView/index.jsx` - Modes: `api-state`, `test` - Verdict: `HookForm`의 파생 target 후보를 backend와 동일한 continuous + plan_and_execute + triggered predicate로 좁히면 된다. create payloa..."
+    },
+    {
       "path": "docs/component-inspector/JobsView/2026-07-15-1057.md",
       "title": "JobsView Retry and Lineage Analysis",
       "type": "report",
@@ -2070,6 +2129,65 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/OperationsView/index.jsx` - Modes: `api-state`, `test` - Verdict: `Backups`는 전달받은 payload를 표시하는 presentational 경계다. 새 상태나 fetch   없이 `profile`과 recoverability warning을 각 row에..."
+    },
+    {
+      "path": "docs/component-inspector/OperationsView/2026-07-21-0958.md",
+      "title": "OperationsView Team Run Policy Metadata Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "operations-team-run-policy",
+      "status": "done",
+      "aliases": [
+        "OperationsView Team Run policy",
+        "Operations 팀 실행 정책 메타데이터"
+      ],
+      "tags": [
+        "[component, analysis, operations, team-run]"
+      ],
+      "updated_at": "2026-07-21",
+      "headings": [
+        {
+          "level": 1,
+          "text": "OperationsView Team Run Policy Metadata Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 추적"
+        },
+        {
+          "level": 3,
+          "text": "조회/action 흐름과 dependencies"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / Stories"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Evidence"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/OperationsView/index.jsx` - Modes: `api-state`, `test` - Verdict: `OperationItems`가 받은 item을 표시하는 read-only 경계이므로 Team Run row에만 두 번째 meta line을 추가하면 된다. action/deep-link/bac..."
     },
     {
       "path": "docs/component-inspector/PersonaLibrary/2026-07-14-1626.md",
@@ -2898,6 +3016,65 @@
       "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: backend decision item의 `stage`를 별도 state나 API mapping 없이 읽어 `DecisionRequestPanel` 안내문만 단계별로 파생하는 것이 가장 작은 변경이다."
     },
     {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-21-0958.md",
+      "title": "TeamRunDetail Cycle Policy Controls Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "continuous-cycle-controls",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail cycle policy",
+        "팀 실행 사이클 제어 UI"
+      ],
+      "tags": [
+        "[component, analysis, team-run, cycle]"
+      ],
+      "updated_at": "2026-07-21",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Cycle Policy Controls Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 추적"
+        },
+        {
+          "level": 3,
+          "text": "Local state와 기존 callback 부작용"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / Stories"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Evidence"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: 기존 Cycle 목록 위에 policy panel을 추가하고 Task 7 callback을 소비하는 것이 현재 소유권과 맞다. 기존 STANDARD/add-work/resume/task UI는 p..."
+    },
+    {
       "path": "docs/component-inspector/TeamsView/2026-07-15-1250.md",
       "title": "TeamsView Persona Card Selection Component Analysis",
       "type": "report",
@@ -2998,7 +3175,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [TeamPicker Continuous Policy Creation — 2026-07-21 09:31](./TeamPicker/2026-07-21-0931.md) - [RulesView Global Enforcement Typography — 2026-07-20 15:17](./RulesView/2026-07-20-1517.md) - [TeamRunDetail Leader Deci..."
+      "excerpt": "- [OperationsView Team Run Policy Metadata — 2026-07-21 09:58](./OperationsView/2026-07-21-0958.md) - [HooksView Triggered Team Run Target — 2026-07-21 09:58](./HooksView/2026-07-21-0958.md) - [TeamRunDetail Cycle Pol..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",

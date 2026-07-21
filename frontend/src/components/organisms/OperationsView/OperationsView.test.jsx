@@ -90,6 +90,47 @@ describe("OperationsView", () => {
     expect(viewProps.onRetryItem).toHaveBeenCalledWith(data.items[1]);
   });
 
+  it("shows safe policy metadata only for Team Run rows", () => {
+    const viewData = {
+      ...data,
+      items: [
+        {
+          ...data.items[0],
+          execution_policy: "auto",
+          policy_status: "paused_failure",
+          queue_count: 2,
+          next_run_at: "2026-07-20T06:00:00Z",
+          pause_reason: "<script>alert(1)</script>",
+          active_cycle_id: "cycle-7"
+        },
+        {
+          ...data.items[0],
+          id: "r2",
+          title: "Triggered safely",
+          execution_policy: "triggered",
+          policy_status: null,
+          queue_count: null,
+          next_run_at: null,
+          pause_reason: null,
+          active_cycle_id: null
+        },
+        {
+          ...data.items[1],
+          execution_policy: "auto",
+          policy_status: "ready",
+          queue_count: 4
+        }
+      ]
+    };
+    const { container } = render(<OperationsView {...props({ data: viewData })} />);
+
+    expect(screen.getByText(/AUTO · PAUSED FAILURE · QUEUE 2 · CYCLE cycle-7 · NEXT/))
+      .toHaveTextContent("<script>alert(1)</script>");
+    expect(screen.getByText("TRIGGERED · READY · QUEUE 0")).toBeInTheDocument();
+    expect(screen.queryByText(/AUTO · READY · QUEUE 4/)).not.toBeInTheDocument();
+    expect(container.querySelector("script")).toBeNull();
+  });
+
   it("confirms emergency stop and exposes backup actions", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const viewProps = props();
