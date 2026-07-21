@@ -9,11 +9,12 @@ aliases:
 tags:
   - component
   - analysis
-updated_at: 2026-07-20
+updated_at: 2026-07-21
 ---
 
 # Component Inspector Reports
 
+- [TeamPicker Continuous Policy Creation — 2026-07-21 09:31](./TeamPicker/2026-07-21-0931.md)
 - [RulesView Global Enforcement Typography — 2026-07-20 15:17](./RulesView/2026-07-20-1517.md)
 - [TeamRunDetail Leader Decision Stage — 2026-07-20 13:56](./TeamRunDetail/2026-07-20-1356.md)
 - [PersonaPicker Fixed Width — 2026-07-20 12:07](./PersonaPicker/2026-07-20-1207.md)

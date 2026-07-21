@@ -2991,14 +2991,14 @@
         "component",
         "analysis"
       ],
-      "updated_at": "2026-07-20",
+      "updated_at": "2026-07-21",
       "headings": [
         {
           "level": 1,
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [RulesView Global Enforcement Typography — 2026-07-20 15:17](./RulesView/2026-07-20-1517.md) - [TeamRunDetail Leader Decision Stage — 2026-07-20 13:56](./TeamRunDetail/2026-07-20-1356.md) - [PersonaPicker Fixed Widt..."
+      "excerpt": "- [TeamPicker Continuous Policy Creation — 2026-07-21 09:31](./TeamPicker/2026-07-21-0931.md) - [RulesView Global Enforcement Typography — 2026-07-20 15:17](./RulesView/2026-07-20-1517.md) - [TeamRunDetail Leader Deci..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
