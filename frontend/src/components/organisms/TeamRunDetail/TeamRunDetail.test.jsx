@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { vi } from "vitest";
@@ -373,6 +373,60 @@ describe("TeamRunDetail", () => {
     expect(onContinueAuto).toHaveBeenCalledWith("s1");
     expect(continueButton).toBeDisabled();
     expect(retryButton).toBeDisabled();
+  });
+
+  it("counts down to the next AUTO Cycle, clamps at zero, and cleans up its timer", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-20T05:59:57Z"));
+    const detail = {
+      run: {
+        id: "r1", goal: "Maintain", status: "completed",
+        run_mode: "plan_and_execute", lifecycle_mode: "continuous",
+        execution_policy: "auto"
+      },
+      policyStatus: "waiting_interval",
+      queueCount: 0,
+      activeAutoSeries: {
+        id: "s1", target_slots: 5, settled_slots: 2,
+        status: "waiting_interval", next_run_at: "2026-07-20T06:00:00Z"
+      },
+      cycles: [], tasks: [], agents: [], messages: []
+    };
+
+    try {
+      const { rerender, unmount } = render(<TeamRunDetail detail={detail} />);
+
+      expect(screen.getByText("NEXT · 3s")).toBeInTheDocument();
+      expect(vi.getTimerCount()).toBe(1);
+
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.getByText("NEXT · 2s")).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(4000));
+      expect(screen.getByText("NEXT · 0s")).toBeInTheDocument();
+      expect(vi.getTimerCount()).toBe(0);
+
+      rerender(<TeamRunDetail detail={{
+        ...detail,
+        activeAutoSeries: {
+          ...detail.activeAutoSeries,
+          next_run_at: "2026-07-20T06:00:10Z"
+        }
+      }} />);
+      expect(vi.getTimerCount()).toBe(1);
+      unmount();
+      expect(vi.getTimerCount()).toBe(0);
+
+      const withoutNextRun = render(<TeamRunDetail detail={{
+        ...detail,
+        activeAutoSeries: { ...detail.activeAutoSeries, next_run_at: null }
+      }} />);
+      expect(screen.queryByText(/NEXT ·/)).not.toBeInTheDocument();
+      expect(vi.getTimerCount()).toBe(0);
+      withoutNextRun.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows only the AUTO action group valid for completed and interrupted policies", async () => {

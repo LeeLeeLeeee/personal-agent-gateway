@@ -1982,7 +1982,10 @@
         "Hook TRIGGERED 팀 실행 필터"
       ],
       "tags": [
-        "[component, analysis, hooks, team-run]"
+        "component",
+        "analysis",
+        "hooks",
+        "team-run"
       ],
       "updated_at": "2026-07-21",
       "headings": [
@@ -2142,7 +2145,10 @@
         "Operations 팀 실행 정책 메타데이터"
       ],
       "tags": [
-        "[component, analysis, operations, team-run]"
+        "component",
+        "analysis",
+        "operations",
+        "team-run"
       ],
       "updated_at": "2026-07-21",
       "headings": [
@@ -3027,7 +3033,10 @@
         "팀 실행 사이클 제어 UI"
       ],
       "tags": [
-        "[component, analysis, team-run, cycle]"
+        "component",
+        "analysis",
+        "team-run",
+        "cycle"
       ],
       "updated_at": "2026-07-21",
       "headings": [

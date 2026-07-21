@@ -141,6 +141,28 @@ describe("HooksView", () => {
       .toBeInTheDocument();
   });
 
+  it("keeps the stored goal summary for a filtered-out AUTO Team Run target", () => {
+    render(<HooksView
+      hooks={[{
+        ...hooks[0],
+        target_kind: "team_run",
+        target_team_run_id: "auto-1"
+      }]}
+      agents={agents}
+      personas={personas}
+      teamRuns={teamRuns}
+      onCreate={noop}
+      onToggle={noop}
+      onRunNow={noop}
+      onDelete={noop}
+      onOpenRuns={noop}
+      onCloseRuns={noop}
+      onTestConnection={noop}
+    />);
+
+    expect(screen.getByText(/team:AUTO inbox/)).toBeInTheDocument();
+  });
+
   it("shows the result of a connection test", async () => {
     const onTestConnection = vi.fn().mockResolvedValue({ ok: false, error: "auth failed" });
     const user = userEvent.setup();

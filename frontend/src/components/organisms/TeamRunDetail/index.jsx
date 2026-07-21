@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
@@ -334,6 +334,28 @@ export function TeamRunDetail({
   const [activeTab, setActiveTab] = useState("activity");
   const [canceling, setCanceling] = useState(false);
   const run = detail?.run;
+  const nextRunAt = detail?.activeAutoSeries?.next_run_at || null;
+  const [countdownNow, setCountdownNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!nextRunAt) return undefined;
+    const deadline = new Date(nextRunAt).getTime();
+    const initialNow = Date.now();
+    setCountdownNow(initialNow);
+    if (initialNow >= deadline) return undefined;
+
+    let timerId = window.setInterval(() => {
+      const now = Date.now();
+      setCountdownNow(now);
+      if (now >= deadline) {
+        window.clearInterval(timerId);
+        timerId = null;
+      }
+    }, 1000);
+    return () => {
+      if (timerId !== null) window.clearInterval(timerId);
+    };
+  }, [nextRunAt]);
 
   if (!run) {
     return <div className="team-run-empty mono">No team run selected.</div>;
@@ -348,6 +370,9 @@ export function TeamRunDetail({
   );
   const policyStatus = detail.policyStatus || "ready";
   const activeAutoSeries = detail.activeAutoSeries;
+  const nextRunCountdownSeconds = nextRunAt
+    ? Math.max(0, Math.ceil((new Date(nextRunAt).getTime() - countdownNow) / 1000))
+    : null;
   const leader = findAgent(agents, run.leader_agent_id);
   const reports = newestFirst(messages.filter((message) => message.kind === "agent_output"));
   const activity = newestFirst(messages);
@@ -495,8 +520,10 @@ export function TeamRunDetail({
                   {activeAutoSeries.settled_slots || 0} / {activeAutoSeries.target_slots || 0} SETTLED
                 </span>
               ) : null}
-              {activeAutoSeries?.next_run_at ? (
-                <span className="mono">NEXT · {fmtDateTime(activeAutoSeries.next_run_at)}</span>
+              {nextRunCountdownSeconds !== null ? (
+                <span className="mono" title={fmtDateTime(nextRunAt)}>
+                  NEXT · {nextRunCountdownSeconds}s
+                </span>
               ) : null}
               {policyStatus === "paused_failure" && activeAutoSeries ? (
                 <>
