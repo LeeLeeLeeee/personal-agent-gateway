@@ -136,6 +136,49 @@ def test_create_auto_run_enqueues_first_cycle_and_manual_trigger_snapshots_previ
     assert response.json()["queue_position"] == 1
 
 
+def test_cancel_continuous_run_cancels_queued_hook_lineage(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Leader")
+    worker_id = create_persona(client, "Worker")
+    team_id = create_team(client, leader_id, [worker_id])
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Process hook",
+            "execution_policy": "triggered",
+        },
+    ).json()["team_run"]
+    hook = client.post(
+        "/api/hooks",
+        json={
+            "name": "Inbox",
+            "source_type": "email",
+            "connection": {"host": "imap.test", "port": 993, "username": "me@test"},
+            "secret": "secret",
+            "filter": {},
+            "target_kind": "team_run",
+            "target_team_run_id": run["id"],
+            "prompt_template": "summarize",
+        },
+    ).json()["hook"]
+    hook_run = client.app.state.hook_run_service.create_run(
+        hook["id"], "message-1", "message", {"subject": "hello"}
+    )
+    request = client.app.state.team_cycle_service.enqueue_request(
+        run["id"], "hook", hook_run.id, "work", previous_cycle_id=None
+    )
+    client.app.state.hook_run_service.link_cycle_request(hook_run.id, request.id)
+
+    first = client.post(f"/api/team-runs/{run['id']}/cancel")
+    second = client.post(f"/api/team-runs/{run['id']}/cancel")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["team_run"]["status"] == "canceled"
+    assert client.app.state.team_cycle_service.get_request(request.id).status == "canceled"
+    assert client.app.state.hook_run_service.get_run(hook_run.id).status == "canceled"
+
 @pytest.mark.parametrize(
     "payload",
     [

@@ -125,6 +125,14 @@ class HookRunService:
         )
         return self.get_run(run_id)
 
+    def mark_canceled(self, run_id: str, message: str) -> HookRun:
+        self._db.execute(
+            "update hook_runs set status = 'canceled', error_message = ?, finished_at = ? "
+            "where id = ?",
+            (message, _now(None), run_id),
+        )
+        return self.get_run(run_id)
+
     def link_cycle_request(self, run_id: str, request_id: str) -> HookRun:
         run = self.get_run(run_id)
         if run.team_cycle_request_id not in {None, request_id}:

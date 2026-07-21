@@ -69,6 +69,14 @@ class TeamCycleDispatcher:
             pass
         self._task = None
 
+    def discard_pending(self) -> None:
+        while True:
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            self._queue.task_done()
+
     def add_preparer(self, preparer: CyclePreparer) -> None:
         self._preparers.append(preparer)
 
@@ -76,6 +84,8 @@ class TeamCycleDispatcher:
         await self._queue.put(team_run_id)
 
     async def run_one(self, team_run_id: str) -> None:
+        if self._teams.get_team_run(team_run_id).status == "canceled":
+            return
         request = self._cycles.claim_next(team_run_id)
         if request is None:
             return
@@ -117,7 +127,9 @@ class TeamCycleDispatcher:
             )
         except asyncio.CancelledError:
             await self._interrupt_cycle(team_run_id, cycle.id)
-            raise
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
         except Exception as exc:
             if self._teams.get_cycle(cycle.id).status in _TERMINAL_CYCLE_STATUSES:
                 current_request = self._cycles.get_request(request.id)
@@ -204,7 +216,12 @@ class TeamCycleDispatcher:
         cycle_id: str,
     ) -> None:
         cycle = self._teams.get_cycle(cycle_id)
-        if cycle.status in {"completed", "completed_with_failures", "failed"}:
+        if cycle.status in {
+            "completed",
+            "completed_with_failures",
+            "failed",
+            "canceled",
+        }:
             request = self._cycles.get_request(cycle.request_id)
             if request.status == "dispatching":
                 await self.on_team_run_settled(

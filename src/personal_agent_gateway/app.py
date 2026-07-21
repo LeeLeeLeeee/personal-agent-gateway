@@ -165,15 +165,6 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     assert app_config.backup_root is not None
     assert app_config.auth_dir is not None
     assert app_config.artifact_root is not None
-    app.state.emergency_stop_service = EmergencyStopService(
-        intake_gate=app.state.intake_gate,
-        session_runs=run_registry,
-        team_runs=team_run_registry,
-        team_run_service=app.state.team_run_service,
-        job_worker=app.state.job_worker,
-        hook_runner=app.state.hook_runner,
-        audit=app.state.audit_service,
-    )
     app.state.backup_service = BackupService(
         database=app.state.database,
         backup_root=app_config.backup_root,
@@ -216,6 +207,18 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.state.hook_runner.attach_team_cycle_queue(
         app.state.team_cycle_service,
         app.state.team_cycle_dispatcher,
+    )
+    app.state.emergency_stop_service = EmergencyStopService(
+        intake_gate=app.state.intake_gate,
+        session_runs=run_registry,
+        team_runs=team_run_registry,
+        team_run_service=app.state.team_run_service,
+        job_worker=app.state.job_worker,
+        hook_runner=app.state.hook_runner,
+        team_cycles=app.state.team_cycle_service,
+        team_cycle_dispatcher=app.state.team_cycle_dispatcher,
+        team_cycle_loop=app.state.team_cycle_loop,
+        audit=app.state.audit_service,
     )
     app.state.health_service = HealthService(
         app.state.database,

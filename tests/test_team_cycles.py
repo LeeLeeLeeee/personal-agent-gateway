@@ -22,6 +22,39 @@ def test_cycle_requests_are_idempotent_and_claimed_fifo(tmp_path: Path) -> None:
     assert cycles.claim_next(run.id).id == second.id
 
 
+def test_cancel_run_atomically_settles_waiting_auto_lineage_and_blocks_work(
+    tmp_path: Path,
+) -> None:
+    _db, teams, cycles, run = make_auto_run(tmp_path)
+    request = cycles.claim_next(run.id)
+    assert request is not None
+    cycle = teams.create_cycle(
+        run.id, request.source_type, request.source_id, request_id=request.id
+    )
+    teams.set_cycle_status(cycle.id, "waiting_for_user")
+    cycles.pause_for_user(cycle.id)
+
+    result = cycles.cancel_run(run.id, reason="user")
+    repeated = cycles.cancel_run(run.id, reason="user")
+
+    assert result.changed is True
+    assert repeated.changed is False
+    assert teams.get_team_run(run.id).status == "canceled"
+    assert teams.get_cycle(cycle.id).status == "canceled"
+    assert cycles.get_request(request.id).status == "canceled"
+    assert result.series is not None
+    assert result.series.status == "canceled"
+    assert cycles.get_dispatching(run.id) is None
+    assert cycles.count_queued(run.id) == 0
+    with pytest.raises(ValueError, match="canceled"):
+        cycles.enqueue_request(
+            run.id, "auto", "late", "work", previous_cycle_id=None,
+            auto_series_id=result.series.id, slot_ordinal=1,
+        )
+    with pytest.raises(ValueError, match="canceled"):
+        cycles.claim_next(run.id)
+
+
 def test_concurrent_enqueue_and_claim_keep_one_request_and_dispatcher(
     tmp_path: Path,
 ) -> None:

@@ -248,7 +248,12 @@ class HookRunner:
                 run.id, cycle.error_message or "Team Run Cycle interrupted"
             )
             status = "interrupted"
-        elif cycle.status in {"failed", "canceled"}:
+        elif cycle.status == "canceled":
+            self._hook_runs.mark_canceled(
+                run.id, cycle.error_message or "Team Run Cycle canceled"
+            )
+            status = "canceled"
+        elif cycle.status == "failed":
             self._hook_runs.mark_failed(
                 run.id, cycle.error_message or f"Team Run Cycle {cycle.status}"
             )
@@ -381,7 +386,14 @@ class HookRunner:
                     cycle.error_message or "Team Run Cycle interrupted",
                 )
             return
-        if cycle.status in {"failed", "canceled"}:
+        if cycle.status == "canceled":
+            if run.status != "canceled":
+                self._hook_runs.mark_canceled(
+                    run.id,
+                    cycle.error_message or "Team Run Cycle canceled",
+                )
+            return
+        if cycle.status == "failed":
             if run.status != "failed":
                 self._hook_runs.mark_failed(
                     run.id,

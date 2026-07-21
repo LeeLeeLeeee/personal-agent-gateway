@@ -80,11 +80,11 @@ async def emergency_stop(
 
 
 @router.post("/resume-intake")
-def resume_intake(
+async def resume_intake(
     request: Request,
     principal: SessionPrincipal = session_dependency,
 ) -> dict[str, bool]:
-    changed = request.app.state.emergency_stop_service.resume(
+    changed = await request.app.state.emergency_stop_service.resume(
         actor_id=principal.id,
         correlation_id=getattr(request.state, "correlation_id", None),
     )

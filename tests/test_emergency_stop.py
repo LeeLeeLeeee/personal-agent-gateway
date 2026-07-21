@@ -1,4 +1,6 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
@@ -128,3 +130,121 @@ def test_stop_and_resume_are_idempotent(tmp_path: Path) -> None:
         },
     )
     assert create_response.status_code == 200
+
+
+def test_emergency_stop_cancels_cycle_queue_and_resume_runs_only_new_work(
+    tmp_path: Path,
+) -> None:
+    app = create_app(make_config(tmp_path))
+    with TestClient(app) as client:
+        client.cookies.set(
+            "agent_session", app.state.auth_session_service.issue().token
+        )
+        leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+        worker = app.state.persona_service.create_persona("Worker", "worker", "d", [], [])
+        auto_run = app.state.team_run_service.create_team_run(
+            "auto",
+            leader.id,
+            [worker.id],
+            "plan_and_execute",
+            1,
+            lifecycle_mode="continuous",
+            execution_policy="auto",
+            auto_repeat_count=2,
+            auto_interval_seconds=60,
+        )
+        queued = app.state.team_cycle_service.list_requests(auto_run.id)[0]
+        due_run = app.state.team_run_service.create_team_run(
+            "due",
+            leader.id,
+            [worker.id],
+            "plan_and_execute",
+            1,
+            lifecycle_mode="continuous",
+            execution_policy="auto",
+            auto_repeat_count=2,
+            auto_interval_seconds=60,
+        )
+        due_request = app.state.team_cycle_service.claim_next(due_run.id)
+        due_cycle = app.state.team_run_service.create_cycle(
+            due_run.id,
+            due_request.source_type,
+            due_request.source_id,
+            request_id=due_request.id,
+        )
+        app.state.team_run_service.set_cycle_status(
+            due_cycle.id, "completed", summary="slot one"
+        )
+        app.state.team_cycle_service.settle_cycle(
+            due_cycle.id,
+            now=datetime.now(timezone.utc) - timedelta(minutes=2),
+        )
+        assert app.state.team_cycle_service.get_active_series(
+            due_run.id
+        ).status == "waiting_interval"
+
+        stopped = client.post("/api/operations/emergency-stop")
+
+        assert stopped.status_code == 200
+        assert app.state.team_cycle_dispatcher.alive is False
+        assert app.state.team_cycle_loop.alive is False
+        assert app.state.team_cycle_service.get_request(queued.id).status == "canceled"
+        assert app.state.team_cycle_service.get_active_series(auto_run.id) is None
+        assert app.state.team_cycle_service.get_active_series(due_run.id) is None
+        assert app.state.team_cycle_service.enqueue_due_auto_requests(
+            now=datetime.now(timezone.utc) + timedelta(days=1)
+        ) == []
+
+        resumed = client.post("/api/operations/resume-intake")
+        assert resumed.status_code == 200
+        assert app.state.team_cycle_dispatcher.alive is True
+        assert app.state.team_cycle_loop.alive is True
+        assert app.state.team_cycle_service.get_request(queued.id).status == "canceled"
+
+        triggered = app.state.team_run_service.create_team_run(
+            "new",
+            leader.id,
+            [worker.id],
+            "plan_and_execute",
+            1,
+            lifecycle_mode="continuous",
+            execution_policy="triggered",
+        )
+        new_request = app.state.team_cycle_service.enqueue_request(
+            triggered.id, "manual", "new", "work", previous_cycle_id=None
+        )
+
+        async def complete(team_run_id, cycle_id, _instruction):
+            app.state.team_run_service.set_cycle_status(
+                cycle_id, "completed", summary="done"
+            )
+            run = app.state.team_run_service.get_team_run(team_run_id)
+            await app.state.team_cycle_dispatcher.on_team_run_settled(
+                run, cycle_id
+            )
+            return run
+
+        app.state.team_run_orchestrator.run_cycle = complete
+        client.portal.call(app.state.team_cycle_dispatcher.enqueue_run, triggered.id)
+        client.portal.call(app.state.team_cycle_dispatcher._queue.join)
+        assert app.state.team_cycle_service.get_request(new_request.id).status == "settled"
+
+
+def test_resume_failure_keeps_intake_closed_and_cleans_started_dispatcher(
+    tmp_path: Path,
+) -> None:
+    app = create_app(make_config(tmp_path))
+    with TestClient(app) as client:
+        client.cookies.set(
+            "agent_session", app.state.auth_session_service.issue().token
+        )
+        assert client.post("/api/operations/emergency-stop").status_code == 200
+        app.state.team_cycle_loop.start = AsyncMock(
+            side_effect=RuntimeError("loop start failed")
+        )
+
+        response = client.post("/api/operations/resume-intake")
+
+        assert response.status_code == 500
+        assert app.state.intake_gate.is_open is False
+        assert app.state.team_cycle_dispatcher.alive is False

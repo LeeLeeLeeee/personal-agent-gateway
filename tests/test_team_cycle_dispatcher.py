@@ -590,6 +590,62 @@ async def test_dispatcher_lifecycle_reports_redacted_loop_error(
 
 
 @pytest.mark.asyncio
+async def test_child_run_cancellation_keeps_dispatcher_alive_for_another_run(
+    tmp_path: Path,
+) -> None:
+    _db, teams, cycles, first_run = make_cycle_services(tmp_path, "triggered")
+    agents = teams.list_agents(first_run.id)
+    second_run = teams.create_team_run(
+        "second goal",
+        agents[0].persona_id,
+        [agents[1].persona_id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    registry = TeamRunRegistry()
+    first_started = asyncio.Event()
+    second_completed = asyncio.Event()
+
+    class Runtime:
+        async def add_work(self, team_run_id, _instruction, cycle_id=None):
+            teams.set_cycle_status(cycle_id, "running")
+            return []
+
+        async def resume(self, team_run_id, cycle_id=None):
+            if team_run_id == first_run.id:
+                first_started.set()
+                await asyncio.Event().wait()
+            teams.set_cycle_status(cycle_id, "completed", summary="done")
+            second_completed.set()
+            return teams.get_team_run(team_run_id)
+
+    orchestrator = TeamRunOrchestrator(registry, Runtime)
+    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, EventBus())
+    orchestrator.add_observer(dispatcher.on_team_run_settled)
+    cycles.enqueue_request(
+        first_run.id, "manual", "first", "work", previous_cycle_id=None
+    )
+    second_request = cycles.enqueue_request(
+        second_run.id, "manual", "second", "work", previous_cycle_id=None
+    )
+
+    await dispatcher.start()
+    await dispatcher.enqueue_run(first_run.id)
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    assert await registry.cancel_and_wait(first_run.id) is True
+    await asyncio.sleep(0)
+
+    assert dispatcher.alive is True
+    await dispatcher.enqueue_run(second_run.id)
+    await asyncio.wait_for(second_completed.wait(), timeout=1)
+    await dispatcher._queue.join()
+    assert cycles.get_request(second_request.id).status == "settled"
+
+    await dispatcher.stop()
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("cycle_status", "expected_event", "expected_policy_status"),
     [

@@ -84,6 +84,16 @@ class CycleSettlement:
     transitioned: bool
 
 
+@dataclass(frozen=True)
+class CycleCancellation:
+    team_run_id: str
+    changed: bool
+    request_ids: list[str]
+    cycle_ids: list[str]
+    hook_run_ids: list[str]
+    series: TeamAutoSeries | None
+
+
 class TeamCycleService:
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -226,7 +236,9 @@ class TeamCycleService:
         timestamp = _timestamp(now)
         with self._db.connection() as connection:
             connection.execute("begin immediate")
-            self._require_run(connection, team_run_id)
+            run = self._require_run(connection, team_run_id)
+            if run["status"] == "canceled":
+                raise ValueError("Team run is canceled and cannot claim cycle requests")
             active = connection.execute(
                 """
                 select id from team_cycle_requests
@@ -551,9 +563,11 @@ class TeamCycleService:
             connection.execute("begin immediate")
             due = connection.execute(
                 """
-                select * from team_run_auto_series
-                where status = 'waiting_interval' and next_run_at <= ?
-                order by next_run_at asc, id asc
+                select series.* from team_run_auto_series series
+                join team_runs run on run.id = series.team_run_id
+                where series.status = 'waiting_interval'
+                  and series.next_run_at <= ? and run.status != 'canceled'
+                order by series.next_run_at asc, series.id asc
                 """,
                 (timestamp,),
             ).fetchall()
@@ -613,6 +627,51 @@ class TeamCycleService:
                     (timestamp, timestamp, request_id),
                 )
             return self._get_request(connection, request_id)
+
+    def cancel_run(
+        self,
+        team_run_id: str,
+        *,
+        reason: str,
+        now: datetime | None = None,
+    ) -> CycleCancellation:
+        timestamp = _timestamp(now)
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            return self._cancel_run(connection, team_run_id, reason, timestamp)
+
+    def cancel_all_active(
+        self,
+        *,
+        reason: str,
+        now: datetime | None = None,
+    ) -> list[CycleCancellation]:
+        timestamp = _timestamp(now)
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            rows = connection.execute(
+                """
+                select distinct run.id from team_runs run
+                where run.lifecycle_mode = 'continuous' and (
+                    exists (
+                        select 1 from team_cycle_requests request
+                        where request.team_run_id = run.id
+                          and request.status in ('queued', 'dispatching')
+                    ) or exists (
+                        select 1 from team_run_auto_series series
+                        where series.team_run_id = run.id and series.status in (
+                            'running', 'waiting_interval', 'paused_failure',
+                            'paused_user', 'paused_interrupted'
+                        )
+                    )
+                )
+                order by run.id
+                """
+            ).fetchall()
+            return [
+                self._cancel_run(connection, row["id"], reason, timestamp)
+                for row in rows
+            ]
 
     def queue_position(self, request_id: str) -> int:
         request = self.get_request(request_id)
@@ -713,7 +772,9 @@ class TeamCycleService:
                 """
                 select request.team_run_id, min(request.created_at) as first_created
                 from team_cycle_requests request
+                join team_runs run on run.id = request.team_run_id
                 where request.status = 'queued'
+                  and run.status != 'canceled'
                   and not exists (
                       select 1 from team_cycle_requests active
                       where active.team_run_id = request.team_run_id
@@ -724,6 +785,154 @@ class TeamCycleService:
                 """
             )
         ]
+
+    def _cancel_run(
+        self,
+        connection: sqlite3.Connection,
+        team_run_id: str,
+        reason: str,
+        now: str,
+    ) -> CycleCancellation:
+        run = self._require_run(connection, team_run_id)
+        if run["lifecycle_mode"] != "continuous":
+            raise ValueError("Cycle cancellation requires a continuous team run")
+        request_rows = connection.execute(
+            """
+            select id from team_cycle_requests
+            where team_run_id = ? and status in ('queued', 'dispatching')
+            order by created_at asc, rowid asc
+            """,
+            (team_run_id,),
+        ).fetchall()
+        request_ids = [row["id"] for row in request_rows]
+        cycle_rows = connection.execute(
+            """
+            select cycle.id from team_run_cycles cycle
+            join team_cycle_requests request on request.id = cycle.request_id
+            where request.team_run_id = ?
+              and cycle.status in ('queued', 'running', 'waiting_for_user', 'interrupted')
+            order by cycle.sequence asc
+            """,
+            (team_run_id,),
+        ).fetchall()
+        cycle_ids = [row["id"] for row in cycle_rows]
+        hook_rows = connection.execute(
+            """
+            select hook.id from hook_runs hook
+            join team_cycle_requests request
+              on request.id = hook.team_cycle_request_id
+            where request.team_run_id = ?
+              and hook.status in ('queued', 'running', 'waiting_for_user', 'interrupted')
+            order by hook.created_at asc, hook.id asc
+            """,
+            (team_run_id,),
+        ).fetchall()
+        hook_run_ids = [row["id"] for row in hook_rows]
+        series_row = connection.execute(
+            """
+            select * from team_run_auto_series where team_run_id = ?
+            order by series_number desc limit 1
+            """,
+            (team_run_id,),
+        ).fetchone()
+        active_series = (
+            series_row is not None and series_row["status"] in _ACTIVE_SERIES_STATUSES
+        )
+        changed = bool(
+            request_ids
+            or cycle_ids
+            or hook_run_ids
+            or active_series
+            or run["status"] != "canceled"
+        )
+        connection.execute(
+            """
+            update team_run_cycles
+            set status = 'canceled', error_message = ?, finished_at = ?, updated_at = ?
+            where id in (
+                select cycle.id from team_run_cycles cycle
+                join team_cycle_requests request on request.id = cycle.request_id
+                where request.team_run_id = ? and cycle.status in (
+                    'queued', 'running', 'waiting_for_user', 'interrupted'
+                )
+            )
+            """,
+            (reason, now, now, team_run_id),
+        )
+        connection.execute(
+            """
+            update team_cycle_requests
+            set status = 'canceled', settled_at = ?, updated_at = ?
+            where team_run_id = ? and status in ('queued', 'dispatching')
+            """,
+            (now, now, team_run_id),
+        )
+        connection.execute(
+            """
+            update team_run_auto_series
+            set status = 'canceled', next_run_at = null, pause_reason = ?,
+                completed_at = ?, updated_at = ?
+            where team_run_id = ? and status in (
+                'running', 'waiting_interval', 'paused_failure',
+                'paused_user', 'paused_interrupted'
+            )
+            """,
+            (reason, now, now, team_run_id),
+        )
+        connection.execute(
+            """
+            update hook_runs
+            set status = 'canceled', error_message = ?, finished_at = ?
+            where team_cycle_request_id in (
+                select id from team_cycle_requests where team_run_id = ?
+            ) and status in ('queued', 'running', 'waiting_for_user', 'interrupted')
+            """,
+            (reason, now, team_run_id),
+        )
+        connection.execute(
+            """
+            update team_decision_requests
+            set status = 'canceled', revision = revision + 1, updated_at = ?
+            where team_run_id = ? and status = 'awaiting_user'
+            """,
+            (now, team_run_id),
+        )
+        connection.execute(
+            """
+            update team_tasks set status = 'canceled', finished_at = ?, updated_at = ?
+            where team_run_id = ? and status in ('pending', 'in_progress', 'blocked')
+            """,
+            (now, now, team_run_id),
+        )
+        connection.execute(
+            """
+            update team_agents
+            set status = 'canceled', current_task_id = null, finished_at = ?, updated_at = ?
+            where team_run_id = ? and status in ('pending', 'running', 'waiting')
+            """,
+            (now, now, team_run_id),
+        )
+        connection.execute(
+            """
+            update team_runs set status = 'canceled', error_message = ?,
+                finished_at = coalesce(finished_at, ?), updated_at = ?
+            where id = ? and status != 'canceled'
+            """,
+            (reason, now, now, team_run_id),
+        )
+        series = (
+            self._get_series(connection, series_row["id"])
+            if series_row is not None
+            else None
+        )
+        return CycleCancellation(
+            team_run_id,
+            changed,
+            request_ids,
+            cycle_ids,
+            hook_run_ids,
+            series,
+        )
 
     def _enqueue_request(
         self,
@@ -995,6 +1204,8 @@ class TeamCycleService:
         expected: ExecutionPolicy,
     ) -> sqlite3.Row:
         run = self._require_run(connection, team_run_id)
+        if run["status"] == "canceled":
+            raise ValueError("Team run is canceled and cannot enqueue cycle requests")
         if run["lifecycle_mode"] != "continuous":
             raise ValueError("Cycle requests require a continuous team run")
         if run["execution_policy"] != expected:

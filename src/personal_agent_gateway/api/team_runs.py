@@ -605,6 +605,12 @@ async def cancel_team_run(
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     if await registry.cancel_and_wait(team_run_id):
         run = service.get_team_run(team_run_id)
+    if run.lifecycle_mode == "continuous":
+        request.app.state.team_cycle_service.cancel_run(
+            team_run_id,
+            reason="user",
+        )
+        run = service.get_team_run(team_run_id)
     elif run.status == "waiting_for_user":
         run = service.cancel_waiting_decision(team_run_id)
     elif run.status not in _TERMINAL:
