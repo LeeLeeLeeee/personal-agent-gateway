@@ -179,6 +179,113 @@ def test_cancel_continuous_run_cancels_queued_hook_lineage(tmp_path: Path) -> No
     assert client.app.state.team_cycle_service.get_request(request.id).status == "canceled"
     assert client.app.state.hook_run_service.get_run(hook_run.id).status == "canceled"
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("execution_policy", ["auto", "triggered"])
+async def test_cancel_during_add_work_cannot_resurrect_continuous_lineage(
+    tmp_path: Path,
+    execution_policy: str,
+) -> None:
+    app = create_app(make_config(tmp_path))
+    teams = app.state.team_run_service
+    cycles = app.state.team_cycle_service
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    worker = app.state.persona_service.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "race",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy=execution_policy,
+        auto_repeat_count=2 if execution_policy == "auto" else None,
+        auto_interval_seconds=60 if execution_policy == "auto" else None,
+    )
+    hook_run = None
+    if execution_policy == "auto":
+        request = cycles.list_requests(run.id)[0]
+    else:
+        hook = app.state.hook_service.create_hook(
+            name="Inbox",
+            source_type="email",
+            connection={"host": "imap.test", "port": 993, "username": "me@test"},
+            secret="secret",
+            filter={},
+            target_backend="",
+            target_model="",
+            target_options={},
+            prompt_template="summarize",
+            poll_interval_seconds=300,
+            target_kind="team_run",
+            target_team_run_id=run.id,
+        )
+        hook_run = app.state.hook_run_service.create_run(
+            hook.id, "message-1", "message", {"subject": "hello"}
+        )
+        request = cycles.enqueue_request(
+            run.id, "hook", hook_run.id, "work", previous_cycle_id=None
+        )
+        app.state.hook_run_service.link_cycle_request(hook_run.id, request.id)
+
+    entered_add_work = asyncio.Event()
+    release_add_work = asyncio.Event()
+    resume_calls: list[str] = []
+
+    class BlockingRuntime:
+        async def add_work(self, team_run_id, _instruction, cycle_id=None):
+            entered_add_work.set()
+            await release_add_work.wait()
+            teams.create_task(
+                team_run_id,
+                "late task",
+                "must not survive cancellation",
+                cycle_id=cycle_id,
+            )
+            return []
+
+        async def resume(self, team_run_id, cycle_id=None):
+            resume_calls.append(team_run_id)
+            teams.set_run_status(team_run_id, "completed")
+            teams.set_cycle_status(cycle_id, "completed", summary="resurrected")
+            return teams.get_team_run(team_run_id)
+
+    app.state.team_runtime = BlockingRuntime()
+    transport = httpx.ASGITransport(app=app)
+    await app.state.team_cycle_dispatcher.start()
+    try:
+        await app.state.team_cycle_dispatcher.enqueue_run(run.id)
+        await asyncio.wait_for(entered_add_work.wait(), timeout=1)
+        assert app.state.team_run_registry.is_running(run.id) is True
+
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            client.cookies.set(
+                "agent_session", app.state.auth_session_service.issue().token
+            )
+            canceled = await client.post(f"/api/team-runs/{run.id}/cancel")
+
+        assert canceled.status_code == 200
+        release_add_work.set()
+        await asyncio.wait_for(app.state.team_cycle_dispatcher._queue.join(), timeout=1)
+
+        cycle = teams.get_cycle_for_request(request.id)
+        assert cycle is not None
+        assert teams.get_team_run(run.id).status == "canceled"
+        assert cycle.status == "canceled"
+        assert cycles.get_request(request.id).status == "canceled"
+        assert resume_calls == []
+        assert teams.list_tasks(run.id, cycle.id) == []
+        assert app.state.team_cycle_dispatcher.alive is True
+        if execution_policy == "auto":
+            assert cycles.get_active_series(run.id) is None
+        else:
+            assert hook_run is not None
+            assert app.state.hook_run_service.get_run(hook_run.id).status == "canceled"
+    finally:
+        await app.state.team_cycle_dispatcher.stop()
+
 @pytest.mark.parametrize(
     "payload",
     [

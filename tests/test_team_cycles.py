@@ -55,6 +55,27 @@ def test_cancel_run_atomically_settles_waiting_auto_lineage_and_blocks_work(
         cycles.claim_next(run.id)
 
 
+@pytest.mark.parametrize(
+    "terminal_status",
+    ["completed", "completed_with_failures", "failed", "canceled"],
+)
+def test_cancel_run_preserves_terminal_continuous_run_status(
+    tmp_path: Path,
+    terminal_status: str,
+) -> None:
+    _db, teams, cycles, run = make_triggered_run(tmp_path)
+    request = cycles.enqueue_request(
+        run.id, "manual", "queued", "work", previous_cycle_id=None
+    )
+    teams.set_run_status(run.id, terminal_status)
+
+    result = cycles.cancel_run(run.id, reason="user")
+
+    assert result.changed is True
+    assert teams.get_team_run(run.id).status == terminal_status
+    assert cycles.get_request(request.id).status == "canceled"
+
+
 def test_concurrent_enqueue_and_claim_keep_one_request_and_dispatcher(
     tmp_path: Path,
 ) -> None:

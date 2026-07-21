@@ -109,31 +109,31 @@ def test_emergency_stop_cancels_jobs_and_blocks_new_execution_intake(tmp_path: P
 
 
 def test_stop_and_resume_are_idempotent(tmp_path: Path) -> None:
-    client = authenticated_client(tmp_path)
+    with authenticated_client(tmp_path) as client:
+        first_stop = client.post("/api/operations/emergency-stop")
+        second_stop = client.post("/api/operations/emergency-stop")
+        first_resume = client.post("/api/operations/resume-intake")
+        second_resume = client.post("/api/operations/resume-intake")
 
-    first_stop = client.post("/api/operations/emergency-stop")
-    second_stop = client.post("/api/operations/emergency-stop")
-    first_resume = client.post("/api/operations/resume-intake")
-    second_resume = client.post("/api/operations/resume-intake")
+        assert first_stop.json()["changed"] is True
+        assert second_stop.json()["changed"] is False
+        assert first_resume.json() == {"intake_open": True, "changed": True}
+        assert second_resume.json() == {"intake_open": True, "changed": False}
 
-    assert first_stop.json()["changed"] is True
-    assert second_stop.json()["changed"] is False
-    assert first_resume.json() == {"intake_open": True, "changed": True}
-    assert second_resume.json() == {"intake_open": True, "changed": False}
-
-    create_response = client.post(
-        "/api/jobs",
-        json={
-            "capability_id": "ffmpeg.inspect",
-            "title": "allowed again",
-            "input": {"source_file": "demo.mov"},
-        },
-    )
-    assert create_response.status_code == 200
+        create_response = client.post(
+            "/api/jobs",
+            json={
+                "capability_id": "ffmpeg.inspect",
+                "title": "allowed again",
+                "input": {"source_file": "demo.mov"},
+            },
+        )
+        assert create_response.status_code == 200
 
 
 def test_emergency_stop_cancels_cycle_queue_and_resume_runs_only_new_work(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     app = create_app(make_config(tmp_path))
     with TestClient(app) as client:
@@ -182,10 +182,42 @@ def test_emergency_stop_cancels_cycle_queue_and_resume_runs_only_new_work(
         assert app.state.team_cycle_service.get_active_series(
             due_run.id
         ).status == "waiting_interval"
+        order: list[str] = []
+        stop_loop = app.state.team_cycle_loop.stop
+        stop_dispatcher = app.state.team_cycle_dispatcher.stop
+        cancel_persistent = app.state.team_cycle_service.cancel_all_active
+
+        async def record_loop_stop():
+            order.append("loop.stop")
+            await stop_loop()
+
+        async def record_dispatcher_stop(*, interrupt_active=True):
+            order.append("dispatcher.stop")
+            assert interrupt_active is False
+            await stop_dispatcher(interrupt_active=interrupt_active)
+
+        def record_persistent_cancel(*, reason):
+            order.append("persistent.cancel_all")
+            return cancel_persistent(reason=reason)
+
+        monkeypatch.setattr(app.state.team_cycle_loop, "stop", record_loop_stop)
+        monkeypatch.setattr(
+            app.state.team_cycle_dispatcher, "stop", record_dispatcher_stop
+        )
+        monkeypatch.setattr(
+            app.state.team_cycle_service,
+            "cancel_all_active",
+            record_persistent_cancel,
+        )
 
         stopped = client.post("/api/operations/emergency-stop")
 
         assert stopped.status_code == 200
+        assert order[:3] == [
+            "loop.stop",
+            "dispatcher.stop",
+            "persistent.cancel_all",
+        ]
         assert app.state.team_cycle_dispatcher.alive is False
         assert app.state.team_cycle_loop.alive is False
         assert app.state.team_cycle_service.get_request(queued.id).status == "canceled"

@@ -843,7 +843,8 @@ class TeamCycleService:
             or cycle_ids
             or hook_run_ids
             or active_series
-            or run["status"] != "canceled"
+            or run["status"]
+            not in {"completed", "completed_with_failures", "failed", "canceled"}
         )
         connection.execute(
             """
@@ -916,7 +917,9 @@ class TeamCycleService:
             """
             update team_runs set status = 'canceled', error_message = ?,
                 finished_at = coalesce(finished_at, ?), updated_at = ?
-            where id = ? and status != 'canceled'
+            where id = ? and status not in (
+                'completed', 'completed_with_failures', 'failed', 'canceled'
+            )
             """,
             (reason, now, now, team_run_id),
         )

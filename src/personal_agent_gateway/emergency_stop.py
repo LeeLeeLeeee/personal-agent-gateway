@@ -67,6 +67,11 @@ class EmergencyStopService:
         except Exception as exc:
             failures.append(f"team_cycle_loop:{type(exc).__name__}")
         try:
+            await self._team_cycle_dispatcher.stop(interrupt_active=False)
+            self._team_cycle_dispatcher.discard_pending()
+        except Exception as exc:
+            failures.append(f"team_cycle_dispatcher:{type(exc).__name__}")
+        try:
             cancellations = self._team_cycles.cancel_all_active(
                 reason="emergency_stop"
             )
@@ -78,11 +83,6 @@ class EmergencyStopService:
             )
         except Exception as exc:
             failures.append(f"team_cycles:{type(exc).__name__}")
-        try:
-            await self._team_cycle_dispatcher.stop()
-            self._team_cycle_dispatcher.discard_pending()
-        except Exception as exc:
-            failures.append(f"team_cycle_dispatcher:{type(exc).__name__}")
 
         try:
             session_ids = await self._session_runs.cancel_all()

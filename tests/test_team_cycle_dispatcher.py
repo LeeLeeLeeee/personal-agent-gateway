@@ -174,6 +174,40 @@ async def test_cancellation_in_preparer_interrupts_same_cycle_and_request(
 
 
 @pytest.mark.asyncio
+async def test_noninterrupting_stop_leaves_active_lineage_for_persistent_cancel(
+    tmp_path: Path,
+) -> None:
+    services = make_dispatcher_services(tmp_path)
+    request = services.cycles.enqueue_request(
+        services.run.id,
+        "manual",
+        "client-1",
+        "work",
+        previous_cycle_id=None,
+    )
+    entered = asyncio.Event()
+
+    async def gated_preparer(*_args):
+        entered.set()
+        await asyncio.Event().wait()
+
+    services.dispatcher.add_preparer(gated_preparer)
+    await services.dispatcher.start()
+    await services.dispatcher.enqueue_run(services.run.id)
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    await services.dispatcher.stop(interrupt_active=False)
+
+    cycle = services.teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    assert cycle.status == "queued"
+    assert services.cycles.get_request(request.id).status == "dispatching"
+    services.cycles.cancel_run(services.run.id, reason="emergency_stop")
+    assert services.teams.get_cycle(cycle.id).status == "canceled"
+    assert services.cycles.get_request(request.id).status == "canceled"
+
+
+@pytest.mark.asyncio
 async def test_cancellation_during_real_leader_add_work_preserves_cycle(
     tmp_path: Path,
 ) -> None:

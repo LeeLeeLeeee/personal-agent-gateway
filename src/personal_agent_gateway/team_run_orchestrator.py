@@ -60,8 +60,12 @@ class TeamRunOrchestrator:
         self, team_run_id: str, cycle_id: str, instruction: str
     ) -> TeamRun:
         runtime = self._runtime_provider()
-        await runtime.add_work(team_run_id, instruction, cycle_id)
-        return await self.resume(team_run_id, cycle_id)
+
+        async def execute_cycle() -> TeamRun:
+            await runtime.add_work(team_run_id, instruction, cycle_id)
+            return await runtime.resume(team_run_id, cycle_id)
+
+        return await self._schedule(team_run_id, cycle_id, execute_cycle)
 
     def _schedule(
         self,

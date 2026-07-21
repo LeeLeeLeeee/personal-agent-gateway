@@ -46,6 +46,7 @@ class TeamCycleDispatcher:
         self._preparers: list[CyclePreparer] = []
         self._task: asyncio.Task[None] | None = None
         self._last_error: str | None = None
+        self._interrupt_on_stop = True
 
     @property
     def alive(self) -> bool:
@@ -59,15 +60,18 @@ class TeamCycleDispatcher:
         if not self.alive:
             self._task = asyncio.create_task(self._run_loop())
 
-    async def stop(self) -> None:
+    async def stop(self, *, interrupt_active: bool = True) -> None:
         if self._task is None:
             return
+        self._interrupt_on_stop = interrupt_active
         self._task.cancel()
         try:
             await self._task
         except asyncio.CancelledError:
             pass
-        self._task = None
+        finally:
+            self._task = None
+            self._interrupt_on_stop = True
 
     def discard_pending(self) -> None:
         while True:
@@ -126,9 +130,11 @@ class TeamCycleDispatcher:
                 instruction,
             )
         except asyncio.CancelledError:
-            await self._interrupt_cycle(team_run_id, cycle.id)
             task = asyncio.current_task()
-            if task is not None and task.cancelling():
+            dispatcher_stopping = task is not None and task.cancelling()
+            if not dispatcher_stopping or self._interrupt_on_stop:
+                await self._interrupt_cycle(team_run_id, cycle.id)
+            if dispatcher_stopping:
                 raise
         except Exception as exc:
             if self._teams.get_cycle(cycle.id).status in _TERMINAL_CYCLE_STATUSES:
