@@ -56,7 +56,11 @@ def authed_client_with_run(tmp_path: Path):
     ).json()["team"]["id"]
     run = client.post(
         "/api/team-runs",
-        json={"team_id": team_id, "goal": "Ship it"},
+        json={
+            "team_id": team_id,
+            "goal": "Ship it",
+            "execution_policy": "triggered",
+        },
     ).json()["team_run"]
     workspace = Path(run["workspace_root"])
     workspace.mkdir(parents=True, exist_ok=True)

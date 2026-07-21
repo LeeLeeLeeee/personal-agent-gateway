@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 117,
+  "document_count": 118,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -4609,6 +4609,54 @@
         }
       ],
       "excerpt": "2026-07-20 구조 리뷰의 5개 경계에서 도출한 11개 change request를 구현했다. 기존 단일 process, SQLite, local React state 구조를 유지하면서 누락된 운영·복구·상태·보안 경계를 보완했다."
+    },
+    {
+      "path": "docs/reports/2026-07-20-continuous-team-run-cycle-policies-implementation.md",
+      "title": "Continuous Team Run Cycle Policies Implementation",
+      "type": "report",
+      "domain": "team-run",
+      "feature": "continuous-cycle-policies",
+      "status": "done",
+      "aliases": [
+        "AUTO TRIGGERED 구현 결과"
+      ],
+      "tags": [
+        "team-run",
+        "cycle",
+        "automation"
+      ],
+      "updated_at": "2026-07-20",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Continuous Team Run Cycle Policies 구현 결과"
+        },
+        {
+          "level": 2,
+          "text": "구현 범위"
+        },
+        {
+          "level": 2,
+          "text": "상태 및 데이터 마이그레이션"
+        },
+        {
+          "level": 2,
+          "text": "API와 UI"
+        },
+        {
+          "level": 2,
+          "text": "재시작 복구"
+        },
+        {
+          "level": 2,
+          "text": "검증 결과"
+        },
+        {
+          "level": 2,
+          "text": "남은 제한"
+        }
+      ],
+      "excerpt": "- `src/personal_agent_gateway/team_cycles.py`가 AUTO Series와 Manual, Hook,   AUTO, Retry CycleRequest를 저장하고 source idempotency, Run별 FIFO claim,   pause와 terminal settlement를 관리한다. - `src/personal_agent_gateway/team_cy..."
     },
     {
       "path": "docs/specs/2026-07-08-observability-audit-log-spec.md",
