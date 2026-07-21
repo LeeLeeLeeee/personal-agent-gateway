@@ -10,6 +10,12 @@ from uuid import uuid4
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.pagination import decode_cursor, encode_cursor
 from personal_agent_gateway.personas import Persona, PersonaService
+from personal_agent_gateway.space_policies import (
+    SpacePolicyService,
+    TeamSpaceManager,
+    policy_from_snapshot,
+    policy_json,
+)
 
 if TYPE_CHECKING:
     from personal_agent_gateway.team_cycles import ExecutionPolicy, TeamCycleService
@@ -68,6 +74,10 @@ class TeamRun:
     team_id: str | None = None
     rules_snapshot: dict | None = None
     execution_policy: Literal["auto", "triggered"] | None = None
+    working_root: str | None = None
+    artifact_root: str | None = None
+    worktree_branch: str | None = None
+    space_policy: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +97,7 @@ class TeamRunCycle:
     finished_at: str | None
     updated_at: str
     request_id: str | None = None
+    rules_snapshot: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +136,7 @@ class TeamTask:
     started_at: str | None = None
     finished_at: str | None = None
     cycle_id: str | None = None
+    retry_of_task_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -163,11 +175,16 @@ class TeamRunService:
         personas: PersonaService,
         workspace_root: Path,
         cycle_service: "TeamCycleService | None" = None,
+        space_policies: SpacePolicyService | None = None,
+        space_manager: TeamSpaceManager | None = None,
     ) -> None:
         self._db = db
         self._personas = personas
         self._workspace_root = workspace_root
         self._cycle_service = cycle_service
+        self._space_policies = space_policies or SpacePolicyService(db)
+        self._space_policies.seed_defaults()
+        self._space_manager = space_manager or TeamSpaceManager()
 
     def create_team_run(
         self,
@@ -204,7 +221,17 @@ class TeamRunService:
         workspace_root_path = self._workspace_root / team_run_id
         workspace_root_path.mkdir(parents=True)
         workspace_root = str(workspace_root_path)
+        effective_space = self._space_policies.resolve(
+            team_id=team_id,
+            persona_id=leader_persona_id,
+        )
+        prepared_space = None
         try:
+            prepared_space = self._space_manager.prepare(
+                team_run_id,
+                workspace_root_path,
+                effective_space.policy,
+            )
             with self._db.connection() as connection:
                 connection.execute("begin immediate")
                 connection.execute(
@@ -212,10 +239,11 @@ class TeamRunService:
                     insert into team_runs (
                         id, goal, status, run_mode, lifecycle_mode, execution_policy,
                         leader_agent_id, max_workers, rounds_budget, rounds_used,
-                        workspace_root, summary, error_message, created_at, started_at,
-                        finished_at, updated_at, team_id, rules_snapshot_json
+                        workspace_root, working_root, artifact_root, worktree_branch,
+                        space_policy_snapshot_json, summary, error_message, created_at,
+                        started_at, finished_at, updated_at, team_id, rules_snapshot_json
                     )
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         team_run_id,
@@ -229,6 +257,10 @@ class TeamRunService:
                         rounds_budget,
                         0,
                         workspace_root,
+                        str(prepared_space.working_root),
+                        str(prepared_space.artifact_root),
+                        prepared_space.worktree_branch,
+                        policy_json(effective_space.policy),
                         None,
                         None,
                         now,
@@ -245,6 +277,7 @@ class TeamRunService:
                     leader_persona_id,
                     "leader",
                     _now(),
+                    str(prepared_space.working_root),
                 )
                 for member_persona_id in member_persona_ids:
                     self._insert_agent(
@@ -253,6 +286,7 @@ class TeamRunService:
                         member_persona_id,
                         "member",
                         _now(),
+                        str(prepared_space.working_root),
                     )
                 connection.execute(
                     "update team_runs set leader_agent_id = ?, updated_at = ? where id = ?",
@@ -267,7 +301,15 @@ class TeamRunService:
                         now=now,
                     )
         except Exception:
-            shutil.rmtree(workspace_root_path)
+            if prepared_space is not None:
+                self._space_manager.cleanup(
+                    workspace_root_path,
+                    effective_space.policy,
+                    prepared_space.working_root,
+                    prepared_space.worktree_branch,
+                )
+            elif workspace_root_path.exists():
+                shutil.rmtree(workspace_root_path)
             raise
         return self.get_team_run(team_run_id)
 
@@ -498,8 +540,12 @@ class TeamRunService:
         expected_workspace_root = (self._workspace_root.resolve() / team_run_id).resolve()
         if workspace_root != expected_workspace_root:
             raise ValueError("Team workspace is outside the configured workspace root")
-        if workspace_root.exists():
-            shutil.rmtree(workspace_root)
+        self._space_manager.cleanup(
+            workspace_root,
+            policy_from_snapshot(run.space_policy),
+            Path(run.working_root).resolve() if run.working_root else None,
+            run.worktree_branch,
+        )
         # team_agents / team_tasks / team_messages cascade via foreign keys
         self._db.execute("delete from team_runs where id = ?", (team_run_id,))
 
@@ -839,11 +885,19 @@ class TeamRunService:
             )
         ]
 
-    def retry_failed_task(self, team_run_id: str, task_id: str) -> tuple[TeamRun, TeamTask]:
+    def retry_failed_task(
+        self,
+        team_run_id: str,
+        task_id: str,
+        rules_snapshot_json: str | None = None,
+    ) -> tuple[TeamRun, TeamTask, TeamRunCycle | None]:
         now = _now()
+        retry_cycle_id: str | None = None
+        retry_task_id = uuid4().hex
         with self._db.connection() as connection:
             run = connection.execute(
-                "select status from team_runs where id = ?", (team_run_id,)
+                "select status, lifecycle_mode, rounds_budget from team_runs where id = ?",
+                (team_run_id,),
             ).fetchone()
             if run is None:
                 raise KeyError(f"Team run not found: {team_run_id}")
@@ -851,7 +905,7 @@ class TeamRunService:
                 raise ValueError("Only failed terminal team runs can retry tasks")
 
             task = connection.execute(
-                "select cycle_id, status, error_message from team_tasks "
+                "select * from team_tasks "
                 "where id = ? and team_run_id = ?",
                 (task_id, team_run_id),
             ).fetchone()
@@ -859,15 +913,60 @@ class TeamRunService:
                 raise KeyError(f"Team task not found: {task_id}")
             if task["status"] != "failed":
                 raise ValueError("Only failed tasks can be retried")
+            existing_retry = connection.execute(
+                "select id from team_tasks where retry_of_task_id = ?", (task_id,)
+            ).fetchone()
+            if existing_retry is not None:
+                raise ValueError("Failed task already has a retry task")
+
+            if run["lifecycle_mode"] == "continuous":
+                sequence_row = connection.execute(
+                    "select coalesce(max(sequence), 0) + 1 as next "
+                    "from team_run_cycles where team_run_id = ?",
+                    (team_run_id,),
+                ).fetchone()
+                retry_cycle_id = uuid4().hex
+                connection.execute(
+                    """
+                    insert into team_run_cycles (
+                        id, team_run_id, request_id, sequence, source_type, source_id,
+                        status, rounds_budget, rounds_used, rules_snapshot_json,
+                        summary, error_message, created_at, started_at, finished_at,
+                        updated_at
+                    ) values (?, ?, null, ?, 'task_retry', ?, 'interrupted', ?, 0, ?,
+                              null, null, ?, null, null, ?)
+                    """,
+                    (
+                        retry_cycle_id,
+                        team_run_id,
+                        int(sequence_row["next"]),
+                        task_id,
+                        int(run["rounds_budget"]),
+                        rules_snapshot_json,
+                        now,
+                        now,
+                    ),
+                )
 
             connection.execute(
                 """
-                update team_tasks
-                set status = 'pending', result = null, error_message = null,
-                    started_at = null, finished_at = null, updated_at = ?
-                where id = ?
+                insert into team_tasks (
+                    id, team_run_id, cycle_id, retry_of_task_id, title, description,
+                    owner_agent_id, status, result, error_message, created_at,
+                    updated_at, started_at, finished_at
+                ) values (?, ?, ?, ?, ?, ?, ?, 'pending', null, null, ?, ?, null, null)
                 """,
-                (now, task_id),
+                (
+                    retry_task_id,
+                    team_run_id,
+                    retry_cycle_id,
+                    task_id,
+                    task["title"],
+                    task["description"],
+                    task["owner_agent_id"],
+                    now,
+                    now,
+                ),
             )
             connection.execute(
                 """
@@ -878,15 +977,6 @@ class TeamRunService:
                 """,
                 (now, team_run_id),
             )
-            if task["cycle_id"] is not None:
-                connection.execute(
-                    """
-                    update team_run_cycles
-                    set status = 'interrupted', summary = null, error_message = null,
-                        finished_at = null, updated_at = ? where id = ?
-                    """,
-                    (now, task["cycle_id"]),
-                )
             connection.execute(
                 """
                 insert into team_messages (
@@ -897,18 +987,25 @@ class TeamRunService:
                 (
                     uuid4().hex,
                     team_run_id,
-                    task["cycle_id"],
+                    retry_cycle_id,
                     "system_task_retried",
-                    "Failed task queued for retry. Resume is required.",
+                    "Retry task created in a new cycle. Resume is required.",
                     json.dumps(
-                        {"task_id": task_id, "previous_error": task["error_message"]},
+                        {
+                            "original_cycle_id": task["cycle_id"],
+                            "original_task_id": task_id,
+                            "retry_cycle_id": retry_cycle_id,
+                            "retry_task_id": retry_task_id,
+                            "previous_error": task["error_message"],
+                        },
                         ensure_ascii=False,
                         sort_keys=True,
                     ),
                     now,
                 ),
             )
-        return self.get_team_run(team_run_id), self._get_task(task_id)
+        retry_cycle = self.get_cycle(retry_cycle_id) if retry_cycle_id else None
+        return self.get_team_run(team_run_id), self._get_task(retry_task_id), retry_cycle
 
     def set_task_status(
         self,
@@ -1643,6 +1740,7 @@ class TeamRunService:
         persona_id: str,
         role: str,
         now: str,
+        workspace_path: str | None = None,
     ) -> TeamAgent:
         persona = self._personas.get_persona(persona_id)
         agent_id = uuid4().hex
@@ -1659,7 +1757,7 @@ class TeamRunService:
             (
                 agent_id, team_run_id, persona.name, role, persona.id,
                 json.dumps(_persona_snapshot(persona), ensure_ascii=False, sort_keys=True),
-                persona.default_backend, persona.default_model, "pending", None, None,
+                persona.default_backend, persona.default_model, "pending", workspace_path, None,
                 0, None,
                 None, None, now, now,
             ),
@@ -1816,6 +1914,17 @@ def _team_run_from_row(row: object) -> TeamRun:
         execution_policy=(
             row["execution_policy"] if "execution_policy" in row.keys() else None
         ),
+        working_root=(row["working_root"] if "working_root" in row.keys() else None),
+        artifact_root=(row["artifact_root"] if "artifact_root" in row.keys() else None),
+        worktree_branch=(
+            row["worktree_branch"] if "worktree_branch" in row.keys() else None
+        ),
+        space_policy=(
+            json.loads(row["space_policy_snapshot_json"])
+            if "space_policy_snapshot_json" in row.keys()
+            and row["space_policy_snapshot_json"]
+            else None
+        ),
     )
 
 
@@ -1836,6 +1945,11 @@ def _team_run_cycle_from_row(row: object) -> TeamRunCycle:
         finished_at=row["finished_at"],
         updated_at=row["updated_at"],
         request_id=row["request_id"] if "request_id" in row.keys() else None,
+        rules_snapshot=(
+            json.loads(row["rules_snapshot_json"])
+            if "rules_snapshot_json" in row.keys() and row["rules_snapshot_json"]
+            else None
+        ),
     )
 
 
@@ -1876,6 +1990,9 @@ def _team_task_from_row(row: object) -> TeamTask:
         started_at=row["started_at"],
         finished_at=row["finished_at"],
         cycle_id=row["cycle_id"] if "cycle_id" in row.keys() else None,
+        retry_of_task_id=(
+            row["retry_of_task_id"] if "retry_of_task_id" in row.keys() else None
+        ),
     )
 
 

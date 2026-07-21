@@ -21,13 +21,15 @@ export function applyTeamRunDelta(detail, event) {
   return { ...detail, run, tasks, agents };
 }
 
-export function useTeamRunController({ toast, confirm, setScreenError }) {
+export function useTeamRunController({ toast, confirm, setScreenError, reloadKey = 0 }) {
   const [teamRuns, setTeamRuns] = useState([]);
   const [creatingTeamRun, setCreatingTeamRun] = useState(false);
   const [runFilter, setRunFilter] = useState("all");
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
   const [teamRunDocuments, setTeamRunDocuments] = useState([]);
+  const [teamRunDetailLoading, setTeamRunDetailLoading] = useState(false);
+  const [teamRunDetailLoadErrorId, setTeamRunDetailLoadErrorId] = useState(null);
   const selectedTeamRunIdRef = useRef(null);
   const selectedTeamRunVersionRef = useRef(0);
   const manualCycleRequestRef = useRef(null);
@@ -53,13 +55,25 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     if (!selectedTeamRunId) {
       setTeamRunDetail(null);
       setTeamRunDocuments([]);
+      setTeamRunDetailLoading(false);
+      setTeamRunDetailLoadErrorId(null);
       return undefined;
     }
     let alive = true;
+    setTeamRunDetail(null);
+    setTeamRunDocuments([]);
+    setTeamRunDetailLoading(true);
+    setTeamRunDetailLoadErrorId(null);
     api.teamRunDetail(selectedTeamRunId).then((detail) => {
+      if (!detail?.run) throw new Error("Team run detail is unavailable");
       if (alive) setTeamRunDetail(detail);
     }).catch((error) => {
-      if (alive) setScreenError(error);
+      if (alive) {
+        setTeamRunDetailLoadErrorId(selectedTeamRunId);
+        setScreenError(error);
+      }
+    }).finally(() => {
+      if (alive) setTeamRunDetailLoading(false);
     });
     api.teamDocuments(selectedTeamRunId).then((documents) => {
       if (alive) setTeamRunDocuments(documents);
@@ -69,7 +83,7 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     return () => {
       alive = false;
     };
-  }, [selectedTeamRunId, setScreenError]);
+  }, [selectedTeamRunId, setScreenError, reloadKey]);
 
   const handleTeamEvent = useCallback((event) => {
     const requiresRefresh = [
@@ -406,6 +420,10 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     setSelectedTeamRunId,
     teamRunDetail,
     teamRunDocuments,
+    teamRunDetailLoading,
+    teamRunDetailLoadError: Boolean(
+      selectedTeamRunId && teamRunDetailLoadErrorId === selectedTeamRunId
+    ),
     handleTeamEvent,
     handleCreateTeamRun,
     handleTriggerTeamCycle,

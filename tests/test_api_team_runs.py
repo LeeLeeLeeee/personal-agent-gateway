@@ -528,7 +528,7 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
     assert [agent["name"] for agent in agents] == ["Tech Lead", "QA Tester"]
     stored_agent = client.app.state.team_run_service.get_agent(agents[0]["id"])
     model = client.app.state.team_runtime._model_factory(stored_agent)
-    assert model._workspace_root == Path(run["workspace_root"]).resolve()
+    assert model._workspace_root == Path(run["working_root"]).resolve()
 
 
 def test_create_team_run_is_continuous_and_standard_record_remains_readable(
@@ -1008,7 +1008,7 @@ def test_team_run_api_requires_auth(tmp_path: Path) -> None:
     assert response.status_code == 401
 
 
-def test_retry_failed_team_task_api_requeues_task_for_manual_resume(tmp_path: Path) -> None:
+def test_retry_failed_team_task_api_creates_new_cycle_and_preserves_history(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "Developer")
@@ -1022,15 +1022,39 @@ def test_retry_failed_team_task_api_requeues_task_for_manual_resume(tmp_path: Pa
         },
     ).json()["team_run"]
     service = client.app.state.team_run_service
-    task = service.create_task(run["id"], "QA", "Run checks")
+    cycle = service.create_cycle(run["id"], "manual", "original-cycle")
+    task = service.create_task(run["id"], "QA", "Run checks", cycle_id=cycle.id)
     service.set_task_status(task.id, "failed", error_message="timed out")
+    service.set_cycle_status(cycle.id, "completed_with_failures", summary="old cycle")
     service.set_run_status(run["id"], "completed_with_failures", summary="old")
+    rules = [{"level": "REQUIRED", "text": "Use a dedicated Git worktree."}]
+    assert client.put(
+        f"/api/teams/{team_id}/rules",
+        json={"personality": "", "rules": rules},
+    ).status_code == 200
 
     response = client.post(f"/api/team-runs/{run['id']}/tasks/{task.id}/retry")
 
     assert response.status_code == 200
-    assert response.json()["team_run"]["status"] == "interrupted"
-    assert response.json()["task"]["status"] == "pending"
+    payload = response.json()
+    assert payload["team_run"]["status"] == "interrupted"
+    assert payload["task"]["id"] != task.id
+    assert payload["task"]["status"] == "pending"
+    assert payload["task"]["retry_of_task_id"] == task.id
+    assert payload["cycle"]["id"] != cycle.id
+    assert payload["cycle"]["source_type"] == "task_retry"
+    assert payload["cycle"]["source_id"] == task.id
+    assert payload["cycle"]["status"] == "interrupted"
+    assert payload["cycle"]["rules_snapshot"]["team"]["rules"] == rules
+
+    original_task = next(
+        item for item in service.list_tasks(run["id"], cycle.id) if item.id == task.id
+    )
+    original_cycle = service.get_cycle(cycle.id)
+    assert original_task.status == "failed"
+    assert original_task.error_message == "timed out"
+    assert original_cycle.status == "completed_with_failures"
+    assert original_cycle.summary == "old cycle"
     assert client.post(f"/api/team-runs/{run['id']}/tasks/{task.id}/retry").status_code == 409
 
 

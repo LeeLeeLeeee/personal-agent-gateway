@@ -110,6 +110,7 @@ def delete_persona(request: Request, persona_id: str, _session: None = session_d
         request.app.state.persona_service.delete_persona(persona_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Persona not found") from exc
+    request.app.state.space_policy_service.delete_persona_override(persona_id)
     return {"deleted": True}
 
 

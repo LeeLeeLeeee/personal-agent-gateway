@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -262,7 +263,7 @@ def test_delete_team_run_allows_missing_workspace(tmp_path):
     personas, teams = make_services(tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])
     run = teams.create_team_run("temporary test run", leader.id, [], "planning_only", 1)
-    Path(run.workspace_root).rmdir()
+    shutil.rmtree(run.workspace_root)
 
     teams.delete_team_run(run.id)
 
@@ -660,7 +661,7 @@ def test_interrupt_active_run_requeues_only_in_progress_work(tmp_path):
     assert [message.kind for message in teams.list_messages(run.id)].count("system_interrupted") == 1
 
 
-def test_retry_failed_task_requeues_only_selected_task_and_interrupts_run(tmp_path):
+def test_retry_failed_task_creates_linked_task_and_preserves_original(tmp_path):
     personas, teams = make_services(tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])
     member = personas.create_persona("W", "work", "d", [], [])
@@ -671,21 +672,33 @@ def test_retry_failed_task_requeues_only_selected_task_and_interrupts_run(tmp_pa
     teams.set_task_status(failed.id, "failed", error_message="timed out")
     teams.set_run_status(run.id, "completed_with_failures", summary="old summary")
 
-    updated_run, updated_task = teams.retry_failed_task(run.id, failed.id)
+    updated_run, retry_task, retry_cycle = teams.retry_failed_task(run.id, failed.id)
 
     assert updated_run.status == "interrupted"
     assert updated_run.summary is None
     assert updated_run.error_message is None
     assert updated_run.finished_at is None
-    assert updated_task.status == "pending"
-    assert updated_task.result is None
-    assert updated_task.error_message is None
-    assert updated_task.started_at is None
-    assert updated_task.finished_at is None
+    assert retry_cycle is None
+    assert retry_task.id != failed.id
+    assert retry_task.retry_of_task_id == failed.id
+    assert retry_task.status == "pending"
+    assert retry_task.result is None
+    assert retry_task.error_message is None
+    assert retry_task.started_at is None
+    assert retry_task.finished_at is None
+    original = next(task for task in teams.list_tasks(run.id) if task.id == failed.id)
+    assert original.status == "failed"
+    assert original.error_message == "timed out"
     assert teams.list_tasks(run.id)[0].result == "kept result"
     message = teams.list_messages(run.id)[-1]
     assert message.kind == "system_task_retried"
-    assert message.metadata == {"task_id": failed.id, "previous_error": "timed out"}
+    assert message.metadata == {
+        "original_cycle_id": None,
+        "original_task_id": failed.id,
+        "retry_cycle_id": None,
+        "retry_task_id": retry_task.id,
+        "previous_error": "timed out",
+    }
 
 
 def test_retry_failed_task_rejects_nonfailed_task_and_nonterminal_run(tmp_path):

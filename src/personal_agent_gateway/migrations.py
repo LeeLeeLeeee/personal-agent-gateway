@@ -444,6 +444,49 @@ def _migration_11_team_cycle_policies(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_12_task_retry_cycles(connection: sqlite3.Connection) -> None:
+    if "rules_snapshot_json" not in _columns(connection, "team_run_cycles"):
+        connection.execute(
+            "alter table team_run_cycles add column rules_snapshot_json text"
+        )
+    if "retry_of_task_id" not in _columns(connection, "team_tasks"):
+        connection.execute(
+            "alter table team_tasks add column retry_of_task_id text "
+            "references team_tasks(id) on delete set null"
+        )
+    connection.execute(
+        "create unique index if not exists idx_team_tasks_one_retry "
+        "on team_tasks(retry_of_task_id) where retry_of_task_id is not null"
+    )
+
+
+def _migration_13_space_policies(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        create table if not exists space_policies (
+            scope text not null,
+            scope_id text not null default '',
+            read_mode text not null,
+            read_path text,
+            write_mode text not null,
+            workspace_path text,
+            created_at text not null,
+            updated_at text not null,
+            primary key (scope, scope_id)
+        )
+        """
+    )
+    columns = _columns(connection, "team_runs")
+    for name in (
+        "working_root",
+        "artifact_root",
+        "worktree_branch",
+        "space_policy_snapshot_json",
+    ):
+        if name not in columns:
+            connection.execute(f"alter table team_runs add column {name} text")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -456,6 +499,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     (9, "hook-persona-targets", _migration_9_hook_persona_targets),
     (10, "transcript-origins", _migration_10_transcript_origins),
     (11, "team-cycle-policies", _migration_11_team_cycle_policies),
+    (12, "task-retry-cycles", _migration_12_task_retry_cycles),
+    (13, "space-policies", _migration_13_space_policies),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

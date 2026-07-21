@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -516,7 +517,15 @@ async def retry_team_task(
     if registry.is_running(team_run_id):
         raise HTTPException(status_code=409, detail="Team run already running")
     try:
-        run, task = service.retry_failed_task(team_run_id, task_id)
+        current = service.get_team_run(team_run_id)
+        rules_snapshot = request.app.state.rule_set_service.snapshot_for_team(
+            current.team_id
+        )
+        run, task, cycle = service.retry_failed_task(
+            team_run_id,
+            task_id,
+            rules_snapshot_json=json.dumps(rules_snapshot, ensure_ascii=False),
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run or task not found") from exc
     except ValueError as exc:
@@ -525,7 +534,8 @@ async def retry_team_task(
         {
             "type": "team.task.updated",
             "team_run_id": team_run_id,
-            "task_id": task_id,
+            "task_id": task.id,
+            "original_task_id": task_id,
             "task": _task_payload(task),
         }
     )
@@ -538,9 +548,17 @@ async def retry_team_task(
         resource_id=task_id,
         team_run_id=team_run_id,
         team_task_id=task_id,
-        metadata={"status": task.status},
+        metadata={
+            "retry_cycle_id": cycle.id if cycle else None,
+            "retry_task_id": task.id,
+            "status": task.status,
+        },
     )
-    return {"team_run": _team_run_payload(run), "task": _task_payload(task)}
+    return {
+        "team_run": _team_run_payload(run),
+        "task": _task_payload(task),
+        "cycle": _cycle_payload(cycle) if cycle else None,
+    }
 
 
 @router.post("/{team_run_id}/add-work")
@@ -837,6 +855,7 @@ _IMAGE_MIME_TYPES = {
 _IGNORED_DOCUMENT_DIRS = {
     ".git", ".hg", ".svn", ".cache", ".mypy_cache", ".pytest_cache", ".ruff_cache",
     ".venv", "venv", "__pycache__", "node_modules", "dist", "build", "coverage",
+    "project", "workspace",
 }
 _MAX_PREVIEW_BYTES = 1_000_000
 
@@ -973,6 +992,9 @@ def _team_run_payload(run: TeamRun) -> dict[str, object]:
         "configured_max_workers": run.max_workers,
         "execution_mode": "sequential",
         "workspace_root": run.workspace_root,
+        "working_root": run.working_root,
+        "artifact_root": run.artifact_root,
+        "space_policy": run.space_policy,
         "team_id": run.team_id,
         "rules_snapshot": run.rules_snapshot,
         "summary": run.summary,
@@ -1009,6 +1031,7 @@ def _task_payload(task: TeamTask) -> dict[str, object]:
         "id": task.id,
         "team_run_id": task.team_run_id,
         "cycle_id": task.cycle_id,
+        "retry_of_task_id": task.retry_of_task_id,
         "title": task.title,
         "description": task.description,
         "owner_agent_id": task.owner_agent_id,
@@ -1046,6 +1069,7 @@ def _cycle_payload(cycle: TeamRunCycle) -> dict[str, object]:
         "status": cycle.status,
         "rounds_budget": cycle.rounds_budget,
         "rounds_used": cycle.rounds_used,
+        "rules_snapshot": cycle.rules_snapshot,
         "summary": cycle.summary,
         "error_message": cycle.error_message,
         "created_at": cycle.created_at,

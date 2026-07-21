@@ -27,16 +27,22 @@ class PendingShellCommand:
 
 
 class WorkspaceTools:
-    def __init__(self, root: Path, approvals: ApprovalStore) -> None:
+    def __init__(
+        self,
+        root: Path,
+        approvals: ApprovalStore,
+        read_roots: list[Path] | None = None,
+    ) -> None:
         self.root = root.resolve()
+        self.read_roots = [path.resolve() for path in (read_roots or [])]
         self.approvals = approvals
 
     def fs_list(self, relative_path: str) -> list[str]:
-        path = self._resolve_workspace_path(relative_path)
+        path = self._resolve_read_path(relative_path)
         return sorted(child.name for child in path.iterdir())
 
     def fs_read(self, relative_path: str) -> str:
-        path = self._resolve_workspace_path(relative_path)
+        path = self._resolve_read_path(relative_path)
         return path.read_text(encoding="utf-8")
 
     def shell_request(self, command: str) -> PendingShellCommand:
@@ -85,4 +91,12 @@ class WorkspaceTools:
             path.relative_to(self.root)
         except ValueError as exc:
             raise ToolError(f"Path escapes workspace: {relative_path}") from exc
+        return path
+
+    def _resolve_read_path(self, value: str) -> Path:
+        requested = Path(value).expanduser()
+        path = requested.resolve() if requested.is_absolute() else (self.root / requested).resolve()
+        allowed_roots = [self.root, *self.read_roots]
+        if not any(path == root or root in path.parents for root in allowed_roots):
+            raise ToolError(f"Path escapes readable SPACE: {value}")
         return path

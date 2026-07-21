@@ -21,6 +21,7 @@ import { TeamRunCard } from "../../molecules/TeamRunCard/index.jsx";
 import { TeamPicker } from "../../organisms/TeamPicker/index.jsx";
 import { TeamRunDetail } from "../../organisms/TeamRunDetail/index.jsx";
 import { RulesView } from "../../organisms/RulesView/index.jsx";
+import { SpacesView } from "../../organisms/SpacesView/index.jsx";
 import { SettingsView } from "../../organisms/SettingsView/index.jsx";
 import { ArtifactsView } from "../../organisms/ArtifactsView/index.jsx";
 import { JobsView } from "../../organisms/JobsView/index.jsx";
@@ -51,6 +52,7 @@ export function GatewayApp() {
   const [notificationState, setNotificationState] = useState(getBrowserNotificationState);
   const [authSessions, setAuthSessions] = useState([]);
   const [rules, setRules] = useState(null);
+  const [spacePolicies, setSpacePolicies] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -110,6 +112,8 @@ export function GatewayApp() {
     setSelectedTeamRunId,
     teamRunDetail,
     teamRunDocuments,
+    teamRunDetailLoading,
+    teamRunDetailLoadError,
     handleTeamEvent,
     handleCreateTeamRun,
     handleTriggerTeamCycle,
@@ -125,7 +129,14 @@ export function GatewayApp() {
     handleSelectTeamRun,
     handleBackToTeamRuns,
     clearTeamRunView
-  } = useTeamRunController({ toast, confirm, setScreenError });
+  } = useTeamRunController({ toast, confirm, setScreenError, reloadKey: screenReloadKey });
+  const teamRunDetailReady = Boolean(
+    selectedTeamRunId && teamRunDetail?.run?.id === selectedTeamRunId
+  );
+  const teamRunDetailEffectiveLoading = Boolean(
+    selectedTeamRunId
+      && (teamRunDetailLoading || (!teamRunDetailReady && !teamRunDetailLoadError))
+  );
 
   const handleEnableNotifications = useCallback(async () => {
     const next = await enableBrowserNotifications();
@@ -262,6 +273,10 @@ export function GatewayApp() {
     } else if (screen === "rules") {
       load(api.teams(), setTeams);
       load(api.rules(), setRules);
+    } else if (screen === "spaces") {
+      load(api.spacePolicies(), setSpacePolicies);
+      load(api.teams(), setTeams);
+      load(api.personas(), setPersonas);
     } else if (screen === "settings") {
       load(api.settings(), setSettings);
       load(api.authSessions(), setAuthSessions);
@@ -374,6 +389,54 @@ export function GatewayApp() {
     const saved = await api.updateTeamRules(teamId, payload);
     if (!saved) { toast("Failed to save rules", "error"); return null; }
     setRules(await api.rules()); toast("Rules saved", "success"); return saved;
+  }
+
+  async function refreshSpaces() {
+    const next = await api.spacePolicies();
+    setSpacePolicies(next);
+    return next;
+  }
+  async function handleSaveGlobalSpace(payload) {
+    try {
+      const saved = await api.updateGlobalSpace(payload);
+      await refreshSpaces();
+      toast("Global space saved", "success");
+      return saved;
+    } catch (error) {
+      setScreenError(error);
+      return null;
+    }
+  }
+  async function handleSavePersonaSpace(personaId, payload) {
+    try {
+      const saved = await api.updatePersonaSpace(personaId, payload);
+      await refreshSpaces();
+      toast("Persona space saved", "success");
+      return saved;
+    } catch (error) {
+      setScreenError(error);
+      return null;
+    }
+  }
+  async function handleDeletePersonaSpace(personaId) {
+    try {
+      await api.deletePersonaSpace(personaId);
+      await refreshSpaces();
+      toast("Persona now inherits global space", "success");
+    } catch (error) {
+      setScreenError(error);
+    }
+  }
+  async function handleSaveTeamSpace(teamId, payload) {
+    try {
+      const saved = await api.updateTeamSpace(teamId, payload);
+      await refreshSpaces();
+      toast("Team space saved", "success");
+      return saved;
+    } catch (error) {
+      setScreenError(error);
+      return null;
+    }
   }
 
   async function handleCreateSchedule(payload) {
@@ -758,8 +821,10 @@ export function GatewayApp() {
               ← TEAM RUNS
             </a>
             <TeamRunDetail
-              detail={teamRunDetail}
-              documents={teamRunDocuments}
+              detail={teamRunDetailReady ? teamRunDetail : null}
+              documents={teamRunDetailReady ? teamRunDocuments : []}
+              loading={teamRunDetailEffectiveLoading}
+              loadError={teamRunDetailLoadError}
               onLoadDocument={(path) => api.teamDocumentContent(selectedTeamRunId, path)}
               onTriggerCycle={handleTriggerTeamCycle}
               onRetryAuto={handleRetryAuto}
@@ -848,6 +913,20 @@ export function GatewayApp() {
               onSaveGlobal={handleSaveGlobalRules}
               onSavePersonaBaseline={handleSavePersonaBaselineRules}
               onSaveTeam={handleSaveTeamRules}
+            />
+          ) : null}
+        </div>
+      ) : screen === "spaces" ? (
+        <div className="screen">
+          {spacePolicies ? (
+            <SpacesView
+              policies={spacePolicies}
+              teams={teams}
+              personas={personas}
+              onSaveGlobal={handleSaveGlobalSpace}
+              onSavePersona={handleSavePersonaSpace}
+              onDeletePersona={handleDeletePersonaSpace}
+              onSaveTeam={handleSaveTeamSpace}
             />
           ) : null}
         </div>

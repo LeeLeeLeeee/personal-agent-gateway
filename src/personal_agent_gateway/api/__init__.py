@@ -12,6 +12,7 @@ from personal_agent_gateway.api.personas import router as personas_router
 from personal_agent_gateway.api.rules import router as rules_router
 from personal_agent_gateway.api.schedules import router as schedules_router
 from personal_agent_gateway.api.settings import router as settings_router
+from personal_agent_gateway.api.spaces import router as spaces_router
 from personal_agent_gateway.api.team_runs import router as team_runs_router
 from personal_agent_gateway.api.teams import router as teams_router
 
@@ -30,6 +31,7 @@ __all__ = [
     "schedules_router",
     "session_config_router",
     "settings_router",
+    "spaces_router",
     "team_runs_router",
     "teams_router",
 ]

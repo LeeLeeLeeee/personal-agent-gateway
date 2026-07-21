@@ -14,6 +14,9 @@ updated_at: 2026-07-21
 
 # Component Inspector Reports
 
+- [GatewayApp Space Policy Integration Analysis — 2026-07-21 16:10](./GatewayApp/2026-07-21-1610.md)
+- [TeamRunDetail Loading Boundary — 2026-07-21 15:12](./TeamRunDetail/2026-07-21-1512.md)
+- [TeamRunDetail Information Hierarchy — 2026-07-21 14:59](./TeamRunDetail/2026-07-21-1459.md)
 - [OperationsView Team Run Policy Metadata — 2026-07-21 09:58](./OperationsView/2026-07-21-0958.md)
 - [HooksView Triggered Team Run Target — 2026-07-21 09:58](./HooksView/2026-07-21-0958.md)
 - [TeamRunDetail Cycle Policy Controls — 2026-07-21 09:58](./TeamRunDetail/2026-07-21-0958.md)

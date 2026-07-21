@@ -446,6 +446,28 @@ describe("api client", () => {
     }));
   });
 
+  it("reads and updates hierarchical space policies", async () => {
+    const payload = { read_mode: "home", read_path: "C:\\Users\\me", write_mode: "isolated", workspace_path: null };
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ global: payload, personas: [], teams: [] }))
+      .mockResolvedValueOnce(jsonResponse({ space_policy: { ...payload, scope: "global" } }))
+      .mockResolvedValueOnce(jsonResponse({ space_policy: { ...payload, scope: "persona", scope_id: "p 1" } }))
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce(jsonResponse({ space_policy: { ...payload, scope: "team", scope_id: "t 1" } }));
+
+    await expect(api.spacePolicies()).resolves.toEqual({ global: payload, personas: [], teams: [] });
+    await api.updateGlobalSpace(payload);
+    await api.updatePersonaSpace("p 1", payload);
+    await expect(api.deletePersonaSpace("p 1")).resolves.toBe(true);
+    await api.updateTeamSpace("t 1", payload);
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/spaces");
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/spaces/global", expect.objectContaining({ method: "PUT" }));
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/spaces/personas/p%201", expect.objectContaining({ method: "PUT" }));
+    expect(fetch).toHaveBeenNthCalledWith(4, "/api/spaces/personas/p%201", { method: "DELETE" });
+    expect(fetch).toHaveBeenNthCalledWith(5, "/api/spaces/teams/t%201", expect.objectContaining({ method: "PUT" }));
+  });
+
   it("teamDocuments() returns the documents array and teamDocumentContent() fetches by path", async () => {
     fetch
       .mockResolvedValueOnce(jsonResponse({ documents: [{ path: "notes.md", kind: "md", previewable: true }] }))

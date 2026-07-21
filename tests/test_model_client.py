@@ -541,7 +541,7 @@ def test_parse_claude_output_includes_upstream_session_id() -> None:
 
 
 class _HangingStdout:
-    async def read(self) -> bytes:
+    async def read(self, _size: int = -1) -> bytes:
         await asyncio.sleep(60)
         return b""
 
@@ -615,7 +615,7 @@ class _ScriptedStdout:
         self._lines = list(lines)
         self._hang_after = hang_after
 
-    async def readline(self) -> bytes:
+    async def read(self, _size: int = -1) -> bytes:
         if self._lines:
             delay, line = self._lines.pop(0)
             await asyncio.sleep(delay)
@@ -764,3 +764,44 @@ async def test_codex_client_waits_for_final_message_after_early_terminal_event(m
 
     assert response.content == "done"
     assert fake.killed is False
+
+
+@pytest.mark.asyncio
+async def test_codex_client_reads_large_json_event_across_chunks(monkeypatch) -> None:
+    answer = "x" * 70_000
+    event = json.dumps(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": answer}}
+    ).encode() + b"\n"
+    fake = _StreamingProcess([(0, event[:32_768]), (0, event[32_768:])])
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    monkeypatch.setattr("personal_agent_gateway.model_client.asyncio.create_subprocess_exec", fake_create)
+    client = CodexModelClient(binary="codex", model="m", workspace_root=Path("."))
+
+    response = await client.complete([{"role": "user", "content": "hi"}])
+
+    assert response.content == answer
+    assert fake.killed is False
+
+
+@pytest.mark.asyncio
+async def test_codex_client_cleans_up_on_unexpected_stream_error(monkeypatch) -> None:
+    class _FailingStdout:
+        async def read(self, _size: int = -1) -> bytes:
+            raise RuntimeError("stream failed")
+
+    fake = _StreamingProcess([])
+    fake.stdout = _FailingStdout()
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    monkeypatch.setattr("personal_agent_gateway.model_client.asyncio.create_subprocess_exec", fake_create)
+    client = CodexModelClient(binary="codex", model="m", workspace_root=Path("."))
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        await client.complete([{"role": "user", "content": "hi"}])
+
+    assert fake.killed is True

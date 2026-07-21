@@ -20,6 +20,7 @@ WIRE_TOOL_NAMES: dict[ToolName, str] = {
 INTERNAL_TOOL_NAMES = {wire_name: tool_name for tool_name, wire_name in WIRE_TOOL_NAMES.items()}
 _PROCESS_EXIT_GRACE_SECONDS = 2.0
 _PROCESS_KILL_GRACE_SECONDS = 5.0
+_STREAM_READ_CHUNK_BYTES = 64 * 1024
 
 
 class _CodexIdleTimeout(TimeoutError):
@@ -101,6 +102,7 @@ class CodexModelClient:
         timeout_seconds: int = 3600,
         idle_timeout_seconds: int = 600,
         on_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
+        additional_write_dirs: list[Path] | None = None,
         *,
         effort: str | None = None,
         upstream_session_id: str | None = None,
@@ -116,6 +118,7 @@ class CodexModelClient:
         self._timeout_seconds = timeout_seconds
         self._idle_timeout_seconds = idle_timeout_seconds
         self._on_event = on_event
+        self._additional_write_dirs = [path.resolve() for path in (additional_write_dirs or [])]
 
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
         stdout_parts: list[str] = []
@@ -188,47 +191,64 @@ class CodexModelClient:
             process.stdin.close()
 
         stderr_task = asyncio.create_task(process.stderr.read())
+        pending = bytearray()
         try:
             while True:
                 try:
-                    line = await asyncio.wait_for(
-                        process.stdout.readline(),
+                    chunk = await asyncio.wait_for(
+                        process.stdout.read(_STREAM_READ_CHUNK_BYTES),
                         timeout=self._idle_timeout_seconds,
                     )
                 except TimeoutError as exc:
                     raise _CodexIdleTimeout from exc
-                if not line:
+                if not chunk:
+                    if pending:
+                        pending.extend(b"\n")
+                    else:
+                        break
+                else:
+                    pending.extend(chunk)
+
+                while True:
+                    newline = pending.find(b"\n")
+                    if newline < 0:
+                        break
+                    line = bytes(pending[: newline + 1])
+                    del pending[: newline + 1]
+                    text = line.decode(errors="replace")
+                    stdout_parts.append(text)
+                    event = _parse_json_line(text)
+                    if event is not None and self._on_event is not None:
+                        await self._on_event(event)
+                    if (
+                        event is not None
+                        and _is_codex_terminal_event(event)
+                        and _parse_codex_final_message("".join(stdout_parts)) is not None
+                    ):
+                        try:
+                            stderr = await asyncio.wait_for(
+                                stderr_task,
+                                timeout=_PROCESS_EXIT_GRACE_SECONDS,
+                            )
+                            await asyncio.wait_for(
+                                process.wait(),
+                                timeout=_PROCESS_EXIT_GRACE_SECONDS,
+                            )
+                        except TimeoutError:
+                            if not stderr_task.done():
+                                stderr_task.cancel()
+                            await _terminate_process_tree(process)
+                            stderr = b""
+                        return "".join(stdout_parts), stderr.decode(errors="replace")
+
+                if not chunk:
                     break
-                text = line.decode(errors="replace")
-                stdout_parts.append(text)
-                event = _parse_json_line(text)
-                if event is not None and self._on_event is not None:
-                    await self._on_event(event)
-                if (
-                    event is not None
-                    and _is_codex_terminal_event(event)
-                    and _parse_codex_final_message("".join(stdout_parts)) is not None
-                ):
-                    try:
-                        stderr = await asyncio.wait_for(
-                            stderr_task,
-                            timeout=_PROCESS_EXIT_GRACE_SECONDS,
-                        )
-                        await asyncio.wait_for(
-                            process.wait(),
-                            timeout=_PROCESS_EXIT_GRACE_SECONDS,
-                        )
-                    except TimeoutError:
-                        if not stderr_task.done():
-                            stderr_task.cancel()
-                        await _terminate_process_tree(process)
-                        stderr = b""
-                    return "".join(stdout_parts), stderr.decode(errors="replace")
         except BaseException:
             if not stderr_task.done():
                 stderr_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await stderr_task
+            await _terminate_process_tree(process)
             raise
 
         stderr = await stderr_task
@@ -261,6 +281,8 @@ class CodexModelClient:
             str(self._workspace_root),
             "--skip-git-repo-check",
         ]
+        for path in self._additional_write_dirs:
+            command.extend(["--add-dir", str(path)])
         if self._model and self._model != "default":
             command.extend(["-m", self._model])
         if self._profile:
@@ -293,6 +315,7 @@ class ClaudeModelClient:
         permission_mode: str = "manual",
         agent: str | None = None,
         timeout_seconds: int = 600,
+        additional_dirs: list[Path] | None = None,
         *,
         upstream_session_id: str | None = None,
     ) -> None:
@@ -304,6 +327,7 @@ class ClaudeModelClient:
         self._agent = agent
         self._upstream_session_id = upstream_session_id
         self._timeout_seconds = timeout_seconds
+        self._additional_dirs = [path.resolve() for path in (additional_dirs or [])]
 
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
         try:
@@ -354,6 +378,9 @@ class ClaudeModelClient:
             command.extend(["--permission-mode", self._permission_mode])
         if self._agent:
             command.extend(["--agent", self._agent])
+        if self._additional_dirs:
+            command.append("--add-dir")
+            command.extend(str(path) for path in self._additional_dirs)
         return command
 
 

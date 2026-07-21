@@ -14,6 +14,7 @@ export const TEAM_NAV = [
   { key: "teams", label: "Team Runs" },
   { key: "team-admin", label: "Teams" },
   { key: "personas", label: "Personas" },
+  { key: "spaces", label: "Spaces" },
   { key: "rules", label: "Rules" }
 ];
 

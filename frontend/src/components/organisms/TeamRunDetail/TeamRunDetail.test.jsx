@@ -5,7 +5,7 @@ import { vi } from "vitest";
 import { TeamRunDetail } from "./index.jsx";
 
 describe("TeamRunDetail", () => {
-  it("renders header, agent lanes, task board, and activity", () => {
+  it("renders the overview first and moves tasks and activity into tabs", async () => {
     render(
       <TeamRunDetail
         detail={{
@@ -19,13 +19,30 @@ describe("TeamRunDetail", () => {
 
     expect(screen.getByText("Design")).toBeInTheDocument();
     expect(screen.getByText("Tech Lead")).toBeInTheDocument();
+    expect(screen.queryByText("Define schema")).not.toBeInTheDocument();
+    expect(screen.queryByText("Planning started")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
     expect(screen.getByText("Define schema")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "ACTIVITY" }));
     expect(screen.getByText("Planning started")).toBeInTheDocument();
   });
 
   it("renders a placeholder when no run is selected", () => {
     render(<TeamRunDetail detail={null} />);
     expect(screen.getByText("No team run selected.")).toBeInTheDocument();
+  });
+
+  it("shows loading and load-error states without flashing the empty placeholder", () => {
+    const { rerender } = render(<TeamRunDetail detail={null} loading />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("LOADING TEAM RUN...");
+    expect(screen.queryByText("No team run selected.")).not.toBeInTheDocument();
+
+    rerender(<TeamRunDetail detail={null} loadError />);
+    expect(screen.getByText("Team run could not be loaded. Use Retry request above.")).toBeInTheDocument();
+    expect(screen.queryByText("No team run selected.")).not.toBeInTheDocument();
   });
 
   it("submits additional work through onAddWork", async () => {
@@ -122,14 +139,16 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    expect(screen.getByText("1 documents")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
     expect(screen.getByText("DOCS 1")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: /SHARED \/ HANDOFFS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "OVERVIEW" }));
+    await userEvent.click(screen.getByText(/SHARED \/ HANDOFFS/));
     const handoffsSection = container.querySelector(".team-handoffs");
     expect(within(handoffsSection).getByText("which schema?")).toBeInTheDocument();
     expect(within(handoffsSection).getByText("use schema X")).toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Build API" }));
     const taskDialog = screen.getByRole("dialog", { name: "Task details: Build API" });
     expect(within(taskDialog).getByText("API built")).toBeInTheDocument();
@@ -193,6 +212,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Run QA" }));
     const retry = screen.getByRole("button", { name: "Retry failed task" });
     await userEvent.click(retry);
@@ -227,14 +247,14 @@ describe("TeamRunDetail", () => {
         onLoadDocument={onLoadDocument}
       />
     );
-    await userEvent.click(screen.getByRole("tab", { name: /DOCUMENTS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /FILES/ }));
     await userEvent.click(screen.getByText("notes.md"));
     expect(screen.getByText("docs")).toBeInTheDocument();
     expect(onLoadDocument).toHaveBeenCalledWith("docs/notes.md");
     expect(await screen.findByRole("heading", { name: "hi" })).toBeInTheDocument();
   });
 
-  it("switches between detail tabs (activity default, results, documents)", async () => {
+  it("shows overview by default and keeps reports collapsed away from raw activity", async () => {
     render(
       <TeamRunDetail
         detail={{
@@ -249,17 +269,18 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    // LIVE ACTIVITY is the default tab
-    expect(screen.getByText("Planning started")).toBeInTheDocument();
-
-    // RESULTS shows agent reports + final summary, and unmounts the activity timeline
-    await userEvent.click(screen.getByRole("tab", { name: "RESULTS" }));
-    expect(screen.getByText("Feature built")).toBeInTheDocument();
     expect(screen.getByText("All shipped.")).toBeInTheDocument();
     expect(screen.queryByText("Planning started")).not.toBeInTheDocument();
+    expect(screen.getByText("Feature built")).not.toBeVisible();
+
+    await userEvent.click(screen.getByText(/AGENT REPORTS/));
+    expect(screen.getByText("Feature built")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "ACTIVITY" }));
+    expect(screen.getByText("Planning started")).toBeInTheDocument();
   });
 
-  it("renders continuous lifecycle Cycle status and Hook lineage newest first", () => {
+  it("renders continuous lifecycle Cycle history newest first", async () => {
     const { container } = render(
       <TeamRunDetail detail={{
         run: {
@@ -285,6 +306,7 @@ describe("TeamRunDetail", () => {
       }} />
     );
 
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
     expect(screen.getByText("continuous")).toBeInTheDocument();
     expect(screen.getByText("hook · hook-run-2")).toBeInTheDocument();
     expect(screen.getByText("First mail done")).toBeInTheDocument();
@@ -497,16 +519,18 @@ describe("TeamRunDetail", () => {
       }} />
     );
 
+    await userEvent.click(screen.getByRole("tab", { name: "ACTIVITY" }));
     expect([...container.querySelectorAll(".tl-detail")].map((node) => node.textContent)).toEqual([
       "new report", "new answer", "new question", "old report", "old answer", "old question"
     ]);
 
-    await userEvent.click(screen.getByRole("tab", { name: "RESULTS" }));
+    await userEvent.click(screen.getByRole("tab", { name: "OVERVIEW" }));
+    await userEvent.click(screen.getByText(/AGENT REPORTS/));
     expect([...container.querySelectorAll(".team-agent-report-body")].map((node) => node.textContent)).toEqual([
       "new report", "old report"
     ]);
 
-    await userEvent.click(screen.getByRole("tab", { name: /SHARED \/ HANDOFFS/ }));
+    await userEvent.click(screen.getByText(/SHARED \/ HANDOFFS/));
     const handoffs = [...container.querySelectorAll(".team-handoff")];
     expect(handoffs[0]).toHaveTextContent("new question");
     expect(handoffs[0]).toHaveTextContent("new answer");
@@ -533,7 +557,7 @@ describe("TeamRunDetail", () => {
       }} />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /SHARED \/ HANDOFFS/ }));
+    await userEvent.click(screen.getByText(/SHARED \/ HANDOFFS/));
     const byQuestion = new Map(
       [...container.querySelectorAll(".team-handoff")].map((handoff) => [
         handoff.querySelector(".team-handoff-q .team-handoff-text").textContent,
@@ -545,7 +569,7 @@ describe("TeamRunDetail", () => {
     expect(byQuestion.get("still waiting")).toContain("awaiting answer");
   });
 
-  it("shows assigned task names and a phase fallback for the leader", () => {
+  it("shows assigned task names and a phase fallback for the leader", async () => {
     render(<TeamRunDetail detail={{
       run: { id: "r1", goal: "Work", status: "running", run_mode: "plan_and_execute" },
       agents: [
@@ -557,7 +581,8 @@ describe("TeamRunDetail", () => {
     }} />);
 
     expect(screen.getByText("Coordinating agents")).toBeInTheDocument();
-    expect(screen.getAllByText("Build API").length).toBeGreaterThanOrEqual(2);
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    expect(screen.getByText("Build API")).toBeInTheDocument();
     expect(screen.getByText("Worker", { selector: ".team-task-owner-name" })).toBeInTheDocument();
   });
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 119,
+  "document_count": 122,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -1726,6 +1726,87 @@
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `api-state`, `test` - Verdict: 현재 단일 `EventSource`와 local React state 소유권은 유지하고, stream identity   기반 bounded dedup과 Team/Hook collection의 eve..."
     },
     {
+      "path": "docs/component-inspector/GatewayApp/2026-07-21-1610.md",
+      "title": "GatewayApp Space Policy Integration Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "space-policy",
+      "status": "done",
+      "aliases": [
+        "GatewayApp space policy analysis",
+        "SPACE 정책 UI 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "space-policy"
+      ],
+      "updated_at": "2026-07-21",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp Space Policy Integration Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 Effect"
+        },
+        {
+          "level": 2,
+          "text": "외부 라이브러리와 로컬 primitive"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 추적"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / 스토리"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `refactor`, `api-state`, `test` - Verdict: SPACE 정책의 원격 상태와 mutation은 기존 page container인 `GatewayApp`이 소유하고, 새 `SpacesView` orga..."
+    },
+    {
       "path": "docs/component-inspector/HooksView/2026-07-20-1037.md",
       "title": "HooksView Create Form Disclosure Analysis",
       "type": "report",
@@ -3084,6 +3165,158 @@
       "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: 기존 Cycle 목록 위에 policy panel을 추가하고 Task 7 callback을 소비하는 것이 현재 소유권과 맞다. 기존 STANDARD/add-work/resume/task UI는 p..."
     },
     {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-21-1459.md",
+      "title": "TeamRunDetail Information Hierarchy Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-detail-information-hierarchy",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail analysis",
+        "TeamRunDetail 컴포넌트 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "information-architecture"
+      ],
+      "updated_at": "2026-07-21",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Information Hierarchy Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "처음 보는 사람을 위한 구조 설명"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 3,
+          "text": "주입 callback / controller action"
+        },
+        {
+          "level": 2,
+          "text": "State / Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 라이브러리 프리미티브"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "현재 정보 계층 문제"
+        },
+        {
+          "level": 2,
+          "text": "권장 표현 구성"
+        },
+        {
+          "level": 2,
+          "text": "Style / Layout"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Evidence"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `refactor`, `style` - Verdict: `TeamRunDetail`의 feature ownership과 부모 callback API는 유지한다. 다만 930줄 안에 개요, 상태별 조치, Cycle 전체 이력, ..."
+    },
+    {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-21-1512.md",
+      "title": "TeamRunDetail Loading Boundary Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-detail-loading",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail loading analysis",
+        "Team Run 로딩 표현"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "loading",
+        "team-run"
+      ],
+      "updated_at": "2026-07-21",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Loading Boundary Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 추적"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / Stories"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Evidence"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: controller가 실제 detail 요청의 `loading/error` lifecycle을 소유하고 선택 effect 시작 시 detail/documents를 비운다. effect 전 첫 re..."
+    },
+    {
       "path": "docs/component-inspector/TeamsView/2026-07-15-1250.md",
       "title": "TeamsView Persona Card Selection Component Analysis",
       "type": "report",
@@ -3184,7 +3417,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [OperationsView Team Run Policy Metadata — 2026-07-21 09:58](./OperationsView/2026-07-21-0958.md) - [HooksView Triggered Team Run Target — 2026-07-21 09:58](./HooksView/2026-07-21-0958.md) - [TeamRunDetail Cycle Pol..."
+      "excerpt": "- [GatewayApp Space Policy Integration Analysis — 2026-07-21 16:10](./GatewayApp/2026-07-21-1610.md) - [TeamRunDetail Loading Boundary — 2026-07-21 15:12](./TeamRunDetail/2026-07-21-1512.md) - [TeamRunDetail Informati..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",

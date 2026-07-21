@@ -110,6 +110,20 @@ def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:
     return "TEAM RULES (frozen at run start):\n" + "\n".join(lines).strip() + "\n\n"
 
 
+def _space_block(run: TeamRun) -> str:
+    policy = run.space_policy or {}
+    read_scope = policy.get("read_path") or policy.get("read_mode") or "configured SPACE"
+    working_root = run.working_root or run.workspace_root
+    artifact_root = run.artifact_root or run.workspace_root
+    return (
+        "SPACE POLICY (frozen at run start):\n"
+        f"- Read scope: {read_scope}\n"
+        f"- Working root: {working_root}\n"
+        f"- Artifact root: {artifact_root}\n"
+        "- Do not write outside the working root or artifact root unless write mode is full_access.\n\n"
+    )
+
+
 class TeamRuntime:
     def __init__(
         self,
@@ -184,7 +198,9 @@ class TeamRuntime:
     ) -> list[dict[str, str]] | UserDecisionResolution:
         leader_agent = self._teams.get_agent(leader.id)
         model = self._model_factory(leader_agent)
-        prompt = _rules_block(run.rules_snapshot, include_persona_baseline=False) + PLANNING_PROMPT.format(
+        prompt = _space_block(run) + _rules_block(
+            self._rules_snapshot(run, cycle_id), include_persona_baseline=False
+        ) + PLANNING_PROMPT.format(
             goal=run.goal,
             persona_snapshot_json=json.dumps(leader_agent.persona_snapshot, ensure_ascii=False),
         )
@@ -244,7 +260,11 @@ class TeamRuntime:
             if not pending:
                 return
             task = pending[0]
-            worker = workers[counter % len(workers)]
+            assigned = next(
+                (worker for worker in workers if worker.id == task.owner_agent_id),
+                None,
+            )
+            worker = assigned or workers[counter % len(workers)]
             counter += 1
             task, worker = self._teams.start_task(task.id, worker.id)
             await self._publish(
@@ -380,7 +400,7 @@ class TeamRuntime:
     ) -> dict[str, object]:
         leader_agent = self._teams.get_agent(leader.id)
         model = self._model_factory(leader_agent)
-        prompt = MEDIATION_PROMPT.format(
+        prompt = _space_block(run) + MEDIATION_PROMPT.format(
             goal=run.goal,
             task_title=task.title,
             question=question,
@@ -400,7 +420,9 @@ class TeamRuntime:
         return "\n\n".join(lines) if lines else "(no completed task outputs yet)"
 
     def _worker_prompt(self, run: TeamRun, worker: TeamAgent, task: TeamTask) -> str:
-        prompt = _rules_block(run.rules_snapshot, include_persona_baseline=True) + WORKER_PROMPT.format(
+        prompt = _space_block(run) + _rules_block(
+            self._rules_snapshot(run, task.cycle_id), include_persona_baseline=True
+        ) + WORKER_PROMPT.format(
             persona_snapshot_json=json.dumps(worker.persona_snapshot, ensure_ascii=False),
             goal=run.goal,
             task_title=task.title,
@@ -513,7 +535,9 @@ class TeamRuntime:
             )
             or "(none)"
         )
-        prompt = ADD_WORK_PROMPT.format(goal=run.goal, existing_titles=existing, instruction=instruction)
+        prompt = _space_block(run) + ADD_WORK_PROMPT.format(
+            goal=run.goal, existing_titles=existing, instruction=instruction
+        )
         response = await model.complete([{"role": "user", "content": prompt}])
         if response.upstream_session_id:
             self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
@@ -557,8 +581,8 @@ class TeamRuntime:
         )
         leader_agent = self._teams.get_agent(leader.id)
         model = self._model_factory(leader_agent)
-        prompt = _rules_block(
-            run.rules_snapshot, include_persona_baseline=False
+        prompt = _space_block(run) + _rules_block(
+            self._rules_snapshot(run, cycle_id), include_persona_baseline=False
         ) + SYNTHESIS_PROMPT.format(goal=run.goal, results=results)
         decision_context = "\n\n".join(
             context
@@ -614,6 +638,15 @@ class TeamRuntime:
             }
         )
         return run
+
+    def _rules_snapshot(
+        self, run: TeamRun, cycle_id: str | None
+    ) -> dict | None:
+        if cycle_id is not None:
+            cycle = self._teams.get_cycle(cycle_id)
+            if cycle.rules_snapshot is not None:
+                return cycle.rules_snapshot
+        return run.rules_snapshot
 
     def _settle_canceled(self, run: TeamRun, cycle_id: str | None = None) -> None:
         for task in self._teams.list_tasks(run.id, cycle_id):

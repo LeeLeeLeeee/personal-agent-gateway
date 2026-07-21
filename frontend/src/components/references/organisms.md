@@ -50,6 +50,12 @@ Project-local Atomic Design catalog for the Vite React frontend.
 - Use when: Rendering the persona master-detail. The local agent catalog drives backend/model/model-specific effort and other select options; save includes `default_options`. The avatar block opens a modal that reuses `AvatarPicker`.
 - Don't use when: Loading personas or the avatar manifest; the container owns API calls.
 
+### SpacesView
+- Path: `src/components/organisms/SpacesView/`
+- Props: `{ policies, teams, personas, onSaveGlobal, onSavePersona, onDeletePersona, onSaveTeam }`
+- Use when: Editing required Global/Team SPACE policies and optional Persona overrides with TEAM → PERSONA → GLOBAL precedence.
+- Don't use when: Resolving effective runtime paths or creating git worktrees; backend services own enforcement and preparation.
+
 ### AvatarPicker
 - Path: `src/components/organisms/AvatarPicker/`
 - Props: `{ avatars, value, onSelect }`

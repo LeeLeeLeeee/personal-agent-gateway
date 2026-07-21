@@ -130,6 +130,62 @@ describe("useTeamRunController request ownership", () => {
     expect(result.current.teamRunDocuments).toEqual(["run-b.md"]);
     expect(api.teamRuns).toHaveBeenCalledTimes(1);
   });
+
+  it("clears the previous run while detail and documents settle independently", async () => {
+    const nextDetail = deferred();
+    const nextDocuments = deferred();
+    api.teamRunDetail.mockImplementation((id) => (
+      id === "run-b" ? nextDetail.promise : Promise.resolve(detail(id))
+    ));
+    api.teamDocuments.mockImplementation((id) => (
+      id === "run-b" ? nextDocuments.promise : Promise.resolve([`${id}.md`])
+    ));
+    const { result } = renderController();
+    await selectRun(result, "run-a");
+
+    act(() => result.current.handleSelectTeamRun("run-b"));
+    await waitFor(() => expect(result.current.teamRunDetailLoading).toBe(true));
+    expect(result.current.teamRunDetail).toBeNull();
+    expect(result.current.teamRunDocuments).toEqual([]);
+
+    await act(async () => {
+      nextDetail.resolve(detail("run-b"));
+      await nextDetail.promise;
+    });
+    expect(result.current.teamRunDetailLoading).toBe(false);
+    expect(result.current.teamRunDetail.run.id).toBe("run-b");
+    expect(result.current.teamRunDocuments).toEqual([]);
+
+    await act(async () => {
+      nextDocuments.resolve(["run-b.md"]);
+      await nextDocuments.promise;
+    });
+    expect(result.current.teamRunDocuments).toEqual(["run-b.md"]);
+  });
+
+  it("ends loading on detail failure and retries when reloadKey changes", async () => {
+    const setScreenError = vi.fn();
+    const requestError = new Error("detail failed");
+    api.teamRunDetail
+      .mockRejectedValueOnce(requestError)
+      .mockResolvedValueOnce(detail("run-a"));
+    const { result, rerender } = renderHook(
+      ({ reloadKey }) => useTeamRunController({
+        toast: vi.fn(), confirm: vi.fn(), setScreenError, reloadKey
+      }),
+      { initialProps: { reloadKey: 0 } }
+    );
+
+    act(() => result.current.handleSelectTeamRun("run-a"));
+    await waitFor(() => expect(result.current.teamRunDetailLoadError).toBe(true));
+    expect(result.current.teamRunDetailLoading).toBe(false);
+    expect(setScreenError).toHaveBeenCalledWith(requestError);
+
+    rerender({ reloadKey: 1 });
+    await waitFor(() => expect(result.current.teamRunDetail?.run?.id).toBe("run-a"));
+    expect(result.current.teamRunDetailLoading).toBe(false);
+    expect(result.current.teamRunDetailLoadError).toBe(false);
+  });
 });
 
 describe("useTeamRunController manual cycle request identity", () => {

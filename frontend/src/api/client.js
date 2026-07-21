@@ -309,6 +309,32 @@ export const api = {
     const response = await fetch(`/api/personas/${encodeURIComponent(id)}`, { method: "DELETE" });
     return response.ok;
   },
+  async spacePolicies() {
+    return jsonOrNull(await fetch("/api/spaces"));
+  },
+  async updateGlobalSpace(payload) {
+    const body = await jsonOrNull(await fetch("/api/spaces/global", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+    return body?.space_policy || null;
+  },
+  async updatePersonaSpace(personaId, payload) {
+    const body = await jsonOrNull(await fetch(`/api/spaces/personas/${encodeURIComponent(personaId)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+    return body?.space_policy || null;
+  },
+  async deletePersonaSpace(personaId) {
+    const response = await fetch(`/api/spaces/personas/${encodeURIComponent(personaId)}`, { method: "DELETE" });
+    if (!response.ok) await jsonOrNull(response);
+    return true;
+  },
+  async updateTeamSpace(teamId, payload) {
+    const body = await jsonOrNull(await fetch(`/api/spaces/teams/${encodeURIComponent(teamId)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    }));
+    return body?.space_policy || null;
+  },
   async teamRuns() {
     return jsonList(await fetch("/api/team-runs"), "team_runs");
   },

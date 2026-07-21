@@ -120,6 +120,7 @@ class HookRunner:
                 hook.target_options,
                 hook_run_id=run_id,
                 system_prompt=persona_system_prompt(hook.target_persona_snapshot),
+                persona_id=hook.target_persona_id,
             )
         else:
             runtime = self._runtime_factory.create_headless_runtime(

@@ -8,6 +8,7 @@ export default defineConfig({
     setupFiles: "./src/test/setup.js"
   },
   server: {
+    allowedHosts: ["mpx-local.younghyun-lee.com"],
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8787",

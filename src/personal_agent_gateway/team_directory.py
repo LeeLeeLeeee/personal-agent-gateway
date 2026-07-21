@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.personas import PersonaService
+from personal_agent_gateway.space_policies import SpacePolicyService
 
 
 @dataclass(frozen=True)
@@ -23,9 +24,15 @@ def _now() -> str:
 
 
 class TeamService:
-    def __init__(self, db: Database, personas: PersonaService) -> None:
+    def __init__(
+        self,
+        db: Database,
+        personas: PersonaService,
+        space_policies: SpacePolicyService | None = None,
+    ) -> None:
         self._db = db
         self._personas = personas
+        self._space_policies = space_policies
 
     def create_team(
         self, name: str, description: str, leader_persona_id: str, member_persona_ids: list[str]
@@ -39,6 +46,8 @@ class TeamService:
             (team_id, name, description, leader_persona_id,
              json.dumps(member_persona_ids, ensure_ascii=False), now, now),
         )
+        if self._space_policies is not None:
+            self._space_policies.ensure_team(team_id)
         return self.get_team(team_id)
 
     def get_team(self, team_id: str) -> Team:
@@ -78,6 +87,8 @@ class TeamService:
 
     def delete_team(self, team_id: str) -> None:
         self.get_team(team_id)
+        if self._space_policies is not None:
+            self._space_policies.delete_team_policy(team_id)
         self._db.execute("delete from teams where id = ?", (team_id,))
 
     def _validate_roster(self, leader_persona_id: str, member_persona_ids: list[str]) -> None:

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
+import { LoaderCube } from "../../molecules/LoaderCube/index.jsx";
 import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
 import { DocumentPreview } from "../DocumentPreview/index.jsx";
 import { fmtDateTime } from "../../../lib/time.js";
@@ -9,10 +10,11 @@ const TEAM_TASK_COLUMNS = ["pending", "in_progress", "blocked", "completed", "fa
 const TERMINAL_STATUSES = ["completed", "completed_with_failures", "failed", "canceled"];
 
 const DETAIL_TABS = [
-  ["results", "RESULTS"],
-  ["activity", "LIVE ACTIVITY"],
-  ["handoffs", "SHARED / HANDOFFS"],
-  ["documents", "DOCUMENTS"]
+  ["overview", "OVERVIEW"],
+  ["tasks", "TASKS"],
+  ["history", "HISTORY"],
+  ["activity", "ACTIVITY"],
+  ["files", "FILES"]
 ];
 
 const RUN_PHASES = [
@@ -318,7 +320,8 @@ function DecisionRequestPanel({ request, onSubmit }) {
 }
 
 export function TeamRunDetail({
-  detail, documents = [], onLoadDocument, onAddWork, onResume, onAnswerDecision,
+  detail, documents = [], loading = false, loadError = false,
+  onLoadDocument, onAddWork, onResume, onAnswerDecision,
   onRetryTask, onCancel, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto
 }) {
   const [workInput, setWorkInput] = useState("");
@@ -331,7 +334,8 @@ export function TeamRunDetail({
   const [workDialogOpen, setWorkDialogOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
-  const [activeTab, setActiveTab] = useState("activity");
+  const [activeTab, setActiveTab] = useState("overview");
+  const [showAllTasks, setShowAllTasks] = useState(false);
   const [canceling, setCanceling] = useState(false);
   const run = detail?.run;
   const nextRunAt = detail?.activeAutoSeries?.next_run_at || null;
@@ -357,6 +361,22 @@ export function TeamRunDetail({
     };
   }, [nextRunAt]);
 
+  if (loading) {
+    return (
+      <div className="team-run-empty" role="status" aria-live="polite">
+        <LoaderCube label="LOADING TEAM RUN" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="team-run-empty mono" role="status">
+        Team run could not be loaded. Use Retry request above.
+      </div>
+    );
+  }
+
   if (!run) {
     return <div className="team-run-empty mono">No team run selected.</div>;
   }
@@ -365,6 +385,7 @@ export function TeamRunDetail({
   const tasks = detail.tasks || [];
   const messages = detail.messages || [];
   const cycles = [...(detail.cycles || [])].sort((left, right) => right.sequence - left.sequence);
+  const currentCycle = cycles[0] || null;
   const previousCycle = cycles.find(
     (cycle) => ["completed", "completed_with_failures"].includes(cycle.status)
   );
@@ -378,6 +399,11 @@ export function TeamRunDetail({
   const activity = newestFirst(messages);
   const handoffs = buildHandoffs(messages);
   const reportsByTask = groupReportsByTask(messages);
+  const tasksHaveCycleIds = tasks.some((task) => task.cycle_id);
+  const currentCycleTasks = currentCycle && tasksHaveCycleIds
+    ? tasks.filter((task) => task.cycle_id === currentCycle.id)
+    : tasks;
+  const visibleTasks = showAllTasks ? tasks : currentCycleTasks;
   const selectedTask = selectedTaskId ? findTask(tasks, selectedTaskId) : null;
   const selectedTaskReports = selectedTask ? (reportsByTask.get(selectedTask.id) || []) : [];
   const canRetrySelectedTask = Boolean(
@@ -400,12 +426,59 @@ export function TeamRunDetail({
 
   return (
     <section className="team-run-detail" aria-label="Team run detail">
-      <header className="team-run-detail-head">
-        <div className="team-run-detail-id-row">
-          <span className="mono team-run-detail-id">{run.id}</span>
-          <StatusBadge kind={run.status} />
+      <header className="team-run-hero">
+        <div className="team-run-hero-main">
+          <div className="team-run-detail-id-row">
+            <span className="mono team-run-detail-id">TEAM RUN · {run.id.slice(0, 8)}</span>
+            <StatusBadge kind={run.status} />
+          </div>
+          <h1 className="headline team-run-detail-goal">{run.goal}</h1>
+          <div className="team-run-hero-summary mono">
+            <span>{String(run.execution_policy || run.lifecycle_mode || "standard").toUpperCase()}</span>
+            <span>LEAD · {leader?.name || "-"}</span>
+            <span>{currentCycle ? `CYCLE #${currentCycle.sequence}` : "NO CYCLE"}</span>
+            <span>{tasks.filter((task) => ["pending", "in_progress", "blocked"].includes(task.status)).length} OPEN TASKS</span>
+          </div>
         </div>
-        <h1 className="headline team-run-detail-goal">{run.goal}</h1>
+        <div className="team-run-hero-actions">
+          {canResume ? (
+            <Button
+              size="btn-sm"
+              variant="primary"
+              disabled={resuming}
+              onClick={async () => {
+                setResuming(true);
+                try {
+                  await onResume();
+                } finally {
+                  setResuming(false);
+                }
+              }}
+            >
+              {resuming ? "Resuming..." : "Resume"}
+            </Button>
+          ) : null}
+          {canAddWork ? (
+            <Button size="btn-sm" variant="primary" onClick={() => setWorkDialogOpen(true)}>Add work</Button>
+          ) : null}
+          {canCancel ? (
+            <Button
+              size="btn-sm"
+              variant="destructive"
+              disabled={canceling}
+              onClick={async () => {
+                setCanceling(true);
+                try {
+                  await onCancel();
+                } finally {
+                  setCanceling(false);
+                }
+              }}
+            >
+              {canceling ? "Stopping..." : "Stop run"}
+            </Button>
+          ) : null}
+        </div>
       </header>
 
       <div className="team-phase-stepper" aria-label="Run phase">
@@ -426,34 +499,37 @@ export function TeamRunDetail({
         })}
       </div>
 
-      <div className="team-run-meta">
-        <div className="team-run-meta-cell">
-          <div className="mono team-run-meta-k">MODE</div>
-          <div className="mono team-run-meta-v">{run.run_mode}</div>
-        </div>
-        <div className="team-run-meta-cell">
-          <div className="mono team-run-meta-k">LIFECYCLE</div>
-          <div className="mono team-run-meta-v">{run.lifecycle_mode || "standard"}</div>
-        </div>
-        <div className="team-run-meta-cell">
-          <div className="mono team-run-meta-k">WORKERS</div>
-          <div className="mono team-run-meta-v">{run.max_workers ?? "-"}</div>
-        </div>
-        <div className="team-run-meta-cell">
-          <div className="mono team-run-meta-k">LEADER</div>
-          <div className="mono team-run-meta-v">{leader?.name || "-"}</div>
-        </div>
-        <div className="team-run-meta-cell">
-          <div className="mono team-run-meta-k">STARTED</div>
-          <div className="mono team-run-meta-v">{fmtDateTime(run.started_at) || "-"}</div>
-        </div>
-        <div className="team-run-meta-cell team-run-meta-workspace">
-          <div className="mono team-run-meta-k">WORKSPACE</div>
-          <div className="mono team-run-meta-v team-run-meta-path" title={run.workspace_root || ""}>
-            {run.workspace_root || "-"}
+      <details className="team-run-details">
+        <summary className="mono">RUN DETAILS</summary>
+        <div className="team-run-meta">
+          <div className="team-run-meta-cell">
+            <div className="mono team-run-meta-k">ID</div>
+            <div className="mono team-run-meta-v" title={run.id}>{run.id}</div>
+          </div>
+          <div className="team-run-meta-cell">
+            <div className="mono team-run-meta-k">MODE</div>
+            <div className="mono team-run-meta-v">{run.run_mode}</div>
+          </div>
+          <div className="team-run-meta-cell">
+            <div className="mono team-run-meta-k">LIFECYCLE</div>
+            <div className="mono team-run-meta-v">{run.lifecycle_mode || "standard"}</div>
+          </div>
+          <div className="team-run-meta-cell">
+            <div className="mono team-run-meta-k">WORKERS</div>
+            <div className="mono team-run-meta-v">{run.max_workers ?? "-"}</div>
+          </div>
+          <div className="team-run-meta-cell">
+            <div className="mono team-run-meta-k">STARTED</div>
+            <div className="mono team-run-meta-v">{fmtDateTime(run.started_at) || "-"}</div>
+          </div>
+          <div className="team-run-meta-cell team-run-meta-workspace">
+            <div className="mono team-run-meta-k">WORKSPACE</div>
+            <div className="mono team-run-meta-v team-run-meta-path" title={run.workspace_root || ""}>
+              {run.workspace_root || "-"}
+            </div>
           </div>
         </div>
-      </div>
+      </details>
 
       {run.lifecycle_mode === "continuous" ? (
         <section className="team-policy-panel" aria-label="Cycle policy">
@@ -468,12 +544,12 @@ export function TeamRunDetail({
 
           {run.execution_policy === "triggered" ? (
             <>
-              <div className="team-previous-cycle">
-                <div className="mono">
+              <details className="team-previous-cycle">
+                <summary className="mono">
                   {previousCycle ? `PREVIOUS CYCLE #${previousCycle.sequence}` : "NO SETTLED CYCLE"}
-                </div>
+                </summary>
                 <div>{previousCycle?.summary || "No previous Cycle summary."}</div>
-              </div>
+              </details>
               <form
                 className="team-cycle-trigger"
                 onSubmit={async (event) => {
@@ -591,39 +667,6 @@ export function TeamRunDetail({
         </section>
       ) : null}
 
-      {run.lifecycle_mode === "continuous" ? (
-        <section className="team-cycles" aria-label="Team Run cycles">
-          <div className="team-section-head">
-            <span className="mono team-section-label">Cycles</span>
-            <span className="mono team-section-count">{cycles.length}</span>
-            <span className="team-section-rule" />
-          </div>
-          {cycles.length ? (
-            <div className="team-cycle-list">
-              {cycles.map((cycle) => (
-                <article className="team-cycle" key={cycle.id}>
-                  <div className="team-cycle-head">
-                    <span className="mono team-cycle-sequence">CYCLE #{cycle.sequence}</span>
-                    <StatusBadge kind={cycle.status} />
-                  </div>
-                  <div className="mono team-cycle-lineage" title={cycle.source_id || ""}>
-                    {cycle.source_type || "manual"} · {cycle.source_id || cycle.id}
-                  </div>
-                  <div className="mono team-cycle-budget">
-                    ROUNDS · {cycle.rounds_used}/{cycle.rounds_budget}
-                    {cycle.finished_at ? ` · ${fmtDateTime(cycle.finished_at)}` : ""}
-                  </div>
-                  {cycle.summary ? <div className="team-cycle-summary">{cycle.summary}</div> : null}
-                  {cycle.error_message ? <div className="hook-row-error mono">{cycle.error_message}</div> : null}
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="team-task-empty mono">Waiting for the first Hook delivery.</div>
-          )}
-        </section>
-      ) : null}
-
       {run.status === "interrupted" ? (
         <div className="team-interrupted-banner" role="status">
           <span className="headline team-interrupted-title">Run interrupted</span>
@@ -645,113 +688,6 @@ export function TeamRunDetail({
         )
       ) : null}
 
-      <div className="team-section-head team-section-toolbar">
-        <span className="mono team-section-label">Agent Sessions</span>
-        <span className="team-section-rule" />
-        {canResume ? (
-          <Button
-            size="btn-sm"
-            variant="primary"
-            disabled={resuming}
-            onClick={async () => {
-              setResuming(true);
-              try {
-                await onResume();
-              } finally {
-                setResuming(false);
-              }
-            }}
-          >
-            {resuming ? "Resuming..." : "Resume"}
-          </Button>
-        ) : null}
-        {canCancel ? (
-          <Button
-            size="btn-sm"
-            variant="destructive"
-            disabled={canceling}
-            onClick={async () => {
-              setCanceling(true);
-              try {
-                await onCancel();
-              } finally {
-                setCanceling(false);
-              }
-            }}
-          >
-            {canceling ? "Stopping..." : "Stop run"}
-          </Button>
-        ) : null}
-        {canAddWork ? (
-          <Button size="btn-sm" variant="primary" onClick={() => setWorkDialogOpen(true)}>Add work</Button>
-        ) : null}
-      </div>
-      <div className="team-lanes">
-        {agents.map((agent) => {
-          const currentTask = findTask(tasks, agent.current_task_id);
-          const avatar = agent.persona_snapshot?.avatar;
-          const roleLabel = agent.persona_snapshot?.role || agent.role;
-          return (
-            <article className={`team-lane team-lane-${agent.status}${agent.role === "leader" ? " team-lane-leader" : ""}`} key={agent.id}>
-              <div className="team-lane-head">
-                {avatar ? (
-                  <img className="team-lane-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
-                ) : (
-                  <span className="team-lane-avatar team-lane-avatar-initials mono">{initials(agent.name)}</span>
-                )}
-                <div className="team-lane-title">
-                  <div className="mono team-lane-name">{agent.name}</div>
-                  <div className="team-lane-role">{roleLabel}</div>
-                </div>
-                {agent.role === "leader" ? <span className="team-lane-lead mono">LEAD</span> : null}
-              </div>
-              <div className="team-lane-body">
-                <div className="team-lane-status-row">
-                  <StatusBadge kind={agent.status} />
-                  {agent.status === "running" ? <span className="mono team-lane-live">LIVE</span> : null}
-                </div>
-                <div className="team-lane-task">{currentWork(agent, currentTask, run.status)}</div>
-                <div className="mono team-lane-snapshot">SNAPSHOT · {agent.backend}/{agent.model}</div>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-
-      <div className="team-section-head">
-        <span className="mono team-section-label">Task Board</span>
-        <span className="mono team-section-count">{reports.length} documents</span>
-        <span className="team-section-rule" />
-      </div>
-      <div className="team-task-board">
-        {TEAM_TASK_COLUMNS.map((column) => {
-          const columnTasks = tasks.filter((task) => task.status === column);
-          return (
-            <div className="team-task-column" key={column}>
-              <div className="team-task-column-head mono">
-                <span>{column.replace("_", " ")}</span>
-                <span>{columnTasks.length}</span>
-              </div>
-              <div className="team-task-column-body">
-                {columnTasks.length ? (
-                  columnTasks.map((task) => (
-                    <TeamTaskCard
-                      key={task.id}
-                      task={task}
-                      owner={findAgent(agents, task.owner_agent_id)}
-                      documentCount={(reportsByTask.get(task.id) || []).length}
-                      onOpen={() => setSelectedTaskId(task.id)}
-                    />
-                  ))
-                ) : (
-                  <div className="team-task-empty mono">-</div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
       <div className="team-detail-tabs" role="tablist" aria-label="Run detail views">
         {DETAIL_TABS.map(([key, label]) => (
           <button
@@ -763,46 +699,211 @@ export function TeamRunDetail({
             onClick={() => setActiveTab(key)}
           >
             <span>{label}</span>
-            {key === "documents" && documents.length ? (
+            {key === "tasks" && tasks.length ? (
+              <span className="team-detail-tab-badge mono">{tasks.length}</span>
+            ) : null}
+            {key === "history" && cycles.length ? (
+              <span className="team-detail-tab-badge mono">{cycles.length}</span>
+            ) : null}
+            {key === "files" && documents.length ? (
               <span className="team-detail-tab-badge mono">{documents.length}</span>
             ) : null}
           </button>
         ))}
       </div>
 
-      {activeTab === "results" ? (
-        <div className="team-tab-panel" role="tabpanel" aria-label="Results">
+      {activeTab === "history" ? (
+        <section className="team-cycles team-tab-panel" aria-label="Team Run cycles">
           <div className="team-section-head">
-            <span className="mono team-section-label">Agent Reports</span>
-            <span className="mono team-section-count">{reports.length}</span>
+            <span className="mono team-section-label">Cycle History</span>
+            <span className="mono team-section-count">{cycles.length}</span>
             <span className="team-section-rule" />
           </div>
-          <div className="team-reports">
-            {reports.length ? reports.map((message) => {
-              const sender = findAgent(agents, message.sender_agent_id);
-              const avatar = sender?.persona_snapshot?.avatar;
-              return (
-                <article className="team-agent-report" key={message.id}>
-                  <div className="team-agent-report-head">
-                    {avatar ? (
-                      <img className="team-agent-report-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
-                    ) : (
-                      <span className="team-agent-report-avatar team-doc-avatar-initials mono">{initials(sender?.name)}</span>
-                    )}
-                    <span className="mono team-agent-report-owner">{sender ? sender.name : "Agent"}</span>
-                    <span className="team-agent-report-time mono">{fmtDateTime(message.created_at)}</span>
+          {cycles.length ? (
+            <div className="team-cycle-list">
+              {cycles.map((cycle, index) => (
+                <details className="team-cycle" key={cycle.id} open={index === 0 || undefined}>
+                  <summary className="team-cycle-head">
+                    <span className="mono team-cycle-sequence">CYCLE #{cycle.sequence}</span>
+                    <span className="mono team-cycle-compact-meta">
+                      {String(cycle.source_type || "manual").replaceAll("_", " ")} · {cycle.rounds_used}/{cycle.rounds_budget} ROUNDS
+                    </span>
+                    <StatusBadge kind={cycle.status} />
+                  </summary>
+                  <div className="team-cycle-content">
+                    <div className="mono team-cycle-lineage" title={cycle.source_id || ""}>
+                      {cycle.source_type || "manual"} · {cycle.source_id || cycle.id}
+                    </div>
+                    <div className="mono team-cycle-budget">
+                      ROUNDS · {cycle.rounds_used}/{cycle.rounds_budget}
+                      {cycle.finished_at ? ` · ${fmtDateTime(cycle.finished_at)}` : ""}
+                    </div>
+                    {cycle.summary ? <div className="team-cycle-summary">{cycle.summary}</div> : null}
+                    {cycle.error_message ? <div className="hook-row-error mono">{cycle.error_message}</div> : null}
                   </div>
-                  <p className="team-agent-report-body">{message.content}</p>
-                </article>
-              );
-            }) : <div className="team-task-empty mono">No agent reports yet.</div>}
-          </div>
+                </details>
+              ))}
+            </div>
+          ) : (
+            <div className="team-task-empty mono">No Cycle history yet.</div>
+          )}
+        </section>
+      ) : null}
+
+      {activeTab === "overview" ? (
+        <>
           {run.summary ? (
-            <div className="team-final-summary">
-              <div className="mono team-final-summary-head">FINAL SUMMARY · {leader?.name || ""}</div>
+            <div className="team-final-summary team-overview-summary">
+              <div className="mono team-final-summary-head">LATEST SUMMARY · {leader?.name || "TEAM"}</div>
               <div className="team-final-summary-body">{run.summary}</div>
             </div>
+          ) : currentCycle?.summary ? (
+            <div className="team-final-summary team-overview-summary">
+              <div className="mono team-final-summary-head">CURRENT CYCLE · #{currentCycle.sequence}</div>
+              <div className="team-final-summary-body">{currentCycle.summary}</div>
+            </div>
           ) : null}
+
+          <div className="team-section-head team-section-toolbar">
+            <span className="mono team-section-label">Agent Sessions</span>
+            <span className="mono team-section-count">{agents.length}</span>
+            <span className="team-section-rule" />
+          </div>
+          <div className="team-lanes">
+            {agents.map((agent) => {
+              const currentTask = findTask(tasks, agent.current_task_id);
+              const avatar = agent.persona_snapshot?.avatar;
+              const roleLabel = agent.persona_snapshot?.role || agent.role;
+              return (
+                <article className={`team-lane team-lane-${agent.status}${agent.role === "leader" ? " team-lane-leader" : ""}`} key={agent.id}>
+                  <div className="team-lane-head">
+                    {avatar ? (
+                      <img className="team-lane-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
+                    ) : (
+                      <span className="team-lane-avatar team-lane-avatar-initials mono">{initials(agent.name)}</span>
+                    )}
+                    <div className="team-lane-title">
+                      <div className="mono team-lane-name">{agent.name}</div>
+                      <div className="team-lane-role">{roleLabel}</div>
+                    </div>
+                    {agent.role === "leader" ? <span className="team-lane-lead mono">LEAD</span> : null}
+                  </div>
+                  <div className="team-lane-body">
+                    <div className="team-lane-status-row">
+                      <StatusBadge kind={agent.status} />
+                      {agent.status === "running" ? <span className="mono team-lane-live">LIVE</span> : null}
+                    </div>
+                    <div className="team-lane-task">{currentWork(agent, currentTask, run.status)}</div>
+                    <details className="team-lane-runtime">
+                      <summary className="mono">RUNTIME</summary>
+                      <div className="mono team-lane-snapshot">{agent.backend}/{agent.model}</div>
+                    </details>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+
+      {activeTab === "tasks" ? (
+        <div className="team-tab-panel" role="tabpanel" aria-label="Tasks">
+          <div className="team-section-head team-section-toolbar">
+            <span className="mono team-section-label">Task Board</span>
+            <span className="mono team-section-count">
+              {showAllTasks ? `${tasks.length} ALL CYCLES` : `${visibleTasks.length} CURRENT CYCLE`}
+            </span>
+            <span className="team-section-rule" />
+            {currentCycle && tasksHaveCycleIds ? (
+              <Button size="btn-sm" onClick={() => setShowAllTasks((value) => !value)}>
+                {showAllTasks ? "Current cycle" : "All cycles"}
+              </Button>
+            ) : null}
+          </div>
+          <div className="team-task-board">
+            {TEAM_TASK_COLUMNS.map((column) => {
+              const columnTasks = visibleTasks.filter((task) => task.status === column);
+              return (
+                <div className="team-task-column" key={column}>
+                  <div className="team-task-column-head mono">
+                    <span>{column.replace("_", " ")}</span>
+                    <span>{columnTasks.length}</span>
+                  </div>
+                  <div className="team-task-column-body">
+                    {columnTasks.length ? (
+                      columnTasks.map((task) => (
+                        <TeamTaskCard
+                          key={task.id}
+                          task={task}
+                          owner={findAgent(agents, task.owner_agent_id)}
+                          documentCount={(reportsByTask.get(task.id) || []).length}
+                          onOpen={() => setSelectedTaskId(task.id)}
+                        />
+                      ))
+                    ) : (
+                      <div className="team-task-empty mono">-</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {activeTab === "overview" ? (
+        <div className="team-overview-disclosures" role="tabpanel" aria-label="Overview">
+          <details className="team-overview-disclosure">
+            <summary className="mono">AGENT REPORTS <span>{reports.length}</span></summary>
+            <div className="team-reports">
+              {reports.length ? reports.map((message) => {
+                const sender = findAgent(agents, message.sender_agent_id);
+                const avatar = sender?.persona_snapshot?.avatar;
+                return (
+                  <article className="team-agent-report" key={message.id}>
+                    <div className="team-agent-report-head">
+                      {avatar ? (
+                        <img className="team-agent-report-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
+                      ) : (
+                        <span className="team-agent-report-avatar team-doc-avatar-initials mono">{initials(sender?.name)}</span>
+                      )}
+                      <span className="mono team-agent-report-owner">{sender ? sender.name : "Agent"}</span>
+                      <span className="team-agent-report-time mono">{fmtDateTime(message.created_at)}</span>
+                    </div>
+                    <p className="team-agent-report-body">{message.content}</p>
+                  </article>
+                );
+              }) : <div className="team-task-empty mono">No agent reports yet.</div>}
+            </div>
+          </details>
+
+          <details className="team-overview-disclosure">
+            <summary className="mono">SHARED / HANDOFFS <span>{handoffs.length}</span></summary>
+            {handoffs.length ? (
+              <div className="team-handoffs">
+                {handoffs.map(({ query, answer }) => {
+                  const asker = findAgent(agents, query.sender_agent_id);
+                  const responder = answer ? findAgent(agents, answer.sender_agent_id) : null;
+                  return (
+                    <div className="team-handoff" key={query.id}>
+                      <div className="team-handoff-q">
+                        <span className="mono team-handoff-who">{asker ? asker.name : "Agent"} →</span>
+                        <span className="team-handoff-text">{query.content}</span>
+                      </div>
+                      {answer ? (
+                        <div className="team-handoff-a">
+                          <span className="mono team-handoff-who">{responder ? responder.name : "Leader"} ↩</span>
+                          <span className="team-handoff-text">{answer.content}</span>
+                        </div>
+                      ) : (
+                        <div className="team-handoff-a team-handoff-unanswered mono">awaiting answer</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : <div className="team-task-empty mono">No handoffs yet.</div>}
+          </details>
         </div>
       ) : null}
 
@@ -824,37 +925,8 @@ export function TeamRunDetail({
         </div>
       ) : null}
 
-      {activeTab === "handoffs" ? (
-        <div className="team-tab-panel" role="tabpanel" aria-label="Shared and handoffs">
-          {handoffs.length ? (
-            <div className="team-handoffs">
-              {handoffs.map(({ query, answer }) => {
-                const asker = findAgent(agents, query.sender_agent_id);
-                const responder = answer ? findAgent(agents, answer.sender_agent_id) : null;
-                return (
-                  <div className="team-handoff" key={query.id}>
-                    <div className="team-handoff-q">
-                      <span className="mono team-handoff-who">{asker ? asker.name : "Agent"} →</span>
-                      <span className="team-handoff-text">{query.content}</span>
-                    </div>
-                    {answer ? (
-                      <div className="team-handoff-a">
-                        <span className="mono team-handoff-who">{responder ? responder.name : "Leader"} ↩</span>
-                        <span className="team-handoff-text">{answer.content}</span>
-                      </div>
-                    ) : (
-                      <div className="team-handoff-a team-handoff-unanswered mono">awaiting answer</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ) : <div className="team-task-empty mono">No handoffs yet.</div>}
-        </div>
-      ) : null}
-
-      {activeTab === "documents" ? (
-        <div className="team-tab-panel" role="tabpanel" aria-label="Documents">
+      {activeTab === "files" ? (
+        <div className="team-tab-panel" role="tabpanel" aria-label="Files">
           <div className="team-docs-list">
             {documents.length ? documents.map((doc) => {
               const label = documentLabel(doc.path);

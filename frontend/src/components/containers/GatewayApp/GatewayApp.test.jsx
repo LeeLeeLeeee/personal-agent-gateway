@@ -22,6 +22,14 @@ function response(body, ok = true) {
   return Promise.resolve({ ok, json: () => Promise.resolve(body) });
 }
 
+function deferredResponse() {
+  let resolve;
+  const promise = new Promise((settle) => {
+    resolve = (body, ok = true) => settle({ ok, json: () => Promise.resolve(body) });
+  });
+  return { promise, resolve };
+}
+
 function installFetch(routes) {
   globalThis.fetch = vi.fn((url, init = {}) => {
     const method = init.method || "GET";
@@ -1107,6 +1115,7 @@ describe("GatewayApp", () => {
     render(<UiProvider><GatewayApp /></UiProvider>);
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
+    await userEvent.click(await screen.findByRole("tab", { name: /TASKS/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Open task Run QA" }));
     await userEvent.click(screen.getByRole("button", { name: "Retry failed task" }));
     const dialog = await screen.findByRole("dialog", { name: "RETRY FAILED TASK" });
@@ -1198,6 +1207,7 @@ describe("GatewayApp", () => {
     expect((await screen.findAllByText("Tech Lead")).length).toBeGreaterThan(0);
     expect(screen.getByText("LEAD")).toBeInTheDocument();
     expect(screen.queryByText("Define schema")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
 
     const source = MockEventSource.instances[0];
     source.emit({
@@ -1396,6 +1406,44 @@ describe("GatewayApp", () => {
     });
     expect(accepted).toBe(false);
     expect(await screen.findByText("Failed to trigger cycle")).toBeInTheDocument();
+  });
+
+  it("shows Team Run loading until the selected detail response matches", async () => {
+    const pendingDetail = deferredResponse();
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/teams": { teams: [] },
+      "GET /api/settings": { settings: {} },
+      "GET /api/team-runs": {
+        team_runs: [{ id: "run-1", goal: "Slow run", status: "running" }]
+      },
+      "GET /api/team-runs/run-1/detail": () => pendingDetail.promise,
+      "GET /api/team-runs/run-1/documents": { documents: [] }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open team run Slow run" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("LOADING TEAM RUN...");
+    expect(teamRunDetailCapture.props.detail).toBeNull();
+    expect(teamRunDetailCapture.props.documents).toEqual([]);
+
+    await act(async () => {
+      pendingDetail.resolve({
+        team_run: { id: "run-1", goal: "Slow run", status: "running" },
+        agents: [], tasks: [], messages: [], cycles: []
+      });
+      await pendingDetail.promise;
+    });
+    expect(await screen.findByText("Slow run")).toBeInTheDocument();
+    expect(teamRunDetailCapture.props.loading).toBe(false);
   });
 
   it("shows an error and keeps the app usable when creating a team run fails", async () => {

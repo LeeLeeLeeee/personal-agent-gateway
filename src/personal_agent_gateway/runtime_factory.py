@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.agent_session_link import AgentSessionLinkService
 from personal_agent_gateway.config import AppConfig, ConfigError
@@ -7,6 +9,7 @@ from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelCli
 from personal_agent_gateway.personas import persona_system_prompt
 from personal_agent_gateway.runtime import AgentRuntime
 from personal_agent_gateway.session_config import SessionAgentConfigService
+from personal_agent_gateway.space_policies import SpacePolicyService
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
 
@@ -18,11 +21,13 @@ class AgentRuntimeFactory:
         transcript: TranscriptStore,
         job_service: JobService | None = None,
         event_bus: EventBus | None = None,
+        space_policies: SpacePolicyService | None = None,
     ) -> None:
         self._config = config
         self._transcript = transcript
         self._job_service = job_service
         self._event_bus = event_bus
+        self._space_policies = space_policies
 
     def create_default_runtime(self) -> AgentRuntime:
         return self._create_runtime_for_app_config()
@@ -35,8 +40,9 @@ class AgentRuntimeFactory:
         *,
         hook_run_id: str,
         system_prompt: str | None = None,
+        persona_id: str | None = None,
     ) -> AgentRuntime:
-        workspace_root = self._config.workspace_root
+        workspace_root, read_roots, write_mode = self._space_context(persona_id)
         if backend == "claude":
             client = ClaudeModelClient(
                 binary=self._config.claude_binary,
@@ -44,10 +50,15 @@ class AgentRuntimeFactory:
                 workspace_root=workspace_root,
                 effort=str(options.get("effort") or "high"),
                 permission_mode=str(
-                    options.get("permission_mode") or self._config.claude_permission_mode
+                    "bypassPermissions"
+                    if write_mode == "full_access"
+                    else self._config.claude_permission_mode
+                    if write_mode is not None
+                    else options.get("permission_mode") or self._config.claude_permission_mode
                 ),
                 agent=str(options["agent"]) if options.get("agent") else None,
                 timeout_seconds=self._config.codex_timeout_seconds,
+                additional_dirs=read_roots,
             )
             session_id = self._transcript.start_new(
                 origin="hook",
@@ -58,13 +69,21 @@ class AgentRuntimeFactory:
                 client,
                 session_id=session_id,
                 system_prompt=system_prompt,
+                workspace_root=workspace_root,
+                read_roots=read_roots,
             )
         if backend == "codex":
             client = CodexModelClient(
                 binary=self._config.codex_binary,
                 model=model,
                 workspace_root=workspace_root,
-                sandbox=str(options.get("sandbox") or self._config.codex_sandbox),
+                sandbox=(
+                    "danger-full-access"
+                    if write_mode == "full_access"
+                    else "workspace-write"
+                    if write_mode is not None
+                    else str(options.get("sandbox") or self._config.codex_sandbox)
+                ),
                 approval_policy=str(
                     options.get("approval_policy") or self._config.codex_approval_policy
                 ),
@@ -82,6 +101,8 @@ class AgentRuntimeFactory:
                 client,
                 session_id=session_id,
                 system_prompt=system_prompt,
+                workspace_root=workspace_root,
+                read_roots=read_roots,
             )
         raise ConfigError(f"Unsupported hook backend: {backend}")
 
@@ -102,6 +123,7 @@ class AgentRuntimeFactory:
             return self._create_runtime_for_app_config(session_id=session_id)
 
         session_config = SessionAgentConfigService(self._transcript).effective_config(session_id)
+        workspace_root, read_roots, write_mode = self._space_context(session_config.persona_id)
         agent_id, model, options = self._effective_session_runtime_config(session_config)
         system_prompt = persona_system_prompt(session_config.persona_snapshot)
         link_service = AgentSessionLinkService(self._transcript)
@@ -132,8 +154,12 @@ class AgentRuntimeFactory:
                 CodexModelClient(
                     binary=self._config.codex_binary,
                     model=model,
-                    workspace_root=self._config.workspace_root,
-                    sandbox=str(options["sandbox"]),
+                    workspace_root=workspace_root,
+                    sandbox=(
+                        "danger-full-access" if write_mode == "full_access" else "workspace-write"
+                        if write_mode is not None
+                        else str(options["sandbox"])
+                    ),
                     approval_policy=str(options["approval_policy"]),
                     profile=str(options["profile"]) if options.get("profile") else None,
                     effort=str(options["effort"]) if options.get("effort") else None,
@@ -146,6 +172,8 @@ class AgentRuntimeFactory:
                 on_upstream_session_id=record_upstream_session,
                 session_id=session_id,
                 system_prompt=system_prompt,
+                workspace_root=workspace_root,
+                read_roots=read_roots,
             )
 
         if agent_id == "claude":
@@ -153,23 +181,33 @@ class AgentRuntimeFactory:
                 ClaudeModelClient(
                     binary=self._config.claude_binary,
                     model=model,
-                    workspace_root=self._config.workspace_root,
+                    workspace_root=workspace_root,
                     effort=str(options["effort"]),
-                    permission_mode=str(options["permission_mode"]),
+                    permission_mode=(
+                        "bypassPermissions"
+                        if write_mode == "full_access"
+                        else self._config.claude_permission_mode
+                        if write_mode is not None
+                        else str(options["permission_mode"])
+                    ),
                     agent=str(options["agent"]) if options.get("agent") else None,
                     upstream_session_id=link.upstream_session_id if link is not None else None,
                     timeout_seconds=self._config.codex_timeout_seconds,
+                    additional_dirs=read_roots,
                 ),
                 history_mode=history_mode,
                 on_upstream_session_id=record_upstream_session,
                 session_id=session_id,
                 system_prompt=system_prompt,
+                workspace_root=workspace_root,
+                read_roots=read_roots,
             )
 
         raise ConfigError(f"Unsupported session agent: {agent_id}")
 
     def _create_runtime_for_app_config(self, session_id: str | None = None) -> AgentRuntime:
         config = self._config
+        workspace_root, read_roots, write_mode = self._space_context(None)
         effective_session_id = session_id if session_id is not None else self._transcript.active_id()
         if config.model_provider == "codex":
 
@@ -183,8 +221,12 @@ class AgentRuntimeFactory:
                 CodexModelClient(
                     binary=config.codex_binary,
                     model=config.model,
-                    workspace_root=config.workspace_root,
-                    sandbox=config.codex_sandbox,
+                    workspace_root=workspace_root,
+                    sandbox=(
+                        "danger-full-access" if write_mode == "full_access" else "workspace-write"
+                        if write_mode is not None
+                        else config.codex_sandbox
+                    ),
                     approval_policy=config.codex_approval_policy,
                     effort="high",
                     timeout_seconds=config.codex_timeout_seconds,
@@ -192,6 +234,8 @@ class AgentRuntimeFactory:
                     on_event=publish_codex_event,
                 ),
                 session_id=effective_session_id,
+                workspace_root=workspace_root,
+                read_roots=read_roots,
             )
 
         if config.model_provider != "openai":
@@ -202,6 +246,8 @@ class AgentRuntimeFactory:
         return self._runtime(
             OpenAIModelClient(api_key=config.openai_api_key or "", model=config.model),
             session_id=effective_session_id,
+            workspace_root=workspace_root,
+            read_roots=read_roots,
         )
 
     def _runtime(
@@ -211,10 +257,16 @@ class AgentRuntimeFactory:
         on_upstream_session_id=None,
         session_id: str | None = None,
         system_prompt: str | None = None,
+        workspace_root: Path | None = None,
+        read_roots: list[Path] | None = None,
     ) -> AgentRuntime:
         return AgentRuntime(
             transcript=self._transcript,
-            tools=WorkspaceTools(self._config.workspace_root, ApprovalStore()),
+            tools=WorkspaceTools(
+                workspace_root or self._config.workspace_root,
+                ApprovalStore(),
+                read_roots=read_roots,
+            ),
             model=model,
             job_service=self._job_service,
             event_bus=self._event_bus,
@@ -223,6 +275,19 @@ class AgentRuntimeFactory:
             session_id=session_id,
             system_prompt=system_prompt,
         )
+
+    def _space_context(self, persona_id: str | None) -> tuple[Path, list[Path], str | None]:
+        if self._space_policies is None:
+            return self._config.workspace_root, [], None
+        effective = self._space_policies.resolve(persona_id=persona_id)
+        policy = effective.policy
+        workspace_root = (
+            Path(policy.workspace_path).resolve()
+            if policy.write_mode == "full_access" and policy.workspace_path
+            else self._config.workspace_root
+        )
+        read_roots = [Path(policy.read_path).resolve()] if policy.read_path else []
+        return workspace_root, read_roots, policy.write_mode
 
     def _effective_session_runtime_config(self, session_config) -> tuple[str, str, dict[str, object]]:
         if session_config.agent_id == "codex":

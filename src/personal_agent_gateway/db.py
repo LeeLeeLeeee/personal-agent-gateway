@@ -119,6 +119,10 @@ create table if not exists team_runs (
     rounds_budget integer not null default 8,
     rounds_used integer not null default 0,
     workspace_root text not null,
+    working_root text,
+    artifact_root text,
+    worktree_branch text,
+    space_policy_snapshot_json text,
     summary text,
     error_message text,
     team_id text,
@@ -139,6 +143,7 @@ create table if not exists team_run_cycles (
     status text not null,
     rounds_budget integer not null,
     rounds_used integer not null default 0,
+    rules_snapshot_json text,
     summary text,
     error_message text,
     created_at text not null,
@@ -214,6 +219,7 @@ create table if not exists team_tasks (
     id text primary key,
     team_run_id text not null,
     cycle_id text,
+    retry_of_task_id text,
     title text not null,
     description text not null,
     owner_agent_id text,
@@ -226,6 +232,7 @@ create table if not exists team_tasks (
     finished_at text,
     foreign key (team_run_id) references team_runs(id) on delete cascade,
     foreign key (cycle_id) references team_run_cycles(id) on delete cascade,
+    foreign key (retry_of_task_id) references team_tasks(id) on delete set null,
     foreign key (owner_agent_id) references team_agents(id) on delete set null
 );
 
@@ -285,6 +292,18 @@ create table if not exists teams (
     member_persona_ids_json text not null default '[]',
     created_at text not null,
     updated_at text not null
+);
+
+create table if not exists space_policies (
+    scope text not null,
+    scope_id text not null default '',
+    read_mode text not null,
+    read_path text,
+    write_mode text not null,
+    workspace_path text,
+    created_at text not null,
+    updated_at text not null,
+    primary key (scope, scope_id)
 );
 
 create table if not exists rule_sets (

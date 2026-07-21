@@ -29,6 +29,7 @@ from personal_agent_gateway.api import (
     schedules_router,
     session_config_router,
     settings_router,
+    spaces_router,
     team_runs_router,
     teams_router,
 )
@@ -71,6 +72,8 @@ from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
 from personal_agent_gateway.scheduler_loop import SchedulerLoop
 from personal_agent_gateway.security_settings import SecuritySettingsService
+from personal_agent_gateway.space_policies import SpacePolicyService
+from personal_agent_gateway.space_policies import policy_from_snapshot
 from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
 from personal_agent_gateway.sources.email import ImapEmailAdapter
 from personal_agent_gateway.team_directory import TeamService
@@ -177,7 +180,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     )
     app.state.team_runtime = TeamRuntime(
         app.state.team_run_service,
-        _team_model_factory(app_config),
+        _team_model_factory(app_config, app.state.team_run_service),
         event_bus,
     )
     app.state.team_run_orchestrator = TeamRunOrchestrator(
@@ -277,6 +280,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(agents_router)
     app.include_router(session_config_router)
     app.include_router(settings_router)
+    app.include_router(spaces_router)
     app.include_router(personas_router)
     app.include_router(team_runs_router)
     app.include_router(teams_router)
@@ -403,21 +407,30 @@ def _attach_local_services(
     session_activity_service = SessionActivityService(db)
     session_activity_publisher = SessionActivityPublisher(session_activity_service, event_bus)
     persona_service = PersonaService(db)
+    space_policy_service = SpacePolicyService(db)
+    space_policy_service.seed_defaults()
     team_cycle_service = TeamCycleService(db)
     team_run_service = TeamRunService(
         db,
         persona_service,
         config.workspace_root,
         cycle_service=team_cycle_service,
+        space_policies=space_policy_service,
     )
-    team_directory_service = TeamService(db, persona_service)
+    team_directory_service = TeamService(db, persona_service, space_policy_service)
     rule_set_service = RuleSetService(db)
     rule_set_service.seed_defaults()
     registry = CapabilityRegistry.default()
     job_service = JobService(db, registry)
     schedule_service = ScheduleService(db, registry)
     artifact_store = ArtifactStore(db, config.artifact_root)
-    runtime_factory = AgentRuntimeFactory(config, transcript, job_service, session_activity_publisher)
+    runtime_factory = AgentRuntimeFactory(
+        config,
+        transcript,
+        job_service,
+        session_activity_publisher,
+        space_policies=space_policy_service,
+    )
     job_worker = JobWorker(
         job_service,
         artifact_store,
@@ -485,6 +498,7 @@ def _attach_local_services(
     app.state.job_worker = job_worker
     app.state.scheduler_loop = scheduler_loop
     app.state.persona_service = persona_service
+    app.state.space_policy_service = space_policy_service
     app.state.session_activity_publisher = session_activity_publisher
     app.state.session_activity_service = session_activity_service
     app.state.team_run_service = team_run_service
@@ -505,11 +519,26 @@ def main() -> None:
     uvicorn.run(create_app(config), host=config.web_host, port=config.web_port)
 
 
-def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], ModelClient]:
+def _team_model_factory(
+    config: AppConfig,
+    team_runs: TeamRunService | None = None,
+) -> Callable[[TeamAgent], ModelClient]:
     def team_model_factory(agent: TeamAgent) -> ModelClient:
         session = agent.upstream_session_id or None
-        workspace_root = config.workspace_root / agent.team_run_id
+        workspace_root = (
+            Path(agent.workspace_path)
+            if agent.workspace_path
+            else config.workspace_root / agent.team_run_id
+        )
         workspace_root.mkdir(parents=True, exist_ok=True)
+        run = team_runs.get_team_run(agent.team_run_id) if team_runs else None
+        space_policy = policy_from_snapshot(run.space_policy) if run else None
+        read_dirs = (
+            [Path(space_policy.read_path)]
+            if space_policy and space_policy.read_path
+            else []
+        )
+        artifact_dirs = [Path(run.artifact_root)] if run and run.artifact_root else []
         raw_options = agent.persona_snapshot.get("default_options")
         options = raw_options if isinstance(raw_options, dict) else {}
         if agent.backend == "claude":
@@ -519,17 +548,28 @@ def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], ModelClient]
                 workspace_root=workspace_root,
                 effort=str(options.get("effort") or "high"),
                 permission_mode=str(
-                    options.get("permission_mode") or config.claude_permission_mode
+                    "bypassPermissions"
+                    if space_policy and space_policy.write_mode == "full_access"
+                    else config.claude_permission_mode
+                    if space_policy
+                    else options.get("permission_mode") or config.claude_permission_mode
                 ),
                 agent=str(options["agent"]) if options.get("agent") else None,
                 timeout_seconds=config.codex_timeout_seconds,
                 upstream_session_id=session,
+                additional_dirs=[*read_dirs, *artifact_dirs],
             )
         return CodexModelClient(
             binary=config.codex_binary,
             model=agent.model,
             workspace_root=workspace_root,
-            sandbox=str(options.get("sandbox") or config.codex_sandbox),
+            sandbox=(
+                "danger-full-access"
+                if space_policy and space_policy.write_mode == "full_access"
+                else "workspace-write"
+                if space_policy
+                else str(options.get("sandbox") or config.codex_sandbox)
+            ),
             approval_policy=str(
                 options.get("approval_policy") or config.codex_approval_policy
             ),
@@ -538,6 +578,7 @@ def _team_model_factory(config: AppConfig) -> Callable[[TeamAgent], ModelClient]
             timeout_seconds=config.codex_timeout_seconds,
             idle_timeout_seconds=config.codex_idle_timeout_seconds,
             upstream_session_id=session,
+            additional_write_dirs=artifact_dirs,
         )
 
     return team_model_factory
