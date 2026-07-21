@@ -61,16 +61,24 @@ updated_at: 2026-07-20
 
 ## 재시작 복구
 
-- `tests/test_team_cycle_recovery.py`는 같은 SQLite DB를 fresh service와 Dispatcher로
-  다시 열어 startup recovery matrix를 검증한다.
+- `tests/test_team_cycle_recovery.py`는 같은 SQLite DB를 fresh service/Dispatcher 또는
+  fresh application으로 다시 열어 startup recovery matrix와 action API 소유권을 검증한다.
 - running Cycle은 interrupt 후 `paused_interrupted`, waiting-for-user Cycle은
   `paused_user`가 되며 둘 다 기존 dispatching Request와 Cycle을 유지해 다음 claim을
-  차단한다.
-- terminal Cycle의 dispatching Request는 한 번만 정산하고, Cycle 없는 orphan claim은
-  한 번만 queued로 되돌린다. due AUTO slot과 기존 queued Run은 반복 reconcile 또는
-  재개 후에도 Request/Cycle을 중복 생성하지 않는다.
-- failure pause의 Retry/Continue는 원래 Run, Series, slot 소유권을 유지한다. Manual과
-  Hook은 재개 후에도 같은 insertion-order FIFO와 source idempotency를 유지한다.
+  차단한다. 두 번 reconcile한 뒤에도 Request와 Cycle은 정확히 하나이고
+  Request-Cycle-Series-slot lineage가 바뀌지 않음을 assert한다.
+- AUTO terminal Cycle은 첫 fresh reconcile에서 Request가 settled 되고 Series가
+  `settled_slots=1`, `waiting_interval`, 예상 `next_run_at`이 되는 snapshot을 검증한다.
+  두 번째 fresh reopen/reconcile 뒤 그 snapshot과 Request/Cycle 각 1개가 불변임을
+  assert한다. Cycle 없는 orphan claim은 한 번만 queued로 되돌린다.
+- failure pause의 Retry는 원래 Run, Series, slot, source ID, `retry_of_request_id` lineage를
+  유지하며 Request만 하나 늘어난다. Continue는 원래 Series/Run에서 Cycle을 늘리지 않고
+  interval을 예약하며, fake-clock due reconcile은 다음 slot Request 하나만 정확한 AUTO
+  lineage로 생성한다.
+- fresh application의 `/resume`과 `/decision-request/answer`가 각각 recovered interrupted
+  Cycle과 waiting-user Cycle의 동일 ID를 orchestrator에 넘기고, 기존 dispatching
+  Request/Series 소유권과 각 1개의 Request/Cycle을 보존함을 검증한다.
+- Manual과 Hook은 재개 후에도 같은 insertion-order FIFO와 source idempotency를 유지한다.
 - 복구 테스트 첫 실행은 `9 passed, 1 failed`였다. 실패한 한 assertion은 helper의 실제
   생성시각과 고정 과거시각 때문에 조회 순서만 뒤집힌 테스트 결함이었으며, ordinal과
   중복 계약을 검증하도록 수정했다. production recovery 코드는 변경하지 않았다.
@@ -80,12 +88,16 @@ updated_at: 2026-07-20
 - `pytest tests/test_team_cycle_recovery.py -q`: `10 passed in 10.49s`.
 - `pytest tests/test_team_cycle_recovery.py tests/test_app_lifecycle.py -q`:
   `17 passed in 20.88s`.
+- 리뷰 강화 후 `pytest tests/test_team_cycle_recovery.py -q`:
+  `13 passed in 4.20s`. 강화된 테스트는 기존 production에서 첫 실행부터 모두 통과했다.
+- 리뷰 강화 후 recovery+lifecycle: `20 passed in 5.91s`.
 - 첫 `pytest -q`: `590 passed, 2 errors in 541.21s`. 기존
   `tests/test_team_documents.py` fixture가 필수 `execution_policy` 없이 신규 Run을
   생성하던 drift였다. 승인된 Task 9 추가 범위로 해당 fixture에
   `execution_policy: triggered`만 추가했고 production validation은 바꾸지 않았다.
 - `pytest tests/test_team_documents.py -q`: `2 passed in 4.66s`.
 - 수정 후 `pytest -q`: `592 passed in 187.33s`.
+- 리뷰 강화 후 `pytest -q`: `595 passed in 230.31s`.
 - `ruff check src tests`: 통과.
 - frontend `npm test -- --run`: `34` files, `247 passed`.
 - frontend `npm run build`: `74` modules transformed, build 성공. runtime에 해석되는
