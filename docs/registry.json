@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 113,
+  "document_count": 114,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -2281,6 +2281,92 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/SchedulesView/index.jsx` (205 lines) - Modes: `understand`, `api-state`, `test` - Verdict: form/list ownership은 적절하다. Schedule detail drawer와 `onLoadDetail`만 추가하고 Job/Schedul..."
+    },
+    {
+      "path": "docs/component-inspector/TeamPicker/2026-07-21-0931.md",
+      "title": "TeamPicker Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-creation",
+      "status": "done",
+      "aliases": [
+        "TeamPicker analysis",
+        "TeamPicker 컴포넌트 분석",
+        "팀 실행 생성 UI"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run"
+      ],
+      "updated_at": "2026-07-21",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamPicker Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태 / Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 primitive와 주입 동작"
+        },
+        {
+          "level": 2,
+          "text": "Custom hooks / selectors / actions"
+        },
+        {
+          "level": 2,
+          "text": "현재 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "Task 7 목표 흐름"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 추적"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / Stories"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "Evidence"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamPicker/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: TeamPicker는 생성 입력과 payload 조립만 소유하고, API 호출·선택 상태·알림은 `useTeamRunController`가 소유한다. Task 7은 이 경계를 ..."
     },
     {
       "path": "docs/component-inspector/TeamRunCard/2026-07-15-1639.md",

@@ -4,6 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayApp, applyTeamRunDelta } from "./index.jsx";
 import { UiProvider } from "../../providers/UiProvider/index.jsx";
 
+const teamRunDetailCapture = vi.hoisted(() => ({ props: null }));
+
+vi.mock("../../organisms/TeamRunDetail/index.jsx", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    TeamRunDetail: function CapturedTeamRunDetail(props) {
+      teamRunDetailCapture.props = props;
+      const ActualTeamRunDetail = actual.TeamRunDetail;
+      return <ActualTeamRunDetail {...props} />;
+    }
+  };
+});
+
 function response(body, ok = true) {
   return Promise.resolve({ ok, json: () => Promise.resolve(body) });
 }
@@ -40,6 +54,7 @@ const sessions = [{
 describe("GatewayApp", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    teamRunDetailCapture.props = null;
   });
 
   afterEach(() => {
@@ -1106,7 +1121,7 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("실패한 업무를 재시도 대기열에 추가했습니다")).toBeInTheDocument();
   });
 
-  it("creates and starts a team run, shows its detail, and refreshes on mixed team SSE events without adding chat entries", async () => {
+  it("creates a fixed TRIGGERED team run without calling start and refreshes on mixed team SSE events", async () => {
     let taskCalls = 0;
     let teamRunsCalls = 0;
     installFetch({
@@ -1123,20 +1138,19 @@ describe("GatewayApp", () => {
         teamRunsCalls += 1;
         return response({
           team_runs: teamRunsCalls > 2
-            ? [{ id: "run-1", goal: "Ship it", status: "completed", run_mode: "planning_only" }]
+            ? [{ id: "run-1", goal: "Ship it", status: "completed", run_mode: "plan_and_execute", lifecycle_mode: "continuous", execution_policy: "triggered" }]
             : []
         });
       },
-      "POST /api/team-runs": { team_run: { id: "run-1", goal: "Ship it", status: "draft", run_mode: "planning_only" } },
-      "POST /api/team-runs/run-1/start": {
-        team_run: { id: "run-1", goal: "Ship it", status: "running", run_mode: "planning_only" }
-      },
+      "POST /api/team-runs": { team_run: { id: "run-1", goal: "Ship it", status: "draft", run_mode: "plan_and_execute", lifecycle_mode: "continuous", execution_policy: "triggered" } },
       "GET /api/team-runs/run-1": {
         team_run: {
           id: "run-1",
           goal: "Ship it",
           status: "running",
-          run_mode: "planning_only",
+          run_mode: "plan_and_execute",
+          lifecycle_mode: "continuous",
+          execution_policy: "triggered",
           leader_agent_id: "a1",
           max_workers: 1
         }
@@ -1166,7 +1180,20 @@ describe("GatewayApp", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
     await userEvent.type(await screen.findByLabelText(/goal/i), "Ship it");
-    await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
+
+    const createCall = fetch.mock.calls.find(([url, init]) => (
+      url === "/api/team-runs" && init?.method === "POST"
+    ));
+    expect(JSON.parse(createCall[1].body)).toEqual({
+      team_id: "t1",
+      goal: "Ship it",
+      execution_policy: "triggered"
+    });
+    expect(fetch).not.toHaveBeenCalledWith(
+      "/api/team-runs/run-1/start",
+      expect.anything()
+    );
 
     expect((await screen.findAllByText("Tech Lead")).length).toBeGreaterThan(0);
     expect(screen.getByText("LEAD")).toBeInTheDocument();
@@ -1198,13 +1225,14 @@ describe("GatewayApp", () => {
     expect(screen.queryByText("should not enter chat")).not.toBeInTheDocument();
   });
 
-  it("creates a continuous Team Run without starting work before a Hook cycle", async () => {
+  it("creates an AUTO Team Run with its default numeric policy settings", async () => {
     const continuousRun = {
       id: "mail-run",
       goal: "Watch inbox",
       status: "draft",
       run_mode: "plan_and_execute",
       lifecycle_mode: "continuous",
+      execution_policy: "auto",
       max_workers: 1
     };
     installFetch({
@@ -1230,22 +1258,111 @@ describe("GatewayApp", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
     await userEvent.type(await screen.findByLabelText(/goal/i), "Watch inbox");
-    await userEvent.click(screen.getByRole("button", { name: "CONTINUOUS" }));
-    await userEvent.click(screen.getByRole("button", { name: "Create continuous run" }));
+    await userEvent.click(screen.getByRole("button", { name: "AUTO" }));
+    await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
 
-    expect(await screen.findByText("Waiting for the first Hook delivery.")).toBeInTheDocument();
+    expect(await screen.findByText("AUTO Team Run started")).toBeInTheDocument();
     const createCall = fetch.mock.calls.find(([url, init]) => (
       url === "/api/team-runs" && init?.method === "POST"
     ));
     expect(createCall).toBeDefined();
-    expect(JSON.parse(createCall[1].body)).toMatchObject({
-      lifecycle_mode: "continuous",
-      run_mode: "plan_and_execute"
+    expect(JSON.parse(createCall[1].body)).toEqual({
+      team_id: "t1",
+      goal: "Watch inbox",
+      execution_policy: "auto",
+      auto_repeat_count: 3,
+      auto_interval_minutes: 5
     });
     expect(fetch).not.toHaveBeenCalledWith(
       "/api/team-runs/mail-run/start",
       expect.anything()
     );
+  });
+
+  it("wires cycle policy actions through the controller and refreshes detail and list", async () => {
+    let detailCalls = 0;
+    let listCalls = 0;
+    let triggerCalls = 0;
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "ui-1") });
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": () => {
+        listCalls += 1;
+        return response({ team_runs: [{
+          id: "run 1", goal: "Maintain", status: "draft",
+          lifecycle_mode: "continuous", run_mode: "plan_and_execute",
+          execution_policy: "auto"
+        }] });
+      },
+      "GET /api/team-runs/run%201/detail": () => {
+        detailCalls += 1;
+        return response({
+          team_run: {
+            id: "run 1", goal: "Maintain", status: "draft",
+            lifecycle_mode: "continuous", run_mode: "plan_and_execute",
+            execution_policy: "auto"
+          },
+          agents: [], tasks: [], messages: [], cycles: [],
+          active_auto_series: { id: "series 1" }
+        });
+      },
+      "GET /api/team-runs/run%201/documents": { documents: [] },
+      "POST /api/team-runs/run%201/cycle-requests": () => {
+        triggerCalls += 1;
+        return triggerCalls === 1
+          ? response({ cycle_request: { id: "q1" } })
+          : response({}, false);
+      },
+      "POST /api/team-runs/run%201/auto-series/series%201/retry": { cycle_request: { id: "q2" } },
+      "POST /api/team-runs/run%201/auto-series/series%201/continue": { auto_series: { id: "series 1" } },
+      "POST /api/team-runs/run%201/auto-series/restart": { auto_series: { id: "series 2" } }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open team run Maintain" }));
+    await waitFor(() => expect(teamRunDetailCapture.props?.detail?.run?.id).toBe("run 1"));
+
+    let accepted;
+    await act(async () => {
+      accepted = await teamRunDetailCapture.props.onTriggerCycle({
+        instruction: "next",
+        previous_cycle_id: "cycle-7"
+      });
+    });
+    expect(accepted).toBe(true);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/run%201/cycle-requests",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          instruction: "next",
+          previous_cycle_id: "cycle-7",
+          client_request_id: "ui-1"
+        })
+      })
+    );
+
+    await act(async () => {
+      expect(await teamRunDetailCapture.props.onRetryAuto("series 1")).toBe(true);
+      expect(await teamRunDetailCapture.props.onContinueAuto("series 1")).toBe(true);
+      expect(await teamRunDetailCapture.props.onRestartAuto()).toBe(true);
+    });
+    expect(await teamRunDetailCapture.props.onRetryAuto("")).toBe(false);
+    expect(detailCalls).toBeGreaterThanOrEqual(5);
+    expect(listCalls).toBeGreaterThanOrEqual(5);
+
+    await act(async () => {
+      accepted = await teamRunDetailCapture.props.onTriggerCycle({ instruction: "fail" });
+    });
+    expect(accepted).toBe(false);
+    expect(await screen.findByText("Failed to trigger cycle")).toBeInTheDocument();
   });
 
   it("shows an error and keeps the app usable when creating a team run fails", async () => {
@@ -1268,10 +1385,10 @@ describe("GatewayApp", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
     await userEvent.type(await screen.findByLabelText(/goal/i), "Ship it");
-    await userEvent.click(screen.getByRole("button", { name: /start team run/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
 
     expect(await screen.findByText("Failed to create team run")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /start team run/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create team run" })).toBeInTheDocument();
   });
 
   it("filters the team-run list by status using the STATUS chips", async () => {

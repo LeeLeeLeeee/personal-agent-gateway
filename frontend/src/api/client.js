@@ -320,6 +320,36 @@ export const api = {
     }));
     return body?.team_run || null;
   },
+  async triggerTeamCycle(id, payload) {
+    return jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/cycle-requests`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }
+    ));
+  },
+  async retryAutoCycle(id, seriesId) {
+    return jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/auto-series/`
+        + `${encodeURIComponent(seriesId)}/retry`,
+      { method: "POST" }
+    ));
+  },
+  async continueAutoCycle(id, seriesId) {
+    return jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/auto-series/`
+        + `${encodeURIComponent(seriesId)}/continue`,
+      { method: "POST" }
+    ));
+  },
+  async restartAutoSeries(id) {
+    return jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/auto-series/restart`,
+      { method: "POST" }
+    ));
+  },
   async startTeamRun(id) {
     const body = await jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/start`, { method: "POST" }));
     return body?.team_run || null;
@@ -378,7 +408,11 @@ export const api = {
         messages: body?.messages || [],
         cycles: body?.cycles || [],
         decisionRequest: body?.decision_request || null,
-        documentSummary: body?.document_summary || null
+        documentSummary: body?.document_summary || null,
+        policyStatus: body?.policy_status || "ready",
+        activeAutoSeries: body?.active_auto_series || null,
+        queueCount: body?.queue_count || 0,
+        activeRequest: body?.active_request || null
       };
     } catch (error) {
       if (!(error instanceof ApiError) || ![0, 404].includes(error.status)) throw error;
@@ -395,7 +429,11 @@ export const api = {
         messages,
         cycles: [],
         decisionRequest: null,
-        documentSummary: null
+        documentSummary: null,
+        policyStatus: "ready",
+        activeAutoSeries: null,
+        queueCount: 0,
+        activeRequest: null
       };
     }
   },

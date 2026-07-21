@@ -112,6 +112,10 @@ export function GatewayApp() {
     teamRunDocuments,
     handleTeamEvent,
     handleCreateTeamRun,
+    handleTriggerTeamCycle,
+    handleRetryAuto,
+    handleContinueAuto,
+    handleRestartAuto,
     handleAddWork,
     handleResumeTeamRun,
     handleAnswerTeamDecision,
@@ -757,6 +761,10 @@ export function GatewayApp() {
               detail={teamRunDetail}
               documents={teamRunDocuments}
               onLoadDocument={(path) => api.teamDocumentContent(selectedTeamRunId, path)}
+              onTriggerCycle={handleTriggerTeamCycle}
+              onRetryAuto={handleRetryAuto}
+              onContinueAuto={handleContinueAuto}
+              onRestartAuto={handleRestartAuto}
               onAddWork={handleAddWork}
               onResume={handleResumeTeamRun}
               onAnswerDecision={handleAnswerTeamDecision}

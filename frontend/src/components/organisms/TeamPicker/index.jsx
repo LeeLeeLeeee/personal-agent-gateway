@@ -1,20 +1,9 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../atoms/Button/index.jsx";
 
-const RUN_MODES = [
-  { value: "planning_only", label: "PLANNING ONLY", desc: "Leader decomposes the goal and drafts tasks. Nothing executes." },
-  { value: "plan_and_execute", label: "PLAN + EXECUTE", desc: "Leader plans, then members execute their tasks and report back." }
-];
-
-const REVIEW_MODE = {
-  value: "review_only",
-  label: "REVIEW ONLY",
-  desc: "Members review existing work against their persona and report findings."
-};
-
-const LIFECYCLE_MODES = [
-  { value: "standard", label: "STANDARD", desc: "Runs once and starts immediately after creation." },
-  { value: "continuous", label: "CONTINUOUS", desc: "Stays ready and runs a new cycle for each hook trigger." }
+const EXECUTION_POLICIES = [
+  { value: "triggered", label: "TRIGGERED", desc: "Runs a new cycle when a manual or Hook trigger is queued." },
+  { value: "auto", label: "AUTO", desc: "Runs a fixed number of cycles separated by an interval." }
 ];
 
 function Avatar({ person }) {
@@ -25,8 +14,9 @@ function Avatar({ person }) {
 export function TeamPicker({ teams = [], onStart, runtime = null }) {
   const [teamId, setTeamId] = useState("");
   const [goal, setGoal] = useState("");
-  const [runMode, setRunMode] = useState("planning_only");
-  const [lifecycleMode, setLifecycleMode] = useState("standard");
+  const [executionPolicy, setExecutionPolicy] = useState("triggered");
+  const [repeatCount, setRepeatCount] = useState("3");
+  const [intervalMinutes, setIntervalMinutes] = useState("5");
 
   useEffect(() => {
     if (!teamId && teams.length) setTeamId(teams[0].id);
@@ -36,37 +26,37 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
     return <div className="tp-empty mono">먼저 팀을 만드세요 — Teams 화면에서 팀과 로스터를 구성할 수 있습니다.</div>;
   }
 
-  const team = teams.find((t) => t.id === teamId) || teams[0];
-  const supportedModes = runtime?.team_review_supported ? [...RUN_MODES, REVIEW_MODE] : RUN_MODES;
-  const activeRunMode = lifecycleMode === "continuous" ? "plan_and_execute" : runMode;
-  const activeMode = supportedModes.find((m) => m.value === activeRunMode) || supportedModes[0];
-  const activeLifecycle = LIFECYCLE_MODES.find((mode) => mode.value === lifecycleMode);
+  const team = teams.find((item) => item.id === teamId) || teams[0];
+  const activePolicy = EXECUTION_POLICIES.find((policy) => policy.value === executionPolicy);
   const executionMode = (runtime?.team_execution_mode || "sequential").toUpperCase();
 
   return (
-      <form className="tp" aria-label="New team run" onSubmit={(event) => {
+    <form className="tp" aria-label="New team run" onSubmit={(event) => {
       event.preventDefault();
-      onStart({
+      const payload = {
         team_id: team.id,
         goal: goal.trim(),
-        run_mode: activeMode.value,
-        lifecycle_mode: lifecycleMode,
-        max_workers: 1
-      });
+        execution_policy: executionPolicy
+      };
+      if (executionPolicy === "auto") {
+        payload.auto_repeat_count = Number(repeatCount);
+        payload.auto_interval_minutes = Number(intervalMinutes);
+      }
+      onStart(payload);
     }}>
       <div className="tp-form">
         <div className="tp-field">
           <span className="tp-label">Team</span>
           <div className="tp-teams">
-            {teams.map((t) => (
+            {teams.map((item) => (
               <button
-                key={t.id}
+                key={item.id}
                 type="button"
-                aria-pressed={t.id === team.id}
-                className={`tp-team${t.id === team.id ? " active" : ""}`}
-                onClick={() => setTeamId(t.id)}
+                aria-pressed={item.id === team.id}
+                className={`tp-team${item.id === team.id ? " active" : ""}`}
+                onClick={() => setTeamId(item.id)}
               >
-                {t.name}
+                {item.name}
               </button>
             ))}
           </div>
@@ -106,30 +96,45 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
           <div className="tp-form">
             <div className="tp-field">
               <span className="tp-label">Lifecycle</span>
-              <div className="tp-mode" role="group" aria-label="Lifecycle">
-                {LIFECYCLE_MODES.map((mode) => (
-                  <button key={mode.value} type="button" aria-pressed={lifecycleMode === mode.value}
-                    className={`tp-mode-btn${lifecycleMode === mode.value ? " active" : ""}`}
-                    onClick={() => {
-                      setLifecycleMode(mode.value);
-                      if (mode.value === "continuous") setRunMode("plan_and_execute");
-                    }}>{mode.label}</button>
-                ))}
-              </div>
-              <div className="tp-mode-desc">{activeLifecycle.desc}</div>
+              <div className="tp-workers-val">CONTINUOUS · FIXED</div>
             </div>
             <div className="tp-field">
-              <span className="tp-label">Run mode</span>
-              <div className="tp-mode" role="group" aria-label="Run mode">
-                {supportedModes.map((mode) => (
-                  <button key={mode.value} type="button" aria-pressed={activeMode.value === mode.value}
-                    disabled={lifecycleMode === "continuous" && mode.value !== "plan_and_execute"}
-                    className={`tp-mode-btn${activeMode.value === mode.value ? " active" : ""}`}
-                    onClick={() => setRunMode(mode.value)}>{mode.label}</button>
+              <span className="tp-label">Execution policy</span>
+              <div className="tp-mode" role="group" aria-label="Execution policy">
+                {EXECUTION_POLICIES.map((policy) => (
+                  <button
+                    key={policy.value}
+                    type="button"
+                    aria-pressed={executionPolicy === policy.value}
+                    className={`tp-mode-btn${executionPolicy === policy.value ? " active" : ""}`}
+                    onClick={() => setExecutionPolicy(policy.value)}
+                  >
+                    {policy.label}
+                  </button>
                 ))}
               </div>
-              <div className="tp-mode-desc">{activeMode.desc}</div>
+              <div className="tp-mode-desc">{activePolicy.desc}</div>
             </div>
+            {executionPolicy === "auto" ? (
+              <div className="tp-field">
+                <label className="tp-label" htmlFor="tp-repeat-count">Repeat count</label>
+                <input
+                  id="tp-repeat-count"
+                  type="number"
+                  min="1"
+                  value={repeatCount}
+                  onChange={(event) => setRepeatCount(event.target.value)}
+                />
+                <label className="tp-label" htmlFor="tp-interval-minutes">Interval minutes</label>
+                <input
+                  id="tp-interval-minutes"
+                  type="number"
+                  min="1"
+                  value={intervalMinutes}
+                  onChange={(event) => setIntervalMinutes(event.target.value)}
+                />
+              </div>
+            ) : null}
           </div>
           <div className="tp-field">
             <span className="tp-label">Execution</span>
@@ -146,14 +151,17 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
           <div className="tp-preview-kv">
             <div className="k">TEAM</div><div>{team.name}</div>
             <div className="k">MEMBERS</div><div>{(team.members || []).length} agents</div>
-            <div className="k">LIFECYCLE</div><div>{activeLifecycle.label}</div>
-            <div className="k">MODE</div><div>{activeMode.label}</div>
+            <div className="k">POLICY</div><div>{activePolicy.label}</div>
+            {executionPolicy === "auto" ? (
+              <>
+                <div className="k">REPEAT</div><div>{repeatCount} cycles</div>
+                <div className="k">INTERVAL</div><div>{intervalMinutes} minutes</div>
+              </>
+            ) : null}
             <div className="k">WORKERS</div><div>1 · {executionMode}</div>
           </div>
           <div className="tp-preview-action">
-            <Button type="submit" variant="primary" size="btn-lg">
-              {lifecycleMode === "continuous" ? "Create continuous run" : "Start team run"}
-            </Button>
+            <Button type="submit" variant="primary" size="btn-lg">Create team run</Button>
           </div>
         </div>
       </aside>

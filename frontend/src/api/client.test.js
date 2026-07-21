@@ -116,6 +116,59 @@ describe("api client", () => {
     expect(fetch).toHaveBeenNthCalledWith(5, "/api/team-runs/r2/start", expect.objectContaining({ method: "POST" }));
   });
 
+  it("supports encoded manual trigger and AUTO policy action endpoints", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ cycle_request: { id: "q1" }, queue_position: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ cycle_request: { id: "q2" } }))
+      .mockResolvedValueOnce(jsonResponse({ auto_series: { id: "series 1", status: "waiting_interval" } }))
+      .mockResolvedValueOnce(jsonResponse({ auto_series: { id: "series 2" }, cycle_request: { id: "q3" } }));
+
+    const triggerPayload = {
+      instruction: "next",
+      client_request_id: "ui-1",
+      previous_cycle_id: "cycle-7"
+    };
+    await expect(api.triggerTeamCycle("run 1", triggerPayload)).resolves.toMatchObject({
+      cycle_request: { id: "q1" },
+      queue_position: 1
+    });
+    await expect(api.retryAutoCycle("run 1", "series 1")).resolves.toMatchObject({
+      cycle_request: { id: "q2" }
+    });
+    await expect(api.continueAutoCycle("run 1", "series 1")).resolves.toMatchObject({
+      auto_series: { id: "series 1", status: "waiting_interval" }
+    });
+    await expect(api.restartAutoSeries("run 1")).resolves.toMatchObject({
+      auto_series: { id: "series 2" },
+      cycle_request: { id: "q3" }
+    });
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/team-runs/run%201/cycle-requests",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(triggerPayload)
+      })
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/team-runs/run%201/auto-series/series%201/retry",
+      { method: "POST" }
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      3,
+      "/api/team-runs/run%201/auto-series/series%201/continue",
+      { method: "POST" }
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      4,
+      "/api/team-runs/run%201/auto-series/restart",
+      { method: "POST" }
+    );
+  });
+
   it("adds work and reads the aggregate team-run detail response", async () => {
     fetch
       .mockResolvedValueOnce(jsonResponse({ team_run: { id: "r1", status: "running" } }))
@@ -125,6 +178,10 @@ describe("api client", () => {
         tasks: [{ id: "t1" }],
         messages: [{ id: "m1" }],
         cycles: [{ id: "c1", sequence: 1 }],
+        policy_status: "paused_failure",
+        active_auto_series: { id: "s1", status: "paused_failure" },
+        queue_count: 2,
+        active_request: { id: "q1", status: "dispatching" },
         document_summary: { count: 2 }
       }));
 
@@ -136,7 +193,11 @@ describe("api client", () => {
       messages: [{ id: "m1" }],
       cycles: [{ id: "c1", sequence: 1 }],
       decisionRequest: null,
-      documentSummary: { count: 2 }
+      documentSummary: { count: 2 },
+      policyStatus: "paused_failure",
+      activeAutoSeries: { id: "s1", status: "paused_failure" },
+      queueCount: 2,
+      activeRequest: { id: "q1", status: "dispatching" }
     });
 
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/team-runs/r1/add-work", expect.objectContaining({
@@ -167,7 +228,11 @@ describe("api client", () => {
       messages: [{ id: "m1" }],
       cycles: [],
       decisionRequest: null,
-      documentSummary: null
+      documentSummary: null,
+      policyStatus: "ready",
+      activeAutoSeries: null,
+      queueCount: 0,
+      activeRequest: null
     });
   });
 

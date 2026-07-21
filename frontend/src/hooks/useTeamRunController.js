@@ -90,25 +90,78 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
         toast("Failed to create team run", "error");
         return;
       }
-      const isContinuous = payload.lifecycle_mode === "continuous";
-      let selectedRun = created;
-      if (!isContinuous) {
-        const started = await api.startTeamRun(created.id);
-        if (!started) {
-          toast("Failed to start team run", "error");
-          return;
-        }
-        selectedRun = started;
-      }
       setCreatingTeamRun(false);
       setTeamRuns(await api.teamRuns());
-      setSelectedTeamRunId(selectedRun.id);
+      setSelectedTeamRunId(created.id);
       toast(
-        isContinuous ? "Continuous team run created; waiting for hook triggers" : "Team run started",
+        payload.execution_policy === "auto"
+          ? "AUTO Team Run started"
+          : "TRIGGERED Team Run created",
         "success"
       );
     } catch (_error) {
       toast("Failed to create team run", "error");
+    }
+  }
+
+  async function refreshSelectedRun() {
+    const [detail, runs] = await Promise.all([
+      api.teamRunDetail(selectedTeamRunId),
+      api.teamRuns()
+    ]);
+    setTeamRunDetail(detail);
+    setTeamRuns(runs);
+  }
+
+  async function handleTriggerTeamCycle(payload) {
+    if (!selectedTeamRunId) return false;
+    try {
+      await api.triggerTeamCycle(selectedTeamRunId, {
+        ...payload,
+        client_request_id: crypto.randomUUID()
+      });
+      await refreshSelectedRun();
+      toast("Cycle을 대기열에 추가했습니다", "success");
+      return true;
+    } catch (_error) {
+      toast("Failed to trigger cycle", "error");
+      return false;
+    }
+  }
+
+  async function handleRetryAuto(seriesId) {
+    if (!selectedTeamRunId || !seriesId) return false;
+    try {
+      await api.retryAutoCycle(selectedTeamRunId, seriesId);
+      await refreshSelectedRun();
+      return true;
+    } catch (_error) {
+      toast("Failed to retry AUTO cycle", "error");
+      return false;
+    }
+  }
+
+  async function handleContinueAuto(seriesId) {
+    if (!selectedTeamRunId || !seriesId) return false;
+    try {
+      await api.continueAutoCycle(selectedTeamRunId, seriesId);
+      await refreshSelectedRun();
+      return true;
+    } catch (_error) {
+      toast("Failed to continue AUTO series", "error");
+      return false;
+    }
+  }
+
+  async function handleRestartAuto() {
+    if (!selectedTeamRunId) return false;
+    try {
+      await api.restartAutoSeries(selectedTeamRunId);
+      await refreshSelectedRun();
+      return true;
+    } catch (_error) {
+      toast("Failed to restart AUTO series", "error");
+      return false;
     }
   }
 
@@ -293,6 +346,10 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     teamRunDocuments,
     handleTeamEvent,
     handleCreateTeamRun,
+    handleTriggerTeamCycle,
+    handleRetryAuto,
+    handleContinueAuto,
+    handleRestartAuto,
     handleAddWork,
     handleResumeTeamRun,
     handleAnswerTeamDecision,
