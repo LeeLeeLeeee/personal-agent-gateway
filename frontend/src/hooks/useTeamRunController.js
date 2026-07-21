@@ -29,10 +29,25 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
   const [teamRunDetail, setTeamRunDetail] = useState(null);
   const [teamRunDocuments, setTeamRunDocuments] = useState([]);
   const selectedTeamRunIdRef = useRef(null);
+  const selectedTeamRunVersionRef = useRef(0);
+  const manualCycleRequestRef = useRef(null);
 
   useEffect(() => {
     selectedTeamRunIdRef.current = selectedTeamRunId;
+    selectedTeamRunVersionRef.current += 1;
   }, [selectedTeamRunId]);
+
+  function captureSelectedRun() {
+    return {
+      id: selectedTeamRunId,
+      version: selectedTeamRunVersionRef.current
+    };
+  }
+
+  function ownsSelectedRun(requestedRun) {
+    return selectedTeamRunIdRef.current === requestedRun.id
+      && selectedTeamRunVersionRef.current === requestedRun.version;
+  }
 
   useEffect(() => {
     if (!selectedTeamRunId) {
@@ -74,17 +89,29 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
         .catch(setScreenError);
     }
     if (event.team_run_id !== selectedTeamRunIdRef.current) return;
+    const requestedRun = {
+      id: event.team_run_id,
+      version: selectedTeamRunVersionRef.current
+    };
     const hasDelta = event.run || event.task || event.agent;
     if (hasDelta) {
       setTeamRunDetail((current) => applyTeamRunDelta(current, event));
     }
     if (!hasDelta || requiresRefresh) {
       api.teamRunDetail(event.team_run_id)
-        .then(setTeamRunDetail)
-        .catch(setScreenError);
+        .then((detail) => {
+          if (ownsSelectedRun(requestedRun)) setTeamRunDetail(detail);
+        })
+        .catch((error) => {
+          if (ownsSelectedRun(requestedRun)) setScreenError(error);
+        });
       api.teamDocuments(event.team_run_id)
-        .then(setTeamRunDocuments)
-        .catch(setScreenError);
+        .then((documents) => {
+          if (ownsSelectedRun(requestedRun)) setTeamRunDocuments(documents);
+        })
+        .catch((error) => {
+          if (ownsSelectedRun(requestedRun)) setScreenError(error);
+        });
     }
   }, [setScreenError]);
 
@@ -109,23 +136,42 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     }
   }
 
-  async function refreshSelectedRun() {
+  async function refreshSelectedRun(requestedRun) {
     const [detail, runs] = await Promise.all([
-      api.teamRunDetail(selectedTeamRunId),
+      api.teamRunDetail(requestedRun.id),
       api.teamRuns()
     ]);
-    setTeamRunDetail(detail);
+    if (ownsSelectedRun(requestedRun)) setTeamRunDetail(detail);
     setTeamRuns(runs);
   }
 
   async function handleTriggerTeamCycle(payload) {
-    if (!selectedTeamRunId) return false;
+    const requestedRun = captureSelectedRun();
+    const instruction = payload?.instruction?.trim();
+    if (!requestedRun.id || !instruction) return false;
+    const identity = JSON.stringify([
+      requestedRun.id,
+      instruction,
+      payload.previous_cycle_id ?? null
+    ]);
+    if (manualCycleRequestRef.current?.identity !== identity) {
+      manualCycleRequestRef.current = {
+        identity,
+        clientRequestId: crypto.randomUUID()
+      };
+    }
+    const clientRequestId = manualCycleRequestRef.current.clientRequestId;
     try {
-      await api.triggerTeamCycle(selectedTeamRunId, {
+      await api.triggerTeamCycle(requestedRun.id, {
         ...payload,
-        client_request_id: crypto.randomUUID()
+        instruction,
+        client_request_id: clientRequestId
       });
-      await refreshSelectedRun();
+      if (manualCycleRequestRef.current?.identity === identity
+        && manualCycleRequestRef.current.clientRequestId === clientRequestId) {
+        manualCycleRequestRef.current = null;
+      }
+      await refreshSelectedRun(requestedRun);
       toast("Cycle을 대기열에 추가했습니다", "success");
       return true;
     } catch (_error) {
@@ -135,10 +181,11 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
   }
 
   async function handleRetryAuto(seriesId) {
-    if (!selectedTeamRunId || !seriesId) return false;
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id || !seriesId) return false;
     try {
-      await api.retryAutoCycle(selectedTeamRunId, seriesId);
-      await refreshSelectedRun();
+      await api.retryAutoCycle(requestedRun.id, seriesId);
+      await refreshSelectedRun(requestedRun);
       return true;
     } catch (_error) {
       toast("Failed to retry AUTO cycle", "error");
@@ -147,10 +194,11 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
   }
 
   async function handleContinueAuto(seriesId) {
-    if (!selectedTeamRunId || !seriesId) return false;
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id || !seriesId) return false;
     try {
-      await api.continueAutoCycle(selectedTeamRunId, seriesId);
-      await refreshSelectedRun();
+      await api.continueAutoCycle(requestedRun.id, seriesId);
+      await refreshSelectedRun(requestedRun);
       return true;
     } catch (_error) {
       toast("Failed to continue AUTO series", "error");
@@ -159,10 +207,11 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
   }
 
   async function handleRestartAuto() {
-    if (!selectedTeamRunId) return false;
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id) return false;
     try {
-      await api.restartAutoSeries(selectedTeamRunId);
-      await refreshSelectedRun();
+      await api.restartAutoSeries(requestedRun.id);
+      await refreshSelectedRun(requestedRun);
       return true;
     } catch (_error) {
       toast("Failed to restart AUTO series", "error");
@@ -171,14 +220,16 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
   }
 
   async function handleAddWork(instruction) {
-    if (!selectedTeamRunId || !instruction.trim()) return false;
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id || !instruction.trim()) return false;
     try {
-      const result = await api.addWork(selectedTeamRunId, instruction.trim());
+      const result = await api.addWork(requestedRun.id, instruction.trim());
       if (!result) {
         toast("Failed to add work", "error");
         return false;
       }
-      setTeamRunDetail(await api.teamRunDetail(selectedTeamRunId));
+      const detail = await api.teamRunDetail(requestedRun.id);
+      if (ownsSelectedRun(requestedRun)) setTeamRunDetail(detail);
       toast("추가 업무를 전달했습니다", "success");
       return true;
     } catch (_error) {
@@ -188,7 +239,8 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
   }
 
   async function handleResumeTeamRun() {
-    if (!selectedTeamRunId) return false;
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id) return false;
     const accepted = await confirm({
       title: "RESUME TEAM RUN",
       message: "Resume pending work for this interrupted team run? Completed tasks will be kept.",
@@ -196,16 +248,16 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     });
     if (!accepted) return false;
     try {
-      const result = await api.resumeTeamRun(selectedTeamRunId);
+      const result = await api.resumeTeamRun(requestedRun.id);
       if (!result) {
         toast("Failed to resume team run", "error");
         return false;
       }
       const [detail, runs] = await Promise.all([
-        api.teamRunDetail(selectedTeamRunId),
+        api.teamRunDetail(requestedRun.id),
         api.teamRuns()
       ]);
-      setTeamRunDetail(detail);
+      if (ownsSelectedRun(requestedRun)) setTeamRunDetail(detail);
       setTeamRuns(runs);
       toast("팀 작업을 재개했습니다", "success");
       return true;
@@ -216,7 +268,8 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
   }
 
   async function handleCancelTeamRun() {
-    if (!selectedTeamRunId) return false;
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id) return false;
     const accepted = await confirm({
       title: "STOP TEAM RUN",
       message: "Stop the active processes? Existing documents and completed work are kept.",
@@ -225,16 +278,16 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     });
     if (!accepted) return false;
     try {
-      const result = await api.cancelTeamRun(selectedTeamRunId);
+      const result = await api.cancelTeamRun(requestedRun.id);
       if (!result) {
         toast("Failed to stop team run", "error");
         return false;
       }
       const [detail, runs] = await Promise.all([
-        api.teamRunDetail(selectedTeamRunId),
+        api.teamRunDetail(requestedRun.id),
         api.teamRuns()
       ]);
-      setTeamRunDetail(detail);
+      if (ownsSelectedRun(requestedRun)) setTeamRunDetail(detail);
       setTeamRuns(runs);
       toast("팀 작업을 중지했습니다", "success");
       return true;
@@ -245,11 +298,12 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
   }
 
   async function handleAnswerTeamDecision(answers) {
+    const requestedRun = captureSelectedRun();
     const request = teamRunDetail?.decisionRequest;
-    if (!selectedTeamRunId || !request) return false;
+    if (!requestedRun.id || !request) return false;
     try {
       const result = await api.answerTeamDecision(
-        selectedTeamRunId,
+        requestedRun.id,
         request.id,
         request.revision,
         answers
@@ -259,13 +313,15 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
         return false;
       }
       const [detail, runs, documents] = await Promise.all([
-        api.teamRunDetail(selectedTeamRunId),
+        api.teamRunDetail(requestedRun.id),
         api.teamRuns(),
-        api.teamDocuments(selectedTeamRunId)
+        api.teamDocuments(requestedRun.id)
       ]);
-      setTeamRunDetail(detail);
       setTeamRuns(runs);
-      setTeamRunDocuments(documents);
+      if (ownsSelectedRun(requestedRun)) {
+        setTeamRunDetail(detail);
+        setTeamRunDocuments(documents);
+      }
       toast("답변을 전달하고 팀 작업을 재개했습니다", "success");
       return true;
     } catch (_error) {
@@ -275,7 +331,8 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
   }
 
   async function handleRetryTeamTask(taskId) {
-    if (!selectedTeamRunId) return false;
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id) return false;
     const task = teamRunDetail?.tasks?.find((item) => item.id === taskId);
     const accepted = await confirm({
       title: "RETRY FAILED TASK",
@@ -285,16 +342,16 @@ export function useTeamRunController({ toast, confirm, setScreenError }) {
     });
     if (!accepted) return false;
     try {
-      const result = await api.retryTeamTask(selectedTeamRunId, taskId);
+      const result = await api.retryTeamTask(requestedRun.id, taskId);
       if (!result) {
         toast("Failed to retry task", "error");
         return false;
       }
       const [detail, runs] = await Promise.all([
-        api.teamRunDetail(selectedTeamRunId),
+        api.teamRunDetail(requestedRun.id),
         api.teamRuns()
       ]);
-      setTeamRunDetail(detail);
+      if (ownsSelectedRun(requestedRun)) setTeamRunDetail(detail);
       setTeamRuns(runs);
       toast("실패한 업무를 재시도 대기열에 추가했습니다", "success");
       return true;
