@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 118,
+  "document_count": 119,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -3871,6 +3871,185 @@
         }
       ],
       "excerpt": "아래 연결은 현재 구현된 런타임 관계다."
+    },
+    {
+      "path": "docs/knowledge/2026-07-21-persona-organization-catalog.md",
+      "title": "Personal Agent Gateway 조직형 페르소나 카탈로그",
+      "type": "knowledge",
+      "domain": "personal-agent-gateway",
+      "feature": "persona-team-catalog",
+      "status": "active",
+      "aliases": [
+        "조직형 페르소나 목록",
+        "개발팀 기획팀 QA팀 PM 페르소나",
+        "팀별 에이전트 추천"
+      ],
+      "tags": [
+        "persona",
+        "team-run",
+        "codex",
+        "claude"
+      ],
+      "updated_at": "2026-07-21",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway 조직형 페르소나 카탈로그"
+        },
+        {
+          "level": 2,
+          "text": "공통 설정 원칙"
+        },
+        {
+          "level": 2,
+          "text": "팀 구성 요약"
+        },
+        {
+          "level": 2,
+          "text": "1. PM·제품팀"
+        },
+        {
+          "level": 3,
+          "text": "1.1 제품 총괄 PM"
+        },
+        {
+          "level": 3,
+          "text": "1.2 프로젝트 매니저"
+        },
+        {
+          "level": 3,
+          "text": "1.3 요구사항 분석가"
+        },
+        {
+          "level": 3,
+          "text": "1.4 기술 PM"
+        },
+        {
+          "level": 2,
+          "text": "2. 서비스 기획팀"
+        },
+        {
+          "level": 3,
+          "text": "2.1 서비스 기획 리드"
+        },
+        {
+          "level": 3,
+          "text": "2.2 UX 기획자"
+        },
+        {
+          "level": 3,
+          "text": "2.3 업무 프로세스 설계자"
+        },
+        {
+          "level": 3,
+          "text": "2.4 데이터 정책 기획자"
+        },
+        {
+          "level": 2,
+          "text": "3. 개발팀"
+        },
+        {
+          "level": 3,
+          "text": "3.1 테크 리드"
+        },
+        {
+          "level": 3,
+          "text": "3.2 Backend Runtime 개발자"
+        },
+        {
+          "level": 3,
+          "text": "3.3 Frontend 개발자"
+        },
+        {
+          "level": 3,
+          "text": "3.4 DB·마이그레이션 개발자"
+        },
+        {
+          "level": 3,
+          "text": "3.5 DevOps 개발자"
+        },
+        {
+          "level": 3,
+          "text": "3.6 코드 리뷰어"
+        },
+        {
+          "level": 2,
+          "text": "4. QA팀"
+        },
+        {
+          "level": 3,
+          "text": "4.1 QA 리드"
+        },
+        {
+          "level": 3,
+          "text": "4.2 기능 QA"
+        },
+        {
+          "level": 3,
+          "text": "4.3 테스트 자동화 엔지니어"
+        },
+        {
+          "level": 3,
+          "text": "4.4 Reliability QA"
+        },
+        {
+          "level": 3,
+          "text": "4.5 보안 QA"
+        },
+        {
+          "level": 2,
+          "text": "5. 운영·릴리즈팀"
+        },
+        {
+          "level": 3,
+          "text": "5.1 릴리즈 매니저"
+        },
+        {
+          "level": 3,
+          "text": "5.2 SRE"
+        },
+        {
+          "level": 3,
+          "text": "5.3 Cloudflare 운영자"
+        },
+        {
+          "level": 3,
+          "text": "5.4 보안 운영자"
+        },
+        {
+          "level": 3,
+          "text": "5.5 문서 관리자"
+        },
+        {
+          "level": 2,
+          "text": "6. 메일·자동화팀"
+        },
+        {
+          "level": 3,
+          "text": "6.1 메일 운영 리드"
+        },
+        {
+          "level": 3,
+          "text": "6.2 메일 트리아지 담당"
+        },
+        {
+          "level": 3,
+          "text": "6.3 업무 전환 담당"
+        },
+        {
+          "level": 3,
+          "text": "6.4 자동화 QA"
+        },
+        {
+          "level": 2,
+          "text": "공통 Persona Baseline"
+        },
+        {
+          "level": 2,
+          "text": "권장 생성 순서"
+        }
+      ],
+      "excerpt": "Personal Agent Gateway를 제품팀처럼 운영하기 위한 6개 팀, 28개 페르소나의 권장 입력값이다. 각 `Responsibilities`와 `Constraints` 코드 블록은 UI의 해당 입력란에 그대로 붙여 넣을 수 있으며, 한 줄이 한 항목이다."
     },
     {
       "path": "docs/knowledge/persona-team-usage-guide.md",
