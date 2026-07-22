@@ -20,6 +20,7 @@ from personal_agent_gateway.api import (
     audit_router,
     auth_router,
     capabilities_router,
+    dashboard_router,
     health_router,
     hooks_router,
     jobs_router,
@@ -273,6 +274,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(health_router)
     app.include_router(audit_router)
     app.include_router(capabilities_router)
+    app.include_router(dashboard_router)
     app.include_router(jobs_router)
     app.include_router(operations_router)
     app.include_router(artifacts_router)

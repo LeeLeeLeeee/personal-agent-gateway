@@ -4,6 +4,7 @@ from personal_agent_gateway.api.artifacts import router as artifacts_router
 from personal_agent_gateway.api.audit import router as audit_router
 from personal_agent_gateway.api.auth import router as auth_router
 from personal_agent_gateway.api.capabilities import router as capabilities_router
+from personal_agent_gateway.api.dashboard import router as dashboard_router
 from personal_agent_gateway.api.jobs import router as jobs_router
 from personal_agent_gateway.api.health import router as health_router
 from personal_agent_gateway.api.hooks import router as hooks_router
@@ -22,6 +23,7 @@ __all__ = [
     "audit_router",
     "auth_router",
     "capabilities_router",
+    "dashboard_router",
     "jobs_router",
     "health_router",
     "hooks_router",

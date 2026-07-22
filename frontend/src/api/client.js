@@ -140,6 +140,9 @@ export const api = {
   async agents() {
     return jsonList(await fetch("/api/agents"), "agents");
   },
+  async dashboardUsage() {
+    return jsonOrNull(await fetch("/api/dashboard/usage"));
+  },
   async searchSessions(query) {
     return jsonList(await fetch(`/api/sessions/search?q=${encodeURIComponent(query)}`), "sessions");
   },

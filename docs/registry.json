@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 128,
+  "document_count": 129,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -2033,6 +2033,99 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `api-state`, `test` - Verdict: `GatewayApp`와 `useTeamRunController`의 기존 API/state ownership을 유지한다. `TeamPicker`는 정책별 생성 payload만 조립하고, `TeamRu..."
+    },
+    {
+      "path": "docs/component-inspector/GatewayApp/2026-07-22-0958.md",
+      "title": "GatewayApp Dashboard Integration Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "dashboard",
+      "status": "done",
+      "aliases": [
+        "GatewayApp dashboard integration analysis",
+        "대시보드 화면 연결 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "dashboard"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp Dashboard Integration Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 Effect"
+        },
+        {
+          "level": 3,
+          "text": "로컬 상태와 ref"
+        },
+        {
+          "level": 3,
+          "text": "Effect와 memoization"
+        },
+        {
+          "level": 2,
+          "text": "외부 primitive와 주입 동작"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 3,
+          "text": "기존 화면 전환"
+        },
+        {
+          "level": 3,
+          "text": "Dashboard 전환"
+        },
+        {
+          "level": 2,
+          "text": "API와 상태 추적"
+        },
+        {
+          "level": 2,
+          "text": "테스트와 Story"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "Review"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: `DashboardView`가 자체적으로 `api.dashboardUsage()`와 로딩·오류·재시도를 소유하므로, `GatewayApp`에는 import와 `screen =..."
     },
     {
       "path": "docs/component-inspector/HooksView/2026-07-20-1037.md",

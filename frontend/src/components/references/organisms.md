@@ -8,6 +8,12 @@ Project-local Atomic Design catalog for the Vite React frontend.
 - Use when: Rendering app-level navigation.
 - Don't use when: Feature-local tabs are needed.
 
+### DashboardView
+- Path: `src/components/organisms/DashboardView/`
+- Props: none; loads `/api/dashboard/usage` through the shared API client.
+- Use when: Rendering provider availability and confirmed weekly usage, remaining limit, and reset time with loading, error, and uncollected states.
+- Don't use when: Collecting or estimating local CLI usage; the backend owns collection and leaves unconfirmed values empty.
+
 ### Statusbar
 - Path: `src/components/organisms/Statusbar/`
 - Props: runtime status, timeline entries, SSE state.

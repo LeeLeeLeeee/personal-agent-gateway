@@ -112,6 +112,9 @@ describe("GatewayApp", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Schedules" }));
     expect(await screen.findByRole("heading", { name: "Schedules" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Dashboard" }));
+    expect(await screen.findByRole("heading", { name: "대시보드" })).toBeInTheDocument();
   });
 
   it("shows the configured environment title in the browser title and sidebar footer", async () => {

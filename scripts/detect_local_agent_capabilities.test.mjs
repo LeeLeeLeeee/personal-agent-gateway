@@ -62,3 +62,17 @@ test("parses Claude aliases, efforts, and permission modes from help", () => {
   assert.equal(result.defaults.effort, "high");
   assert.equal(result.defaults.permission_mode, "plan");
 });
+
+test("keeps an unavailable local CLI report parseable with fallback options", () => {
+  const result = parseCodexCapabilities({
+    help: "",
+    version: "",
+    available: false,
+    error: "ENOENT",
+  });
+
+  assert.equal(result.available, false);
+  assert.equal(result.error, "ENOENT");
+  assert.equal(result.models[0].id, "default");
+  assert.deepEqual(result.options.sandbox, ["read-only", "workspace-write", "danger-full-access"]);
+});

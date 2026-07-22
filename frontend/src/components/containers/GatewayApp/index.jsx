@@ -12,6 +12,7 @@ import {
 import { AuthCard } from "../../molecules/AuthCard/index.jsx";
 import { AuthTemplate } from "../../templates/AuthTemplate/index.jsx";
 import { AppShell } from "../../templates/AppShell/index.jsx";
+import { DashboardView } from "../../organisms/DashboardView/index.jsx";
 import { ChatView } from "../../organisms/ChatView/index.jsx";
 import { NAV } from "../../organisms/Sidebar/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
@@ -778,7 +779,9 @@ export function GatewayApp() {
           </button>
         </div>
       ) : null}
-      {screen === "chat" ? (
+      {screen === "dashboard" ? (
+        <DashboardView />
+      ) : screen === "chat" ? (
         <ChatView
           agents={agents}
           personas={personas}

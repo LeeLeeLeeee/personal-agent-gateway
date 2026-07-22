@@ -1,6 +1,7 @@
 import { Logo } from "../../atoms/Logo/index.jsx";
 
 export const NAV = [
+  { key: "dashboard", label: "Dashboard" },
   { key: "chat", label: "Chat" },
   { key: "jobs", label: "Jobs" },
   { key: "schedules", label: "Schedules" },
