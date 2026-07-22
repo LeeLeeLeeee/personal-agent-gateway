@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { api } from "../../../api/client.js";
+import { api, apiErrorAction } from "../../../api/client.js";
+import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import "./DashboardView.css";
+import { isOperationsPayload, operationsDashboardModel } from "./operationsModel.js";
 
 const STATUS_LABELS = {
   ok: "수집 완료",
@@ -114,11 +116,173 @@ function ProviderUsageCard({ usage }) {
   );
 }
 
-export function DashboardView() {
+function errorMessage(error) {
+  return typeof error?.detail === "string" ? error.detail : error?.message || "잠시 후 다시 시도해 주세요.";
+}
+
+function OperationRows({ items, emptyMessage, onOpenTarget, attention = false }) {
+  if (!items.length) {
+    return <div className="dashboard-operation-empty">{emptyMessage}</div>;
+  }
+
+  return (
+    <div className={`dashboard-operation-list${attention ? " dashboard-operation-list-attention" : ""}`}>
+      {items.map((item) => (
+        <article className="dashboard-operation-row" key={`${item.domain}:${item.id}`}>
+          <div className="dashboard-operation-row-main">
+            <h3>{item.title || "제목 없는 작업"}</h3>
+            <p className="mono">
+              {String(item.domain || "operation").replaceAll("_", " ").toUpperCase()}
+              {item.updated_at ? ` · ${formatDateTime(item.updated_at)}` : " · 갱신 시각 미확인"}
+            </p>
+            {item.pause_reason ? <p className="dashboard-operation-reason">{item.pause_reason}</p> : null}
+          </div>
+          <StatusBadge kind={item.status || "idle"} />
+          {item.target && onOpenTarget ? (
+            <button
+              type="button"
+              className="btn btn-sm"
+              aria-label={`${item.title || "작업"} 상세 열기`}
+              onClick={() => onOpenTarget(item.target)}
+            >
+              열기
+            </button>
+          ) : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function SystemStatus({ model, operations }) {
+  const accessMode = operations.access_mode ? String(operations.access_mode).toUpperCase() : "미확인";
+  const workspace = operations.diagnostics.workspace_writable;
+
+  return (
+    <>
+      <div className="dashboard-system-summary mono">
+        INTAKE · {operations.intake_open ? "OPEN" : "STOPPED"}
+        <span>ACCESS · {accessMode}</span>
+        <span>WORKSPACE · {workspace === true ? "WRITABLE" : workspace === false ? "BLOCKED" : "UNCONFIRMED"}</span>
+      </div>
+      {model.health.length ? (
+        <div className="dashboard-health-grid">
+          {model.health.map((component) => (
+            <article className="dashboard-health-card" key={component.name || component.detail}>
+              <div>
+                <h3 className="mono">{component.name || "unknown"}</h3>
+                <p>{typeof component.detail === "string" ? component.detail : "상태 정보가 없습니다."}</p>
+              </div>
+              <StatusBadge kind={component.ready === true ? "completed" : "failed"} />
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="dashboard-operation-empty">시스템 상태 정보가 없습니다.</div>
+      )}
+    </>
+  );
+}
+
+function OperationsDashboard({ data, error, loading, onReload, onOpenTarget, onRelogin }) {
+  const model = data ? operationsDashboardModel(data) : null;
+  const attentionCount = model ? model.attentionItems.length + model.systemAttention.length : 0;
+  const errorAction = apiErrorAction(error);
+
+  return (
+    <section className="dashboard-operations-section" aria-labelledby="dashboard-operations-title">
+      <div className="dashboard-section-head">
+        <div>
+          <h2 id="dashboard-operations-title" className="headline">운영 현황</h2>
+          <p>진행 중인 작업과 조치가 필요한 상태를 확인합니다.</p>
+        </div>
+        {!loading ? (
+          <button type="button" className="btn btn-sm" onClick={onReload}>새로고침</button>
+        ) : null}
+      </div>
+
+      {loading && !data ? <div className="dashboard-state" role="status">운영 현황을 불러오는 중입니다.</div> : null}
+      {error ? (
+        <div className="dashboard-state dashboard-state-error" role="alert">
+          <strong>운영 현황을 불러오지 못했습니다.</strong>
+          <span>{errorMessage(error)}</span>
+          {data ? <span>마지막으로 성공한 정보를 계속 표시합니다.</span> : null}
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={errorAction === "relogin" && onRelogin ? onRelogin : onReload}
+          >
+            {errorAction === "relogin" && onRelogin ? "다시 로그인" : "다시 시도"}
+          </button>
+        </div>
+      ) : null}
+
+      {model ? (
+        <>
+          <div className="dashboard-operations-summary" aria-label="운영 요약">
+            <div className="dashboard-summary-card">
+              <span>진행 중</span>
+              <strong className="mono">{model.activeItems.length}</strong>
+            </div>
+            <div className={`dashboard-summary-card${attentionCount ? " dashboard-summary-card-danger" : ""}`}>
+              <span>조치 필요</span>
+              <strong className="mono">{attentionCount}</strong>
+            </div>
+            <div className="dashboard-summary-card">
+              <span>정상 시스템</span>
+              <strong className="mono">{model.healthyCount} / {model.health.length}</strong>
+            </div>
+          </div>
+
+          <div className="dashboard-operations-grid">
+            <section className="dashboard-operation-panel" aria-labelledby="dashboard-active-title">
+              <h3 id="dashboard-active-title" className="headline">진행 중 작업</h3>
+              <OperationRows
+                items={model.activeItems.slice(0, 5)}
+                emptyMessage="현재 진행 중인 작업이 없습니다."
+                onOpenTarget={onOpenTarget}
+              />
+            </section>
+
+            <section className="dashboard-operation-panel" aria-labelledby="dashboard-system-title">
+              <h3 id="dashboard-system-title" className="headline">시스템 상태</h3>
+              <SystemStatus model={model} operations={data} />
+            </section>
+          </div>
+
+          <section className="dashboard-operation-panel dashboard-attention-panel" aria-labelledby="dashboard-attention-title">
+            <h3 id="dashboard-attention-title" className="headline">조치 필요</h3>
+            {model.systemAttention.map((item) => (
+              <article className="dashboard-operation-row dashboard-operation-system-alert" key={item.id}>
+                <div className="dashboard-operation-row-main">
+                  <h4>{item.title}</h4>
+                  <p>{item.detail}</p>
+                </div>
+                <StatusBadge kind={item.kind} />
+              </article>
+            ))}
+            <OperationRows
+              items={model.attentionItems.slice(0, 5)}
+              emptyMessage={model.systemAttention.length ? "작업 항목에는 추가 조치가 필요하지 않습니다." : "조치가 필요한 항목이 없습니다."}
+              onOpenTarget={onOpenTarget}
+              attention
+            />
+          </section>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+export function DashboardView({ onOpenTarget, onRelogin }) {
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
+  const [operations, setOperations] = useState(null);
+  const [operationsError, setOperationsError] = useState(null);
+  const [operationsLoading, setOperationsLoading] = useState(true);
+  const [operationsReloadKey, setOperationsReloadKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -140,6 +304,30 @@ export function DashboardView() {
       active = false;
     };
   }, [reloadKey]);
+
+  useEffect(() => {
+    let active = true;
+    setOperationsLoading(true);
+    setOperationsError(null);
+
+    api.operations()
+      .then((nextOperations) => {
+        if (!isOperationsPayload(nextOperations)) {
+          throw new Error("운영 현황 응답에 필요한 정보가 없습니다.");
+        }
+        if (active) setOperations(nextOperations);
+      })
+      .catch((nextError) => {
+        if (active) setOperationsError(nextError);
+      })
+      .finally(() => {
+        if (active) setOperationsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [operationsReloadKey]);
 
   const providers = report?.providers || [];
 
@@ -199,6 +387,15 @@ export function DashboardView() {
           </div>
         ) : null}
       </section>
+
+      <OperationsDashboard
+        data={operations}
+        error={operationsError}
+        loading={operationsLoading}
+        onReload={() => setOperationsReloadKey((value) => value + 1)}
+        onOpenTarget={onOpenTarget}
+        onRelogin={onRelogin}
+      />
     </section>
   );
 }

@@ -27,6 +27,10 @@
   margin-top: 28px;
 }
 
+.dashboard-operations-section {
+  margin-top: 34px;
+}
+
 .dashboard-section-head h2 {
   font-size: 20px;
 }
@@ -182,8 +186,134 @@
   line-height: 1.5;
 }
 
+.dashboard-operations-summary,
+.dashboard-operations-grid {
+  display: grid;
+  gap: 18px;
+  margin-top: 14px;
+}
+
+.dashboard-operations-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboard-summary-card,
+.dashboard-operation-panel {
+  min-width: 0;
+  padding: 18px;
+  border: var(--bd);
+  background: var(--c-white);
+}
+
+.dashboard-summary-card {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dashboard-summary-card > span {
+  color: var(--c-grey);
+  font-size: 12px;
+}
+
+.dashboard-summary-card > strong {
+  font-size: 24px;
+}
+
+.dashboard-summary-card-danger,
+.dashboard-attention-panel {
+  border-color: var(--c-danger);
+}
+
+.dashboard-operations-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dashboard-operation-panel > h3 {
+  font-size: 18px;
+}
+
+.dashboard-operation-list,
+.dashboard-health-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.dashboard-operation-row,
+.dashboard-health-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: var(--bd-in);
+  background: var(--c-panel);
+}
+
+.dashboard-operation-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.dashboard-operation-row h3,
+.dashboard-operation-row h4,
+.dashboard-health-card h3 {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.dashboard-operation-row p,
+.dashboard-health-card p {
+  margin-top: 5px;
+  color: var(--c-grey);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.dashboard-operation-reason {
+  color: var(--c-danger) !important;
+}
+
+.dashboard-operation-list-attention .dashboard-operation-row,
+.dashboard-operation-system-alert {
+  border-left: 4px solid var(--c-danger);
+}
+
+.dashboard-operation-empty {
+  margin-top: 14px;
+  padding: 12px;
+  border: var(--bd-in);
+  color: var(--c-grey);
+  background: var(--c-panel);
+  font-size: 12px;
+}
+
+.dashboard-system-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 14px;
+  color: var(--c-grey);
+  font-size: 10px;
+}
+
+.dashboard-attention-panel {
+  margin-top: 18px;
+}
+
+.dashboard-attention-panel > .dashboard-operation-row {
+  margin-top: 14px;
+}
+
 @media (max-width: 800px) {
   .dashboard-usage-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-operations-summary,
+  .dashboard-operations-grid {
     grid-template-columns: 1fr;
   }
 

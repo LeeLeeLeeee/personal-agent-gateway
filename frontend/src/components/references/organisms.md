@@ -10,8 +10,8 @@ Project-local Atomic Design catalog for the Vite React frontend.
 
 ### DashboardView
 - Path: `src/components/organisms/DashboardView/`
-- Props: none; loads `/api/dashboard/usage` through the shared API client.
-- Use when: Rendering provider availability and confirmed weekly usage, remaining limit, and reset time with loading, error, and uncollected states.
+- Props: `{ onOpenTarget?, onRelogin? }`; loads `/api/dashboard/usage` and `/api/operations` through the shared API client.
+- Use when: Rendering provider availability and confirmed weekly usage plus read-only operation attention, active work, and system status with independent loading, error, empty, and uncollected states.
 - Don't use when: Collecting or estimating local CLI usage; the backend owns collection and leaves unconfirmed values empty.
 
 ### Statusbar

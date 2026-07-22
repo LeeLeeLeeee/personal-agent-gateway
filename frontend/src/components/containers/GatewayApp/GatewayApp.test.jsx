@@ -117,6 +117,41 @@ describe("GatewayApp", () => {
     expect(await screen.findByRole("heading", { name: "대시보드" })).toBeInTheDocument();
   });
 
+  it("opens an operations dashboard item through the existing target navigation handler", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { detected_at: "2026-07-22T00:00:00Z", providers: [] },
+      "GET /api/operations": {
+        intake_open: true,
+        diagnostics: { workspace_writable: true },
+        health: [],
+        items: [{
+          id: "job-1",
+          domain: "job",
+          title: "Retry export",
+          status: "failed",
+          updated_at: "2026-07-22T10:00:00Z",
+          retryable: true,
+          target: { screen: "jobs", job_id: "job-1" }
+        }]
+      },
+      "GET /api/jobs": { jobs: [] },
+      "GET /api/jobs/job-1/events": { events: [] }
+    });
+
+    render(<GatewayApp />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Dashboard" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Retry export 상세 열기" }));
+
+    expect(await screen.findByRole("heading", { name: "Jobs" })).toBeInTheDocument();
+  });
+
   it("shows the configured environment title in the browser title and sidebar footer", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },

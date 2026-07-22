@@ -33,19 +33,51 @@ const completeReport = {
   ]
 };
 
+const operationsPayload = {
+  intake_open: true,
+  access_mode: "restricted",
+  diagnostics: { workspace_writable: true },
+  health: [
+    { name: "worker", ready: true, detail: "ready" },
+    { name: "scheduler", ready: false, detail: "not running" }
+  ],
+  items: [
+    {
+      id: "run-1",
+      domain: "team_run",
+      title: "Release dashboard",
+      status: "running",
+      updated_at: "2026-07-22T09:00:00Z",
+      target: { screen: "teams", team_run_id: "run-1" }
+    },
+    {
+      id: "job-1",
+      domain: "job",
+      title: "Retry export",
+      status: "failed",
+      updated_at: "2026-07-22T10:00:00Z",
+      retryable: true,
+      target: { screen: "jobs", job_id: "job-1" }
+    }
+  ]
+};
+
 describe("DashboardView", () => {
   beforeEach(() => {
     globalThis.fetch = vi.fn();
   });
 
   it("calls the dashboard usage API and renders provider usage as a card and gauge", async () => {
-    fetch.mockResolvedValueOnce(await jsonResponse(completeReport));
+    fetch
+      .mockResolvedValueOnce(await jsonResponse(completeReport))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload));
 
     render(<DashboardView />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("사용량을 불러오는 중입니다.");
+    expect(screen.getByText("사용량을 불러오는 중입니다.")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Codex" })).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith("/api/dashboard/usage");
+    expect(fetch).toHaveBeenCalledWith("/api/operations");
     expect(screen.getByText("1,000")).toBeInTheDocument();
     expect(screen.getByText("400")).toBeInTheDocument();
     expect(screen.getByText("600 / 1,000 (60%)")).toBeInTheDocument();
@@ -87,7 +119,7 @@ describe("DashboardView", () => {
           note: "not found"
         }
       ]
-    }));
+    })).mockResolvedValueOnce(await jsonResponse(operationsPayload));
 
     render(<DashboardView />);
 
@@ -101,6 +133,7 @@ describe("DashboardView", () => {
   it("shows an error and retries the API request", async () => {
     fetch
       .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload))
       .mockResolvedValueOnce(await jsonResponse(completeReport));
 
     render(<DashboardView />);
@@ -111,15 +144,67 @@ describe("DashboardView", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
     expect(await screen.findByRole("heading", { name: "Codex" })).toBeInTheDocument();
   });
 
   it("shows a clear empty state when no local agents are returned", async () => {
-    fetch.mockResolvedValueOnce(await jsonResponse({ detected_at: "2026-07-22T00:00:00Z", providers: [] }));
+    fetch
+      .mockResolvedValueOnce(await jsonResponse({ detected_at: "2026-07-22T00:00:00Z", providers: [] }))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload));
 
     render(<DashboardView />);
 
     expect(await screen.findByText("표시할 로컬 에이전트가 없습니다.")).toBeInTheDocument();
+  });
+
+  it("renders active work, system status, and attention items from operations separately from usage", async () => {
+    const onOpenTarget = vi.fn();
+    fetch
+      .mockResolvedValueOnce(await jsonResponse(completeReport))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload));
+
+    render(<DashboardView onOpenTarget={onOpenTarget} />);
+
+    expect(await screen.findByRole("heading", { name: "운영 현황" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Release dashboard" })).toBeInTheDocument();
+    expect(screen.getByText("scheduler 상태를 확인하세요.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry export 상세 열기" }));
+    expect(onOpenTarget).toHaveBeenCalledWith({ screen: "jobs", job_id: "job-1" });
+  });
+
+  it("keeps usage visible when operations fails and retries only operations", async () => {
+    fetch
+      .mockResolvedValueOnce(await jsonResponse(completeReport))
+      .mockRejectedValueOnce(new Error("operations offline"))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload));
+
+    render(<DashboardView />);
+
+    expect(await screen.findByRole("heading", { name: "Codex" })).toBeInTheDocument();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("운영 현황을 불러오지 못했습니다.");
+
+    await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    expect(await screen.findByRole("heading", { name: "Release dashboard" })).toBeInTheDocument();
+  });
+
+  it("shows explicit empty states when operations has no current data", async () => {
+    fetch
+      .mockResolvedValueOnce(await jsonResponse(completeReport))
+      .mockResolvedValueOnce(await jsonResponse({
+        intake_open: true,
+        diagnostics: { workspace_writable: true },
+        health: [],
+        items: []
+      }));
+
+    render(<DashboardView />);
+
+    expect(await screen.findByText("현재 진행 중인 작업이 없습니다.")).toBeInTheDocument();
+    expect(screen.getByText("시스템 상태 정보가 없습니다.")).toBeInTheDocument();
+    expect(screen.getByText("조치가 필요한 항목이 없습니다.")).toBeInTheDocument();
   });
 });

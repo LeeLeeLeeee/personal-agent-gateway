@@ -780,7 +780,10 @@ export function GatewayApp() {
         </div>
       ) : null}
       {screen === "dashboard" ? (
-        <DashboardView />
+        <DashboardView
+          onOpenTarget={handleOpenOperationTarget}
+          onRelogin={handleOperationsRelogin}
+        />
       ) : screen === "chat" ? (
         <ChatView
           agents={agents}

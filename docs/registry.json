@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 132,
+  "document_count": 135,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -1275,6 +1275,108 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/ChatView/index.jsx` - Modes: `understand`, `api-state`, `test`, `refactor` - Verdict: 단일 Chat의 상위 선택 단위를 runtime `Agent`에서 `Persona`로 바꾸되,   기존 session config의 backend/model/..."
+    },
+    {
+      "path": "docs/component-inspector/DashboardView/2026-07-22-1321.md",
+      "title": "DashboardView Operations Expansion Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "dashboard-operations",
+      "status": "done",
+      "aliases": [
+        "DashboardView operations expansion analysis",
+        "대시보드 운영 현황 확장 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "dashboard",
+        "operations"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "DashboardView Operations Expansion Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 Effect"
+        },
+        {
+          "level": 2,
+          "text": "외부 primitive와 주입 동작"
+        },
+        {
+          "level": 3,
+          "text": "Custom hooks / selectors / actions"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 3,
+          "text": "현재 usage 조회와 재시도"
+        },
+        {
+          "level": 3,
+          "text": "제안 operations 조회와 deep-link"
+        },
+        {
+          "level": 2,
+          "text": "API와 상태 추적"
+        },
+        {
+          "level": 3,
+          "text": "`/api/dashboard/usage`"
+        },
+        {
+          "level": 3,
+          "text": "`/api/operations` coverage 판정"
+        },
+        {
+          "level": 3,
+          "text": "확인된 제한과 백엔드 최소 보강 판정"
+        },
+        {
+          "level": 2,
+          "text": "테스트와 Story"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "Review"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/DashboardView/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: 현재 `DashboardView`는 `/api/dashboard/usage`의 독립적인 loading/error/retry 경계를 소유한다. 1차 확장은 신규 endpoi..."
     },
     {
       "path": "docs/component-inspector/GatewayApp/2026-07-14-1526.md",
@@ -3922,7 +4024,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [TeamRunDetail Delivery Conflict — 2026-07-22 11:27](./TeamRunDetail/2026-07-22-1127.md) - [TeamRunDetail Worktree Delivery — 2026-07-22 10:54](./TeamRunDetail/2026-07-22-1054.md) - [GatewayApp Dashboard Integration..."
+      "excerpt": "- [DashboardView Operations Expansion Analysis — 2026-07-22 13:21](./DashboardView/2026-07-22-1321.md) - [TeamRunDetail Delivery Conflict — 2026-07-22 11:27](./TeamRunDetail/2026-07-22-1127.md) - [TeamRunDetail Worktr..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -5785,6 +5887,74 @@
         }
       ],
       "excerpt": "- `src/personal_agent_gateway/team_cycles.py`가 AUTO Series와 Manual, Hook,   AUTO, Retry CycleRequest를 저장하고 source idempotency, Run별 FIFO claim,   pause와 terminal settlement를 관리한다. - `src/personal_agent_gateway/team_cy..."
+    },
+    {
+      "path": "docs/reports/2026-07-22-dashboard-operations-expansion-implementation.md",
+      "title": "대시보드 운영 현황 확장 구현 결과",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "dashboard-operations",
+      "status": "done",
+      "aliases": [
+        "대시보드 확장 구현 결과",
+        "Dashboard operations expansion report",
+        "대시보드 운영 현황 통합 결과"
+      ],
+      "tags": [
+        "dashboard",
+        "operations",
+        "usage",
+        "health",
+        "implementation"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "대시보드 운영 현황 확장 구현 결과"
+        },
+        {
+          "level": 2,
+          "text": "결론"
+        },
+        {
+          "level": 2,
+          "text": "최종 위젯 구성과 데이터 소스"
+        },
+        {
+          "level": 2,
+          "text": "결정 사항"
+        },
+        {
+          "level": 3,
+          "text": "Health는 Operations 응답으로 통합"
+        },
+        {
+          "level": 3,
+          "text": "재사용 대비 신규 개발 판정"
+        },
+        {
+          "level": 2,
+          "text": "2차 이관 항목"
+        },
+        {
+          "level": 2,
+          "text": "알려진 한계"
+        },
+        {
+          "level": 2,
+          "text": "검증 결과"
+        },
+        {
+          "level": 2,
+          "text": "인계 및 관련 문서"
+        },
+        {
+          "level": 2,
+          "text": "근거 경로"
+        }
+      ],
+      "excerpt": "1차 대시보드 확장은 구현 및 targeted 검증을 완료했다. 기존 사용량 위젯은 유지하고, 같은 `DashboardView`에서 기존 `/api/operations`를 독립적으로 읽어 운영 현황을 읽기 전용으로 표시한다. backend endpoint·production schema·migration은 추가하지 않았다."
     },
     {
       "path": "docs/specs/2026-07-08-observability-audit-log-spec.md",
@@ -9581,6 +9751,108 @@
         }
       ],
       "excerpt": "작성일: 2026-07-16 상태: active — 구현 대기 목록이 아니라 실제 사용 근거를 기다리는 가설 목록"
+    },
+    {
+      "path": "docs/todo/2026-07-22-dashboard-operations-expansion-plan.md",
+      "title": "대시보드 운영 현황 확장 구현 계획",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "dashboard-operations",
+      "status": "done",
+      "aliases": [
+        "대시보드 확장 계획",
+        "Dashboard operations plan"
+      ],
+      "tags": [
+        "dashboard",
+        "operations",
+        "frontend",
+        "api"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "대시보드 운영 현황 확장 구현 계획"
+        },
+        {
+          "level": 2,
+          "text": "결론"
+        },
+        {
+          "level": 2,
+          "text": "목표와 비목표"
+        },
+        {
+          "level": 3,
+          "text": "목표"
+        },
+        {
+          "level": 3,
+          "text": "비목표"
+        },
+        {
+          "level": 2,
+          "text": "UX 설계"
+        },
+        {
+          "level": 2,
+          "text": "데이터 계약과 판정 규칙"
+        },
+        {
+          "level": 3,
+          "text": "source별 책임"
+        },
+        {
+          "level": 3,
+          "text": "frontend projection"
+        },
+        {
+          "level": 2,
+          "text": "데이터 흐름과 책임 경계"
+        },
+        {
+          "level": 2,
+          "text": "오류 처리 기준"
+        },
+        {
+          "level": 2,
+          "text": "변경 영향 범위"
+        },
+        {
+          "level": 2,
+          "text": "세부 작업 분해와 착수 순서"
+        },
+        {
+          "level": 2,
+          "text": "backend 보강 gate"
+        },
+        {
+          "level": 2,
+          "text": "검증 전략"
+        },
+        {
+          "level": 3,
+          "text": "단위"
+        },
+        {
+          "level": 3,
+          "text": "통합·회귀"
+        },
+        {
+          "level": 3,
+          "text": "실행 명령"
+        },
+        {
+          "level": 2,
+          "text": "완료 기준"
+        },
+        {
+          "level": 2,
+          "text": "분석 근거"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-22"
     }
   ]
 }

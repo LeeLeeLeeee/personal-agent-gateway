@@ -228,6 +228,7 @@ Prompt 원문, 파일 내용, command output은 지표에 넣지 않는다. ID, 
 
 ## 관련 문서
 
+- [대시보드 운영 현황 확장 구현 결과](2026-07-22-dashboard-operations-expansion-implementation.md) — PM-01의 1차 구현 범위와 2차 이관 항목
 - [서비스 도메인 지도](../knowledge/2026-07-15-service-domain-map.md)
 - [개발 PM 유지보수성 진단](2026-07-15-development-pm-maintainability-assessment.md)
 - [통합 개선 로드맵](../todo/2026-07-15-service-improvement-roadmap.md)
