@@ -59,6 +59,13 @@ const sessions = [{
   created_at: "2026-07-08T01:00:00Z"
 }];
 
+async function renderGatewayApp({ openChat = true, uiProvider = false } = {}) {
+  render(uiProvider ? <UiProvider><GatewayApp /></UiProvider> : <GatewayApp />);
+  if (openChat) {
+    await userEvent.click(await screen.findByRole("button", { name: "Chat" }));
+  }
+}
+
 describe("GatewayApp", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -89,7 +96,7 @@ describe("GatewayApp", () => {
     expect(updated.agents[0]).toMatchObject({ status: "running", current_task_id: "task-1" });
   });
 
-  it("boots authenticated users into the chat shell and preserves planned tabs", async () => {
+  it("boots authenticated users into the dashboard and preserves planned tabs", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
       "GET /api/status": status,
@@ -98,14 +105,16 @@ describe("GatewayApp", () => {
       "GET /api/agents": { agents: [] },
       "GET /api/sessions/active/config": { config: null },
       "GET /api/jobs": { jobs: [] },
-      "GET /api/schedules": { schedules: [] }
+      "GET /api/schedules": { schedules: [] },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": { items: [], counts: {} }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp({ openChat: false });
 
     expect(await screen.findByLabelText("Agent Gateway")).toBeInTheDocument();
-    expect(screen.getAllByText("Main chat").length).toBeGreaterThan(0);
-    expect(screen.getByText("AGENT IDLE")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "대시보드" })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Message the agent, or describe a local action...")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Jobs" }));
     expect(await screen.findByRole("heading", { name: "Jobs" })).toBeInTheDocument();
@@ -113,8 +122,8 @@ describe("GatewayApp", () => {
     await userEvent.click(screen.getByRole("button", { name: "Schedules" }));
     expect(await screen.findByRole("heading", { name: "Schedules" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Dashboard" }));
-    expect(await screen.findByRole("heading", { name: "대시보드" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(await screen.findByText("AGENT IDLE")).toBeInTheDocument();
   });
 
   it("opens an operations dashboard item through the existing target navigation handler", async () => {
@@ -144,7 +153,7 @@ describe("GatewayApp", () => {
       "GET /api/jobs/job-1/events": { events: [] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp({ openChat: false });
 
     await userEvent.click(await screen.findByRole("button", { name: "Dashboard" }));
     await userEvent.click(await screen.findByRole("button", { name: "Retry export 상세 열기" }));
@@ -162,7 +171,7 @@ describe("GatewayApp", () => {
       "GET /api/sessions/active/config": { config: null }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     expect(await screen.findByText("PC(MPX)")).toBeInTheDocument();
     await waitFor(() => expect(document.title).toBe("MPX PC · Agent Gateway"));
@@ -180,7 +189,7 @@ describe("GatewayApp", () => {
       "DELETE /api/sessions/session-1": { deleted: true, active_session_id: null }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     expect(await screen.findByText("WORKING")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Rename" })).not.toBeInTheDocument();
@@ -211,7 +220,7 @@ describe("GatewayApp", () => {
       "GET /api/sessions/active/config": { config: { agent_id: "claude", model: "sonnet", options: {}, editable: true, source: "explicit" } }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     expect(await screen.findByText("claude")).toBeInTheDocument();
     expect(screen.getAllByText("sonnet").length).toBeGreaterThan(0);
@@ -234,7 +243,7 @@ describe("GatewayApp", () => {
       }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     expect(await screen.findByText("openai")).toBeInTheDocument();
     expect(screen.getByText("legacy-model")).toBeInTheDocument();
@@ -251,12 +260,13 @@ describe("GatewayApp", () => {
       "GET /api/sessions/active/config": { config: null }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp({ openChat: false });
 
     await userEvent.type(await screen.findByPlaceholderText("000000"), "123456");
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/auth/login", expect.any(Object)));
+    await userEvent.click(await screen.findByRole("button", { name: "Chat" }));
     await waitFor(() => expect(screen.getAllByText("Main chat").length).toBeGreaterThan(0));
   });
 
@@ -272,7 +282,7 @@ describe("GatewayApp", () => {
       "GET /api/artifacts": { artifacts: [] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
     await userEvent.type(input, "hello");
@@ -298,7 +308,7 @@ describe("GatewayApp", () => {
       "POST /api/sessions/session-1/chat": () => response({ messages: [], pending_approval: false, session_id: "session-1", request_id: "r1" })
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
     await screen.findByLabelText("Agent Gateway");
 
     const composer = screen.getByPlaceholderText("Message the agent, or describe a local action...");
@@ -331,7 +341,7 @@ describe("GatewayApp", () => {
       "GET /api/artifacts": { artifacts: [] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
     await userEvent.type(input, "run it");
@@ -368,7 +378,7 @@ describe("GatewayApp", () => {
       "GET /api/artifacts": { artifacts: [] }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
 
     const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
     await userEvent.type(input, "run it");
@@ -404,7 +414,7 @@ describe("GatewayApp", () => {
       }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     const rail = await screen.findByLabelText("Sessions");
     await userEvent.type(within(rail).getByPlaceholderText("Search"), "old");
@@ -435,7 +445,7 @@ describe("GatewayApp", () => {
       }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     expect(await screen.findByText("deleted session text")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Session actions Main chat" }));
@@ -468,7 +478,7 @@ describe("GatewayApp", () => {
       "GET /api/artifacts": { artifacts: [] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await screen.findByLabelText("Agent Gateway");
     await userEvent.click(screen.getByRole("button", { name: "+" }));
@@ -497,7 +507,7 @@ describe("GatewayApp", () => {
       "GET /api/sessions/active/config": { config: null }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await screen.findByLabelText("Agent Gateway");
     await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
@@ -540,7 +550,7 @@ describe("GatewayApp", () => {
       "POST /api/sessions/session-2/activate": { session_id: "session-2" }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await screen.findByLabelText("Agent Gateway");
     await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
@@ -577,7 +587,7 @@ describe("GatewayApp", () => {
       "GET /api/sessions/session-1/status": { status: "idle", session_id: "session-1" }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await screen.findByLabelText("Agent Gateway");
     await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
@@ -614,7 +624,7 @@ describe("GatewayApp", () => {
       "DELETE /api/sessions/session-1": () => response({ detail: "Session is running" }, false)
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
 
     expect(await screen.findByText("hello")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Session actions Main chat" }));
@@ -639,7 +649,7 @@ describe("GatewayApp", () => {
       "GET /api/artifacts": { artifacts: [] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
     await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
@@ -661,7 +671,7 @@ describe("GatewayApp", () => {
       "POST /api/sessions/session-1/chat": () => response({ detail: "Session is already running" }, false)
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
 
     const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
     await userEvent.type(input, "lost message");
@@ -683,7 +693,7 @@ describe("GatewayApp", () => {
       "GET /api/artifacts": { artifacts: [] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
     await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
@@ -723,7 +733,7 @@ describe("GatewayApp", () => {
       "GET /api/artifacts": { artifacts: [] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     const input = await screen.findByPlaceholderText("Message the agent, or describe a local action...");
     await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
@@ -756,7 +766,7 @@ describe("GatewayApp", () => {
       "GET /api/sessions/active/config": { config: null }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await screen.findByLabelText("Agent Gateway");
     await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
@@ -794,7 +804,7 @@ describe("GatewayApp", () => {
       }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await screen.findByRole("option", { name: "Mail Manager — Inbox triage" });
     await userEvent.selectOptions(await screen.findByLabelText("Persona"), "p1");
@@ -833,7 +843,7 @@ describe("GatewayApp", () => {
       }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await screen.findByRole("option", { name: "Mail Manager — Inbox triage" });
     await userEvent.selectOptions(await screen.findByLabelText("Persona"), "p1");
@@ -854,7 +864,7 @@ describe("GatewayApp", () => {
       "GET /api/sessions/active/config": { config: { agent_id: "claude", model: "sonnet", options: { effort: "high" }, editable: false } }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     const compactStatus = await screen.findByLabelText("Locked session status");
 
@@ -880,7 +890,7 @@ describe("GatewayApp", () => {
       "GET /api/personas": { personas: [{ id: "p1", name: "Tech Lead", role: "Planning", description: "Owns the plan" }] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await userEvent.click(await screen.findByRole("button", { name: "Personas" }));
     expect(await screen.findByRole("heading", { name: "Personas" })).toBeInTheDocument();
@@ -921,7 +931,7 @@ describe("GatewayApp", () => {
       }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
 
     const runButton = await screen.findByRole("button", { name: "Open team run Release Crew · run-1" });
@@ -962,7 +972,7 @@ describe("GatewayApp", () => {
       "DELETE /api/team-runs/run-1": {}
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await screen.findByText("Ship it");
 
@@ -998,7 +1008,7 @@ describe("GatewayApp", () => {
       "POST /api/team-runs/run-1/add-work": { team_run: { id: "run-1", status: "running" } }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
     await userEvent.click(await screen.findByRole("button", { name: "Add work" }));
@@ -1030,7 +1040,7 @@ describe("GatewayApp", () => {
       "POST /api/team-runs/run-1/add-work": () => response({}, false)
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
     await userEvent.click(await screen.findByRole("button", { name: "Add work" }));
@@ -1067,7 +1077,7 @@ describe("GatewayApp", () => {
       "POST /api/team-runs/run-1/resume": { team_run: { id: "run-1", status: "interrupted" } }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
     await userEvent.click(await screen.findByRole("button", { name: "Resume" }));
@@ -1110,7 +1120,7 @@ describe("GatewayApp", () => {
       "POST /api/team-runs/run-1/cancel": { team_run: { id: "run-1", status: "canceled" } }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
     await userEvent.click(await screen.findByRole("button", { name: "Stop run" }));
@@ -1155,7 +1165,7 @@ describe("GatewayApp", () => {
       }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
     await userEvent.click(await screen.findByRole("tab", { name: /TASKS/ }));
@@ -1228,7 +1238,7 @@ describe("GatewayApp", () => {
       "GET /api/team-runs/run-1/messages": { messages: [] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
@@ -1341,7 +1351,7 @@ describe("GatewayApp", () => {
       "GET /api/team-runs/mail-run/delivery": { delivery: { available: false } }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
     await userEvent.click(screen.getByRole("button", { name: "AUTO" }));
@@ -1412,7 +1422,7 @@ describe("GatewayApp", () => {
       "POST /api/team-runs/run%201/auto-series/restart": { auto_series: { id: "series 2" } }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Maintain" }));
     await waitFor(() => expect(teamRunDetailCapture.props?.detail?.run?.id).toBe("run 1"));
@@ -1480,7 +1490,7 @@ describe("GatewayApp", () => {
       "GET /api/team-runs/run-1/delivery": { delivery: { available: false } }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Slow run" }));
 
@@ -1514,7 +1524,7 @@ describe("GatewayApp", () => {
       "POST /api/team-runs": response({}, false)
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
 
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
@@ -1543,7 +1553,7 @@ describe("GatewayApp", () => {
       "GET /api/team-runs": { team_runs: runs }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await screen.findByText("Active objective");
 
@@ -1597,7 +1607,7 @@ describe("GatewayApp", () => {
       }] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await userEvent.click(await screen.findByRole("button", { name: "Hooks" }));
     expect(await screen.findByRole("heading", { name: "Hooks" })).toBeInTheDocument();
@@ -1627,7 +1637,7 @@ describe("GatewayApp", () => {
       }] }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
 
     await screen.findByLabelText("Agent Gateway");
     await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
@@ -1659,7 +1669,7 @@ describe("GatewayApp", () => {
       }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
 
     await screen.findByLabelText("Agent Gateway");
     await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
@@ -1709,7 +1719,7 @@ describe("GatewayApp", () => {
       }
     });
 
-    render(<UiProvider><GatewayApp /></UiProvider>);
+    await renderGatewayApp({ uiProvider: true });
 
     await userEvent.click(await screen.findByRole("button", { name: "Hooks" }));
     expect(await screen.findByText("Invoice Watcher")).toBeInTheDocument();
@@ -1767,7 +1777,7 @@ describe("GatewayApp", () => {
       "GET /api/team-runs/run-private/delivery": { delivery: { available: false } }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
     await screen.findByLabelText("Agent Gateway");
     await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
     const source = MockEventSource.instances[0];
@@ -1828,7 +1838,7 @@ describe("GatewayApp", () => {
       "GET /api/team-runs/run-1/messages": { messages: [] }
     });
 
-    render(<GatewayApp />);
+    await renderGatewayApp();
 
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByText("Ship it"));

@@ -3377,6 +3377,14 @@ p {
     line-height: 1.6;
     white-space: pre-wrap;
 }
+.team-final-summary-body > .md,
+.team-cycle-summary > .md,
+.team-previous-cycle > div > .md,
+.team-task-dialog-copy > .md,
+.team-doc-body > .md,
+.team-agent-report-body > .md {
+    white-space: normal;
+}
 .team-add-work-dialog-body .team-add-work-input {
     min-height: 140px;
     margin: 0;

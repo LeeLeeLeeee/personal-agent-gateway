@@ -14,6 +14,8 @@ updated_at: 2026-07-22
 
 # Component Inspector Reports
 
+- [GatewayApp Initial Dashboard Analysis — 2026-07-22 15:31](./GatewayApp/2026-07-22-1531.md)
+- [TeamRunDetail Structured Content Analysis — 2026-07-22 15:31](./TeamRunDetail/2026-07-22-1531.md)
 - [DashboardView Operations Expansion Analysis — 2026-07-22 13:21](./DashboardView/2026-07-22-1321.md)
 - [TeamRunDetail Delivery Conflict — 2026-07-22 11:27](./TeamRunDetail/2026-07-22-1127.md)
 - [TeamRunDetail Worktree Delivery — 2026-07-22 10:54](./TeamRunDetail/2026-07-22-1054.md)

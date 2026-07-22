@@ -8,17 +8,19 @@ let mermaidPromise = null;
 let mermaidSeq = 0;
 
 const SessionIdContext = createContext(null);
-const RegistryContext = createContext({ registeredByPath: null, onRegistered: null });
+const RegistryContext = createContext({ registeredByPath: null, onRegistered: null, pathRegistration: true });
 
 function PathChip({ path }) {
   const sessionId = useContext(SessionIdContext);
-  const { registeredByPath, onRegistered } = useContext(RegistryContext);
+  const { registeredByPath, onRegistered, pathRegistration } = useContext(RegistryContext);
   const toast = useToast();
   const [saving, setSaving] = useState(false);
   const [localArtifact, setLocalArtifact] = useState(null);
   const [open, setOpen] = useState(false);
 
   const artifact = localArtifact || registeredByPath?.get(path) || null;
+
+  if (!pathRegistration) return <code className="md-code">{path}</code>;
 
   async function register() {
     if (saving) return;
@@ -240,7 +242,13 @@ function paragraphNodes(lines, key) {
   );
 }
 
-export function MarkdownContent({ source, sessionId = null, registeredByPath = null, onRegistered = null }) {
+export function MarkdownContent({
+  source,
+  sessionId = null,
+  registeredByPath = null,
+  onRegistered = null,
+  pathRegistration = true
+}) {
   const lines = String(source || "").replace(/\r\n/g, "\n").split("\n");
   const nodes = [];
   const isUl = (line) => /^\s*[-*]\s+/.test(line);
@@ -316,7 +324,7 @@ export function MarkdownContent({ source, sessionId = null, registeredByPath = n
 
   return (
     <SessionIdContext.Provider value={sessionId}>
-      <RegistryContext.Provider value={{ registeredByPath, onRegistered }}>
+      <RegistryContext.Provider value={{ registeredByPath, onRegistered, pathRegistration }}>
         <div className="md">{nodes}</div>
       </RegistryContext.Provider>
     </SessionIdContext.Provider>

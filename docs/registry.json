@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 135,
+  "document_count": 137,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -2230,6 +2230,83 @@
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: `DashboardView`가 자체적으로 `api.dashboardUsage()`와 로딩·오류·재시도를 소유하므로, `GatewayApp`에는 import와 `screen =..."
     },
     {
+      "path": "docs/component-inspector/GatewayApp/2026-07-22-1531.md",
+      "title": "GatewayApp Initial Dashboard Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "gateway-initial-screen",
+      "status": "done",
+      "aliases": [
+        "GatewayApp initial dashboard",
+        "최초 대시보드 진입"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "dashboard"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp Initial Dashboard Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 및 주입 의존성"
+        },
+        {
+          "level": 2,
+          "text": "Custom hooks / actions"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `refactor` - Verdict: 최초 화면은 `screen`의 초기값과 장기 callback용 `screenRef` 초기값 두 곳에서 `chat`으로 고정되어 있다. 둘을 `dashboard`로 맞추는 것이 최소 변경이며 ..."
+    },
+    {
       "path": "docs/component-inspector/HooksView/2026-07-20-1037.md",
       "title": "HooksView Create Form Disclosure Analysis",
       "type": "report",
@@ -3924,6 +4001,83 @@
       "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `api-state`, `style`, `test` - Verdict: 기존 `DeliveryPanel`이 worktree 검토·커밋·적용의 표현 경계다. 충돌 해결 UI도 이 로컬 경계에 두되, 장기 상태와 Git 명령은 `..."
     },
     {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-22-1531.md",
+      "title": "TeamRunDetail Structured Content Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-structured-content",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail markdown",
+        "팀 실행 요약 포맷"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "markdown"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Structured Content Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 및 로컬 의존성"
+        },
+        {
+          "level": 2,
+          "text": "Custom hooks / selectors / actions"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `refactor` - Verdict: Team Run의 summary·task description/result·agent report는 Markdown 형태의 구조화된 문자열인데 현재 일반 `<div>`/`<p>`로 출력한..."
+    },
+    {
       "path": "docs/component-inspector/TeamsView/2026-07-15-1250.md",
       "title": "TeamsView Persona Card Selection Component Analysis",
       "type": "report",
@@ -4024,7 +4178,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [DashboardView Operations Expansion Analysis — 2026-07-22 13:21](./DashboardView/2026-07-22-1321.md) - [TeamRunDetail Delivery Conflict — 2026-07-22 11:27](./TeamRunDetail/2026-07-22-1127.md) - [TeamRunDetail Worktr..."
+      "excerpt": "- [GatewayApp Initial Dashboard Analysis — 2026-07-22 15:31](./GatewayApp/2026-07-22-1531.md) - [TeamRunDetail Structured Content Analysis — 2026-07-22 15:31](./TeamRunDetail/2026-07-22-1531.md) - [DashboardView Opera..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -4947,7 +5101,7 @@
           "text": "관련 설계 문서"
         }
       ],
-      "excerpt": "이 문서는 기능이 어떤 책임 경계로 나뉘며 왜 이 구성이 로컬 agent 실행에 효율적인지 설명한다. 화면별 동작은 기능 가이드를 참고한다."
+      "excerpt": "이 문서는 기능이 어떤 책임 경계로 나뉘며 왜 이 구성이 로컬 agent 실행에 효율적인지 설명한다. 화면별 동작은 [기능 가이드](gateway-feature-guide.md)를 참고한다."
     },
     {
       "path": "docs/knowledge/gateway-feature-guide.md",
@@ -5001,7 +5155,7 @@
           "text": "함께 볼 문서"
         }
       ],
-      "excerpt": "이 문서는 각 화면에서 할 수 있는 일과 기능이 서로 연결되는 방식을 설명한다. 설치와 운영은 설치·운영 가이드, 내부 설계는 아키텍처 가이드를 참고한다."
+      "excerpt": "이 문서는 각 화면에서 할 수 있는 일과 기능이 서로 연결되는 방식을 설명한다. 설치와 운영은 [설치·운영 가이드](gateway-setup-guide.md), 내부 설계는 [아키텍처 가이드](gateway-architecture-guide.md)를 참고한다."
     },
     {
       "path": "docs/knowledge/gateway-setup-guide.md",
@@ -5100,7 +5254,7 @@
           "text": "Troubleshooting"
         }
       ],
-      "excerpt": "Personal Agent Gateway의 설치, 인증, 환경 변수, Frontend build, Cloudflare Tunnel, 개발, 테스트와 문제 해결 절차를 정리한다."
+      "excerpt": "- Python 3.11 이상 - Node.js 20 이상 권장 - npm - Codex CLI 또는 Claude Code 중 사용할 로컬 CLI의 로그인 상태 - 외부 접속을 쓸 경우 `cloudflared`"
     },
     {
       "path": "docs/knowledge/persona-team-usage-guide.md",

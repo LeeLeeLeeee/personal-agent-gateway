@@ -280,6 +280,64 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("Planning started")).toBeInTheDocument();
   });
 
+  it("renders summaries and task details as structured markdown", async () => {
+    const { container } = render(
+      <TeamRunDetail
+        detail={{
+          run: {
+            id: "r1",
+            goal: "Design",
+            status: "completed",
+            run_mode: "plan_and_execute",
+            summary: "## 완료 내용\n\n- API 구현\n- QA 통과"
+          },
+          agents: [{ id: "a1", name: "Worker", role: "member", status: "completed" }],
+          tasks: [{
+            id: "t1",
+            title: "Build API",
+            description: "## 수행 내용\n\n`/api/items`를 구현합니다.",
+            result: "## 결과\n\n- 성공",
+            status: "completed"
+          }],
+          messages: [{
+            id: "m1",
+            kind: "agent_output",
+            sender_agent_id: "a1",
+            content: "### 보고서\n\n| 항목 | 상태 |\n| --- | --- |\n| API | 완료 |",
+            metadata: { task_id: "t1" },
+            created_at: "2026-07-08T00:01:00Z"
+          }],
+          cycles: [{
+            id: "c1",
+            sequence: 1,
+            source_type: "manual",
+            status: "completed",
+            rounds_used: 1,
+            rounds_budget: 8,
+            summary: "## Cycle 결과\n\n1. 구현\n2. 검증"
+          }]
+        }}
+      />
+    );
+
+    const latestSummary = container.querySelector(".team-final-summary-body");
+    expect(within(latestSummary).getByRole("heading", { name: "완료 내용" })).toBeInTheDocument();
+    expect(within(latestSummary).getByRole("list")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    const cycleSummary = container.querySelector(".team-cycle-summary");
+    expect(within(cycleSummary).getByRole("heading", { name: "Cycle 결과" })).toBeInTheDocument();
+    expect(within(cycleSummary).getByRole("list")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Open task Build API" }));
+    const taskDialog = screen.getByRole("dialog", { name: "Task details: Build API" });
+    expect(within(taskDialog).getByRole("heading", { name: "수행 내용" })).toBeInTheDocument();
+    expect(within(taskDialog).getByRole("heading", { name: "결과" })).toBeInTheDocument();
+    expect(within(taskDialog).getByRole("heading", { name: "보고서" })).toBeInTheDocument();
+    expect(within(taskDialog).getByRole("table")).toBeInTheDocument();
+  });
+
   it("renders continuous lifecycle Cycle history newest first", async () => {
     const { container } = render(
       <TeamRunDetail detail={{

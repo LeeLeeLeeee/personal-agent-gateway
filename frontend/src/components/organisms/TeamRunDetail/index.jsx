@@ -4,6 +4,7 @@ import { Button } from "../../atoms/Button/index.jsx";
 import { LoaderCube } from "../../molecules/LoaderCube/index.jsx";
 import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
 import { DocumentPreview } from "../DocumentPreview/index.jsx";
+import { MarkdownContent } from "../MarkdownContent/index.jsx";
 import { fmtDateTime } from "../../../lib/time.js";
 
 const TEAM_TASK_COLUMNS = ["pending", "in_progress", "blocked", "completed", "failed"];
@@ -127,13 +128,19 @@ function TaskDetailDialog({ task, reports, agents, canRetry, retrying, onRetry, 
           <div>
             <div className="mono team-task-dialog-label">TASK</div>
             <h2 className="headline team-task-dialog-title">{task.title}</h2>
-            {task.description ? <p className="team-task-dialog-copy">{task.description}</p> : null}
+            {task.description ? (
+              <div className="team-task-dialog-copy">
+                <MarkdownContent source={task.description} pathRegistration={false} />
+              </div>
+            ) : null}
           </div>
 
           {task.result || task.error_message ? (
             <div>
               <div className="mono team-task-dialog-label">RESULT</div>
-              <div className="team-task-dialog-copy">{task.result || task.error_message}</div>
+              <div className="team-task-dialog-copy">
+                <MarkdownContent source={task.result || task.error_message} pathRegistration={false} />
+              </div>
             </div>
           ) : null}
 
@@ -156,7 +163,9 @@ function TaskDetailDialog({ task, reports, agents, canRetry, retrying, onRetry, 
                         <span className="team-doc-task">{fmtDateTime(message.created_at)}</span>
                       </div>
                     </div>
-                    <p className="team-doc-body">{message.content}</p>
+                    <div className="team-doc-body">
+                      <MarkdownContent source={message.content} pathRegistration={false} />
+                    </div>
                   </article>
                 );
               }) : <div className="team-task-empty mono">No shared documents for this task.</div>}
@@ -839,7 +848,12 @@ export function TeamRunDetail({
                 <summary className="mono">
                   {previousCycle ? `PREVIOUS CYCLE #${previousCycle.sequence}` : "NO SETTLED CYCLE"}
                 </summary>
-                <div>{previousCycle?.summary || "No previous Cycle summary."}</div>
+                <div>
+                  <MarkdownContent
+                    source={previousCycle?.summary || "No previous Cycle summary."}
+                    pathRegistration={false}
+                  />
+                </div>
               </details>
               <form
                 className="team-cycle-trigger"
@@ -1030,7 +1044,11 @@ export function TeamRunDetail({
                       ROUNDS · {cycle.rounds_used}/{cycle.rounds_budget}
                       {cycle.finished_at ? ` · ${fmtDateTime(cycle.finished_at)}` : ""}
                     </div>
-                    {cycle.summary ? <div className="team-cycle-summary">{cycle.summary}</div> : null}
+                    {cycle.summary ? (
+                      <div className="team-cycle-summary">
+                        <MarkdownContent source={cycle.summary} pathRegistration={false} />
+                      </div>
+                    ) : null}
                     {cycle.error_message ? <div className="hook-row-error mono">{cycle.error_message}</div> : null}
                   </div>
                 </details>
@@ -1047,12 +1065,16 @@ export function TeamRunDetail({
           {run.summary ? (
             <div className="team-final-summary team-overview-summary">
               <div className="mono team-final-summary-head">LATEST SUMMARY · {leader?.name || "TEAM"}</div>
-              <div className="team-final-summary-body">{run.summary}</div>
+              <div className="team-final-summary-body">
+                <MarkdownContent source={run.summary} pathRegistration={false} />
+              </div>
             </div>
           ) : currentCycle?.summary ? (
             <div className="team-final-summary team-overview-summary">
               <div className="mono team-final-summary-head">CURRENT CYCLE · #{currentCycle.sequence}</div>
-              <div className="team-final-summary-body">{currentCycle.summary}</div>
+              <div className="team-final-summary-body">
+                <MarkdownContent source={currentCycle.summary} pathRegistration={false} />
+              </div>
             </div>
           ) : null}
 
@@ -1162,7 +1184,9 @@ export function TeamRunDetail({
                       <span className="mono team-agent-report-owner">{sender ? sender.name : "Agent"}</span>
                       <span className="team-agent-report-time mono">{fmtDateTime(message.created_at)}</span>
                     </div>
-                    <p className="team-agent-report-body">{message.content}</p>
+                    <div className="team-agent-report-body">
+                      <MarkdownContent source={message.content} pathRegistration={false} />
+                    </div>
                   </article>
                 );
               }) : <div className="team-task-empty mono">No agent reports yet.</div>}

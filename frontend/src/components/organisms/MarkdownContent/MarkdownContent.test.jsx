@@ -68,6 +68,12 @@ describe("MarkdownContent path registration", () => {
     expect(screen.queryByRole("button", { name: "+등록" })).not.toBeInTheDocument();
   });
 
+  it("renders paths without registration actions in read-only content", () => {
+    render(<MarkdownContent source={"결과: `artifacts/report.md`"} pathRegistration={false} />);
+    expect(screen.getByText("artifacts/report.md")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+등록" })).not.toBeInTheDocument();
+  });
+
   it("does not render a +등록 button for a bare URL in plain text", () => {
     render(<MarkdownContent source={"참고: https://example.com/report.pdf 확인"} />);
     expect(screen.queryByRole("button", { name: "+등록" })).not.toBeInTheDocument();

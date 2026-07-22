@@ -43,7 +43,7 @@ function useForceTick(active) {
 export function GatewayApp() {
   const confirm = useConfirm();
   const toast = useToast();
-  const [screen, setScreen] = useState("chat");
+  const [screen, setScreen] = useState("dashboard");
   const [sessionStateById, setSessionStateById] = useState({});
   const [navOpen, setNavOpen] = useState(false);
   const [personas, setPersonas] = useState([]);
@@ -64,7 +64,7 @@ export function GatewayApp() {
   const hooksRef = useRef([]);
   const notificationStateRef = useRef(notificationState);
   const notifiedTeamRunsRef = useRef(new Set());
-  const screenRef = useRef("chat");
+  const screenRef = useRef("dashboard");
   const openHookRunsIdRef = useRef(null);
   const [focusedJobId, setFocusedJobId] = useState(null);
   const [focusedScheduleId, setFocusedScheduleId] = useState(null);
