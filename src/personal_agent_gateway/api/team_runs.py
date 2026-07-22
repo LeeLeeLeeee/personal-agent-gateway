@@ -455,6 +455,7 @@ def apply_team_run_delivery(
         metadata={
             "applied_commits": delivery.get("applied_commits", []),
             "result_head": delivery.get("result_head"),
+            "auto_resolved_files": delivery.get("auto_resolved_files", []),
             "conflict_count": (
                 conflict_session.get("total_count", 0)
                 if isinstance(conflict_session, dict)
@@ -527,6 +528,7 @@ def continue_team_run_delivery(
         metadata={
             "applied_commits": delivery.get("applied_commits", []),
             "result_head": delivery.get("result_head"),
+            "auto_resolved_files": delivery.get("auto_resolved_files", []),
         },
     )
     return {"delivery": delivery}

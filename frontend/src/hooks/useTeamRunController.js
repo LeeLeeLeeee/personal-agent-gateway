@@ -440,6 +440,11 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
       if (ownsSelectedRun(requestedRun)) setTeamRunDelivery(delivery);
       if (delivery?.conflict_session) {
         toast("Repository conflicts need your resolution", "error");
+      } else if (delivery?.auto_resolved_files?.length) {
+        toast(
+          `Auto-resolved ${delivery.auto_resolved_files.length} generated file conflict(s) and applied changes`,
+          "success"
+        );
       } else {
         toast("Team Run changes applied to the repository", "success");
       }
@@ -475,6 +480,11 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
       if (ownsSelectedRun(requestedRun)) setTeamRunDelivery(delivery);
       if (delivery?.conflict_session) {
         toast("More repository conflicts need your resolution", "error");
+      } else if (delivery?.auto_resolved_files?.length) {
+        toast(
+          `Auto-resolved ${delivery.auto_resolved_files.length} generated file conflict(s) and applied changes`,
+          "success"
+        );
       } else {
         toast("Resolved changes applied to the repository", "success");
       }

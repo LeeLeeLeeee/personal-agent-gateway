@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Literal
@@ -12,6 +13,7 @@ _SESSION_FILE = ".delivery-session.json"
 _APPLIED_FILE = ".delivery-applied.json"
 _INTEGRATION_PREFIX = ".delivery-integration-"
 _MAX_MANUAL_BYTES = 1_000_000
+_REPORT_TIMESTAMP = re.compile(r"—\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})")
 
 
 class TeamRunDeliveryError(ValueError):
@@ -120,7 +122,10 @@ class TeamRunDeliveryService:
             if conflicts:
                 session["status"] = "conflicted"
                 session["files"] = conflicts
+                _auto_resolve_conflicts(run, session)
                 _write_session(run, session)
+                if all(item.get("resolution") for item in conflicts):
+                    return self._continue_session(run, session)
                 return self.preview(run)
             _cleanup_session(run, session)
             raise TeamRunDeliveryError(f"Delivery integration failed: {exc}") from exc
@@ -147,33 +152,7 @@ class TeamRunDeliveryService:
             raise TeamRunDeliveryError("Delivery conflict not found")
 
         integration = _integration_path(run, session)
-        file_path = _conflict_path(integration, str(conflict["path"]))
-        if mode == "manual":
-            if content is None:
-                raise TeamRunDeliveryError("Manual resolution requires content")
-            if len(content.encode("utf-8")) > _MAX_MANUAL_BYTES:
-                raise TeamRunDeliveryError("Manual resolution is too large")
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(content, encoding="utf-8")
-        else:
-            blob = conflict.get(f"{mode}_blob")
-            if blob:
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_bytes(_git_bytes(integration, "cat-file", "blob", str(blob)))
-            elif file_path.exists():
-                file_path.unlink()
-
-        if file_path.exists():
-            _git(integration, "add", "--", str(conflict["path"]))
-        else:
-            _git(
-                integration,
-                "rm",
-                "--ignore-unmatch",
-                "--",
-                str(conflict["path"]),
-            )
-        conflict["resolution"] = mode
+        _resolve_conflict(integration, conflict, mode, content)
         _write_session(run, session)
         return self.preview(run)
 
@@ -184,23 +163,7 @@ class TeamRunDeliveryService:
         if not files or any(not item.get("resolution") for item in files):
             raise TeamRunDeliveryError("Resolve every repository conflict first")
 
-        integration = _integration_path(run, session)
-        try:
-            _git(
-                integration,
-                "-c",
-                "core.editor=true",
-                "cherry-pick",
-                "--continue",
-            )
-        except TeamRunDeliveryError as exc:
-            conflicts = _collect_conflicts(integration)
-            if conflicts:
-                session["files"] = conflicts
-                _write_session(run, session)
-                return self.preview(run)
-            raise TeamRunDeliveryError(f"Delivery could not continue: {exc}") from exc
-        return _finalize_session(run, session)
+        return self._continue_session(run, session)
 
     def cancel(self, run: TeamRun) -> dict[str, object]:
         session = _require_session(run)
@@ -208,6 +171,35 @@ class TeamRunDeliveryService:
         _git(integration, "cherry-pick", "--abort", check=False)
         _cleanup_session(run, session)
         return self.preview(run)
+
+    def _continue_session(
+        self,
+        run: TeamRun,
+        session: dict[str, object],
+    ) -> dict[str, object]:
+        integration = _integration_path(run, session)
+        while True:
+            try:
+                _git(
+                    integration,
+                    "-c",
+                    "core.editor=true",
+                    "cherry-pick",
+                    "--continue",
+                )
+            except TeamRunDeliveryError as exc:
+                conflicts = _collect_conflicts(integration)
+                if not conflicts:
+                    raise TeamRunDeliveryError(
+                        f"Delivery could not continue: {exc}"
+                    ) from exc
+                session["files"] = conflicts
+                _auto_resolve_conflicts(run, session)
+                _write_session(run, session)
+                if all(item.get("resolution") for item in conflicts):
+                    continue
+                return self.preview(run)
+            return _finalize_session(run, session)
 
 
 def _ensure_mutation_allowed(run: TeamRun) -> None:
@@ -411,6 +403,7 @@ def _create_session(
         "target_branch": context["target_branch"],
         "target_head": context["target_head"],
         "commits": commits,
+        "auto_resolved_files": [],
         "files": [],
     }
     _git(
@@ -450,6 +443,138 @@ def _collect_conflicts(integration: Path) -> list[dict[str, object]]:
             }
         )
     return conflicts
+
+
+def _auto_resolve_conflicts(
+    run: TeamRun,
+    session: dict[str, object],
+) -> None:
+    integration = _integration_path(run, session)
+    resolved_files = session.setdefault("auto_resolved_files", [])
+    for conflict in session.get("files", []):
+        if not isinstance(conflict, dict) or conflict.get("resolution"):
+            continue
+        target_content, target_text = _blob_text(
+            integration,
+            conflict.get("target_blob"),
+        )
+        team_content, team_text = _blob_text(
+            integration,
+            conflict.get("team_blob"),
+        )
+        if not target_text or not team_text:
+            continue
+        merged = _merge_generated_content(
+            str(conflict.get("path") or ""),
+            target_content,
+            team_content,
+        )
+        if merged is None:
+            continue
+        _resolve_conflict(integration, conflict, "auto", merged)
+        if conflict["path"] not in resolved_files:
+            resolved_files.append(conflict["path"])
+
+
+def _merge_generated_content(
+    path: str,
+    target_content: str | None,
+    team_content: str | None,
+) -> str | None:
+    normalized = path.replace("\\", "/")
+    if target_content is None or team_content is None:
+        return None
+    if normalized == "docs/component-inspector/index.md":
+        return _merge_component_report_index(target_content, team_content)
+    if normalized == "docs/registry.json":
+        return _merge_docs_registry(target_content, team_content)
+    return None
+
+
+def _merge_component_report_index(target_content: str, team_content: str) -> str:
+    target_lines = target_content.splitlines()
+    target_bullets = [line for line in target_lines if line.startswith("- [")]
+    team_bullets = [line for line in team_content.splitlines() if line.startswith("- [")]
+    bullets = list(dict.fromkeys([*target_bullets, *team_bullets]))
+    bullets.sort(key=_report_line_sort_key, reverse=True)
+
+    bullet_indexes = [
+        index for index, line in enumerate(target_lines) if line.startswith("- [")
+    ]
+    if not bullet_indexes:
+        return target_content
+    first = bullet_indexes[0]
+    last = bullet_indexes[-1]
+    merged = [*target_lines[:first], *bullets, *target_lines[last + 1 :]]
+    return "\n".join(merged) + "\n"
+
+
+def _report_line_sort_key(line: str) -> tuple[str, str]:
+    match = _REPORT_TIMESTAMP.search(line)
+    return (match.group(1) if match else "", line)
+
+
+def _merge_docs_registry(target_content: str, team_content: str) -> str | None:
+    try:
+        target = json.loads(target_content)
+        team = json.loads(team_content)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(target, dict) or not isinstance(team, dict):
+        return None
+    target_documents = target.get("documents")
+    team_documents = team.get("documents")
+    if not isinstance(target_documents, list) or not isinstance(team_documents, list):
+        return None
+
+    documents_by_path: dict[str, dict[str, object]] = {}
+    for document in [*team_documents, *target_documents]:
+        if not isinstance(document, dict):
+            return None
+        document_path = document.get("path")
+        if not isinstance(document_path, str) or not document_path:
+            return None
+        documents_by_path[document_path] = document
+    documents = [documents_by_path[path] for path in sorted(documents_by_path)]
+    merged = {**target, "document_count": len(documents), "documents": documents}
+    return json.dumps(merged, ensure_ascii=False, indent=2) + "\n"
+
+
+def _resolve_conflict(
+    integration: Path,
+    conflict: dict[str, object],
+    mode: Literal["target", "team", "manual", "auto"],
+    content: str | None,
+) -> None:
+    file_path = _conflict_path(integration, str(conflict["path"]))
+    if mode in {"manual", "auto"}:
+        if content is None:
+            raise TeamRunDeliveryError("Text resolution requires content")
+        if len(content.encode("utf-8")) > _MAX_MANUAL_BYTES:
+            raise TeamRunDeliveryError("Text resolution is too large")
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+    else:
+        blob = conflict.get(f"{mode}_blob")
+        if blob:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_bytes(
+                _git_bytes(integration, "cat-file", "blob", str(blob))
+            )
+        elif file_path.exists():
+            file_path.unlink()
+
+    if file_path.exists():
+        _git(integration, "add", "--", str(conflict["path"]))
+    else:
+        _git(
+            integration,
+            "rm",
+            "--ignore-unmatch",
+            "--",
+            str(conflict["path"]),
+        )
+    conflict["resolution"] = mode
 
 
 def _session_payload(
@@ -550,6 +675,7 @@ def _finalize_session(run: TeamRun, session: dict[str, object]) -> dict[str, obj
     _cleanup_session(run, session)
     result = TeamRunDeliveryService().preview(run)
     result["applied_commits"] = commits
+    result["auto_resolved_files"] = list(session.get("auto_resolved_files", []))
     result["result_head"] = _git(context["target"], "rev-parse", "HEAD")
     return result
 

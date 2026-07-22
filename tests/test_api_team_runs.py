@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import subprocess
 from dataclasses import asdict, dataclass
@@ -217,6 +218,116 @@ def test_worktree_delivery_resolves_conflict_before_applying(
     assert (repository / "README.md").read_text(encoding="utf-8") == "target + team\n"
     assert not (Path(run["workspace_root"]) / ".delivery-session.json").exists()
     assert ".delivery-integration-" not in _git(repository, "worktree", "list")
+
+
+def test_worktree_delivery_auto_resolves_generated_doc_indexes(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    inspector = repository / "docs" / "component-inspector"
+    inspector.mkdir(parents=True)
+    _git(repository, "init")
+    _git(repository, "config", "user.email", "test@example.com")
+    _git(repository, "config", "user.name", "Test User")
+    base_index = "# Component Inspector Reports\n\n- [Base — 2026-07-20 10:00](./base.md)\n"
+    (inspector / "index.md").write_text(base_index, encoding="utf-8")
+    base_registry = {
+        "schema_version": 1,
+        "document_count": 1,
+        "documents": [{"path": "docs/base.md", "title": "Base"}],
+    }
+    (repository / "docs" / "registry.json").write_text(
+        json.dumps(base_registry, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    _git(repository, "add", "docs")
+    _git(repository, "commit", "-m", "initial")
+
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Lead")
+    team_id = create_team(client, leader_id)
+    assert client.put(
+        f"/api/spaces/teams/{team_id}",
+        json={
+            "read_mode": "home",
+            "write_mode": "worktree",
+            "workspace_path": str(repository),
+        },
+    ).status_code == 200
+    run = client.post(
+        "/api/team-runs",
+        json={"team_id": team_id, "execution_policy": "triggered"},
+    ).json()["team_run"]
+    run_id = run["id"]
+    working_root = Path(run["working_root"])
+    team_index = (
+        "# Component Inspector Reports\n\n"
+        "- [Team — 2026-07-22 09:00](./team.md)\n"
+        "- [Base — 2026-07-20 10:00](./base.md)\n"
+    )
+    (working_root / "docs" / "component-inspector" / "index.md").write_text(
+        team_index,
+        encoding="utf-8",
+    )
+    team_registry = {
+        **base_registry,
+        "document_count": 2,
+        "documents": [
+            *base_registry["documents"],
+            {"path": "docs/team.md", "title": "Team"},
+        ],
+    }
+    (working_root / "docs" / "registry.json").write_text(
+        json.dumps(team_registry, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    assert client.post(
+        f"/api/team-runs/{run_id}/delivery/commit",
+        json={"message": "docs: add team report"},
+    ).status_code == 200
+
+    target_index = (
+        "# Component Inspector Reports\n\n"
+        "- [Target — 2026-07-22 10:00](./target.md)\n"
+        "- [Base — 2026-07-20 10:00](./base.md)\n"
+    )
+    (inspector / "index.md").write_text(target_index, encoding="utf-8")
+    target_registry = {
+        **base_registry,
+        "document_count": 2,
+        "documents": [
+            *base_registry["documents"],
+            {"path": "docs/target.md", "title": "Target"},
+        ],
+    }
+    (repository / "docs" / "registry.json").write_text(
+        json.dumps(target_registry, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    _git(repository, "add", "docs")
+    _git(repository, "commit", "-m", "docs: add target report")
+
+    applied = client.post(f"/api/team-runs/{run_id}/delivery/apply")
+    assert applied.status_code == 200
+    delivery = applied.json()["delivery"]
+    assert delivery["conflict_session"] is None
+    assert delivery["up_to_date"] is True
+    assert set(delivery["auto_resolved_files"]) == {
+        "docs/component-inspector/index.md",
+        "docs/registry.json",
+    }
+    merged_index = (inspector / "index.md").read_text(encoding="utf-8")
+    assert "[Target — 2026-07-22 10:00]" in merged_index
+    assert "[Team — 2026-07-22 09:00]" in merged_index
+    merged_registry = json.loads(
+        (repository / "docs" / "registry.json").read_text(encoding="utf-8")
+    )
+    assert merged_registry["document_count"] == 3
+    assert [document["path"] for document in merged_registry["documents"]] == [
+        "docs/base.md",
+        "docs/target.md",
+        "docs/team.md",
+    ]
 
 
 def test_create_auto_run_enqueues_first_cycle_and_manual_trigger_snapshots_preview(

@@ -280,7 +280,12 @@ describe("useTeamRunController delivery", () => {
       target: { branch: "main" }
     };
     const committed = { ...initial, pending_commits: [{ sha: "b2" }] };
-    const applied = { ...initial, can_apply: false, pending_commits: [] };
+    const applied = {
+      ...initial,
+      can_apply: false,
+      pending_commits: [],
+      auto_resolved_files: ["docs/registry.json"]
+    };
     api.teamRunDelivery.mockResolvedValue(initial);
     api.commitTeamRunDelivery.mockResolvedValue(committed);
     api.applyTeamRunDelivery.mockResolvedValue(applied);
@@ -307,6 +312,10 @@ describe("useTeamRunController delivery", () => {
     }));
     expect(api.applyTeamRunDelivery).toHaveBeenCalledWith("run-a");
     expect(result.current.teamRunDelivery).toEqual(applied);
+    expect(toast).toHaveBeenCalledWith(
+      "Auto-resolved 1 generated file conflict(s) and applied changes",
+      "success"
+    );
   });
 
   it("owns conflict resolution, continuation, and cancellation snapshots", async () => {
