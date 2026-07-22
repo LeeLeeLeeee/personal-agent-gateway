@@ -1,10 +1,11 @@
 // @vitest-environment node
 
 import { describe, expect, it, vi } from "vitest";
-import config from "./vite.config.js";
+import { createViteConfig } from "./vite.config.js";
 
 describe("Vite API proxy", () => {
   it("preserves the public host and forwarded protocol", () => {
+    const config = createViteConfig("tunnel.example.com");
     let proxyHandler;
     config.server.proxy["/api"].configure({
       on: vi.fn((event, handler) => {
@@ -17,7 +18,7 @@ describe("Vite API proxy", () => {
       { setHeader },
       {
         headers: {
-          host: "mpx-local.younghyun-lee.com",
+          host: "tunnel.example.com",
           "x-forwarded-proto": "https"
         }
       }
@@ -25,8 +26,12 @@ describe("Vite API proxy", () => {
 
     expect(setHeader).toHaveBeenCalledWith(
       "host",
-      "mpx-local.younghyun-lee.com"
+      "tunnel.example.com"
     );
     expect(setHeader).toHaveBeenCalledWith("x-forwarded-proto", "https");
+  });
+
+  it("does not publish an allowed host when the local setting is blank", () => {
+    expect(createViteConfig().server.allowedHosts).toEqual([]);
   });
 });
