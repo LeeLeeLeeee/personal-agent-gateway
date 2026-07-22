@@ -7,7 +7,7 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
-from personal_agent_gateway.team_runtime import TeamRuntime, WORKER_PROMPT, _rules_block
+from personal_agent_gateway.team_runtime import TeamRuntime, WORKER_PROMPT, _rules_block, _task_delta
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.teams import TeamRunService
 
@@ -94,6 +94,27 @@ def test_cycle_objective_replaces_blank_triggered_run_goal(tmp_path) -> None:
     runtime = TeamRuntime(teams, lambda _agent: FakeModel("[]"))
 
     assert runtime._goal_context(run, cycle.id) == "Review the new release"
+
+
+def test_task_delta_keeps_cycle_id(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "Planning", "Plans", [], [])
+    run = teams.create_team_run(
+        "Plan",
+        leader.id,
+        [],
+        "planning_only",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    task = teams.create_task(run.id, "Inspect", "Inspect dashboard", cycle_id=cycle.id)
+
+    assert _task_delta(task)["cycle_id"] == cycle.id
 
 
 @pytest.mark.asyncio
@@ -184,11 +205,19 @@ async def test_plan_and_execute_assigns_tasks_to_workers(tmp_path):
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, workspace)
     leader = personas.create_persona("Tech Lead", "Planning", "Plans work.", ["Plan"], [])
+    backend = personas.create_persona("Backend", "Development", "Builds APIs.", ["Build"], [])
     worker = personas.create_persona("QA Tester", "Quality", "Checks work.", ["Test"], [])
-    run = teams.create_team_run("Build teams", leader.id, [worker.id], "plan_and_execute", 1)
+    run = teams.create_team_run(
+        "Build teams", leader.id, [backend.id, worker.id], "plan_and_execute", 1
+    )
+    qa_agent = next(agent for agent in teams.list_agents(run.id) if agent.persona_id == worker.id)
 
     responses = iter([
-        '[{"title":"Verify API","description":"Check team run endpoints"}]',
+        json.dumps([{
+            "title": "Verify API",
+            "description": "Check team run endpoints",
+            "owner_agent_id": qa_agent.id,
+        }]),
         "Verified API behavior. No files changed. Evidence: tests passed.",
         "Summary: API endpoints verified successfully.",
     ])
@@ -200,8 +229,47 @@ async def test_plan_and_execute_assigns_tasks_to_workers(tmp_path):
     messages = teams.list_messages(run.id)
     assert completed.status == "completed"
     assert tasks[0].status == "completed"
+    assert tasks[0].owner_agent_id == qa_agent.id
     assert "Verified API behavior" in tasks[0].result
     assert any(message.kind == "agent_output" for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_add_work_keeps_leader_selected_owner(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "Planning", "Plans", ["Assign"], [])
+    frontend = personas.create_persona(
+        "Frontend", "Frontend development", "Builds UI", ["Implement React UI"], []
+    )
+    database = personas.create_persona(
+        "Database", "Database development", "Builds schema", ["Design schema"], []
+    )
+    run = teams.create_team_run(
+        "Improve dashboard",
+        leader.id,
+        [frontend.id, database.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    frontend_agent = next(
+        agent for agent in teams.list_agents(run.id) if agent.persona_id == frontend.id
+    )
+    plan = json.dumps([{
+        "title": "Build dashboard widget",
+        "description": "Implement the React widget",
+        "owner_agent_id": frontend_agent.id,
+    }])
+    runtime = TeamRuntime(teams, lambda _agent: FakeModel(plan))
+
+    tasks = await runtime.add_work(run.id, "Add a dashboard widget", cycle.id)
+
+    assert tasks[0].owner_agent_id == frontend_agent.id
 
 
 @pytest.mark.asyncio

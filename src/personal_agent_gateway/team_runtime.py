@@ -11,11 +11,14 @@ from personal_agent_gateway.teams import TeamAgent, TeamRun, TeamRunService, Tea
 PLANNING_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
 Goal: {goal}
 Persona snapshot: {persona_snapshot_json}
+Available team members: {team_roster_json}
 
 Before creating tasks, identify any consequential choice that only the user can make.
 First resolve ambiguity from the goal, frozen rules, and prior user decisions.
 Return ONLY one of:
-1. A JSON array of task objects. Each object must have "title" and "description".
+1. A JSON array of task objects. Each object must have "title", "description", and
+   "owner_agent_id". Assign the member whose persona role and responsibilities best
+   match the task. Do not assign by list order or previous completion status.
 2. {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why planning cannot safely continue","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 Use ask_user only when the choice materially changes the plan and cannot be inferred safely."""
 
@@ -68,11 +71,17 @@ Use ask_user only when the user must decide. Prefer task scope; use run scope on
 
 ADD_WORK_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
 The user is adding work to an in-flight run. Break the request into concrete tasks.
-Return ONLY a JSON array of task objects. Each object must have "title" and "description".
+Return ONLY a JSON array of task objects. Each object must have "title", "description",
+and "owner_agent_id".
 Run context:
 {goal}
 Existing tasks: {existing_titles}
-Current cycle objective: {instruction}"""
+Current cycle objective: {instruction}
+Available team members: {team_roster_json}
+
+Assign every task to the member whose persona role and responsibilities best match it.
+Return "owner_agent_id" using the exact ID from the available team members list.
+Do not assign by list order or previous completion status."""
 
 AGENT_REINVOCATION_CAP = 3
 
@@ -209,12 +218,15 @@ class TeamRuntime:
         self, run: TeamRun, leader: TeamAgent, cycle_id: str | None = None
     ) -> list[dict[str, str]] | UserDecisionResolution:
         leader_agent = self._teams.get_agent(leader.id)
+        members = _find_workers(self._teams.list_agents(run.id))
+        member_ids = {member.id for member in members}
         model = self._model_factory(leader_agent)
         prompt = _space_block(run) + _rules_block(
             self._rules_snapshot(run, cycle_id), include_persona_baseline=False
         ) + PLANNING_PROMPT.format(
             goal=self._goal_context(run, cycle_id),
             persona_snapshot_json=json.dumps(leader_agent.persona_snapshot, ensure_ascii=False),
+            team_roster_json=_assignment_roster_json(members),
         )
         decision_context = self._teams.decision_context_for_run(
             run.id, stage="planning", cycle_id=cycle_id
@@ -240,8 +252,13 @@ class TeamRuntime:
                 self._teams.set_agent_session(leader_agent.id, retry.upstream_session_id)
             tasks = _parse_task_plan(retry.content)
         for task in tasks:
+            owner_agent_id = task.get("owner_agent_id")
             created = self._teams.create_task(
-                run.id, task["title"], task["description"], cycle_id=cycle_id
+                run.id,
+                task["title"],
+                task["description"],
+                owner_agent_id=owner_agent_id if owner_agent_id in member_ids else None,
+                cycle_id=cycle_id,
             )
             await self._publish({"type": "team.task.created", "team_run_id": run.id, "task_id": created.id})
         self._teams.append_message(
@@ -540,6 +557,8 @@ class TeamRuntime:
         self._validate_cycle(run, cycle_id)
         leader = _find_leader(self._teams.list_agents(run.id))
         leader_agent = self._teams.get_agent(leader.id)
+        members = _find_workers(self._teams.list_agents(run.id))
+        member_ids = {member.id for member in members}
         model = self._model_factory(leader_agent)
         existing = (
             ", ".join(
@@ -551,6 +570,7 @@ class TeamRuntime:
             goal=self._goal_context(run, cycle_id),
             existing_titles=existing,
             instruction=instruction,
+            team_roster_json=_assignment_roster_json(members),
         )
         response = await model.complete([{"role": "user", "content": prompt}])
         if response.upstream_session_id:
@@ -566,8 +586,13 @@ class TeamRuntime:
             specs = _parse_task_plan(retry.content)
         created: list[TeamTask] = []
         for spec in specs:
+            owner_agent_id = spec.get("owner_agent_id")
             task = self._teams.create_task(
-                run.id, spec["title"], spec["description"], cycle_id=cycle_id
+                run.id,
+                spec["title"],
+                spec["description"],
+                owner_agent_id=owner_agent_id if owner_agent_id in member_ids else None,
+                cycle_id=cycle_id,
             )
             created.append(task)
             await self._publish({"type": "team.task.created", "team_run_id": run.id, "task_id": task.id})
@@ -729,6 +754,22 @@ def _find_workers(agents: list[TeamAgent]) -> list[TeamAgent]:
     return [agent for agent in agents if agent.role != "leader"]
 
 
+def _assignment_roster_json(members: list[TeamAgent]) -> str:
+    return json.dumps(
+        [
+            {
+                "owner_agent_id": member.id,
+                "name": member.persona_snapshot.get("name"),
+                "role": member.persona_snapshot.get("role"),
+                "description": member.persona_snapshot.get("description"),
+                "responsibilities": member.persona_snapshot.get("responsibilities", []),
+            }
+            for member in members
+        ],
+        ensure_ascii=False,
+    )
+
+
 def _terminal_status(tasks: list[TeamTask]) -> str:
     if not tasks:
         return "completed"
@@ -756,6 +797,7 @@ def _task_delta(task: TeamTask) -> dict[str, object]:
     return {
         "id": task.id,
         "team_run_id": task.team_run_id,
+        "cycle_id": task.cycle_id,
         "title": task.title,
         "description": task.description,
         "owner_agent_id": task.owner_agent_id,
@@ -795,7 +837,11 @@ def _parse_task_plan(content: str) -> list[dict[str, str]]:
         description = item.get("description")
         if not isinstance(title, str) or not isinstance(description, str):
             raise ValueError("Planner task requires title and description")
-        tasks.append({"title": title, "description": description})
+        task = {"title": title, "description": description}
+        owner_agent_id = item.get("owner_agent_id")
+        if isinstance(owner_agent_id, str) and owner_agent_id:
+            task["owner_agent_id"] = owner_agent_id
+        tasks.append(task)
     return tasks
 
 
