@@ -8,6 +8,20 @@
 Browser -> Cloudflare Quick Tunnel -> Local FastAPI -> Codex CLI -> Local Workspace
 ```
 
+## 화면 미리보기
+
+### Team Runs
+
+팀 실행의 현재 상태, 진행 중인 Cycle, 참여 Persona와 완료된 Task를 한눈에 확인하는 목록 화면입니다.
+
+![Team Runs 목록 화면](docs/assets/team-runs-list.png)
+
+### Team Run Overview
+
+선택한 팀 실행의 최신 요약, Persona별 세션 상태, 보고서와 공유 내역을 확인하는 상세 화면입니다.
+
+![Team Run Overview 화면](docs/assets/team-run-overview.png)
+
 ## 왜 필요한가
 
 Codex CLI는 로컬 개발 환경과 잘 붙어 있지만, 밖에서 휴대폰이나 다른 노트북으로 내 로컬 Codex에게 작업을 맡기려면 안전한 진입점이 필요합니다.
