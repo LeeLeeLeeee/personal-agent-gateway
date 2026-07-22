@@ -451,6 +451,7 @@ def _auto_resolve_conflicts(
 ) -> None:
     integration = _integration_path(run, session)
     resolved_files = session.setdefault("auto_resolved_files", [])
+    candidates: dict[str, tuple[dict[str, object], str, str]] = {}
     for conflict in session.get("files", []):
         if not isinstance(conflict, dict) or conflict.get("resolution"):
             continue
@@ -464,14 +465,29 @@ def _auto_resolve_conflicts(
         )
         if not target_text or not team_text:
             continue
+        path = str(conflict.get("path") or "").replace("\\", "/")
+        if target_content is not None and team_content is not None:
+            candidates[path] = (conflict, target_content, team_content)
+
+    merged_contents: dict[str, str] = {}
+    for path in (
+        "docs/component-inspector/index.md",
+        "docs/registry.json",
+    ):
+        candidate = candidates.get(path)
+        if candidate is None:
+            continue
+        conflict, target_content, team_content = candidate
         merged = _merge_generated_content(
-            str(conflict.get("path") or ""),
+            path,
             target_content,
             team_content,
+            merged_contents.get("docs/component-inspector/index.md"),
         )
         if merged is None:
             continue
         _resolve_conflict(integration, conflict, "auto", merged)
+        merged_contents[path] = merged
         if conflict["path"] not in resolved_files:
             resolved_files.append(conflict["path"])
 
@@ -480,6 +496,7 @@ def _merge_generated_content(
     path: str,
     target_content: str | None,
     team_content: str | None,
+    merged_component_index: str | None = None,
 ) -> str | None:
     normalized = path.replace("\\", "/")
     if target_content is None or team_content is None:
@@ -487,7 +504,11 @@ def _merge_generated_content(
     if normalized == "docs/component-inspector/index.md":
         return _merge_component_report_index(target_content, team_content)
     if normalized == "docs/registry.json":
-        return _merge_docs_registry(target_content, team_content)
+        return _merge_docs_registry(
+            target_content,
+            team_content,
+            merged_component_index,
+        )
     return None
 
 
@@ -514,7 +535,11 @@ def _report_line_sort_key(line: str) -> tuple[str, str]:
     return (match.group(1) if match else "", line)
 
 
-def _merge_docs_registry(target_content: str, team_content: str) -> str | None:
+def _merge_docs_registry(
+    target_content: str,
+    team_content: str,
+    merged_component_index: str | None = None,
+) -> str | None:
     try:
         target = json.loads(target_content)
         team = json.loads(team_content)
@@ -536,8 +561,30 @@ def _merge_docs_registry(target_content: str, team_content: str) -> str | None:
             return None
         documents_by_path[document_path] = document
     documents = [documents_by_path[path] for path in sorted(documents_by_path)]
+    if merged_component_index is not None:
+        index_document = documents_by_path.get("docs/component-inspector/index.md")
+        if index_document is not None:
+            index_document = {
+                **index_document,
+                "excerpt": _markdown_excerpt(merged_component_index),
+            }
+            documents_by_path["docs/component-inspector/index.md"] = index_document
+            documents = [documents_by_path[path] for path in sorted(documents_by_path)]
     merged = {**target, "document_count": len(documents), "documents": documents}
     return json.dumps(merged, ensure_ascii=False, indent=2) + "\n"
+
+
+def _markdown_excerpt(markdown: str) -> str:
+    body = markdown
+    if markdown.startswith("---"):
+        marker = markdown.find("\n---", 3)
+        if marker >= 0:
+            body = markdown[marker + 4 :]
+    for block in re.split(r"\r?\n\r?\n", body):
+        paragraph = " ".join(block.splitlines()).strip()
+        if paragraph and not paragraph.startswith(("#", "|")):
+            return paragraph if len(paragraph) <= 220 else f"{paragraph[:217]}..."
+    return ""
 
 
 def _resolve_conflict(

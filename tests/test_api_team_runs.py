@@ -234,7 +234,11 @@ def test_worktree_delivery_auto_resolves_generated_doc_indexes(
     base_registry = {
         "schema_version": 1,
         "document_count": 1,
-        "documents": [{"path": "docs/base.md", "title": "Base"}],
+        "documents": [{
+            "path": "docs/component-inspector/index.md",
+            "title": "Component Inspector Reports",
+            "excerpt": "base",
+        }],
     }
     (repository / "docs" / "registry.json").write_text(
         json.dumps(base_registry, indent=2) + "\n",
@@ -324,10 +328,13 @@ def test_worktree_delivery_auto_resolves_generated_doc_indexes(
     )
     assert merged_registry["document_count"] == 3
     assert [document["path"] for document in merged_registry["documents"]] == [
-        "docs/base.md",
+        "docs/component-inspector/index.md",
         "docs/target.md",
         "docs/team.md",
     ]
+    index_entry = merged_registry["documents"][0]
+    assert "[Target — 2026-07-22 10:00]" in index_entry["excerpt"]
+    assert "[Team — 2026-07-22 09:00]" in index_entry["excerpt"]
 
 
 def test_create_auto_run_enqueues_first_cycle_and_manual_trigger_snapshots_preview(
