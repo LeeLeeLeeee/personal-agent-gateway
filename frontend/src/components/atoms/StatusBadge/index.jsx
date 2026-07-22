@@ -20,7 +20,11 @@ const LABELS = {
   in_progress: "IN PROGRESS",
   blocked: "BLOCKED",
   enabled: "ENABLED",
-  paused: "PAUSED"
+  paused: "PAUSED",
+  active: "ACTIVE",
+  ready: "READY",
+  auto_waiting: "AUTO WAITING",
+  needs_attention: "NEEDS ATTENTION"
 };
 
 const ACTIVE = new Set([
@@ -33,7 +37,9 @@ const ACTIVE = new Set([
   "waiting_for_user",
   "queued",
   "pending",
-  "in_progress"
+  "in_progress",
+  "active",
+  "auto_waiting"
 ]);
 
 export function StatusBadge({ kind = "idle" }) {

@@ -1256,6 +1256,19 @@ p {
     color: var(--c-warn);
     border-color: var(--c-warn);
 }
+.badge-active,
+.badge-auto_waiting {
+    color: var(--c-warn);
+    border-color: var(--c-warn);
+}
+.badge-ready {
+    color: var(--c-ok);
+    border-color: var(--c-ok);
+}
+.badge-needs_attention {
+    color: var(--c-danger);
+    border-color: var(--c-danger);
+}
 .badge-working {
     color: var(--c-warn);
     border-color: var(--c-warn);
@@ -2544,6 +2557,13 @@ p {
     margin: 0;
     line-height: 1.15;
 }
+.team-run-base-objective {
+    margin-top: 7px;
+    color: var(--c-grey);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .7px;
+}
 .team-run-details {
     margin-top: 14px;
     border: var(--bd-in);
@@ -2563,6 +2583,81 @@ p {
 .team-run-details .team-run-meta {
     margin-top: 0;
     border: none;
+}
+.team-delivery-panel {
+    border: var(--bd-in);
+    padding: 14px;
+    margin-top: 14px;
+    background: var(--c-white);
+}
+.team-delivery-paths {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+.team-delivery-paths > div {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+.team-delivery-k {
+    color: var(--c-grey);
+    font-size: 10px;
+    letter-spacing: .08em;
+}
+.team-delivery-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+}
+.team-delivery-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    padding: 12px 0;
+    font-size: 11px;
+}
+.team-delivery-files,
+.team-delivery-commits {
+    border: var(--bd-in);
+    max-height: 180px;
+    overflow: auto;
+}
+.team-delivery-file,
+.team-delivery-commit {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 8px;
+    padding: 7px 9px;
+    border-bottom: var(--bd-in);
+    font-size: 11px;
+}
+.team-delivery-file:last-child,
+.team-delivery-commit:last-child {
+    border-bottom: 0;
+}
+.team-delivery-blockers {
+    margin-top: 10px;
+    border: 1px solid var(--c-danger);
+    padding: 8px 10px;
+    color: var(--c-danger);
+    font-size: 12px;
+}
+.team-delivery-actions {
+    display: flex;
+    align-items: end;
+    gap: 8px;
+    margin-top: 12px;
+}
+.team-delivery-message {
+    display: grid;
+    gap: 4px;
+    flex: 1;
+}
+.team-delivery-empty {
+    color: var(--c-grey);
+    font-size: 11px;
 }
 .team-run-meta {
     display: grid;
@@ -3178,6 +3273,13 @@ p {
     }
     .team-run-hero-actions {
         justify-content: flex-start;
+    }
+    .team-delivery-paths {
+        grid-template-columns: 1fr;
+    }
+    .team-delivery-actions {
+        align-items: stretch;
+        flex-direction: column;
     }
     .team-run-list-meta {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4015,6 +4117,9 @@ p {
 .trc-id, .trc-mode { font-size: 10px; color: #808080; letter-spacing: 1px; }
 .trc-legacy { font-size: 9px; letter-spacing: 1px; border: 1px solid #808080; color: #808080; padding: 1px 5px; }
 .trc-goal { font-size: 19px; line-height: 1.15; text-transform: uppercase; }
+.trc-cycle-row { display: grid; gap: 3px; margin-top: 8px; }
+.trc-cycle { font-size: 10px; color: #808080; letter-spacing: 1px; }
+.trc-objective { overflow: hidden; color: var(--c-dark); font-size: 13px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .trc-roster { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .trc-roster-k { font-size: 10px; color: #808080; letter-spacing: 1px; }
 .trc-members { display: flex; gap: 7px; flex-wrap: wrap; }
@@ -4032,6 +4137,7 @@ p {
 .trc-bar > span:last-child { border-right: none; }
 .trc-progress-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
 .trc-elapsed { font-size: 10px; color: #808080; }
+.trc-updated { margin-top: 6px; color: #808080; font-size: 9px; text-align: right; }
 .trc-open { font-size: 10px; color: #0000FF; }
 .team-runs-filter { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 18px 0 16px; }
 .team-runs-filter-k { font-size: 10px; letter-spacing: 1px; color: #808080; width: 52px; }

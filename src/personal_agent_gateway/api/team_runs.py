@@ -17,6 +17,7 @@ from personal_agent_gateway.api.dependencies import (
 from personal_agent_gateway.auth_sessions import SessionPrincipal
 from personal_agent_gateway.pagination import decode_cursor, encode_cursor
 from personal_agent_gateway.team_cycles import TeamAutoSeries, TeamCycleRequest
+from personal_agent_gateway.team_delivery import TeamRunDeliveryError
 from personal_agent_gateway.teams import (
     TeamAgent,
     TeamDecisionRequest,
@@ -37,16 +38,20 @@ class CreateTeamRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     team_id: str
-    goal: str
+    goal: str | None = None
     execution_policy: Literal["auto", "triggered"]
     auto_repeat_count: Annotated[int | None, Field(ge=1)] = None
     auto_interval_minutes: Annotated[int | None, Field(ge=1)] = None
 
     @model_validator(mode="after")
     def validate_policy_settings(self) -> Self:
+        self.goal = (self.goal or "").strip()
         auto_fields = (self.auto_repeat_count, self.auto_interval_minutes)
-        if self.execution_policy == "auto" and None in auto_fields:
-            raise ValueError("AUTO requires repeat count and interval")
+        if self.execution_policy == "auto":
+            if not self.goal:
+                raise ValueError("AUTO requires a base objective")
+            if None in auto_fields:
+                raise ValueError("AUTO requires repeat count and interval")
         if self.execution_policy == "triggered" and any(
             value is not None for value in auto_fields
         ):
@@ -76,6 +81,20 @@ class AnswerDecisionRequest(BaseModel):
     request_id: str
     revision: int
     answers: dict[str, str]
+
+
+class CommitDeliveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: Annotated[str, Field(min_length=1, max_length=200)]
+
+    @field_validator("message")
+    @classmethod
+    def reject_blank_message(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
 
 
 @router.get("")
@@ -352,6 +371,75 @@ def get_team_run_detail(
             "messages": len(messages) > len(selected_messages),
         },
     }
+
+
+@router.get("/{team_run_id}/delivery")
+def get_team_run_delivery(
+    request: Request,
+    team_run_id: str,
+    _session: None = session_dependency,
+) -> dict[str, object]:
+    try:
+        run = request.app.state.team_run_service.get_team_run(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    return {"delivery": request.app.state.team_run_delivery_service.preview(run)}
+
+
+@router.post("/{team_run_id}/delivery/commit")
+def commit_team_run_delivery(
+    request: Request,
+    team_run_id: str,
+    payload: CommitDeliveryRequest,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    try:
+        run = request.app.state.team_run_service.get_team_run(team_run_id)
+        delivery = request.app.state.team_run_delivery_service.commit(run, payload.message)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    except TeamRunDeliveryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_delivery_committed",
+        action="team_runs.delivery.commit",
+        resource_type="team_run",
+        resource_id=run.id,
+        team_run_id=run.id,
+        metadata={"source_head": delivery["source"]["head"]},
+    )
+    return {"delivery": delivery}
+
+
+@router.post("/{team_run_id}/delivery/apply")
+def apply_team_run_delivery(
+    request: Request,
+    team_run_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    try:
+        run = request.app.state.team_run_service.get_team_run(team_run_id)
+        delivery = request.app.state.team_run_delivery_service.apply(run)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    except TeamRunDeliveryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_delivery_applied",
+        action="team_runs.delivery.apply",
+        resource_type="team_run",
+        resource_id=run.id,
+        team_run_id=run.id,
+        metadata={
+            "applied_commits": delivery.get("applied_commits", []),
+            "result_head": delivery.get("result_head"),
+        },
+    )
+    return {"delivery": delivery}
 
 
 @router.post("/{team_run_id}/start")
@@ -983,6 +1071,7 @@ def _team_run_payload(run: TeamRun) -> dict[str, object]:
     return {
         "id": run.id,
         "goal": run.goal,
+        "team_name": _team_name(run),
         "status": run.status,
         "run_mode": run.run_mode,
         "lifecycle_mode": run.lifecycle_mode,
@@ -1004,6 +1093,15 @@ def _team_run_payload(run: TeamRun) -> dict[str, object]:
         "finished_at": run.finished_at,
         "updated_at": run.updated_at,
     }
+
+
+def _team_name(run: TeamRun) -> str | None:
+    snapshot = run.rules_snapshot or {}
+    team = snapshot.get("team")
+    if not isinstance(team, dict):
+        return None
+    name = str(team.get("name") or "").strip()
+    return name or None
 
 
 def _agent_payload(agent: TeamAgent) -> dict[str, object]:

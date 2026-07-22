@@ -13,7 +13,7 @@ function Avatar({ person }) {
 
 export function TeamPicker({ teams = [], onStart, runtime = null }) {
   const [teamId, setTeamId] = useState("");
-  const [goal, setGoal] = useState("");
+  const [baseObjective, setBaseObjective] = useState("");
   const [executionPolicy, setExecutionPolicy] = useState("triggered");
   const [repeatCount, setRepeatCount] = useState("3");
   const [intervalMinutes, setIntervalMinutes] = useState("5");
@@ -35,10 +35,10 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
       event.preventDefault();
       const payload = {
         team_id: team.id,
-        goal: goal.trim(),
         execution_policy: executionPolicy
       };
       if (executionPolicy === "auto") {
+        payload.goal = baseObjective.trim();
         payload.auto_repeat_count = Number(repeatCount);
         payload.auto_interval_minutes = Number(intervalMinutes);
       }
@@ -80,17 +80,19 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
           </div>
         </div>
 
-        <div className="tp-field">
-          <span className="tp-label" id="tp-goal-label">Goal</span>
-          <textarea
-            className="tp-goal"
-            aria-labelledby="tp-goal-label"
-            aria-label="Goal"
-            value={goal}
-            onChange={(event) => setGoal(event.target.value)}
-            placeholder="What should the team accomplish, end to end?"
-          />
-        </div>
+        {executionPolicy === "auto" ? (
+          <div className="tp-field">
+            <label className="tp-label" htmlFor="tp-base-objective">Base objective</label>
+            <textarea
+              id="tp-base-objective"
+              className="tp-goal"
+              value={baseObjective}
+              onChange={(event) => setBaseObjective(event.target.value)}
+              placeholder="What should every AUTO cycle continue working toward?"
+              required
+            />
+          </div>
+        ) : null}
 
         <div className="tp-settings">
           <div className="tp-form">
@@ -154,6 +156,7 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
             <div className="k">POLICY</div><div>{activePolicy.label}</div>
             {executionPolicy === "auto" ? (
               <>
+                <div className="k">OBJECTIVE</div><div>{baseObjective.trim() || "Required"}</div>
                 <div className="k">REPEAT</div><div>{repeatCount} cycles</div>
                 <div className="k">INTERVAL</div><div>{intervalMinutes} minutes</div>
               </>
@@ -161,7 +164,14 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
             <div className="k">WORKERS</div><div>1 · {executionMode}</div>
           </div>
           <div className="tp-preview-action">
-            <Button type="submit" variant="primary" size="btn-lg">Create team run</Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="btn-lg"
+              disabled={executionPolicy === "auto" && !baseObjective.trim()}
+            >
+              Create team run
+            </Button>
           </div>
         </div>
       </aside>

@@ -5,6 +5,10 @@ import { TeamRunCard } from "./index.jsx";
 
 const run = {
   id: "TR-204", goal: "Ship export-to-PDF", status: "running", run_mode: "plan_and_execute",
+  team_name: "Release Crew", execution_policy: "triggered", display_status: "active",
+  current_objective: "Ship export-to-PDF", cycle_count: 3,
+  latest_cycle: { sequence: 3, status: "running", objective: "Ship export-to-PDF" },
+  pending_request: null, auto_series: null, last_activity_at: "2026-07-22T08:15:00+00:00",
   leader_name: "Tech Lead",
   leader: { name: "Tech Lead", avatar: "a01", initials: "TL" },
   members: [{ name: "Frontend Dev", avatar: "a05", initials: "FD" }],
@@ -13,15 +17,19 @@ const run = {
 };
 
 describe("TeamRunCard", () => {
-  it("shows id, goal, leader, members and task progress", () => {
+  it("shows team identity, latest Cycle, roster and current-Cycle progress", () => {
     const { container } = render(<TeamRunCard run={run} onOpen={vi.fn()} />);
     expect(screen.getByText("TR-204")).toBeInTheDocument();
-    expect(screen.getByText(/Ship export-to-PDF/i)).toBeInTheDocument();
+    expect(screen.getByText("Release Crew · TR-204")).toBeInTheDocument();
+    expect(screen.getByText("CYCLE #3 · RUNNING")).toBeInTheDocument();
+    expect(screen.getByText("Ship export-to-PDF")).toBeInTheDocument();
+    expect(screen.getByText("ACTIVE")).toBeInTheDocument();
     expect(screen.getByText("Tech Lead")).toBeInTheDocument();
     expect(container.querySelector('img[src="/static/avatars/a01.png"]')).toBeInTheDocument();
     expect(screen.getByText("Frontend Dev")).toBeInTheDocument();
     expect(container.querySelector('img[src="/static/avatars/a05.png"]')).toBeInTheDocument();
     expect(screen.getByText("2 / 6 DONE")).toBeInTheDocument();
+    expect(screen.getByText("CYCLES 3")).toBeInTheDocument();
   });
 
   it("calls onOpen when clicked", async () => {
@@ -32,8 +40,25 @@ describe("TeamRunCard", () => {
   });
 
   it("marks legacy runs without a team", () => {
-    render(<TeamRunCard run={{ ...run, team_id: null }} onOpen={vi.fn()} />);
+    render(<TeamRunCard run={{ ...run, team_id: null, team_name: null }} onOpen={vi.fn()} />);
     expect(screen.getByText("LEGACY")).toBeInTheDocument();
+    expect(screen.getAllByText("TR-204")).toHaveLength(2);
+  });
+
+  it("shows AUTO progress and the next scheduled Cycle", () => {
+    render(<TeamRunCard run={{
+      ...run,
+      execution_policy: "auto",
+      display_status: "auto_waiting",
+      auto_series: {
+        settled_slots: 2,
+        target_slots: 5,
+        next_run_at: "2026-07-22T10:30:00+00:00"
+      }
+    }} onOpen={vi.fn()} />);
+
+    expect(screen.getByText("AUTO WAITING")).toBeInTheDocument();
+    expect(screen.getByText(/AUTO 2 \/ 5 · NEXT 2026-07-22 10:30/)).toBeInTheDocument();
   });
 
   it("falls back to initials while keeping roster names visible", () => {

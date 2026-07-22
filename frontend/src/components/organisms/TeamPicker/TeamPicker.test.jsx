@@ -23,12 +23,11 @@ describe("TeamPicker", () => {
     expect(screen.queryByRole("button", { name: "STANDARD" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Run mode" })).not.toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText(/goal/i), "  ship it  ");
+    expect(screen.queryByLabelText(/base objective/i)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
 
     expect(onStart).toHaveBeenCalledWith({
       team_id: "t1",
-      goal: "ship it",
       execution_policy: "triggered"
     });
   });
@@ -38,6 +37,8 @@ describe("TeamPicker", () => {
     render(<TeamPicker teams={teams} onStart={onStart} />);
 
     await userEvent.click(screen.getByRole("button", { name: "AUTO" }));
+    expect(screen.getByRole("button", { name: "Create team run" })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("Base objective"), "  keep gateway healthy  ");
     expect(screen.getByLabelText("Repeat count")).toHaveValue(3);
     expect(screen.getByLabelText("Interval minutes")).toHaveValue(5);
     await userEvent.clear(screen.getByLabelText("Repeat count"));
@@ -48,7 +49,7 @@ describe("TeamPicker", () => {
 
     expect(onStart).toHaveBeenCalledWith({
       team_id: "t1",
-      goal: "",
+      goal: "keep gateway healthy",
       execution_policy: "auto",
       auto_repeat_count: 5,
       auto_interval_minutes: 30

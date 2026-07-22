@@ -121,6 +121,15 @@ class DisconnectAfterEventRequest:
         return self.calls > 1
 
 
+class DisconnectAfterTwoEventsRequest:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def is_disconnected(self) -> bool:
+        self.calls += 1
+        return self.calls > 2
+
+
 async def test_sse_events_formats_published_events() -> None:
     bus = EventBus()
     await bus.publish({"type": "runtime.started"})
@@ -138,6 +147,28 @@ async def test_sse_events_formats_published_events() -> None:
         "id": 1,
         "type": "runtime.started",
     }
+
+
+async def test_sse_events_marks_only_connection_backlog_as_replayed() -> None:
+    bus = EventBus()
+    backlog_event = await bus.publish({"type": "hook.run.updated"})
+    replay_through_id = int(backlog_event["id"])
+    subscriber = bus.subscribe()
+    await bus.publish({"type": "hook.run.updated"})
+    chunks: list[str] = []
+
+    async for chunk in _sse_events(
+        DisconnectAfterTwoEventsRequest(),
+        bus,
+        subscriber,
+        replay_through_id=replay_through_id,
+    ):
+        chunks.append(chunk)
+
+    replayed_payload = json.loads(chunks[1].split("data: ", 1)[1])
+    live_payload = json.loads(chunks[2].split("data: ", 1)[1])
+    assert replayed_payload["replayed"] is True
+    assert "replayed" not in live_payload
 
 
 def test_query_token_is_not_required_to_load_browser_shell(tmp_path: Path) -> None:

@@ -420,6 +420,30 @@ export const api = {
     const response = await fetch(`/api/team-runs/${encodeURIComponent(id)}`, { method: "DELETE" });
     return response.ok;
   },
+  async teamRunDelivery(id) {
+    const body = await jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/delivery`
+    ));
+    return body?.delivery || null;
+  },
+  async commitTeamRunDelivery(id, message) {
+    const body = await jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/delivery/commit`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message })
+      }
+    ));
+    return body?.delivery || null;
+  },
+  async applyTeamRunDelivery(id) {
+    const body = await jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/delivery/apply`,
+      { method: "POST" }
+    ));
+    return body?.delivery || null;
+  },
   async avatarManifest() {
     return jsonList(await fetch("/static/avatars/manifest.json"), "avatars");
   },

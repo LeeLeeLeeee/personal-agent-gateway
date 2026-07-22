@@ -6,7 +6,10 @@ import { useTeamRunController } from "./useTeamRunController.js";
 vi.mock("../api/client.js", () => ({
   api: {
     answerTeamDecision: vi.fn(),
+    applyTeamRunDelivery: vi.fn(),
+    commitTeamRunDelivery: vi.fn(),
     teamDocuments: vi.fn(),
+    teamRunDelivery: vi.fn(),
     teamRunDetail: vi.fn(),
     teamRuns: vi.fn(),
     triggerTeamCycle: vi.fn()
@@ -55,6 +58,7 @@ describe("useTeamRunController request ownership", () => {
     api.teamRuns.mockResolvedValue([]);
     api.teamRunDetail.mockImplementation(async (id) => detail(id));
     api.teamDocuments.mockImplementation(async (id) => [`${id}.md`]);
+    api.teamRunDelivery.mockImplementation(async (id) => ({ source: { path: id } }));
   });
 
   it("keeps a late SSE refresh for run A from replacing run B detail or documents", async () => {
@@ -194,6 +198,7 @@ describe("useTeamRunController manual cycle request identity", () => {
     api.teamRuns.mockResolvedValue([]);
     api.teamRunDetail.mockImplementation(async (id) => detail(id));
     api.teamDocuments.mockImplementation(async (id) => [`${id}.md`]);
+    api.teamRunDelivery.mockImplementation(async (id) => ({ source: { path: id } }));
   });
 
   it("reuses an id after an ambiguous failure and rotates it after success", async () => {
@@ -253,5 +258,51 @@ describe("useTeamRunController manual cycle request identity", () => {
       ["run-a", "request-3"],
       ["run-b", "request-4"]
     ]);
+  });
+});
+
+describe("useTeamRunController delivery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.teamRuns.mockResolvedValue([]);
+    api.teamRunDetail.mockImplementation(async (id) => detail(id));
+    api.teamDocuments.mockResolvedValue([]);
+  });
+
+  it("owns delivery state and refreshes it after commit and apply", async () => {
+    const initial = {
+      available: true,
+      can_apply: true,
+      pending_commits: [{ sha: "a1" }],
+      target: { branch: "main" }
+    };
+    const committed = { ...initial, pending_commits: [{ sha: "b2" }] };
+    const applied = { ...initial, can_apply: false, pending_commits: [] };
+    api.teamRunDelivery.mockResolvedValue(initial);
+    api.commitTeamRunDelivery.mockResolvedValue(committed);
+    api.applyTeamRunDelivery.mockResolvedValue(applied);
+    const confirm = vi.fn().mockResolvedValue(true);
+    const toast = vi.fn();
+    const setScreenError = vi.fn();
+    const { result } = renderHook(() => useTeamRunController({
+      toast, confirm, setScreenError
+    }));
+    await selectRun(result, "run-a");
+    await waitFor(() => expect(result.current.teamRunDelivery).toEqual(initial));
+
+    await act(async () => {
+      expect(await result.current.handleCommitTeamRunDelivery(" feat: dashboard ")).toBe(true);
+    });
+    expect(api.commitTeamRunDelivery).toHaveBeenCalledWith("run-a", "feat: dashboard");
+    expect(result.current.teamRunDelivery).toEqual(committed);
+
+    await act(async () => {
+      expect(await result.current.handleApplyTeamRunDelivery()).toBe(true);
+    });
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: "APPLY TEAM RUN CHANGES"
+    }));
+    expect(api.applyTeamRunDelivery).toHaveBeenCalledWith("run-a");
+    expect(result.current.teamRunDelivery).toEqual(applied);
   });
 });

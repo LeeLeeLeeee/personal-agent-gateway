@@ -865,7 +865,9 @@ describe("GatewayApp", () => {
         team_runs: [{
           id: "run-1",
           goal: "Ship it",
+          team_name: "Release Crew",
           status: "running",
+          display_status: "active",
           run_mode: "plan_and_execute",
           team_id: "t1",
           leader_name: "Tech Lead",
@@ -873,7 +875,10 @@ describe("GatewayApp", () => {
           task_counts: { completed: 1, in_progress: 1, pending: 1 },
           task_done: 1,
           task_total: 3,
-          elapsed_seconds: 125
+          elapsed_seconds: 125,
+          cycle_count: 1,
+          latest_cycle: { sequence: 1, status: "running" },
+          current_objective: "Ship it"
         }]
       }
     });
@@ -881,8 +886,8 @@ describe("GatewayApp", () => {
     render(<GatewayApp />);
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
 
-    const runButton = await screen.findByRole("button", { name: "Open team run Ship it" });
-    expect(runButton).toHaveTextContent("plan_and_execute");
+    const runButton = await screen.findByRole("button", { name: "Open team run Release Crew · run-1" });
+    expect(runButton).toHaveTextContent("PLAN_AND_EXECUTE");
     expect(runButton).toHaveTextContent("Tech Lead");
     expect(runButton).toHaveTextContent("1 / 3 DONE");
   });
@@ -1147,15 +1152,16 @@ describe("GatewayApp", () => {
         teamRunsCalls += 1;
         return response({
           team_runs: teamRunsCalls > 2
-            ? [{ id: "run-1", goal: "Ship it", status: "completed", run_mode: "plan_and_execute", lifecycle_mode: "continuous", execution_policy: "triggered" }]
+            ? [{ id: "run-1", goal: "", team_name: "Release Crew", current_objective: "Ready for trigger", display_status: "ready", status: "completed", run_mode: "plan_and_execute", lifecycle_mode: "continuous", execution_policy: "triggered" }]
             : []
         });
       },
-      "POST /api/team-runs": { team_run: { id: "run-1", goal: "Ship it", status: "draft", run_mode: "plan_and_execute", lifecycle_mode: "continuous", execution_policy: "triggered" } },
+      "POST /api/team-runs": { team_run: { id: "run-1", goal: "", team_name: "Release Crew", status: "draft", run_mode: "plan_and_execute", lifecycle_mode: "continuous", execution_policy: "triggered" } },
       "GET /api/team-runs/run-1": {
         team_run: {
           id: "run-1",
-          goal: "Ship it",
+          goal: "",
+          team_name: "Release Crew",
           status: "running",
           run_mode: "plan_and_execute",
           lifecycle_mode: "continuous",
@@ -1188,7 +1194,7 @@ describe("GatewayApp", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
-    await userEvent.type(await screen.findByLabelText(/goal/i), "Ship it");
+    expect(screen.queryByLabelText(/base objective/i)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
 
     const createCall = fetch.mock.calls.find(([url, init]) => (
@@ -1196,7 +1202,6 @@ describe("GatewayApp", () => {
     ));
     expect(JSON.parse(createCall[1].body)).toEqual({
       team_id: "t1",
-      goal: "Ship it",
       execution_policy: "triggered"
     });
     expect(fetch).not.toHaveBeenCalledWith(
@@ -1263,7 +1268,7 @@ describe("GatewayApp", () => {
     });
     await waitFor(() => expect(teamRunsCalls).toBeGreaterThan(2));
     await userEvent.click(screen.getByText("← TEAM RUNS"));
-    expect(await screen.findByText("Ship it")).toBeInTheDocument();
+    expect(await screen.findByText(/Release Crew · run-1/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(screen.queryByText("should not enter chat")).not.toBeInTheDocument();
   });
@@ -1294,14 +1299,15 @@ describe("GatewayApp", () => {
         team_run: continuousRun,
         agents: [], tasks: [], messages: [], cycles: []
       },
-      "GET /api/team-runs/mail-run/documents": { documents: [] }
+      "GET /api/team-runs/mail-run/documents": { documents: [] },
+      "GET /api/team-runs/mail-run/delivery": { delivery: { available: false } }
     });
 
     render(<UiProvider><GatewayApp /></UiProvider>);
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
-    await userEvent.type(await screen.findByLabelText(/goal/i), "Watch inbox");
     await userEvent.click(screen.getByRole("button", { name: "AUTO" }));
+    await userEvent.type(await screen.findByLabelText("Base objective"), "Watch inbox");
     await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
 
     expect(await screen.findByText("AUTO Team Run started")).toBeInTheDocument();
@@ -1356,6 +1362,7 @@ describe("GatewayApp", () => {
         });
       },
       "GET /api/team-runs/run%201/documents": { documents: [] },
+      "GET /api/team-runs/run%201/delivery": { delivery: { available: false } },
       "POST /api/team-runs/run%201/cycle-requests": () => {
         triggerCalls += 1;
         return triggerCalls === 1
@@ -1371,6 +1378,10 @@ describe("GatewayApp", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Maintain" }));
     await waitFor(() => expect(teamRunDetailCapture.props?.detail?.run?.id).toBe("run 1"));
+    await waitFor(() => expect(teamRunDetailCapture.props?.delivery).toEqual({ available: false }));
+    expect(teamRunDetailCapture.props.onRefreshDelivery).toEqual(expect.any(Function));
+    expect(teamRunDetailCapture.props.onCommitDelivery).toEqual(expect.any(Function));
+    expect(teamRunDetailCapture.props.onApplyDelivery).toEqual(expect.any(Function));
 
     let accepted;
     await act(async () => {
@@ -1424,7 +1435,8 @@ describe("GatewayApp", () => {
         team_runs: [{ id: "run-1", goal: "Slow run", status: "running" }]
       },
       "GET /api/team-runs/run-1/detail": () => pendingDetail.promise,
-      "GET /api/team-runs/run-1/documents": { documents: [] }
+      "GET /api/team-runs/run-1/documents": { documents: [] },
+      "GET /api/team-runs/run-1/delivery": { delivery: { available: false } }
     });
 
     render(<UiProvider><GatewayApp /></UiProvider>);
@@ -1465,20 +1477,19 @@ describe("GatewayApp", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
-    await userEvent.type(await screen.findByLabelText(/goal/i), "Ship it");
     await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
 
     expect(await screen.findByText("Failed to create team run")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create team run" })).toBeInTheDocument();
   });
 
-  it("filters the team-run list by status using the STATUS chips", async () => {
+  it("filters the team-run list by Cycle-aware display status", async () => {
     const runs = [
-      { id: "run-running", goal: "Running goal", status: "running", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 0, task_total: 1, elapsed_seconds: 10, team_id: "t1" },
-      { id: "run-planning", goal: "Planning goal", status: "planning", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 0, task_total: 1, elapsed_seconds: 10, team_id: "t1" },
-      { id: "run-completed", goal: "Completed goal", status: "completed", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 1, task_total: 1, elapsed_seconds: 10, team_id: "t1" },
-      { id: "run-completed-failures", goal: "Completed with failures goal", status: "completed_with_failures", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 1, task_total: 2, elapsed_seconds: 10, team_id: "t1" },
-      { id: "run-failed", goal: "Failed goal", status: "failed", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 0, task_total: 1, elapsed_seconds: 10, team_id: "t1" }
+      { id: "run-active", goal: "Active objective", current_objective: "Active objective", status: "running", display_status: "active", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 0, task_total: 1, team_id: "t1" },
+      { id: "run-ready", goal: "", current_objective: "Ready objective", status: "completed", display_status: "ready", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 1, task_total: 1, team_id: "t1" },
+      { id: "run-waiting", goal: "Auto objective", current_objective: "Auto objective", status: "completed", display_status: "auto_waiting", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 1, task_total: 1, team_id: "t1" },
+      { id: "run-attention", goal: "Fix objective", current_objective: "Fix objective", status: "failed", display_status: "needs_attention", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 0, task_total: 1, team_id: "t1" },
+      { id: "run-canceled", goal: "Canceled objective", current_objective: "Canceled objective", status: "canceled", display_status: "canceled", run_mode: "plan_and_execute", leader_name: "Tech Lead", members: [], task_counts: {}, task_done: 0, task_total: 1, team_id: "t1" }
     ];
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
@@ -1493,35 +1504,28 @@ describe("GatewayApp", () => {
 
     render(<GatewayApp />);
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
-    await screen.findByText("Running goal");
+    await screen.findByText("Active objective");
 
-    await userEvent.click(screen.getByRole("button", { name: "Running" }));
-    expect(screen.getByText("Running goal")).toBeInTheDocument();
-    expect(screen.getByText("Planning goal")).toBeInTheDocument();
-    expect(screen.queryByText("Completed goal")).not.toBeInTheDocument();
-    expect(screen.queryByText("Completed with failures goal")).not.toBeInTheDocument();
-    expect(screen.queryByText("Failed goal")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Active" }));
+    expect(screen.getByText("Active objective")).toBeInTheDocument();
+    expect(screen.queryByText("Ready objective")).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Completed" }));
-    expect(screen.getByText("Completed goal")).toBeInTheDocument();
-    expect(screen.getByText("Completed with failures goal")).toBeInTheDocument();
-    expect(screen.queryByText("Running goal")).not.toBeInTheDocument();
-    expect(screen.queryByText("Planning goal")).not.toBeInTheDocument();
-    expect(screen.queryByText("Failed goal")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Ready" }));
+    expect(screen.getByText("Ready objective")).toBeInTheDocument();
+    expect(screen.queryByText("Active objective")).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Failed" }));
-    expect(screen.getByText("Failed goal")).toBeInTheDocument();
-    expect(screen.queryByText("Running goal")).not.toBeInTheDocument();
-    expect(screen.queryByText("Planning goal")).not.toBeInTheDocument();
-    expect(screen.queryByText("Completed goal")).not.toBeInTheDocument();
-    expect(screen.queryByText("Completed with failures goal")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Auto waiting" }));
+    expect(screen.getByText("Auto objective")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Needs attention" }));
+    expect(screen.getByText("Fix objective")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "All" }));
-    expect(screen.getByText("Running goal")).toBeInTheDocument();
-    expect(screen.getByText("Planning goal")).toBeInTheDocument();
-    expect(screen.getByText("Completed goal")).toBeInTheDocument();
-    expect(screen.getByText("Completed with failures goal")).toBeInTheDocument();
-    expect(screen.getByText("Failed goal")).toBeInTheDocument();
+    expect(screen.getByText("Active objective")).toBeInTheDocument();
+    expect(screen.getByText("Ready objective")).toBeInTheDocument();
+    expect(screen.getByText("Auto objective")).toBeInTheDocument();
+    expect(screen.getByText("Fix objective")).toBeInTheDocument();
+    expect(screen.getByText("Canceled objective")).toBeInTheDocument();
   });
 
   it("loads the hooks screen and lists hooks from the API", async () => {
@@ -1597,6 +1601,45 @@ describe("GatewayApp", () => {
 
     const hooksButton = screen.getByRole("button", { name: "Hooks" });
     expect(within(hooksButton).getByText("1")).toBeInTheDocument();
+  });
+
+  it("does not notify for replayed hook events after login", async () => {
+    let hooksCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/hooks": () => {
+        hooksCalls += 1;
+        return response({ hooks: [] });
+      }
+    });
+
+    render(<UiProvider><GatewayApp /></UiProvider>);
+
+    await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit({
+        stream_id: "boot-a",
+        id: 3,
+        replayed: true,
+        type: "hook.run.updated",
+        hook_id: "hook-1",
+        run_id: "run-1",
+        status: "succeeded"
+      });
+    });
+
+    await waitFor(() => expect(hooksCalls).toBe(1));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    const hooksButton = screen.getByRole("button", { name: "Hooks" });
+    expect(within(hooksButton).queryByText("1")).not.toBeInTheDocument();
   });
 
   it("refreshes the Hook collection after a background hook event", async () => {
@@ -1679,7 +1722,8 @@ describe("GatewayApp", () => {
         team_run: { id: "run-private", goal: "Private goal", status: "failed", run_mode: "plan_and_execute" },
         agents: [], tasks: [], messages: [], document_summary: null
       },
-      "GET /api/team-runs/run-private/documents": { documents: [] }
+      "GET /api/team-runs/run-private/documents": { documents: [] },
+      "GET /api/team-runs/run-private/delivery": { delivery: { available: false } }
     });
 
     render(<GatewayApp />);

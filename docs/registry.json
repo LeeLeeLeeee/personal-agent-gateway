@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 122,
+  "document_count": 127,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -1026,6 +1026,110 @@
       "excerpt": "- Linked evidence: `B-02`, `F-01`, `O-01/B` - Purpose: Auth/Hook secret 파일이 중간 상태로 손상되거나 플랫폼 기본 권한에만 의존하지   않게 한다. - Target scope: AuthStore, HookSecretStore, 최소 공용 file helper와 fault/permission tests. - Non-goals: OS..."
     },
     {
+      "path": "docs/code-structure-review/team-run-cycle-objective-list/2026-07-22-0846/analysis.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run 목표와 Cycle 중심 목록 구조 검토"
+        },
+        {
+          "level": 2,
+          "text": "Decision question"
+        },
+        {
+          "level": 2,
+          "text": "Confirmed facts"
+        },
+        {
+          "level": 2,
+          "text": "Interpretation"
+        },
+        {
+          "level": 2,
+          "text": "Unknowns"
+        },
+        {
+          "level": 2,
+          "text": "Options"
+        },
+        {
+          "level": 3,
+          "text": "F-01 · Run goal과 Cycle objective의 책임"
+        },
+        {
+          "level": 3,
+          "text": "F-02 · Cycle 누적 이후 Team Runs 목록"
+        },
+        {
+          "level": 2,
+          "text": "Recommendation"
+        },
+        {
+          "level": 2,
+          "text": "Reversal conditions"
+        },
+        {
+          "level": 2,
+          "text": "Scope and excluded boundaries"
+        },
+        {
+          "level": 2,
+          "text": "Feature behavior and code paths"
+        },
+        {
+          "level": 2,
+          "text": "Current diagrams"
+        },
+        {
+          "level": 2,
+          "text": "Evidence inventory"
+        },
+        {
+          "level": 2,
+          "text": "Analysis limits and next questions"
+        },
+        {
+          "level": 2,
+          "text": "Review result"
+        }
+      ],
+      "excerpt": "- Continuous Team Run의 `goal`을 Run 생성 시 항상 받을지, 실행 정책에 따라 선택적으로 받을지 결정한다. - Cycle이 누적되는 Team Run을 목록에서 어떤 상태와 작업 단위로 표현할지 결정한다."
+    },
+    {
+      "path": "docs/code-structure-review/team-run-cycle-objective-list/2026-07-22-0846/change-requests.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Change Requests"
+        },
+        {
+          "level": 2,
+          "text": "CR-01 · Run context와 Cycle objective 분리"
+        },
+        {
+          "level": 2,
+          "text": "CR-02 · Team Runs list를 latest Cycle 중심 read model로 변경"
+        }
+      ],
+      "excerpt": "- Linked evidence: `B-01`, `B-02`, `F-01`, `O-01/B` - Purpose: TRIGGERED 생성 시 중복 goal 입력을 제거하면서 AUTO 반복 기준을 보존한다. - Target scope: Team Run schema/model/create API, AUTO request 생성, Cycle Runtime prompt context, TeamPi..."
+    },
+    {
       "path": "docs/component-inspector/AgentPicker/2026-07-14-1626.md",
       "title": "AgentPicker Local CLI Capability Component Analysis",
       "type": "report",
@@ -1805,6 +1909,130 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `refactor`, `api-state`, `test` - Verdict: SPACE 정책의 원격 상태와 mutation은 기존 page container인 `GatewayApp`이 소유하고, 새 `SpacesView` orga..."
+    },
+    {
+      "path": "docs/component-inspector/GatewayApp/2026-07-22-0828.md",
+      "title": "GatewayApp Hook SSE Toast Replay Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "gateway-hook-notification",
+      "status": "done",
+      "aliases": [
+        "GatewayApp hook toast replay",
+        "로그인 후 이전 Hook 토스트"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "sse",
+        "hook"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp Hook SSE Toast Replay Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 흐름"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / Story"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `api-state`, `test` - Verdict: `EventBus` replay는 상태 복구를 위해 유지하고, SSE API가 연결 시점 watermark까지의 전달분에 `replayed: true`를 표시해 `GatewayApp.handleHoo..."
+    },
+    {
+      "path": "docs/component-inspector/GatewayApp/2026-07-22-0901.md",
+      "title": "GatewayApp Team Run Cycle List Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-cycle-list",
+      "status": "done",
+      "aliases": [
+        "GatewayApp team run cycle list",
+        "Team Run 목표와 Cycle 목록"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "cycle"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp Team Run Cycle List Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 흐름"
+        },
+        {
+          "level": 3,
+          "text": "관련 state / effect / refresh 경로"
+        },
+        {
+          "level": 3,
+          "text": "`display_status` 우선순위"
+        },
+        {
+          "level": 2,
+          "text": "테스트 / Story"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `api-state`, `test` - Verdict: `GatewayApp`와 `useTeamRunController`의 기존 API/state ownership을 유지한다. `TeamPicker`는 정책별 생성 payload만 조립하고, `TeamRu..."
     },
     {
       "path": "docs/component-inspector/HooksView/2026-07-20-1037.md",
@@ -3317,6 +3545,96 @@
       "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `api-state`, `test` - Verdict: controller가 실제 detail 요청의 `loading/error` lifecycle을 소유하고 선택 effect 시작 시 detail/documents를 비운다. effect 전 첫 re..."
     },
     {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-22-1054.md",
+      "title": "TeamRunDetail Worktree Delivery Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-delivery",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail delivery analysis",
+        "Team Run worktree 적용 UI 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "git-worktree"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Worktree Delivery Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 라이브러리와 로컬 의존성"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 3,
+          "text": "Run mutation"
+        },
+        {
+          "level": 3,
+          "text": "Tab 및 preview"
+        },
+        {
+          "level": 3,
+          "text": "Worktree delivery가 따라야 할 흐름"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 의존 추적"
+        },
+        {
+          "level": 2,
+          "text": "테스트 현황과 필요한 RED 사례"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: `TeamRunDetail`은 실행 상태의 표현과 로컬 상호작용을 맡고, API 상태와 mutation은 `useTeamRunController` handler로 위임한다..."
+    },
+    {
       "path": "docs/component-inspector/TeamsView/2026-07-15-1250.md",
       "title": "TeamsView Persona Card Selection Component Analysis",
       "type": "report",
@@ -3417,7 +3735,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [GatewayApp Space Policy Integration Analysis — 2026-07-21 16:10](./GatewayApp/2026-07-21-1610.md) - [TeamRunDetail Loading Boundary — 2026-07-21 15:12](./TeamRunDetail/2026-07-21-1512.md) - [TeamRunDetail Informati..."
+      "excerpt": "- [TeamRunDetail Worktree Delivery — 2026-07-22 10:54](./TeamRunDetail/2026-07-22-1054.md) - [GatewayApp Team Run Cycle List — 2026-07-22 09:01](./GatewayApp/2026-07-22-0901.md) - [GatewayApp Hook SSE Toast Replay — 2..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",

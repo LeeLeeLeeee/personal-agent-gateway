@@ -14,6 +14,9 @@ updated_at: 2026-07-21
 
 # Component Inspector Reports
 
+- [TeamRunDetail Worktree Delivery — 2026-07-22 10:54](./TeamRunDetail/2026-07-22-1054.md)
+- [GatewayApp Team Run Cycle List — 2026-07-22 09:01](./GatewayApp/2026-07-22-0901.md)
+- [GatewayApp Hook SSE Toast Replay — 2026-07-22 08:28](./GatewayApp/2026-07-22-0828.md)
 - [GatewayApp Space Policy Integration Analysis — 2026-07-21 16:10](./GatewayApp/2026-07-21-1610.md)
 - [TeamRunDetail Loading Boundary — 2026-07-21 15:12](./TeamRunDetail/2026-07-21-1512.md)
 - [TeamRunDetail Information Hierarchy — 2026-07-21 14:59](./TeamRunDetail/2026-07-21-1459.md)

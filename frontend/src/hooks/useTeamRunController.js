@@ -28,6 +28,8 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
   const [teamRunDocuments, setTeamRunDocuments] = useState([]);
+  const [teamRunDelivery, setTeamRunDelivery] = useState(null);
+  const [teamRunDeliveryLoading, setTeamRunDeliveryLoading] = useState(false);
   const [teamRunDetailLoading, setTeamRunDetailLoading] = useState(false);
   const [teamRunDetailLoadErrorId, setTeamRunDetailLoadErrorId] = useState(null);
   const selectedTeamRunIdRef = useRef(null);
@@ -55,6 +57,8 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     if (!selectedTeamRunId) {
       setTeamRunDetail(null);
       setTeamRunDocuments([]);
+      setTeamRunDelivery(null);
+      setTeamRunDeliveryLoading(false);
       setTeamRunDetailLoading(false);
       setTeamRunDetailLoadErrorId(null);
       return undefined;
@@ -62,7 +66,9 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     let alive = true;
     setTeamRunDetail(null);
     setTeamRunDocuments([]);
+    setTeamRunDelivery(null);
     setTeamRunDetailLoading(true);
+    setTeamRunDeliveryLoading(true);
     setTeamRunDetailLoadErrorId(null);
     api.teamRunDetail(selectedTeamRunId).then((detail) => {
       if (!detail?.run) throw new Error("Team run detail is unavailable");
@@ -79,6 +85,13 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
       if (alive) setTeamRunDocuments(documents);
     }).catch((error) => {
       if (alive) setScreenError(error);
+    });
+    api.teamRunDelivery(selectedTeamRunId).then((delivery) => {
+      if (alive) setTeamRunDelivery(delivery);
+    }).catch((error) => {
+      if (alive) setScreenError(error);
+    }).finally(() => {
+      if (alive) setTeamRunDeliveryLoading(false);
     });
     return () => {
       alive = false;
@@ -122,6 +135,13 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
       api.teamDocuments(event.team_run_id)
         .then((documents) => {
           if (ownsSelectedRun(requestedRun)) setTeamRunDocuments(documents);
+        })
+        .catch((error) => {
+          if (ownsSelectedRun(requestedRun)) setScreenError(error);
+        });
+      api.teamRunDelivery(event.team_run_id)
+        .then((delivery) => {
+          if (ownsSelectedRun(requestedRun)) setTeamRunDelivery(delivery);
         })
         .catch((error) => {
           if (ownsSelectedRun(requestedRun)) setScreenError(error);
@@ -375,6 +395,57 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     }
   }
 
+  async function handleRefreshTeamRunDelivery() {
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id) return false;
+    setTeamRunDeliveryLoading(true);
+    try {
+      const delivery = await api.teamRunDelivery(requestedRun.id);
+      if (ownsSelectedRun(requestedRun)) setTeamRunDelivery(delivery);
+      return true;
+    } catch (_error) {
+      toast("Failed to refresh Team Run changes", "error");
+      return false;
+    } finally {
+      if (ownsSelectedRun(requestedRun)) setTeamRunDeliveryLoading(false);
+    }
+  }
+
+  async function handleCommitTeamRunDelivery(message) {
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id || !message.trim()) return false;
+    try {
+      const delivery = await api.commitTeamRunDelivery(requestedRun.id, message.trim());
+      if (ownsSelectedRun(requestedRun)) setTeamRunDelivery(delivery);
+      toast("Team Run changes committed", "success");
+      return true;
+    } catch (_error) {
+      toast("Failed to commit Team Run changes", "error");
+      return false;
+    }
+  }
+
+  async function handleApplyTeamRunDelivery() {
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id || !teamRunDelivery?.can_apply) return false;
+    const commitCount = teamRunDelivery.pending_commits?.length || 0;
+    const accepted = await confirm({
+      title: "APPLY TEAM RUN CHANGES",
+      message: `Apply ${commitCount} commit(s) to ${teamRunDelivery.target?.branch || "the target repository"}?`,
+      confirmLabel: "Apply"
+    });
+    if (!accepted) return false;
+    try {
+      const delivery = await api.applyTeamRunDelivery(requestedRun.id);
+      if (ownsSelectedRun(requestedRun)) setTeamRunDelivery(delivery);
+      toast("Team Run changes applied to the repository", "success");
+      return true;
+    } catch (_error) {
+      toast("Failed to apply Team Run changes", "error");
+      return false;
+    }
+  }
+
   async function handleDeleteTeamRun(id) {
     const accepted = await confirm({
       title: "DELETE TEAM RUN",
@@ -406,6 +477,8 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     setSelectedTeamRunId(null);
     setTeamRunDetail(null);
     setTeamRunDocuments([]);
+    setTeamRunDelivery(null);
+    setTeamRunDeliveryLoading(false);
     setCreatingTeamRun(false);
   }
 
@@ -420,6 +493,8 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     setSelectedTeamRunId,
     teamRunDetail,
     teamRunDocuments,
+    teamRunDelivery,
+    teamRunDeliveryLoading,
     teamRunDetailLoading,
     teamRunDetailLoadError: Boolean(
       selectedTeamRunId && teamRunDetailLoadErrorId === selectedTeamRunId
@@ -435,6 +510,9 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     handleAnswerTeamDecision,
     handleCancelTeamRun,
     handleRetryTeamTask,
+    handleRefreshTeamRunDelivery,
+    handleCommitTeamRunDelivery,
+    handleApplyTeamRunDelivery,
     handleDeleteTeamRun,
     handleSelectTeamRun,
     handleBackToTeamRuns,

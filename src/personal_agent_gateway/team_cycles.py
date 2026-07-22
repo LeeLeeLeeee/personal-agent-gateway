@@ -219,7 +219,7 @@ class TeamCycleService:
             team_run_id,
             "auto",
             _auto_source_id(series_id, 1, 1),
-            "Continue the team goal.",
+            self._auto_instruction(connection, team_run_id),
             previous_cycle_id=None,
             auto_series_id=series_id,
             slot_ordinal=1,
@@ -588,7 +588,7 @@ class TeamCycleService:
                     series.team_run_id,
                     "auto",
                     _auto_source_id(series.id, slot, 1),
-                    "Continue the team goal.",
+                    self._auto_instruction(connection, series.team_run_id),
                     previous_cycle_id=previous["id"] if previous is not None else None,
                     auto_series_id=series.id,
                     slot_ordinal=slot,
@@ -605,6 +605,20 @@ class TeamCycleService:
                 )
                 created.append(request)
         return created
+
+    @staticmethod
+    def _auto_instruction(
+        connection: sqlite3.Connection, team_run_id: str
+    ) -> str:
+        row = connection.execute(
+            "select goal from team_runs where id = ?", (team_run_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Team run not found: {team_run_id}")
+        instruction = str(row["goal"] or "").strip()
+        if not instruction:
+            raise ValueError("AUTO Team Run requires a base objective")
+        return instruction
 
     def mark_request_settled(
         self,

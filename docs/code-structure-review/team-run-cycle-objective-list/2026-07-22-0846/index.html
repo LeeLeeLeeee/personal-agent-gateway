@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Team Run 목표와 Cycle 중심 목록 구조 검토</title>
+  <style>
+    :root{color-scheme:light dark;--bg:#f4f2ed;--surface:#fffdf8;--surface-2:#ece8df;--text:#202522;--muted:#65706a;--line:#d8d3c8;--accent:#155d4a;--accent-soft:#dcece5;--code:#2d3531;--shadow:0 18px 45px rgb(36 44 39 / 10%)}
+    @media(prefers-color-scheme:dark){:root{--bg:#111613;--surface:#18201c;--surface-2:#222c27;--text:#edf3ef;--muted:#aebbb4;--line:#34423b;--accent:#72d7b0;--accent-soft:#203d32;--code:#e5eee9;--shadow:0 18px 45px rgb(0 0 0 / 28%)}}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Pretendard,"Noto Sans KR",system-ui,sans-serif;line-height:1.65}a{color:var(--accent)}a:focus-visible{outline:3px solid var(--accent);outline-offset:3px}.skip-link{position:fixed;z-index:10;top:.5rem;left:.5rem;padding:.6rem .8rem;border-radius:.5rem;background:var(--surface);transform:translateY(-160%)}.skip-link:focus{transform:translateY(0)}code,pre{color:var(--code);font-family:"SFMono-Regular",Consolas,monospace}pre{overflow:auto;padding:1rem;background:var(--surface-2);border-radius:.8rem}.layout{min-height:100vh;display:grid;grid-template-columns:260px minmax(0,1fr)}.sidebar{position:sticky;top:0;height:100vh;padding:2rem 1.25rem;border-right:1px solid var(--line);background:var(--surface)}.brand{color:var(--muted);font-size:.75rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.sidebar nav{display:grid;gap:.35rem;margin-top:2rem}.sidebar a{padding:.55rem .7rem;border-radius:.6rem;color:var(--muted);text-decoration:none}.sidebar a:hover{background:var(--accent-soft);color:var(--text)}main{width:min(1120px,100%);padding:4rem clamp(1.25rem,5vw,5rem) 6rem}header{margin-bottom:3rem}h1{max-width:18ch;margin:.5rem 0 1rem;font-size:clamp(2.2rem,6vw,4.6rem);line-height:1.02;letter-spacing:-.045em}.scope{max-width:75ch;color:var(--muted);font-size:1.05rem}section{margin:0 0 1.5rem;padding:clamp(1.25rem,3vw,2rem);border:1px solid var(--line);border-radius:1rem;background:var(--surface);box-shadow:var(--shadow)}section h2{margin-top:0;font-size:clamp(1.35rem,3vw,2rem)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.card{min-width:0;padding:1rem;border:1px solid var(--line);border-radius:.8rem;background:var(--surface-2)}.card h3{margin-top:0}.diagram{overflow:auto;padding:1rem;border:1px solid var(--line);border-radius:.8rem;background:var(--surface-2)}.diagram svg{width:100%;height:auto;min-width:520px}table{width:100%;border-collapse:collapse}th,td{padding:.75rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.muted{color:var(--muted)}@media(max-width:820px){.layout{grid-template-columns:1fr}.sidebar{position:static;width:100%;height:auto;border-right:0;border-bottom:1px solid var(--line)}.sidebar nav{grid-template-columns:repeat(2,minmax(0,1fr))}main{padding-top:2rem}.grid{grid-template-columns:1fr}}@media(max-width:480px){.sidebar nav{grid-template-columns:1fr}th,td{display:block;width:100%}th{padding-bottom:.2rem;border-bottom:0}td{padding-top:.2rem}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">본문으로 건너뛰기</a>
+  <div class="layout">
+    <aside class="sidebar"><div class="brand">Code Structure Decision Review</div><nav aria-label="Report sections"><a href="#summary">요약</a><a href="#behaviors">행동</a><a href="#diagrams">현재 구조</a><a href="#decisions">선택지</a><a href="#evidence">근거</a><a href="#requests">수정 요청</a><a href="#limits">한계</a></nav></aside>
+    <main id="main-content">
+      <header><div class="brand">Feature / Module Review</div><h1>Team Run 목표와 Cycle 중심 목록 구조 검토</h1><div class="scope">Team Run 생성 계약, Cycle objective 전달, Team Runs list read model과 카드 정보 계층을 함께 검토한다.</div></header>
+      <section id="summary"><h2>60초 요약</h2><p>현재 <code>goal</code>은 Run 제목, AUTO 반복 기준, Agent 공통 프롬프트를 동시에 담당한다. TRIGGERED는 별도 Cycle instruction도 받아 의미가 중복된다. 목록은 전체 Task를 합산해 Cycle이 늘수록 현재 실행 상태를 파악하기 어렵다.</p></section>
+      <section id="behaviors"><h2>사용자·도메인 행동</h2><div class="grid"><div class="card"><h3>B-01 · Run 생성</h3><p>Team과 AUTO/TRIGGERED 정책을 골라 Continuous container를 만든다.</p></div><div class="card"><h3>B-02 · Cycle 실행</h3><p>AUTO는 반복 기준으로, Trigger/Hook은 요청 instruction으로 Cycle을 실행한다.</p></div><div class="card"><h3>B-03 · 목록 탐색</h3><p>현재 Cycle 상태와 다음 행동을 확인하고 상세로 이동한다.</p></div></div></section>
+      <section id="diagrams"><h2>현재 구조</h2><p>결정 질문: 현재 goal과 instruction은 실제 실행에서 어떻게 합쳐지는가?</p><div class="diagram"><pre>flowchart LR
+  Form[TeamPicker goal] --&gt; Run[team_runs.goal]
+  Trigger[Trigger or Hook instruction] --&gt; Request[team_cycle_requests.instruction]
+  Auto[AUTO scheduler] --&gt; Fixed[Continue the team goal]
+  Fixed --&gt; Request
+  Request --&gt; AddWork[add_work task planning]
+  Run --&gt; AddWork
+  AddWork --&gt; Tasks[Cycle tasks]
+  Tasks --&gt; Execute[worker execution]
+  Run --&gt; Execute
+  Execute --&gt; Synthesize[Cycle synthesis]
+  Run --&gt; Synthesize
+  Synthesize --&gt; Cycle[TeamRunCycle result]</pre><p class="muted">Mermaid source fallback: 이 HTML은 외부 script를 로드하지 않는다.</p></div></section>
+      <section id="decisions"><h2>선택을 위한 비교</h2><h3>Unknowns</h3><ul><li>TRIGGERED Run에 선택적인 장기 context가 필요한지는 확정되지 않았다.</li><li>개별 Cycle 감사·검색이 목록의 주 사용 사례인지 실제 사용 데이터가 없다.</li></ul><h3>Run goal</h3><table><thead><tr><th>Option</th><th>Benefit</th><th>Cost</th><th>Risk</th><th>Applicable when</th></tr></thead><tbody><tr><td>O-01/A 항상 유지</td><td>변경이 작다.</td><td>TRIGGERED 입력이 중복된다.</td><td>Run goal과 Cycle 목표가 어긋난다.</td><td>모든 Cycle이 하나의 고정 goal 하위일 때</td></tr><tr><td>O-01/B 정책별 base objective</td><td>AUTO 기준과 Cycle 목표가 구분된다.</td><td>migration과 prompt 분리가 필요하다.</td><td>기존 데이터 호환이 필요하다.</td><td>AUTO와 Trigger 실행 의미가 다를 때</td></tr><tr><td>O-01/C 완전 제거</td><td>모든 입력이 Cycle로 통일된다.</td><td>AUTO template과 Run 식별을 재설계한다.</td><td>변경 범위가 크다.</td><td>AUTO도 매회 외부 입력을 받을 때</td></tr></tbody></table><h3>목록</h3><table><thead><tr><th>Option</th><th>Benefit</th><th>Cost</th><th>Risk</th><th>Applicable when</th></tr></thead><tbody><tr><td>O-02/A 유지</td><td>변경이 없다.</td><td>현재 Cycle을 알 수 없다.</td><td>누적 수치가 오해를 만든다.</td><td>Run이 한 번만 실행될 때</td></tr><tr><td>O-02/B Run card + latest Cycle</td><td>밀도를 유지하며 현재 상태를 보여준다.</td><td>list 집계와 기존 snapshot mapping이 추가된다.</td><td>보조 정보가 과해질 수 있다.</td><td>Run이 Continuous container일 때</td></tr><tr><td>O-02/C Cycle별 row</td><td>개별 실행 탐색이 쉽다.</td><td>목록이 빠르게 늘어난다.</td><td>Run 소유 관계가 약해진다.</td><td>감사 로그 탐색이 주 용도일 때</td></tr></tbody></table><h3>Recommendation</h3><p><strong>O-01/B + O-02/B</strong>: AUTO에만 base objective를 필수로 두고 모든 Cycle instruction을 실제 objective로 사용한다. 목록은 Run당 카드 하나를 유지하면서 Team 이름, 최신 Cycle objective/status, 최신 Cycle Task 진행률, Cycle 수와 AUTO 진행 정보를 표시한다.</p><p>신규 Run은 기존 <code>rules_snapshot.team.name</code>과 short Run ID를 함께 제목으로 사용하고, snapshot이 없는 legacy Run은 short Run ID만 사용한다. 별도 사용자 입력 Run 이름은 추가하지 않는다.</p><h3>Reversal conditions</h3><ul><li>모든 Triggered Cycle이 하나의 장기 목표 아래에만 존재한다는 규칙이 확정되면 O-01/A를 선택한다.</li><li>AUTO도 매회 외부 입력을 받게 되면 O-01/C를 다시 검토한다.</li><li>개별 Cycle 감사가 주 사용 사례가 되면 O-02/C를 별도 History 화면으로 도입한다.</li></ul></section>
+      <section id="evidence"><h2>근거</h2><ul><li><code>api/team_runs.py</code>: 정책별 생성과 Trigger 계약</li><li><code>db.py</code>, <code>team_cycles.py</code>: goal/instruction 저장과 AUTO request</li><li><code>team_runtime.py</code>: Agent prompt에서 run.goal 사용</li><li><code>teams.py</code>, <code>TeamRunCard</code>: 전체 Task 합산 목록</li><li><code>TeamRunDetail</code>: 최신 Cycle 기준 상세 UI</li></ul></section>
+      <section id="requests"><h2>후속 수정 요청</h2><div class="grid"><div class="card"><h3>CR-01</h3><p>Run context와 Cycle objective를 분리하고 AUTO/manual/Hook prompt 경로를 맞춘다.</p></div><div class="card"><h3>CR-02</h3><p>목록 read model과 카드를 latest Cycle 중심으로 바꾼다.</p></div></div></section>
+      <section id="limits"><h2>분석 한계와 다음 질문</h2><p>실제 Run당 Cycle 수와 사용자의 탐색 빈도는 측정하지 않았다. 구현 전 남은 제품 결정은 TRIGGERED Run에 선택적인 장기 context를 허용할지 여부다.</p></section>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -77,6 +78,81 @@ def create_standard_run(
     return asdict(run)
 
 
+def _git(path: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(path), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def test_worktree_delivery_commits_and_applies_to_space_repository(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init")
+    _git(repository, "config", "user.email", "test@example.com")
+    _git(repository, "config", "user.name", "Test User")
+    (repository / "README.md").write_text("base\n", encoding="utf-8")
+    _git(repository, "add", "README.md")
+    _git(repository, "commit", "-m", "initial")
+
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Lead")
+    team_id = create_team(client, leader_id)
+    assert client.put(
+        f"/api/spaces/teams/{team_id}",
+        json={
+            "read_mode": "home",
+            "write_mode": "worktree",
+            "workspace_path": str(repository),
+        },
+    ).status_code == 200
+    created = client.post(
+        "/api/team-runs",
+        json={"team_id": team_id, "execution_policy": "triggered"},
+    )
+    assert created.status_code == 200
+    run = created.json()["team_run"]
+    run_id = run["id"]
+    working_root = Path(run["working_root"])
+    (working_root / "feature.txt").write_text("delivered\n", encoding="utf-8")
+
+    preview = client.get(f"/api/team-runs/{run_id}/delivery").json()["delivery"]
+    assert preview["available"] is True
+    assert preview["can_commit"] is True
+    assert preview["can_apply"] is False
+    assert preview["uncommitted_files"] == [{"status": "??", "path": "feature.txt"}]
+
+    committed = client.post(
+        f"/api/team-runs/{run_id}/delivery/commit",
+        json={"message": "feat: deliver team run"},
+    )
+    assert committed.status_code == 200
+    delivery = committed.json()["delivery"]
+    assert delivery["uncommitted_files"] == []
+    assert [item["subject"] for item in delivery["pending_commits"]] == [
+        "feat: deliver team run"
+    ]
+    assert delivery["can_apply"] is True
+
+    dirty_target = repository / "local.txt"
+    dirty_target.write_text("keep\n", encoding="utf-8")
+    blocked = client.post(f"/api/team-runs/{run_id}/delivery/apply")
+    assert blocked.status_code == 409
+    assert "uncommitted changes" in blocked.json()["detail"]
+    dirty_target.unlink()
+
+    applied = client.post(f"/api/team-runs/{run_id}/delivery/apply")
+    assert applied.status_code == 200
+    result = applied.json()["delivery"]
+    assert result["pending_commits"] == []
+    assert result["up_to_date"] is True
+    assert (repository / "feature.txt").read_text(encoding="utf-8") == "delivered\n"
+
+
 def test_create_auto_run_enqueues_first_cycle_and_manual_trigger_snapshots_preview(
     tmp_path: Path,
 ) -> None:
@@ -102,17 +178,19 @@ def test_create_auto_run_enqueues_first_cycle_and_manual_trigger_snapshots_previ
     assert auto_run["run_mode"] == "plan_and_execute"
     assert auto_run["execution_policy"] == "auto"
     assert auto_run["configured_max_workers"] == 1
-    assert len(client.app.state.team_cycle_service.list_requests(auto_run["id"])) == 1
+    auto_requests = client.app.state.team_cycle_service.list_requests(auto_run["id"])
+    assert len(auto_requests) == 1
+    assert auto_requests[0].instruction == "Maintain gateway"
     assert client.app.state.team_cycle_dispatcher._queue.qsize() == 1
 
     triggered = client.post(
         "/api/team-runs",
         json={
             "team_id": team_id,
-            "goal": "Triggered maintenance",
             "execution_policy": "triggered",
         },
     ).json()["team_run"]
+    assert triggered["goal"] == ""
     previous = client.app.state.team_run_service.create_cycle(
         triggered["id"], "manual", "previous"
     )
@@ -294,6 +372,13 @@ async def test_cancel_during_add_work_cannot_resurrect_continuous_lineage(
             "goal": "g",
             "execution_policy": "auto",
             "auto_repeat_count": 2,
+        },
+        {
+            "team_id": "team",
+            "goal": "  ",
+            "execution_policy": "auto",
+            "auto_repeat_count": 2,
+            "auto_interval_minutes": 5,
         },
         {
             "team_id": "team",
@@ -572,16 +657,46 @@ def test_list_team_runs_returns_enriched_fields(tmp_path: Path) -> None:
         "/api/team-runs",
         json={
             "team_id": team_id,
-            "goal": "Design Agent Teams",
             "execution_policy": "triggered",
         },
     ).json()["team_run"]["id"]
+    cycle_service = client.app.state.team_cycle_service
+    team_service = client.app.state.team_run_service
+    request = cycle_service.enqueue_request(
+        run_id,
+        "manual",
+        "list-read-model",
+        "Design Agent Teams",
+        previous_cycle_id=None,
+    )
+    claimed = cycle_service.claim_next(run_id)
+    assert claimed is not None and claimed.id == request.id
+    cycle = team_service.create_cycle(
+        run_id,
+        "manual",
+        request.source_id,
+        request_id=request.id,
+    )
+    team_service.set_cycle_status(cycle.id, "running")
+    team_service.create_task(
+        run_id,
+        "Design list",
+        "Expose current Cycle",
+        cycle_id=cycle.id,
+    )
 
     body = client.get("/api/team-runs").json()
     run = next(r for r in body["team_runs"] if r["id"] == run_id)
 
     assert run["leader_name"] == "Tech Lead"
     assert run["leader"] == {"name": "Tech Lead", "avatar": "", "initials": "TL"}
+    assert run["team_name"] == "Team"
+    assert run["goal"] == ""
+    assert run["display_status"] == "active"
+    assert run["current_objective"] == "Design Agent Teams"
+    assert run["cycle_count"] == 1
+    assert run["latest_cycle"]["sequence"] == 1
+    assert run["task_total"] == 1
     assert "members" in run
     assert "task_counts" in run
     assert "elapsed_seconds" in run

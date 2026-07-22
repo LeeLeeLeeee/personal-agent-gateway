@@ -80,6 +80,7 @@ from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycle_loop import TeamCycleLoop
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_delivery import TeamRunDeliveryService
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
@@ -502,6 +503,7 @@ def _attach_local_services(
     app.state.session_activity_publisher = session_activity_publisher
     app.state.session_activity_service = session_activity_service
     app.state.team_run_service = team_run_service
+    app.state.team_run_delivery_service = TeamRunDeliveryService()
     app.state.team_cycle_service = team_cycle_service
     app.state.team_directory_service = team_directory_service
     app.state.rule_set_service = rule_set_service

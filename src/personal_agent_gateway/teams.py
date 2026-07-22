@@ -453,6 +453,20 @@ class TeamRunService:
             raise KeyError(f"Team run cycle not found: {cycle_id}")
         return _team_run_cycle_from_row(row)
 
+    def get_cycle_objective(self, cycle_id: str) -> str | None:
+        row = self._db.fetchone(
+            """
+            select request.instruction from team_run_cycles cycle
+            left join team_cycle_requests request on request.id = cycle.request_id
+            where cycle.id = ?
+            """,
+            (cycle_id,),
+        )
+        if row is None:
+            raise KeyError(f"Team run cycle not found: {cycle_id}")
+        objective = str(row["instruction"] or "").strip()
+        return objective or None
+
     def list_cycles(self, team_run_id: str) -> list[TeamRunCycle]:
         self.get_team_run(team_run_id)
         return [
@@ -596,8 +610,37 @@ class TeamRunService:
             run_ids,
         )
         count_rows = self._db.fetchall(
-            f"select team_run_id, status, count(*) as total from team_tasks "
-            f"where team_run_id in ({placeholders}) group by team_run_id, status",
+            f"select team_run_id, cycle_id, status, count(*) as total from team_tasks "
+            f"where team_run_id in ({placeholders}) group by team_run_id, cycle_id, status",
+            run_ids,
+        )
+        cycle_rows = self._db.fetchall(
+            f"""
+            select cycle.*, request.instruction as request_instruction
+            from team_run_cycles cycle
+            left join team_cycle_requests request on request.id = cycle.request_id
+            where cycle.team_run_id in ({placeholders})
+            order by cycle.team_run_id, cycle.sequence desc
+            """,
+            run_ids,
+        )
+        pending_request_rows = self._db.fetchall(
+            f"""
+            select * from team_cycle_requests
+            where team_run_id in ({placeholders})
+              and status in ('queued', 'dispatching')
+            order by team_run_id,
+              case status when 'dispatching' then 0 else 1 end,
+              created_at desc, rowid desc
+            """,
+            run_ids,
+        )
+        series_rows = self._db.fetchall(
+            f"""
+            select * from team_run_auto_series
+            where team_run_id in ({placeholders})
+            order by team_run_id, series_number desc
+            """,
             run_ids,
         )
         agents_by_run: dict[str, list[TeamAgent]] = {run_id: [] for run_id in run_ids}
@@ -605,15 +648,55 @@ class TeamRunService:
             agent = _team_agent_from_row(row)
             agents_by_run[agent.team_run_id].append(agent)
         counts_by_run: dict[str, dict[str, int]] = {run_id: {} for run_id in run_ids}
+        counts_by_cycle: dict[tuple[str, str], dict[str, int]] = {}
         for row in count_rows:
-            counts_by_run[row["team_run_id"]][row["status"]] = int(row["total"])
+            run_counts = counts_by_run[row["team_run_id"]]
+            run_counts[row["status"]] = run_counts.get(row["status"], 0) + int(row["total"])
+            if row["cycle_id"] is not None:
+                cycle_counts = counts_by_cycle.setdefault(
+                    (row["team_run_id"], row["cycle_id"]), {}
+                )
+                cycle_counts[row["status"]] = int(row["total"])
+        latest_cycle_by_run: dict[str, sqlite3.Row] = {}
+        cycle_count_by_run = {run_id: 0 for run_id in run_ids}
+        for row in cycle_rows:
+            cycle_count_by_run[row["team_run_id"]] += 1
+            latest_cycle_by_run.setdefault(row["team_run_id"], row)
+        pending_request_by_run: dict[str, sqlite3.Row] = {}
+        for row in pending_request_rows:
+            pending_request_by_run.setdefault(row["team_run_id"], row)
+        latest_series_by_run: dict[str, sqlite3.Row] = {}
+        for row in series_rows:
+            latest_series_by_run.setdefault(row["team_run_id"], row)
 
         result: list[dict[str, object]] = []
         for run in runs:
             agents = agents_by_run[run.id]
             leader = next((a for a in agents if a.role == "leader"), None)
             members = [a for a in agents if a.role != "leader"]
-            counts = counts_by_run[run.id]
+            latest_cycle = latest_cycle_by_run.get(run.id)
+            pending_request = pending_request_by_run.get(run.id)
+            latest_series = latest_series_by_run.get(run.id)
+            lifetime_counts = counts_by_run[run.id]
+            counts = (
+                counts_by_cycle.get((run.id, latest_cycle["id"]), {})
+                if latest_cycle is not None and run.lifecycle_mode == "continuous"
+                else lifetime_counts
+            )
+            team_snapshot = (run.rules_snapshot or {}).get("team")
+            team_name = (
+                str(team_snapshot.get("name") or "").strip() or None
+                if isinstance(team_snapshot, dict)
+                else None
+            )
+            objective = _current_objective(run, pending_request, latest_cycle)
+            display_status = _team_run_display_status(
+                run, pending_request, latest_cycle, latest_series
+            )
+            activity_times = [run.updated_at]
+            for row in (pending_request, latest_cycle, latest_series):
+                if row is not None and row["updated_at"]:
+                    activity_times.append(row["updated_at"])
             result.append(
                 {
                     "id": run.id,
@@ -625,6 +708,45 @@ class TeamRunService:
                     "configured_max_workers": run.max_workers,
                     "execution_mode": "sequential",
                     "team_id": run.team_id,
+                    "team_name": team_name,
+                    "display_status": display_status,
+                    "current_objective": objective,
+                    "cycle_count": cycle_count_by_run[run.id],
+                    "latest_cycle": (
+                        {
+                            "id": latest_cycle["id"],
+                            "sequence": latest_cycle["sequence"],
+                            "status": latest_cycle["status"],
+                            "source_type": latest_cycle["source_type"],
+                            "objective": latest_cycle["request_instruction"],
+                            "updated_at": latest_cycle["updated_at"],
+                        }
+                        if latest_cycle is not None
+                        else None
+                    ),
+                    "pending_request": (
+                        {
+                            "id": pending_request["id"],
+                            "status": pending_request["status"],
+                            "source_type": pending_request["source_type"],
+                            "slot_ordinal": pending_request["slot_ordinal"],
+                            "objective": pending_request["instruction"],
+                            "updated_at": pending_request["updated_at"],
+                        }
+                        if pending_request is not None
+                        else None
+                    ),
+                    "auto_series": (
+                        {
+                            "status": latest_series["status"],
+                            "target_slots": latest_series["target_slots"],
+                            "settled_slots": latest_series["settled_slots"],
+                            "next_run_at": latest_series["next_run_at"],
+                        }
+                        if latest_series is not None
+                        else None
+                    ),
+                    "last_activity_at": max(activity_times),
                     "created_at": run.created_at,
                     "started_at": run.started_at,
                     "finished_at": run.finished_at,
@@ -650,6 +772,7 @@ class TeamRunService:
                     "task_total": sum(counts.values()),
                     "task_done": counts.get("completed", 0),
                     "elapsed_seconds": _elapsed_seconds(run.started_at, run.finished_at),
+                    "lifetime_task_total": sum(lifetime_counts.values()),
                 }
             )
         return result
@@ -2037,6 +2160,50 @@ def _initials(name: str) -> str:
         return "?"
     letters = [word[0] for word in parts[:2]]
     return "".join(letters).upper()
+
+
+def _current_objective(
+    run: TeamRun,
+    pending_request: sqlite3.Row | None,
+    latest_cycle: sqlite3.Row | None,
+) -> str:
+    if pending_request is not None:
+        instruction = str(pending_request["instruction"] or "").strip()
+        if instruction:
+            return instruction
+    if latest_cycle is not None:
+        instruction = str(latest_cycle["request_instruction"] or "").strip()
+        if instruction:
+            return instruction
+    return run.goal.strip() or "Ready for trigger"
+
+
+def _team_run_display_status(
+    run: TeamRun,
+    pending_request: sqlite3.Row | None,
+    latest_cycle: sqlite3.Row | None,
+    latest_series: sqlite3.Row | None,
+) -> str:
+    if run.status == "canceled":
+        return "canceled"
+    cycle_status = latest_cycle["status"] if latest_cycle is not None else None
+    series_status = latest_series["status"] if latest_series is not None else None
+    if (
+        pending_request is not None
+        or run.status in _ACTIVE_RUN_STATUSES
+        or cycle_status in {"queued", "running"}
+        or series_status == "running"
+    ):
+        return "active"
+    if (
+        run.status in {"waiting_for_user", "interrupted", "failed", "completed_with_failures"}
+        or cycle_status in {"failed", "waiting_for_user", "interrupted"}
+        or series_status in {"paused_failure", "paused_user", "paused_interrupted"}
+    ):
+        return "needs_attention"
+    if series_status == "waiting_interval":
+        return "auto_waiting"
+    return "ready"
 
 
 def _elapsed_seconds(started_at: str | None, finished_at: str | None) -> float:

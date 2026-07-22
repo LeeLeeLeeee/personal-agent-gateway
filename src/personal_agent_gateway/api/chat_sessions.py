@@ -169,11 +169,20 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
         request: Request,
         _session: None = session_dependency,
     ) -> StreamingResponse:
+        recent_events = context.event_bus.recent()
+        replay_through_id = (
+            int(recent_events[-1]["id"]) if recent_events else None
+        )
         subscriber = context.event_bus.subscribe(
             last_event_id=request.headers.get("last-event-id")
         )
         return StreamingResponse(
-            _sse_events(request, context.event_bus, subscriber),
+            _sse_events(
+                request,
+                context.event_bus,
+                subscriber,
+                replay_through_id=replay_through_id,
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -512,6 +521,7 @@ async def _sse_events(
     request: Request,
     event_bus: EventBus,
     subscriber: asyncio.Queue[dict[str, object]],
+    replay_through_id: int | None = None,
 ):
     try:
         yield ": connected\n\n"
@@ -522,7 +532,14 @@ async def _sse_events(
                 yield ": heartbeat\n\n"
                 continue
             event_id = event.get("id")
-            yield f"id: {event_id}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+            payload = event
+            if (
+                replay_through_id is not None
+                and isinstance(event_id, int)
+                and event_id <= replay_through_id
+            ):
+                payload = {**event, "replayed": True}
+            yield f"id: {event_id}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
     finally:
         event_bus.unsubscribe(subscriber)
 

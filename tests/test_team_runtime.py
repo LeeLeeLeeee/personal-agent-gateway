@@ -8,6 +8,7 @@ from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.team_runtime import TeamRuntime, WORKER_PROMPT, _rules_block
+from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.teams import TeamRunService
 
 
@@ -61,6 +62,38 @@ def test_worker_prompt_presents_a_complete_concrete_assignment() -> None:
     assert "Do not ask the user what work to do" in prompt
     assert "Read CYCLES/cycle-1/MAIL_CONTEXT.md" in prompt
     assert "changed files" not in prompt
+
+
+def test_cycle_objective_replaces_blank_triggered_run_goal(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    cycles = TeamCycleService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace", cycle_service=cycles)
+    leader = personas.create_persona("Lead", "Planning", "Plans", [], [])
+    run = teams.create_team_run(
+        "",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "manual-1",
+        "Review the new release",
+        previous_cycle_id=None,
+    )
+    cycles.claim_next(run.id)
+    cycle = teams.create_cycle(
+        run.id, "manual", request.source_id, request_id=request.id
+    )
+    runtime = TeamRuntime(teams, lambda _agent: FakeModel("[]"))
+
+    assert runtime._goal_context(run, cycle.id) == "Review the new release"
 
 
 @pytest.mark.asyncio

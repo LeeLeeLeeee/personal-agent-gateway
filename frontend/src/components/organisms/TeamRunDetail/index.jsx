@@ -214,6 +214,121 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
   );
 }
 
+function DeliveryPanel({
+  runId, delivery, loading, onRefresh, onCommit, onApply
+}) {
+  const [message, setMessage] = useState(`chore(team-run): deliver ${runId.slice(0, 8)}`);
+  const [action, setAction] = useState(null);
+
+  if (!delivery && !loading) return null;
+
+  async function perform(name, callback) {
+    if (!callback || action) return;
+    setAction(name);
+    try {
+      await callback();
+    } finally {
+      setAction(null);
+    }
+  }
+
+  return (
+    <section className="team-delivery-panel" aria-label="Repository delivery">
+      <div className="team-section-head">
+        <span className="mono team-section-label">Repository Delivery</span>
+        <span className="team-section-rule" />
+        <Button
+          size="btn-sm"
+          disabled={loading || Boolean(action) || !onRefresh}
+          onClick={() => perform("refresh", onRefresh)}
+        >
+          {loading || action === "refresh" ? "Refreshing..." : "Refresh"}
+        </Button>
+      </div>
+
+      {loading && !delivery ? (
+        <div className="team-delivery-empty mono">Inspecting worktree changes...</div>
+      ) : delivery?.available === false ? (
+        <div className="team-delivery-empty mono">{delivery.reason}</div>
+      ) : delivery ? (
+        <>
+          <div className="team-delivery-paths">
+            <div>
+              <span className="mono team-delivery-k">SOURCE · {delivery.source?.branch}</span>
+              <span className="mono team-delivery-path" title={delivery.source?.path}>{delivery.source?.path}</span>
+            </div>
+            <div>
+              <span className="mono team-delivery-k">TARGET · {delivery.target?.branch}</span>
+              <span className="mono team-delivery-path" title={delivery.target?.path}>{delivery.target?.path}</span>
+            </div>
+          </div>
+
+          <div className="team-delivery-counts mono">
+            <span>UNCOMMITTED · {delivery.uncommitted_files?.length || 0}</span>
+            <span>PENDING COMMITS · {delivery.pending_commits?.length || 0}</span>
+            <span>TARGET DIRTY · {delivery.target?.dirty_files?.length || 0}</span>
+          </div>
+
+          {delivery.uncommitted_files?.length ? (
+            <div className="team-delivery-files">
+              {delivery.uncommitted_files.map((file) => (
+                <div className="mono team-delivery-file" key={`${file.status}:${file.path}`}>
+                  <span>{file.status}</span><span>{file.path}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {delivery.pending_commits?.length ? (
+            <div className="team-delivery-commits">
+              {delivery.pending_commits.map((commit) => (
+                <div className="team-delivery-commit" key={commit.sha}>
+                  <span className="mono">{commit.short_sha}</span>
+                  <span>{commit.subject}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {delivery.blocked_reasons?.length ? (
+            <div className="team-delivery-blockers" role="status">
+              {delivery.blocked_reasons.map((reason) => <div key={reason}>{reason}</div>)}
+            </div>
+          ) : null}
+
+          <div className="team-delivery-actions">
+            {delivery.uncommitted_files?.length ? (
+              <label className="team-delivery-message">
+                <span className="mono team-delivery-k">COMMIT MESSAGE</span>
+                <input
+                  className="input-field"
+                  value={message}
+                  onChange={(event) => setMessage(event.target.value)}
+                />
+              </label>
+            ) : null}
+            <Button
+              size="btn-sm"
+              disabled={!delivery.can_commit || !message.trim() || Boolean(action) || !onCommit}
+              onClick={() => perform("commit", () => onCommit(message.trim()))}
+            >
+              {action === "commit" ? "Committing..." : "Commit changes"}
+            </Button>
+            <Button
+              size="btn-sm"
+              variant="primary"
+              disabled={!delivery.can_apply || Boolean(action) || !onApply}
+              onClick={() => perform("apply", onApply)}
+            >
+              {action === "apply" ? "Applying..." : "Apply to repository"}
+            </Button>
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 function DecisionRequestPanel({ request, onSubmit }) {
   const [answers, setAnswers] = useState({});
   const [submitting, setSubmitting] = useState(false);
@@ -320,9 +435,11 @@ function DecisionRequestPanel({ request, onSubmit }) {
 }
 
 export function TeamRunDetail({
-  detail, documents = [], loading = false, loadError = false,
+  detail, documents = [], delivery = null, deliveryLoading = false,
+  loading = false, loadError = false,
   onLoadDocument, onAddWork, onResume, onAnswerDecision,
-  onRetryTask, onCancel, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto
+  onRetryTask, onCancel, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto,
+  onRefreshDelivery, onCommitDelivery, onApplyDelivery
 }) {
   const [workInput, setWorkInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -432,7 +549,10 @@ export function TeamRunDetail({
             <span className="mono team-run-detail-id">TEAM RUN · {run.id.slice(0, 8)}</span>
             <StatusBadge kind={run.status} />
           </div>
-          <h1 className="headline team-run-detail-goal">{run.goal}</h1>
+          <h1 className="headline team-run-detail-goal">
+            {run.team_name ? `${run.team_name} · ${run.id.slice(0, 8)}` : (run.goal || run.id.slice(0, 8))}
+          </h1>
+          {run.goal ? <div className="team-run-base-objective">BASE OBJECTIVE · {run.goal}</div> : null}
           <div className="team-run-hero-summary mono">
             <span>{String(run.execution_policy || run.lifecycle_mode || "standard").toUpperCase()}</span>
             <span>LEAD · {leader?.name || "-"}</span>
@@ -530,6 +650,16 @@ export function TeamRunDetail({
           </div>
         </div>
       </details>
+
+      <DeliveryPanel
+        key={run.id}
+        runId={run.id}
+        delivery={delivery}
+        loading={deliveryLoading}
+        onRefresh={onRefreshDelivery}
+        onCommit={onCommitDelivery}
+        onApply={onApplyDelivery}
+      />
 
       {run.lifecycle_mode === "continuous" ? (
         <section className="team-policy-panel" aria-label="Cycle policy">

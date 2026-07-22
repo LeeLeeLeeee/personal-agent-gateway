@@ -112,6 +112,8 @@ export function GatewayApp() {
     setSelectedTeamRunId,
     teamRunDetail,
     teamRunDocuments,
+    teamRunDelivery,
+    teamRunDeliveryLoading,
     teamRunDetailLoading,
     teamRunDetailLoadError,
     handleTeamEvent,
@@ -125,6 +127,9 @@ export function GatewayApp() {
     handleAnswerTeamDecision,
     handleCancelTeamRun,
     handleRetryTeamTask,
+    handleRefreshTeamRunDelivery,
+    handleCommitTeamRunDelivery,
+    handleApplyTeamRunDelivery,
     handleDeleteTeamRun,
     handleSelectTeamRun,
     handleBackToTeamRuns,
@@ -176,7 +181,7 @@ export function GatewayApp() {
   const handleHookEvent = useCallback(async (event) => {
     const hook = hooksRef.current.find((item) => item.id === event.hook_id);
     const name = hook?.name || event.hook_id;
-    if (event.status === "succeeded" || event.status === "failed") {
+    if (!event.replayed && (event.status === "succeeded" || event.status === "failed")) {
       toast(
         `Hook "${name}": ${event.status === "succeeded" ? "완료" : "실패"}`,
         event.status === "succeeded" ? "success" : "error"
@@ -823,6 +828,8 @@ export function GatewayApp() {
             <TeamRunDetail
               detail={teamRunDetailReady ? teamRunDetail : null}
               documents={teamRunDetailReady ? teamRunDocuments : []}
+              delivery={teamRunDetailReady ? teamRunDelivery : null}
+              deliveryLoading={teamRunDeliveryLoading}
               loading={teamRunDetailEffectiveLoading}
               loadError={teamRunDetailLoadError}
               onLoadDocument={(path) => api.teamDocumentContent(selectedTeamRunId, path)}
@@ -835,6 +842,9 @@ export function GatewayApp() {
               onAnswerDecision={handleAnswerTeamDecision}
               onCancel={handleCancelTeamRun}
               onRetryTask={handleRetryTeamTask}
+              onRefreshDelivery={handleRefreshTeamRunDelivery}
+              onCommitDelivery={handleCommitTeamRunDelivery}
+              onApplyDelivery={handleApplyTeamRunDelivery}
             />
           </div>
         ) : creatingTeamRun ? (
@@ -858,13 +868,13 @@ export function GatewayApp() {
             <div className="team-runs-home-head">
               <div>
                 <h1 className="headline" style={{ fontSize: 34 }}>Team Runs</h1>
-                <div className="team-runs-home-sub">Multiple agent sessions, one goal · each agent starts from a persona snapshot</div>
+                <div className="team-runs-home-sub">Continuous team containers · each Cycle carries its own objective</div>
               </div>
               <Button variant="primary" onClick={() => setCreatingTeamRun(true)}>New team run</Button>
             </div>
             <div className="team-runs-filter">
               <span className="mono team-runs-filter-k">STATUS</span>
-              {[["all", "All"], ["running", "Running"], ["completed", "Completed"], ["failed", "Failed"]].map(([key, label]) => (
+              {[["all", "All"], ["active", "Active"], ["ready", "Ready"], ["auto_waiting", "Auto waiting"], ["needs_attention", "Needs attention"]].map(([key, label]) => (
                 <button
                   key={key}
                   type="button"
@@ -880,10 +890,7 @@ export function GatewayApp() {
               {teamRuns
                 .filter((run) => {
                   if (runFilter === "all") return true;
-                  if (runFilter === "running") return run.status === "running" || run.status === "planning";
-                  if (runFilter === "completed") return run.status === "completed" || run.status === "completed_with_failures";
-                  if (runFilter === "failed") return run.status === "failed";
-                  return true;
+                  return run.display_status === runFilter;
                 })
                 .map((run) => (
                   <div className="team-run-list-item" key={run.id}>

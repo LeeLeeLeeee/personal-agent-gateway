@@ -1,5 +1,6 @@
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,7 +9,33 @@ from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.rule_sets import RuleSetService
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_directory import TeamService
-from personal_agent_gateway.teams import TeamRunService
+from personal_agent_gateway.teams import TeamRunService, _team_run_display_status
+
+
+@pytest.mark.parametrize(
+    ("run_status", "request_status", "cycle_status", "series_status", "expected"),
+    [
+        ("canceled", "queued", None, "running", "canceled"),
+        ("failed", "queued", "failed", "paused_failure", "active"),
+        ("completed", None, "failed", "paused_failure", "needs_attention"),
+        ("completed", None, "completed", "waiting_interval", "auto_waiting"),
+        ("completed", None, "completed", "auto_completed", "ready"),
+    ],
+)
+def test_team_run_display_status_prioritizes_current_cycle_activity(
+    run_status: str,
+    request_status: str | None,
+    cycle_status: str | None,
+    series_status: str | None,
+    expected: str,
+) -> None:
+    request = {"status": request_status} if request_status else None
+    cycle = {"status": cycle_status} if cycle_status else None
+    series = {"status": series_status} if series_status else None
+
+    assert _team_run_display_status(
+        SimpleNamespace(status=run_status), request, cycle, series
+    ) == expected
 
 
 def make_services(tmp_path):

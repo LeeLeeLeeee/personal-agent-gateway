@@ -699,4 +699,56 @@ describe("TeamRunDetail", () => {
 
     expect(screen.getByText("Decision request is unavailable. Refresh this run.")).toBeInTheDocument();
   });
+
+  it("reviews, commits, and applies worktree delivery through injected callbacks", async () => {
+    const onCommitDelivery = vi.fn().mockResolvedValue(true);
+    const onApplyDelivery = vi.fn().mockResolvedValue(true);
+    const detail = {
+      run: { id: "run-12345678", goal: "Ship", status: "completed", run_mode: "plan_and_execute" },
+      agents: [], tasks: [], messages: []
+    };
+    const delivery = {
+      available: true,
+      source: { path: "C:/runs/project", branch: "team-run/run-12345678" },
+      target: { path: "C:/repo", branch: "main", dirty_files: [] },
+      uncommitted_files: [{ status: "M", path: "src/app.js" }],
+      pending_commits: [],
+      blocked_reasons: ["Commit Team Run changes before applying."],
+      can_commit: true,
+      can_apply: false
+    };
+    const { rerender } = render(<TeamRunDetail
+      detail={detail}
+      delivery={delivery}
+      onCommitDelivery={onCommitDelivery}
+      onApplyDelivery={onApplyDelivery}
+      onRefreshDelivery={vi.fn()}
+    />);
+
+    expect(screen.getByRole("region", { name: "Repository delivery" })).toBeInTheDocument();
+    expect(screen.getByText("src/app.js")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply to repository" })).toBeDisabled();
+    const message = screen.getByLabelText("COMMIT MESSAGE");
+    await userEvent.clear(message);
+    await userEvent.type(message, "feat: apply dashboard");
+    await userEvent.click(screen.getByRole("button", { name: "Commit changes" }));
+    expect(onCommitDelivery).toHaveBeenCalledWith("feat: apply dashboard");
+
+    rerender(<TeamRunDetail
+      detail={detail}
+      delivery={{
+        ...delivery,
+        uncommitted_files: [],
+        pending_commits: [{ sha: "abcdef1234", short_sha: "abcdef12", subject: "feat: apply dashboard" }],
+        blocked_reasons: [],
+        can_commit: false,
+        can_apply: true
+      }}
+      onCommitDelivery={onCommitDelivery}
+      onApplyDelivery={onApplyDelivery}
+      onRefreshDelivery={vi.fn()}
+    />);
+    await userEvent.click(screen.getByRole("button", { name: "Apply to repository" }));
+    expect(onApplyDelivery).toHaveBeenCalledTimes(1);
+  });
 });

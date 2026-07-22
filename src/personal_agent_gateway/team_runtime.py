@@ -69,9 +69,10 @@ Use ask_user only when the user must decide. Prefer task scope; use run scope on
 ADD_WORK_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
 The user is adding work to an in-flight run. Break the request into concrete tasks.
 Return ONLY a JSON array of task objects. Each object must have "title" and "description".
-Goal: {goal}
+Run context:
+{goal}
 Existing tasks: {existing_titles}
-User request: {instruction}"""
+Current cycle objective: {instruction}"""
 
 AGENT_REINVOCATION_CAP = 3
 
@@ -134,6 +135,17 @@ class TeamRuntime:
         self._teams = teams
         self._model_factory = model_factory
         self._event_bus = event_bus
+
+    def _goal_context(self, run: TeamRun, cycle_id: str | None) -> str:
+        if cycle_id is None:
+            return run.goal
+        objective = self._teams.get_cycle_objective(cycle_id)
+        if run.goal and objective and objective != run.goal:
+            return (
+                f"Base objective: {run.goal}\n"
+                f"Current cycle objective: {objective}"
+            )
+        return objective or run.goal
 
     async def start(self, team_run_id: str, cycle_id: str | None = None) -> TeamRun:
         run = self._teams.get_team_run(team_run_id)
@@ -201,7 +213,7 @@ class TeamRuntime:
         prompt = _space_block(run) + _rules_block(
             self._rules_snapshot(run, cycle_id), include_persona_baseline=False
         ) + PLANNING_PROMPT.format(
-            goal=run.goal,
+            goal=self._goal_context(run, cycle_id),
             persona_snapshot_json=json.dumps(leader_agent.persona_snapshot, ensure_ascii=False),
         )
         decision_context = self._teams.decision_context_for_run(
@@ -401,7 +413,7 @@ class TeamRuntime:
         leader_agent = self._teams.get_agent(leader.id)
         model = self._model_factory(leader_agent)
         prompt = _space_block(run) + MEDIATION_PROMPT.format(
-            goal=run.goal,
+            goal=self._goal_context(run, task.cycle_id),
             task_title=task.title,
             question=question,
             outputs=self._collect_outputs(run, task.cycle_id),
@@ -424,7 +436,7 @@ class TeamRuntime:
             self._rules_snapshot(run, task.cycle_id), include_persona_baseline=True
         ) + WORKER_PROMPT.format(
             persona_snapshot_json=json.dumps(worker.persona_snapshot, ensure_ascii=False),
-            goal=run.goal,
+            goal=self._goal_context(run, task.cycle_id),
             task_title=task.title,
             task_description=task.description,
         )
@@ -536,7 +548,9 @@ class TeamRuntime:
             or "(none)"
         )
         prompt = _space_block(run) + ADD_WORK_PROMPT.format(
-            goal=run.goal, existing_titles=existing, instruction=instruction
+            goal=self._goal_context(run, cycle_id),
+            existing_titles=existing,
+            instruction=instruction,
         )
         response = await model.complete([{"role": "user", "content": prompt}])
         if response.upstream_session_id:
@@ -583,7 +597,9 @@ class TeamRuntime:
         model = self._model_factory(leader_agent)
         prompt = _space_block(run) + _rules_block(
             self._rules_snapshot(run, cycle_id), include_persona_baseline=False
-        ) + SYNTHESIS_PROMPT.format(goal=run.goal, results=results)
+        ) + SYNTHESIS_PROMPT.format(
+            goal=self._goal_context(run, cycle_id), results=results
+        )
         decision_context = "\n\n".join(
             context
             for context in (
