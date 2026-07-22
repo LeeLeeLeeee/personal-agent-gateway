@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 129,
+  "document_count": 132,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -4788,6 +4788,217 @@
         }
       ],
       "excerpt": "Personal Agent Gateway를 제품팀처럼 운영하기 위한 6개 팀, 28개 페르소나의 권장 입력값이다. 각 `Responsibilities`와 `Constraints` 코드 블록은 UI의 해당 입력란에 그대로 붙여 넣을 수 있으며, 한 줄이 한 항목이다."
+    },
+    {
+      "path": "docs/knowledge/gateway-architecture-guide.md",
+      "title": "Personal Agent Gateway 아키텍처 가이드",
+      "type": "knowledge",
+      "domain": "personal-agent-gateway",
+      "feature": "architecture-overview",
+      "status": "active",
+      "aliases": [
+        "PAG 아키텍처",
+        "Gateway 구성 원칙"
+      ],
+      "tags": [
+        "architecture",
+        "lifecycle",
+        "persistence",
+        "frontend"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway 아키텍처 가이드"
+        },
+        {
+          "level": 2,
+          "text": "다섯 구성 요소"
+        },
+        {
+          "level": 2,
+          "text": "실행 소유권"
+        },
+        {
+          "level": 2,
+          "text": "Backend 구성"
+        },
+        {
+          "level": 3,
+          "text": "주요 모듈"
+        },
+        {
+          "level": 2,
+          "text": "Frontend 구성"
+        },
+        {
+          "level": 2,
+          "text": "상태와 파일의 책임"
+        },
+        {
+          "level": 2,
+          "text": "효율성을 위한 설계"
+        },
+        {
+          "level": 2,
+          "text": "관련 설계 문서"
+        }
+      ],
+      "excerpt": "이 문서는 기능이 어떤 책임 경계로 나뉘며 왜 이 구성이 로컬 agent 실행에 효율적인지 설명한다. 화면별 동작은 기능 가이드를 참고한다."
+    },
+    {
+      "path": "docs/knowledge/gateway-feature-guide.md",
+      "title": "Personal Agent Gateway 기능 가이드",
+      "type": "knowledge",
+      "domain": "personal-agent-gateway",
+      "feature": "product-overview",
+      "status": "active",
+      "aliases": [
+        "PAG 전체 기능",
+        "Gateway 화면별 기능"
+      ],
+      "tags": [
+        "features",
+        "ui",
+        "team-run",
+        "automation"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway 기능 가이드"
+        },
+        {
+          "level": 2,
+          "text": "화면별 기능"
+        },
+        {
+          "level": 2,
+          "text": "실행 경로"
+        },
+        {
+          "level": 3,
+          "text": "Chat"
+        },
+        {
+          "level": 3,
+          "text": "Jobs와 Schedules"
+        },
+        {
+          "level": 3,
+          "text": "Hooks"
+        },
+        {
+          "level": 3,
+          "text": "Team Runs"
+        },
+        {
+          "level": 2,
+          "text": "함께 볼 문서"
+        }
+      ],
+      "excerpt": "이 문서는 각 화면에서 할 수 있는 일과 기능이 서로 연결되는 방식을 설명한다. 설치와 운영은 설치·운영 가이드, 내부 설계는 아키텍처 가이드를 참고한다."
+    },
+    {
+      "path": "docs/knowledge/gateway-setup-guide.md",
+      "title": "Personal Agent Gateway 설치·운영 가이드",
+      "type": "knowledge",
+      "domain": "personal-agent-gateway",
+      "feature": "setup-and-operations",
+      "status": "active",
+      "aliases": [
+        "PAG 설치 방법",
+        "Gateway 실행 방법",
+        "Cloudflare Tunnel 설정"
+      ],
+      "tags": [
+        "setup",
+        "security",
+        "cloudflare",
+        "troubleshooting"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway 설치·운영 가이드"
+        },
+        {
+          "level": 2,
+          "text": "준비물"
+        },
+        {
+          "level": 2,
+          "text": "Backend 설치"
+        },
+        {
+          "level": 3,
+          "text": "Windows PowerShell"
+        },
+        {
+          "level": 3,
+          "text": "macOS"
+        },
+        {
+          "level": 2,
+          "text": "Frontend 설치"
+        },
+        {
+          "level": 2,
+          "text": "인증 설정"
+        },
+        {
+          "level": 2,
+          "text": "`.env` 설정"
+        },
+        {
+          "level": 2,
+          "text": "Frontend build"
+        },
+        {
+          "level": 2,
+          "text": "Local gateway 실행"
+        },
+        {
+          "level": 3,
+          "text": "Windows PowerShell"
+        },
+        {
+          "level": 3,
+          "text": "macOS"
+        },
+        {
+          "level": 2,
+          "text": "외부 접속"
+        },
+        {
+          "level": 3,
+          "text": "임시 Quick Tunnel"
+        },
+        {
+          "level": 3,
+          "text": "고정 hostname의 named tunnel"
+        },
+        {
+          "level": 2,
+          "text": "개발 모드"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 2,
+          "text": "보안 기준"
+        },
+        {
+          "level": 2,
+          "text": "Troubleshooting"
+        }
+      ],
+      "excerpt": "Personal Agent Gateway의 설치, 인증, 환경 변수, Frontend build, Cloudflare Tunnel, 개발, 테스트와 문제 해결 절차를 정리한다."
     },
     {
       "path": "docs/knowledge/persona-team-usage-guide.md",
