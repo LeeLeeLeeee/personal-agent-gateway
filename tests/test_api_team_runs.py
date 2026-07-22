@@ -153,6 +153,72 @@ def test_worktree_delivery_commits_and_applies_to_space_repository(
     assert (repository / "feature.txt").read_text(encoding="utf-8") == "delivered\n"
 
 
+def test_worktree_delivery_resolves_conflict_before_applying(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init")
+    _git(repository, "config", "user.email", "test@example.com")
+    _git(repository, "config", "user.name", "Test User")
+    (repository / "README.md").write_text("base\n", encoding="utf-8")
+    _git(repository, "add", "README.md")
+    _git(repository, "commit", "-m", "initial")
+
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Lead")
+    team_id = create_team(client, leader_id)
+    assert client.put(
+        f"/api/spaces/teams/{team_id}",
+        json={
+            "read_mode": "home",
+            "write_mode": "worktree",
+            "workspace_path": str(repository),
+        },
+    ).status_code == 200
+    run = client.post(
+        "/api/team-runs",
+        json={"team_id": team_id, "execution_policy": "triggered"},
+    ).json()["team_run"]
+    run_id = run["id"]
+    working_root = Path(run["working_root"])
+    (working_root / "README.md").write_text("team\n", encoding="utf-8")
+    assert client.post(
+        f"/api/team-runs/{run_id}/delivery/commit",
+        json={"message": "feat: change from team"},
+    ).status_code == 200
+
+    (repository / "README.md").write_text("target\n", encoding="utf-8")
+    _git(repository, "add", "README.md")
+    _git(repository, "commit", "-m", "feat: change target")
+
+    conflicted = client.post(f"/api/team-runs/{run_id}/delivery/apply")
+    assert conflicted.status_code == 200
+    session = conflicted.json()["delivery"]["conflict_session"]
+    assert session["total_count"] == 1
+    assert session["files"][0]["path"] == "README.md"
+    assert session["files"][0]["target_content"] == "target\n"
+    assert session["files"][0]["team_content"] == "team\n"
+    assert (repository / "README.md").read_text(encoding="utf-8") == "target\n"
+
+    conflict_id = session["files"][0]["id"]
+    resolved = client.post(
+        f"/api/team-runs/{run_id}/delivery/conflicts/{conflict_id}/resolve",
+        json={"mode": "manual", "content": "target + team\n"},
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["delivery"]["conflict_session"]["can_continue"] is True
+
+    continued = client.post(f"/api/team-runs/{run_id}/delivery/continue")
+    assert continued.status_code == 200
+    delivery = continued.json()["delivery"]
+    assert delivery["conflict_session"] is None
+    assert delivery["up_to_date"] is True
+    assert (repository / "README.md").read_text(encoding="utf-8") == "target + team\n"
+    assert not (Path(run["workspace_root"]) / ".delivery-session.json").exists()
+    assert ".delivery-integration-" not in _git(repository, "worktree", "list")
+
+
 def test_create_auto_run_enqueues_first_cycle_and_manual_trigger_snapshots_preview(
     tmp_path: Path,
 ) -> None:

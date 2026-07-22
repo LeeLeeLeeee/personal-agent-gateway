@@ -9,11 +9,12 @@ aliases:
 tags:
   - component
   - analysis
-updated_at: 2026-07-21
+updated_at: 2026-07-22
 ---
 
 # Component Inspector Reports
 
+- [TeamRunDetail Delivery Conflict — 2026-07-22 11:27](./TeamRunDetail/2026-07-22-1127.md)
 - [TeamRunDetail Worktree Delivery — 2026-07-22 10:54](./TeamRunDetail/2026-07-22-1054.md)
 - [GatewayApp Team Run Cycle List — 2026-07-22 09:01](./GatewayApp/2026-07-22-0901.md)
 - [GatewayApp Hook SSE Toast Replay — 2026-07-22 08:28](./GatewayApp/2026-07-22-0828.md)

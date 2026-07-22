@@ -214,8 +214,146 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
   );
 }
 
+function ConflictContent({ label, content, deleted }) {
+  return (
+    <div className="team-delivery-conflict-version">
+      <span className="mono team-delivery-k">{label}</span>
+      <pre>{deleted ? "(deleted)" : (content ?? "(binary or too large to preview)")}</pre>
+    </div>
+  );
+}
+
+function ConflictEditor({ conflict, action, perform, onResolve }) {
+  const [draft, setDraft] = useState(conflict.working_content || "");
+  const busy = Boolean(action);
+
+  return (
+    <div className="team-delivery-conflict-editor">
+      <div className="team-delivery-conflict-compare">
+        <ConflictContent
+          label="TARGET VERSION"
+          content={conflict.target_content}
+          deleted={conflict.target_deleted}
+        />
+        <ConflictContent
+          label="TEAM RUN VERSION"
+          content={conflict.team_content}
+          deleted={conflict.team_deleted}
+        />
+      </div>
+      <div className="team-delivery-conflict-choice">
+        <Button
+          size="btn-sm"
+          disabled={busy || !onResolve}
+          onClick={() => perform(
+            `resolve-target-${conflict.id}`,
+            () => onResolve(conflict.id, { mode: "target" })
+          )}
+        >
+          Keep target
+        </Button>
+        <Button
+          size="btn-sm"
+          disabled={busy || !onResolve}
+          onClick={() => perform(
+            `resolve-team-${conflict.id}`,
+            () => onResolve(conflict.id, { mode: "team" })
+          )}
+        >
+          Use Team Run
+        </Button>
+      </div>
+      <label className="team-delivery-conflict-manual">
+        <span className="mono team-delivery-k">MERGED RESULT</span>
+        <textarea
+          aria-label={`Merged result for ${conflict.path}`}
+          value={draft}
+          disabled={!conflict.manual_allowed || busy}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+      </label>
+      <Button
+        size="btn-sm"
+        variant="primary"
+        disabled={!conflict.manual_allowed || busy || !onResolve}
+        onClick={() => perform(
+          `resolve-manual-${conflict.id}`,
+          () => onResolve(conflict.id, { mode: "manual", content: draft })
+        )}
+      >
+        Save manual merge
+      </Button>
+    </div>
+  );
+}
+
+function DeliveryConflictResolver({
+  session, action, perform, onResolve, onContinue, onCancel
+}) {
+  const files = session.files || [];
+  const [selectedId, setSelectedId] = useState(files[0]?.id || null);
+  const selected = files.find((file) => file.id === selectedId) || files[0] || null;
+
+  return (
+    <div className="team-delivery-conflicts" role="region" aria-label="Repository conflicts">
+      <div className="team-delivery-conflict-head">
+        <div>
+          <span className="mono team-delivery-conflict-kicker">CONFLICTS NEED RESOLUTION</span>
+          <strong>{session.resolved_count} / {session.total_count} resolved</strong>
+        </div>
+        {session.target_changed ? (
+          <span className="team-delivery-conflict-stale">Target HEAD changed. Cancel and apply again.</span>
+        ) : null}
+      </div>
+      <div className="team-delivery-conflict-layout">
+        <div className="team-delivery-conflict-list" role="list">
+          {files.map((file) => (
+            <button
+              key={file.id}
+              type="button"
+              className={file.id === selected?.id ? "active" : ""}
+              onClick={() => setSelectedId(file.id)}
+            >
+              <span>{file.path}</span>
+              <span className="mono">{file.resolved ? `RESOLVED · ${file.resolution}` : "OPEN"}</span>
+            </button>
+          ))}
+        </div>
+        {selected ? (
+          <ConflictEditor
+            key={`${session.id}:${selected.id}:${selected.resolution || "open"}`}
+            conflict={selected}
+            action={action}
+            perform={perform}
+            onResolve={onResolve}
+          />
+        ) : null}
+      </div>
+      <div className="team-delivery-conflict-actions">
+        <Button
+          size="btn-sm"
+          variant="destructive"
+          disabled={Boolean(action) || !onCancel}
+          onClick={() => perform("cancel-conflicts", onCancel)}
+        >
+          {action === "cancel-conflicts" ? "Canceling..." : "Cancel resolution"}
+        </Button>
+        <Button
+          size="btn-sm"
+          variant="primary"
+          disabled={!session.can_continue || Boolean(action) || !onContinue}
+          onClick={() => perform("continue-delivery", onContinue)}
+        >
+          {action === "continue-delivery" ? "Applying..." : "Resolve & apply"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function DeliveryPanel({
-  runId, delivery, loading, onRefresh, onCommit, onApply
+  runId, delivery, loading, onRefresh, onCommit, onApply,
+  onResolve, onContinue, onCancelConflicts
 }) {
   const [message, setMessage] = useState(`chore(team-run): deliver ${runId.slice(0, 8)}`);
   const [action, setAction] = useState(null);
@@ -233,25 +371,30 @@ function DeliveryPanel({
   }
 
   return (
-    <section className="team-delivery-panel" aria-label="Repository delivery">
-      <div className="team-section-head">
+    <details className="team-delivery-panel" role="region" aria-label="Repository delivery" open>
+      <summary className="team-delivery-summary">
         <span className="mono team-section-label">Repository Delivery</span>
         <span className="team-section-rule" />
         <Button
           size="btn-sm"
           disabled={loading || Boolean(action) || !onRefresh}
-          onClick={() => perform("refresh", onRefresh)}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            perform("refresh", onRefresh);
+          }}
         >
           {loading || action === "refresh" ? "Refreshing..." : "Refresh"}
         </Button>
-      </div>
+      </summary>
 
-      {loading && !delivery ? (
-        <div className="team-delivery-empty mono">Inspecting worktree changes...</div>
-      ) : delivery?.available === false ? (
-        <div className="team-delivery-empty mono">{delivery.reason}</div>
-      ) : delivery ? (
-        <>
+      <div className="team-delivery-body">
+        {loading && !delivery ? (
+          <div className="team-delivery-empty mono">Inspecting worktree changes...</div>
+        ) : delivery?.available === false ? (
+          <div className="team-delivery-empty mono">{delivery.reason}</div>
+        ) : delivery ? (
+          <>
           <div className="team-delivery-paths">
             <div>
               <span className="mono team-delivery-k">SOURCE · {delivery.source?.branch}</span>
@@ -296,36 +439,49 @@ function DeliveryPanel({
             </div>
           ) : null}
 
-          <div className="team-delivery-actions">
-            {delivery.uncommitted_files?.length ? (
-              <label className="team-delivery-message">
-                <span className="mono team-delivery-k">COMMIT MESSAGE</span>
-                <input
-                  className="input-field"
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                />
-              </label>
-            ) : null}
-            <Button
-              size="btn-sm"
-              disabled={!delivery.can_commit || !message.trim() || Boolean(action) || !onCommit}
-              onClick={() => perform("commit", () => onCommit(message.trim()))}
-            >
-              {action === "commit" ? "Committing..." : "Commit changes"}
-            </Button>
-            <Button
-              size="btn-sm"
-              variant="primary"
-              disabled={!delivery.can_apply || Boolean(action) || !onApply}
-              onClick={() => perform("apply", onApply)}
-            >
-              {action === "apply" ? "Applying..." : "Apply to repository"}
-            </Button>
-          </div>
-        </>
-      ) : null}
-    </section>
+            {delivery.conflict_session ? (
+              <DeliveryConflictResolver
+                key={delivery.conflict_session.id}
+                session={delivery.conflict_session}
+                action={action}
+                perform={perform}
+                onResolve={onResolve}
+                onContinue={onContinue}
+                onCancel={onCancelConflicts}
+              />
+            ) : (
+              <div className="team-delivery-actions">
+                {delivery.uncommitted_files?.length ? (
+                  <label className="team-delivery-message">
+                    <span className="mono team-delivery-k">COMMIT MESSAGE</span>
+                    <input
+                      className="input-field"
+                      value={message}
+                      onChange={(event) => setMessage(event.target.value)}
+                    />
+                  </label>
+                ) : null}
+                <Button
+                  size="btn-sm"
+                  disabled={!delivery.can_commit || !message.trim() || Boolean(action) || !onCommit}
+                  onClick={() => perform("commit", () => onCommit(message.trim()))}
+                >
+                  {action === "commit" ? "Committing..." : "Commit changes"}
+                </Button>
+                <Button
+                  size="btn-sm"
+                  variant="primary"
+                  disabled={!delivery.can_apply || Boolean(action) || !onApply}
+                  onClick={() => perform("apply", onApply)}
+                >
+                  {action === "apply" ? "Applying..." : "Apply to repository"}
+                </Button>
+              </div>
+            )}
+          </>
+        ) : null}
+      </div>
+    </details>
   );
 }
 
@@ -439,7 +595,8 @@ export function TeamRunDetail({
   loading = false, loadError = false,
   onLoadDocument, onAddWork, onResume, onAnswerDecision,
   onRetryTask, onCancel, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto,
-  onRefreshDelivery, onCommitDelivery, onApplyDelivery
+  onRefreshDelivery, onCommitDelivery, onApplyDelivery,
+  onResolveDeliveryConflict, onContinueDelivery, onCancelDeliveryConflicts
 }) {
   const [workInput, setWorkInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -659,18 +816,22 @@ export function TeamRunDetail({
         onRefresh={onRefreshDelivery}
         onCommit={onCommitDelivery}
         onApply={onApplyDelivery}
+        onResolve={onResolveDeliveryConflict}
+        onContinue={onContinueDelivery}
+        onCancelConflicts={onCancelDeliveryConflicts}
       />
 
       {run.lifecycle_mode === "continuous" ? (
-        <section className="team-policy-panel" aria-label="Cycle policy">
-          <div className="team-section-head">
+        <details className="team-policy-panel" role="region" aria-label="Cycle policy" open>
+          <summary className="team-policy-summary">
             <span className="mono team-section-label">
               {String(run.execution_policy || "triggered").toUpperCase()}
               {" · "}
               {String(policyStatus).replaceAll("_", " ").toUpperCase()}
             </span>
             <span className="team-section-rule" />
-          </div>
+          </summary>
+          <div className="team-policy-body">
 
           {run.execution_policy === "triggered" ? (
             <>
@@ -794,7 +955,8 @@ export function TeamRunDetail({
               ACTIVE REQUEST · {detail.activeRequest.id}
             </span>
           ) : null}
-        </section>
+          </div>
+        </details>
       ) : null}
 
       {run.status === "interrupted" ? (

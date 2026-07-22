@@ -7,7 +7,10 @@ vi.mock("../api/client.js", () => ({
   api: {
     answerTeamDecision: vi.fn(),
     applyTeamRunDelivery: vi.fn(),
+    cancelTeamRunDeliveryConflicts: vi.fn(),
     commitTeamRunDelivery: vi.fn(),
+    continueTeamRunDelivery: vi.fn(),
+    resolveTeamRunDeliveryConflict: vi.fn(),
     teamDocuments: vi.fn(),
     teamRunDelivery: vi.fn(),
     teamRunDetail: vi.fn(),
@@ -303,6 +306,74 @@ describe("useTeamRunController delivery", () => {
       title: "APPLY TEAM RUN CHANGES"
     }));
     expect(api.applyTeamRunDelivery).toHaveBeenCalledWith("run-a");
+    expect(result.current.teamRunDelivery).toEqual(applied);
+  });
+
+  it("owns conflict resolution, continuation, and cancellation snapshots", async () => {
+    const initial = {
+      available: true,
+      can_apply: true,
+      pending_commits: [{ sha: "a1" }],
+      target: { branch: "main" }
+    };
+    const conflicted = {
+      ...initial,
+      can_apply: false,
+      conflict_session: {
+        id: "session-1",
+        files: [{ id: "conflict-1", path: "README.md", resolved: false }],
+        can_continue: false
+      }
+    };
+    const resolved = {
+      ...conflicted,
+      conflict_session: {
+        ...conflicted.conflict_session,
+        files: [{ id: "conflict-1", path: "README.md", resolved: true }],
+        can_continue: true
+      }
+    };
+    const applied = { ...initial, can_apply: false, pending_commits: [], conflict_session: null };
+    api.teamRunDelivery.mockResolvedValue(initial);
+    api.applyTeamRunDelivery.mockResolvedValue(conflicted);
+    api.resolveTeamRunDeliveryConflict.mockResolvedValue(resolved);
+    api.continueTeamRunDelivery.mockResolvedValue(applied);
+    api.cancelTeamRunDeliveryConflicts.mockResolvedValue(initial);
+    const confirm = vi.fn().mockResolvedValue(true);
+    const toast = vi.fn();
+    const setScreenError = vi.fn();
+    const { result } = renderHook(() => useTeamRunController({
+      toast, confirm, setScreenError
+    }));
+    await selectRun(result, "run-a");
+    await waitFor(() => expect(result.current.teamRunDelivery).toEqual(initial));
+
+    await act(async () => result.current.handleApplyTeamRunDelivery());
+    expect(result.current.teamRunDelivery).toEqual(conflicted);
+    expect(toast).toHaveBeenCalledWith("Repository conflicts need your resolution", "error");
+
+    await act(async () => result.current.handleResolveTeamRunDeliveryConflict(
+      "conflict-1",
+      { mode: "manual", content: "merged" }
+    ));
+    expect(api.resolveTeamRunDeliveryConflict).toHaveBeenCalledWith(
+      "run-a",
+      "conflict-1",
+      { mode: "manual", content: "merged" }
+    );
+    expect(result.current.teamRunDelivery).toEqual(resolved);
+
+    await act(async () => result.current.handleCancelTeamRunDeliveryConflicts());
+    expect(api.cancelTeamRunDeliveryConflicts).toHaveBeenCalledWith("run-a");
+    expect(result.current.teamRunDelivery).toEqual(initial);
+
+    await act(async () => result.current.handleApplyTeamRunDelivery());
+    await act(async () => result.current.handleResolveTeamRunDeliveryConflict(
+      "conflict-1",
+      { mode: "manual", content: "merged" }
+    ));
+    await act(async () => result.current.handleContinueTeamRunDelivery());
+    expect(api.continueTeamRunDelivery).toHaveBeenCalledWith("run-a");
     expect(result.current.teamRunDelivery).toEqual(applied);
   });
 });

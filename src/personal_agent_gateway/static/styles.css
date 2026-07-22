@@ -2586,10 +2586,36 @@ p {
 }
 .team-delivery-panel {
     border: var(--bd-in);
-    padding: 14px;
     margin-top: 14px;
     background: var(--c-white);
 }
+.team-delivery-summary,
+.team-policy-summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    cursor: pointer;
+    list-style: none;
+}
+.team-delivery-summary::-webkit-details-marker,
+.team-policy-summary::-webkit-details-marker { display: none; }
+.team-delivery-summary::before,
+.team-policy-summary::before {
+    content: "▸";
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
+}
+.team-delivery-panel[open] > .team-delivery-summary::before,
+.team-policy-panel[open] > .team-policy-summary::before { content: "▾"; }
+.team-delivery-panel[open] > .team-delivery-summary,
+.team-policy-panel[open] > .team-policy-summary {
+    border-bottom: var(--bd-in);
+    background: var(--c-panel);
+}
+.team-delivery-body,
+.team-policy-body { padding: 12px; }
 .team-delivery-paths {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2658,6 +2684,100 @@ p {
 .team-delivery-empty {
     color: var(--c-grey);
     font-size: 11px;
+}
+.team-delivery-conflicts {
+    margin-top: 12px;
+    border: 2px solid var(--c-danger);
+}
+.team-delivery-conflict-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-bottom: var(--bd-in);
+    background: #fff3d6;
+}
+.team-delivery-conflict-head > div { display: grid; gap: 4px; }
+.team-delivery-conflict-kicker {
+    color: var(--c-danger);
+    font-size: 10px;
+    letter-spacing: .08em;
+}
+.team-delivery-conflict-stale {
+    color: var(--c-danger);
+    font-size: 11px;
+}
+.team-delivery-conflict-layout {
+    display: grid;
+    grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+    min-height: 320px;
+}
+.team-delivery-conflict-list {
+    border-right: var(--bd-in);
+    background: var(--c-panel);
+}
+.team-delivery-conflict-list button {
+    display: grid;
+    width: 100%;
+    gap: 4px;
+    padding: 10px;
+    border: 0;
+    border-bottom: var(--bd-in);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+}
+.team-delivery-conflict-list button.active {
+    color: var(--c-white);
+    background: var(--c-black);
+}
+.team-delivery-conflict-list button .mono { font-size: 9px; }
+.team-delivery-conflict-editor {
+    display: grid;
+    align-content: start;
+    gap: 10px;
+    padding: 12px;
+    min-width: 0;
+}
+.team-delivery-conflict-compare {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+.team-delivery-conflict-version {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+.team-delivery-conflict-version pre {
+    min-height: 120px;
+    max-height: 220px;
+    margin: 0;
+    padding: 9px;
+    overflow: auto;
+    border: var(--bd-in);
+    background: var(--c-panel);
+    font: 11px/1.5 var(--font-mono);
+    white-space: pre-wrap;
+}
+.team-delivery-conflict-choice,
+.team-delivery-conflict-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.team-delivery-conflict-manual { display: grid; gap: 4px; }
+.team-delivery-conflict-manual textarea {
+    min-height: 180px;
+    resize: vertical;
+    border: var(--bd-in);
+    padding: 9px;
+    font: 11px/1.5 var(--font-mono);
+}
+.team-delivery-conflict-actions {
+    justify-content: flex-end;
+    padding: 10px 12px;
+    border-top: var(--bd-in);
 }
 .team-run-meta {
     display: grid;
@@ -3281,6 +3401,11 @@ p {
         align-items: stretch;
         flex-direction: column;
     }
+    .team-delivery-conflict-layout,
+    .team-delivery-conflict-compare {
+        grid-template-columns: 1fr;
+    }
+    .team-delivery-conflict-list { border-right: 0; border-bottom: var(--bd-in); }
     .team-run-list-meta {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -4333,8 +4458,7 @@ p {
   .spaces-inherit > div { align-items: flex-start; flex-direction: column; }
 }
 .team-cycles { margin-top: 24px; }
-.team-policy-panel { margin-top: 24px; border: 2px solid #000; padding: 14px; background: #fff; }
-.team-policy-panel > .team-section-head { margin: 0; }
+.team-policy-panel { margin-top: 14px; border: 2px solid #000; background: #fff; }
 .team-cycle-trigger { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; margin-top: 12px; }
 .team-previous-cycle { margin-top: 10px; padding: 10px 12px; border-left: 4px solid #000; background: #f2f2f2; white-space: pre-wrap; }
 .team-previous-cycle > summary { cursor: pointer; font-size: 10px; letter-spacing: 1px; }

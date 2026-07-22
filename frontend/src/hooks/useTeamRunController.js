@@ -438,10 +438,69 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     try {
       const delivery = await api.applyTeamRunDelivery(requestedRun.id);
       if (ownsSelectedRun(requestedRun)) setTeamRunDelivery(delivery);
-      toast("Team Run changes applied to the repository", "success");
+      if (delivery?.conflict_session) {
+        toast("Repository conflicts need your resolution", "error");
+      } else {
+        toast("Team Run changes applied to the repository", "success");
+      }
       return true;
-    } catch (_error) {
-      toast("Failed to apply Team Run changes", "error");
+    } catch (error) {
+      toast(error?.message || "Failed to apply Team Run changes", "error");
+      return false;
+    }
+  }
+
+  async function handleResolveTeamRunDeliveryConflict(conflictId, resolution) {
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id || !conflictId) return false;
+    try {
+      const delivery = await api.resolveTeamRunDeliveryConflict(
+        requestedRun.id,
+        conflictId,
+        resolution
+      );
+      if (ownsSelectedRun(requestedRun)) setTeamRunDelivery(delivery);
+      return true;
+    } catch (error) {
+      toast(error?.message || "Failed to resolve repository conflict", "error");
+      return false;
+    }
+  }
+
+  async function handleContinueTeamRunDelivery() {
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id || !teamRunDelivery?.conflict_session?.can_continue) return false;
+    try {
+      const delivery = await api.continueTeamRunDelivery(requestedRun.id);
+      if (ownsSelectedRun(requestedRun)) setTeamRunDelivery(delivery);
+      if (delivery?.conflict_session) {
+        toast("More repository conflicts need your resolution", "error");
+      } else {
+        toast("Resolved changes applied to the repository", "success");
+      }
+      return true;
+    } catch (error) {
+      toast(error?.message || "Failed to continue repository delivery", "error");
+      return false;
+    }
+  }
+
+  async function handleCancelTeamRunDeliveryConflicts() {
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id || !teamRunDelivery?.conflict_session) return false;
+    const accepted = await confirm({
+      title: "CANCEL CONFLICT RESOLUTION",
+      message: "Discard the current conflict resolutions? The source and target repositories stay unchanged.",
+      confirmLabel: "Cancel resolution"
+    });
+    if (!accepted) return false;
+    try {
+      const delivery = await api.cancelTeamRunDeliveryConflicts(requestedRun.id);
+      if (ownsSelectedRun(requestedRun)) setTeamRunDelivery(delivery);
+      toast("Repository conflict resolution canceled", "success");
+      return true;
+    } catch (error) {
+      toast(error?.message || "Failed to cancel repository conflict resolution", "error");
       return false;
     }
   }
@@ -513,6 +572,9 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     handleRefreshTeamRunDelivery,
     handleCommitTeamRunDelivery,
     handleApplyTeamRunDelivery,
+    handleResolveTeamRunDeliveryConflict,
+    handleContinueTeamRunDelivery,
+    handleCancelTeamRunDeliveryConflicts,
     handleDeleteTeamRun,
     handleSelectTeamRun,
     handleBackToTeamRuns,

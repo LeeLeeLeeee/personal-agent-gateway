@@ -400,6 +400,8 @@ describe("TeamRunDetail", () => {
   it("counts down to the next AUTO Cycle, clamps at zero, and cleans up its timer", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-20T05:59:57Z"));
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    const clearIntervalSpy = vi.spyOn(window, "clearInterval");
     const detail = {
       run: {
         id: "r1", goal: "Maintain", status: "completed",
@@ -419,14 +421,14 @@ describe("TeamRunDetail", () => {
       const { rerender, unmount } = render(<TeamRunDetail detail={detail} />);
 
       expect(screen.getByText("NEXT · 3s")).toBeInTheDocument();
-      expect(vi.getTimerCount()).toBe(1);
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
 
       act(() => vi.advanceTimersByTime(1000));
       expect(screen.getByText("NEXT · 2s")).toBeInTheDocument();
 
       act(() => vi.advanceTimersByTime(4000));
       expect(screen.getByText("NEXT · 0s")).toBeInTheDocument();
-      expect(vi.getTimerCount()).toBe(0);
+      expect(clearIntervalSpy).toHaveBeenCalled();
 
       rerender(<TeamRunDetail detail={{
         ...detail,
@@ -435,18 +437,20 @@ describe("TeamRunDetail", () => {
           next_run_at: "2026-07-20T06:00:10Z"
         }
       }} />);
-      expect(vi.getTimerCount()).toBe(1);
+      expect(setIntervalSpy).toHaveBeenCalledTimes(2);
       unmount();
-      expect(vi.getTimerCount()).toBe(0);
+      expect(clearIntervalSpy).toHaveBeenCalledTimes(2);
 
       const withoutNextRun = render(<TeamRunDetail detail={{
         ...detail,
         activeAutoSeries: { ...detail.activeAutoSeries, next_run_at: null }
       }} />);
       expect(screen.queryByText(/NEXT ·/)).not.toBeInTheDocument();
-      expect(vi.getTimerCount()).toBe(0);
+      expect(setIntervalSpy).toHaveBeenCalledTimes(2);
       withoutNextRun.unmount();
     } finally {
+      setIntervalSpy.mockRestore();
+      clearIntervalSpy.mockRestore();
       vi.useRealTimers();
     }
   });
@@ -750,5 +754,114 @@ describe("TeamRunDetail", () => {
     />);
     await userEvent.click(screen.getByRole("button", { name: "Apply to repository" }));
     expect(onApplyDelivery).toHaveBeenCalledTimes(1);
+  });
+
+  it("collapses repository delivery and Cycle policy from their summaries", async () => {
+    render(<TeamRunDetail
+      detail={{
+        run: {
+          id: "run-1", goal: "", status: "completed", run_mode: "plan_and_execute",
+          lifecycle_mode: "continuous", execution_policy: "triggered"
+        },
+        policyStatus: "ready",
+        agents: [], tasks: [], messages: [], cycles: []
+      }}
+      delivery={{
+        available: true,
+        source: { path: "C:/run", branch: "team-run/run-1" },
+        target: { path: "C:/repo", branch: "main", dirty_files: [] },
+        uncommitted_files: [], pending_commits: [], blocked_reasons: []
+      }}
+    />);
+
+    const deliveryPanel = screen.getByRole("region", { name: "Repository delivery" });
+    const policyPanel = screen.getByRole("region", { name: "Cycle policy" });
+    expect(deliveryPanel.tagName).toBe("DETAILS");
+    expect(policyPanel.tagName).toBe("DETAILS");
+    expect(deliveryPanel).toHaveAttribute("open");
+    expect(policyPanel).toHaveAttribute("open");
+
+    await userEvent.click(screen.getByText("Repository Delivery"));
+    await userEvent.click(screen.getByText("TRIGGERED · READY"));
+    expect(deliveryPanel).not.toHaveAttribute("open");
+    expect(policyPanel).not.toHaveAttribute("open");
+  });
+
+  it("resolves repository conflicts through target, team, manual, continue, and cancel callbacks", async () => {
+    const onResolveDeliveryConflict = vi.fn().mockResolvedValue(true);
+    const onContinueDelivery = vi.fn().mockResolvedValue(true);
+    const onCancelDeliveryConflicts = vi.fn().mockResolvedValue(true);
+    const detail = {
+      run: { id: "run-1", goal: "Ship", status: "completed", run_mode: "plan_and_execute" },
+      agents: [], tasks: [], messages: []
+    };
+    const conflict = {
+      id: "conflict-1",
+      path: "docs/registry.json",
+      resolved: false,
+      resolution: null,
+      target_content: "target content\n",
+      team_content: "team content\n",
+      working_content: "<<<<<<< target\n=======\n>>>>>>> team\n",
+      target_deleted: false,
+      team_deleted: false,
+      manual_allowed: true
+    };
+    const delivery = {
+      available: true,
+      source: { path: "C:/run", branch: "team-run/run-1" },
+      target: { path: "C:/repo", branch: "main", dirty_files: [] },
+      uncommitted_files: [], pending_commits: [{ sha: "a1", short_sha: "a1", subject: "change" }],
+      blocked_reasons: ["Resolve repository conflicts before applying."],
+      conflict_session: {
+        id: "session-1", files: [conflict], resolved_count: 0, total_count: 1,
+        can_continue: false, target_changed: false
+      }
+    };
+    const { rerender } = render(<TeamRunDetail
+      detail={detail}
+      delivery={delivery}
+      onResolveDeliveryConflict={onResolveDeliveryConflict}
+      onContinueDelivery={onContinueDelivery}
+      onCancelDeliveryConflicts={onCancelDeliveryConflicts}
+    />);
+
+    expect(screen.getByRole("region", { name: "Repository conflicts" })).toBeInTheDocument();
+    expect(screen.getByText("target content", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("team content", { exact: false })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resolve & apply" })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Keep target" }));
+    expect(onResolveDeliveryConflict).toHaveBeenCalledWith("conflict-1", { mode: "target" });
+    await userEvent.click(screen.getByRole("button", { name: "Use Team Run" }));
+    expect(onResolveDeliveryConflict).toHaveBeenCalledWith("conflict-1", { mode: "team" });
+    const manual = screen.getByLabelText("Merged result for docs/registry.json");
+    await userEvent.clear(manual);
+    await userEvent.type(manual, "merged content");
+    await userEvent.click(screen.getByRole("button", { name: "Save manual merge" }));
+    expect(onResolveDeliveryConflict).toHaveBeenLastCalledWith(
+      "conflict-1",
+      { mode: "manual", content: "merged content" }
+    );
+
+    rerender(<TeamRunDetail
+      detail={detail}
+      delivery={{
+        ...delivery,
+        conflict_session: {
+          ...delivery.conflict_session,
+          files: [{ ...conflict, resolved: true, resolution: "manual" }],
+          resolved_count: 1,
+          can_continue: true
+        }
+      }}
+      onResolveDeliveryConflict={onResolveDeliveryConflict}
+      onContinueDelivery={onContinueDelivery}
+      onCancelDeliveryConflicts={onCancelDeliveryConflicts}
+    />);
+    await userEvent.click(screen.getByRole("button", { name: "Resolve & apply" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel resolution" }));
+    expect(onContinueDelivery).toHaveBeenCalledTimes(1);
+    expect(onCancelDeliveryConflicts).toHaveBeenCalledTimes(1);
   });
 });

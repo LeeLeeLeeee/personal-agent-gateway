@@ -444,6 +444,31 @@ export const api = {
     ));
     return body?.delivery || null;
   },
+  async resolveTeamRunDeliveryConflict(id, conflictId, resolution) {
+    const body = await jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/delivery/conflicts/${encodeURIComponent(conflictId)}/resolve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(resolution)
+      }
+    ));
+    return body?.delivery || null;
+  },
+  async continueTeamRunDelivery(id) {
+    const body = await jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/delivery/continue`,
+      { method: "POST" }
+    ));
+    return body?.delivery || null;
+  },
+  async cancelTeamRunDeliveryConflicts(id) {
+    const body = await jsonOrNull(await fetch(
+      `/api/team-runs/${encodeURIComponent(id)}/delivery/conflicts`,
+      { method: "DELETE" }
+    ));
+    return body?.delivery || null;
+  },
   async avatarManifest() {
     return jsonList(await fetch("/static/avatars/manifest.json"), "avatars");
   },

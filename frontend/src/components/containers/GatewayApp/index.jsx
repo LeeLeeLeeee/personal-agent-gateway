@@ -130,6 +130,9 @@ export function GatewayApp() {
     handleRefreshTeamRunDelivery,
     handleCommitTeamRunDelivery,
     handleApplyTeamRunDelivery,
+    handleResolveTeamRunDeliveryConflict,
+    handleContinueTeamRunDelivery,
+    handleCancelTeamRunDeliveryConflicts,
     handleDeleteTeamRun,
     handleSelectTeamRun,
     handleBackToTeamRuns,
@@ -845,6 +848,9 @@ export function GatewayApp() {
               onRefreshDelivery={handleRefreshTeamRunDelivery}
               onCommitDelivery={handleCommitTeamRunDelivery}
               onApplyDelivery={handleApplyTeamRunDelivery}
+              onResolveDeliveryConflict={handleResolveTeamRunDeliveryConflict}
+              onContinueDelivery={handleContinueTeamRunDelivery}
+              onCancelDeliveryConflicts={handleCancelTeamRunDeliveryConflicts}
             />
           </div>
         ) : creatingTeamRun ? (

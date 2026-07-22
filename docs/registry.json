@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 127,
+  "document_count": 128,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -3635,6 +3635,100 @@
       "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: `TeamRunDetail`은 실행 상태의 표현과 로컬 상호작용을 맡고, API 상태와 mutation은 `useTeamRunController` handler로 위임한다..."
     },
     {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-22-1127.md",
+      "title": "TeamRunDetail Delivery Conflict Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-delivery-conflict",
+      "status": "done",
+      "aliases": [
+        "TeamRunDetail delivery conflict analysis",
+        "Team Run 충돌 해결 UI 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "git-conflict"
+      ],
+      "updated_at": "2026-07-22",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Delivery Conflict Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 라이브러리와 주입 동작"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 3,
+          "text": "현재 Apply"
+        },
+        {
+          "level": 3,
+          "text": "현재 DeliveryPanel 전체 흐름"
+        },
+        {
+          "level": 3,
+          "text": "필요한 충돌 해결 흐름"
+        },
+        {
+          "level": 2,
+          "text": "API와 상태 의존성"
+        },
+        {
+          "level": 2,
+          "text": "스타일과 레이아웃"
+        },
+        {
+          "level": 2,
+          "text": "테스트와 Stories"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `api-state`, `style`, `test` - Verdict: 기존 `DeliveryPanel`이 worktree 검토·커밋·적용의 표현 경계다. 충돌 해결 UI도 이 로컬 경계에 두되, 장기 상태와 Git 명령은 `..."
+    },
+    {
       "path": "docs/component-inspector/TeamsView/2026-07-15-1250.md",
       "title": "TeamsView Persona Card Selection Component Analysis",
       "type": "report",
@@ -3728,14 +3822,14 @@
         "component",
         "analysis"
       ],
-      "updated_at": "2026-07-21",
+      "updated_at": "2026-07-22",
       "headings": [
         {
           "level": 1,
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [TeamRunDetail Worktree Delivery — 2026-07-22 10:54](./TeamRunDetail/2026-07-22-1054.md) - [GatewayApp Team Run Cycle List — 2026-07-22 09:01](./GatewayApp/2026-07-22-0901.md) - [GatewayApp Hook SSE Toast Replay — 2..."
+      "excerpt": "- [TeamRunDetail Delivery Conflict — 2026-07-22 11:27](./TeamRunDetail/2026-07-22-1127.md) - [TeamRunDetail Worktree Delivery — 2026-07-22 10:54](./TeamRunDetail/2026-07-22-1054.md) - [GatewayApp Team Run Cycle List —..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",

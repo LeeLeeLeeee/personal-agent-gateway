@@ -1382,6 +1382,9 @@ describe("GatewayApp", () => {
     expect(teamRunDetailCapture.props.onRefreshDelivery).toEqual(expect.any(Function));
     expect(teamRunDetailCapture.props.onCommitDelivery).toEqual(expect.any(Function));
     expect(teamRunDetailCapture.props.onApplyDelivery).toEqual(expect.any(Function));
+    expect(teamRunDetailCapture.props.onResolveDeliveryConflict).toEqual(expect.any(Function));
+    expect(teamRunDetailCapture.props.onContinueDelivery).toEqual(expect.any(Function));
+    expect(teamRunDetailCapture.props.onCancelDeliveryConflicts).toEqual(expect.any(Function));
 
     let accepted;
     await act(async () => {

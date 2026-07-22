@@ -70,6 +70,6 @@ Project-local Atomic Design catalog for the Vite React frontend.
 
 ### TeamRunDetail
 - Path: `src/components/organisms/TeamRunDetail/`
-- Props: `{ detail, documents?, delivery?, deliveryLoading?, onLoadDocument?, onAddWork?, onResume?, onRetryTask?, onRefreshDelivery?, onCommitDelivery?, onApplyDelivery?, ...policyCallbacks }`
-- Use when: Rendering a team run's header/meta strip, Cycle policy, worktree source/target delivery review and Commit/Apply commands, agent sessions, task board, documents, live activity, handoffs, final summary, and supported run actions. Renders "No team run selected." when `detail?.run` is absent.
+- Props: `{ detail, documents?, delivery?, deliveryLoading?, onLoadDocument?, onAddWork?, onResume?, onRetryTask?, onRefreshDelivery?, onCommitDelivery?, onApplyDelivery?, onResolveDeliveryConflict?, onContinueDelivery?, onCancelDeliveryConflicts?, ...policyCallbacks }`
+- Use when: Rendering a team run's header/meta strip, collapsible Cycle policy, worktree source/target delivery review, Commit/Apply commands, resumable conflict resolution, agent sessions, task board, documents, live activity, handoffs, final summary, and supported run actions. Renders "No team run selected." when `detail?.run` is absent.
 - Don't use when: Loading team run data or reacting to `/api/events` SSE updates; the container owns fetching and refetches `detail` on `team.*` events for the selected run.

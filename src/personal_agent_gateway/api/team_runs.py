@@ -97,6 +97,19 @@ class CommitDeliveryRequest(BaseModel):
         return value
 
 
+class ResolveDeliveryConflictRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["target", "team", "manual"]
+    content: Annotated[str | None, Field(max_length=1_000_000)] = None
+
+    @model_validator(mode="after")
+    def require_manual_content(self) -> Self:
+        if self.mode == "manual" and self.content is None:
+            raise ValueError("manual mode requires content")
+        return self
+
+
 @router.get("")
 def list_team_runs(
     request: Request,
@@ -426,10 +439,15 @@ def apply_team_run_delivery(
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     except TeamRunDeliveryError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    conflict_session = delivery.get("conflict_session")
     record_domain_audit(
         request,
         principal,
-        event_type="team.run_delivery_applied",
+        event_type=(
+            "team.run_delivery_conflicted"
+            if conflict_session
+            else "team.run_delivery_applied"
+        ),
         action="team_runs.delivery.apply",
         resource_type="team_run",
         resource_id=run.id,
@@ -437,7 +455,104 @@ def apply_team_run_delivery(
         metadata={
             "applied_commits": delivery.get("applied_commits", []),
             "result_head": delivery.get("result_head"),
+            "conflict_count": (
+                conflict_session.get("total_count", 0)
+                if isinstance(conflict_session, dict)
+                else 0
+            ),
         },
+    )
+    return {"delivery": delivery}
+
+
+@router.post("/{team_run_id}/delivery/conflicts/{conflict_id}/resolve")
+def resolve_team_run_delivery_conflict(
+    request: Request,
+    team_run_id: str,
+    conflict_id: str,
+    payload: ResolveDeliveryConflictRequest,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    try:
+        run = request.app.state.team_run_service.get_team_run(team_run_id)
+        delivery = request.app.state.team_run_delivery_service.resolve(
+            run,
+            conflict_id,
+            payload.mode,
+            payload.content,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    except TeamRunDeliveryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_delivery_conflict_resolved",
+        action="team_runs.delivery.conflicts.resolve",
+        resource_type="team_run",
+        resource_id=run.id,
+        team_run_id=run.id,
+        metadata={"conflict_id": conflict_id, "mode": payload.mode},
+    )
+    return {"delivery": delivery}
+
+
+@router.post("/{team_run_id}/delivery/continue")
+def continue_team_run_delivery(
+    request: Request,
+    team_run_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    try:
+        run = request.app.state.team_run_service.get_team_run(team_run_id)
+        delivery = request.app.state.team_run_delivery_service.continue_apply(run)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    except TeamRunDeliveryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    conflict_session = delivery.get("conflict_session")
+    record_domain_audit(
+        request,
+        principal,
+        event_type=(
+            "team.run_delivery_conflicted"
+            if conflict_session
+            else "team.run_delivery_applied"
+        ),
+        action="team_runs.delivery.continue",
+        resource_type="team_run",
+        resource_id=run.id,
+        team_run_id=run.id,
+        metadata={
+            "applied_commits": delivery.get("applied_commits", []),
+            "result_head": delivery.get("result_head"),
+        },
+    )
+    return {"delivery": delivery}
+
+
+@router.delete("/{team_run_id}/delivery/conflicts")
+def cancel_team_run_delivery_conflicts(
+    request: Request,
+    team_run_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    try:
+        run = request.app.state.team_run_service.get_team_run(team_run_id)
+        delivery = request.app.state.team_run_delivery_service.cancel(run)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    except TeamRunDeliveryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_delivery_conflict_canceled",
+        action="team_runs.delivery.conflicts.cancel",
+        resource_type="team_run",
+        resource_id=run.id,
+        team_run_id=run.id,
     )
     return {"delivery": delivery}
 
