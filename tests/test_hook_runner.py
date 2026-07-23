@@ -51,8 +51,9 @@ class FakeFactory:
         *,
         hook_run_id,
         system_prompt=None,
+        persona_id=None,
     ) -> FakeRuntime:
-        self.calls.append((backend, model, options, hook_run_id, system_prompt))
+        self.calls.append((backend, model, options, hook_run_id, system_prompt, persona_id))
         return self._runtime
 
 

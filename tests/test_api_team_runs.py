@@ -1048,6 +1048,7 @@ def test_team_run_detail_includes_complete_cycle_payload(tmp_path: Path) -> None
             "status": "completed",
             "rounds_budget": 3,
             "rounds_used": 1,
+            "rules_snapshot": cycle.rules_snapshot,
             "summary": "Mail handled",
             "error_message": None,
             "created_at": cycle.created_at,

@@ -741,7 +741,9 @@ def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Pat
     created: list[dict[str, object]] = []
 
     class StubFactory:
-        def __init__(self, app_config, transcript, job_service, event_bus) -> None:
+        def __init__(
+            self, app_config, transcript, job_service, event_bus, *, space_policies=None
+        ) -> None:
             created.append(
                 {
                     "config": app_config,
@@ -776,7 +778,9 @@ def test_chat_uses_active_session_config_runtime_factory(tmp_path: Path, monkeyp
     created_for: list[tuple[str, str]] = []
 
     class StubFactory:
-        def __init__(self, app_config, transcript, job_service, event_bus) -> None:
+        def __init__(
+            self, app_config, transcript, job_service, event_bus, *, space_policies=None
+        ) -> None:
             self.transcript = transcript
 
         def create_default_runtime(self) -> FakeRuntime:
