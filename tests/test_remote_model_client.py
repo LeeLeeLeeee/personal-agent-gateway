@@ -95,3 +95,31 @@ async def test_complete_skips_malformed_lines_without_raising():
     client = HttpModelClient("http://lmg", "codex", "default", {}, transport=_transport(body))
     resp = await client.complete([{"role": "user", "content": "hi"}])
     assert resp.content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_sends_tools_and_wire_maps_messages():
+    cap = {}
+    body = _sse({"kind": "run.completed", "content": "ok"})
+    messages = [
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "fs.read", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "name": "fs.read", "content": "data"},
+    ]
+    client = HttpModelClient("http://lmg", "openai", "gpt-4o", {}, transport=_transport(body, cap))
+    await client.complete(messages)
+    b = cap["body"]
+    assert any(t["function"]["name"] == "fs_read" for t in b["tools"])       # tool defs sent, wire names
+    sent = b["messages"]
+    assert sent[0]["tool_calls"][0]["function"]["name"] == "fs_read"          # assistant tool_call wire-mapped
+    assert "name" not in sent[1]                                             # tool message dropped `name`
+
+
+@pytest.mark.asyncio
+async def test_codex_provider_omits_tools_and_does_not_wire_map():
+    cap = {}
+    body = _sse({"kind": "run.completed", "content": "ok"})
+    client = HttpModelClient("http://lmg", "codex", "default", {}, transport=_transport(body, cap))
+    await client.complete([{"role": "user", "content": "hi"}])
+    assert "tools" not in cap["body"]
+    assert cap["body"]["messages"] == [{"role": "user", "content": "hi"}]

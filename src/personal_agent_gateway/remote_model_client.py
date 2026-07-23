@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
-from personal_agent_gateway.model_client import INTERNAL_TOOL_NAMES, ModelResponse, ToolCall
+from personal_agent_gateway.model_client import INTERNAL_TOOL_NAMES, ModelResponse, ToolCall, WIRE_TOOL_NAMES
 
 
 class HttpModelClient:
@@ -31,14 +31,20 @@ class HttpModelClient:
         self._transport = transport
 
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
+        outgoing = messages
+        body_extra = {}
+        if self._provider == "openai":
+            outgoing = _wire_messages(messages)
+            body_extra["tools"] = _tool_definitions()
         body = {
             "provider": self._provider,
             "model": self._model,
-            "messages": messages,
+            "messages": outgoing,
             "session": {"upstream_id": self._upstream_session_id or ""},
             "execution": self._execution,
             "timeout_ms": self._timeout_seconds * 1000,
             "idle_timeout_ms": self._idle_timeout_seconds * 1000,
+            **body_extra,
         }
         content = ""
         tool_calls: list[ToolCall] = []
@@ -70,6 +76,44 @@ class HttpModelClient:
                         tool_calls = _parse_tool_calls(event.get("tool_calls"))
                         return ModelResponse(content=content, tool_calls=tool_calls, upstream_session_id=upstream_session_id)
         return ModelResponse(content=content, tool_calls=tool_calls, upstream_session_id=upstream_session_id)
+
+
+def _tool_definitions() -> list[dict]:
+    return [
+        {"type": "function", "function": {"name": WIRE_TOOL_NAMES["fs.list"],
+            "description": "List files under a workspace-relative path.",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}}},
+        {"type": "function", "function": {"name": WIRE_TOOL_NAMES["fs.read"],
+            "description": "Read a UTF-8 text file from a workspace-relative path.",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}},
+        {"type": "function", "function": {"name": WIRE_TOOL_NAMES["shell.run"],
+            "description": "Request approval to run a shell command in the workspace.",
+            "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}},
+    ]
+
+
+def _wire_messages(messages: list[dict]) -> list[dict]:
+    wired = []
+    for message in messages:
+        m = dict(message)
+        if m.get("role") == "assistant" and isinstance(m.get("tool_calls"), list):
+            m["tool_calls"] = [_wire_tool_call(tc) for tc in m["tool_calls"]]
+        if m.get("role") == "tool":
+            m.pop("name", None)
+        wired.append(m)
+    return wired
+
+
+def _wire_tool_call(tc: object) -> object:
+    if not isinstance(tc, dict):
+        return tc
+    out = dict(tc)
+    fn = out.get("function")
+    if isinstance(fn, dict):
+        wfn = dict(fn)
+        wfn["name"] = WIRE_TOOL_NAMES.get(wfn.get("name"), wfn.get("name"))
+        out["function"] = wfn
+    return out
 
 
 def _parse_tool_calls(raw: object) -> list[ToolCall]:
