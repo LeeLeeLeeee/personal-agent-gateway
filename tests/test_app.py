@@ -378,7 +378,7 @@ def test_chat_records_runtime_events_for_sse_subscribers(tmp_path: Path) -> None
 def test_codex_stream_events_include_active_session_id(tmp_path: Path, monkeypatch) -> None:
     config = make_config(tmp_path)
 
-    class FakeCodexModelClient:
+    class FakeHttpModelClient:
         def __init__(self, *args, on_event=None, **kwargs) -> None:
             self.on_event = on_event
 
@@ -387,7 +387,7 @@ def test_codex_stream_events_include_active_session_id(tmp_path: Path, monkeypat
                 await self.on_event({"item": {"type": "agent_message", "text": "streamed"}})
             return ModelResponse(content="done", tool_calls=[])
 
-    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
     client = auth_client(config, runtime=None)
 
     response = client.post("/api/chat", json={"message": "hello"})
@@ -494,14 +494,14 @@ def test_session_explicit_chat_writes_only_target_session(tmp_path: Path, monkey
     first_id = store.start_new()
     second_id = store.start_new()
 
-    class FakeCodexModelClient:
+    class FakeHttpModelClient:
         def __init__(self, *args, **kwargs) -> None:
             pass
 
         async def complete(self, messages):
             return ModelResponse(content=f"reply to {messages[-1]['content']}", tool_calls=[])
 
-    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
     client = auth_client(config, runtime=None)
 
     response = client.post(f"/api/sessions/{first_id}/chat", json={"message": "targeted"})
@@ -813,21 +813,16 @@ def test_chat_without_explicit_session_config_falls_back_to_app_config(tmp_path:
     config = make_config(tmp_path)
     config.model_provider = "openai"
     config.model = "legacy-model"
-    used_models: list[str] = []
+    captured: list[dict[str, object]] = []
 
-    class FakeOpenAIModelClient:
-        def __init__(self, api_key: str, model: str) -> None:
-            assert api_key == "test-key"
-            used_models.append(model)
+    class FakeHttpModelClient:
+        def __init__(self, *, provider: str, model: str, **kwargs) -> None:
+            captured.append({"provider": provider, "model": model})
 
         async def complete(self, _messages: list[dict[str, object]]) -> ModelResponse:
             return ModelResponse(content="legacy", tool_calls=[])
 
-    def fail_if_called(**_kwargs):
-        raise AssertionError("session runtime should not construct Codex without an explicit session override")
-
-    monkeypatch.setattr("personal_agent_gateway.runtime_factory.OpenAIModelClient", FakeOpenAIModelClient)
-    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", fail_if_called)
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
     client = auth_client(config, runtime=None)
 
     response = client.post("/api/chat", json={"message": "hello"})
@@ -837,21 +832,21 @@ def test_chat_without_explicit_session_config_falls_back_to_app_config(tmp_path:
         "messages": [{"role": "assistant", "content": "legacy"}],
         "pending_approval": None,
     }
-    assert used_models == ["legacy-model"]
+    assert captured == [{"provider": "openai", "model": "legacy-model"}]
 
 
 def test_chat_passes_codex_profile_from_session_config(tmp_path: Path, monkeypatch) -> None:
     config = make_config(tmp_path)
     captured: list[dict[str, object]] = []
 
-    class FakeCodexModelClient:
+    class FakeHttpModelClient:
         def __init__(self, **kwargs) -> None:
             captured.append(kwargs)
 
         async def complete(self, _messages: list[dict[str, object]]) -> ModelResponse:
             return ModelResponse(content="codex", tool_calls=[])
 
-    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
     client = auth_client(config, runtime=None)
 
     assert client.put(
@@ -862,13 +857,13 @@ def test_chat_passes_codex_profile_from_session_config(tmp_path: Path, monkeypat
     response = client.post("/api/chat", json={"message": "hello"})
 
     assert response.status_code == 200
-    assert captured[-1]["profile"] == "local-dev"
+    assert captured[-1]["execution"]["profile"] == "local-dev"
 
 
 def test_chat_passes_codex_effort_from_session_config(tmp_path: Path, monkeypatch) -> None:
     captured: list[dict[str, object]] = []
 
-    class FakeCodexModelClient:
+    class FakeHttpModelClient:
         def __init__(self, **kwargs):
             captured.append(kwargs)
 
@@ -877,7 +872,7 @@ def test_chat_passes_codex_effort_from_session_config(tmp_path: Path, monkeypatc
 
             return ModelResponse(content="ok", tool_calls=[])
 
-    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
     client = TestClient(create_app(make_config(tmp_path)))
     client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
@@ -888,21 +883,21 @@ def test_chat_passes_codex_effort_from_session_config(tmp_path: Path, monkeypatc
     response = client.post("/api/chat", json={"message": "hello"})
 
     assert response.status_code == 200
-    assert captured[-1]["effort"] == "xhigh"
+    assert captured[-1]["execution"]["effort"] == "xhigh"
 
 
 def test_chat_passes_claude_agent_from_session_config(tmp_path: Path, monkeypatch) -> None:
     config = make_config(tmp_path)
     captured: list[dict[str, object]] = []
 
-    class FakeClaudeModelClient:
+    class FakeHttpModelClient:
         def __init__(self, **kwargs) -> None:
             captured.append(kwargs)
 
         async def complete(self, _messages: list[dict[str, object]]) -> ModelResponse:
             return ModelResponse(content="claude", tool_calls=[])
 
-    monkeypatch.setattr("personal_agent_gateway.runtime_factory.ClaudeModelClient", FakeClaudeModelClient)
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
     client = auth_client(config, runtime=None)
 
     assert client.put(
@@ -913,14 +908,14 @@ def test_chat_passes_claude_agent_from_session_config(tmp_path: Path, monkeypatc
     response = client.post("/api/chat", json={"message": "hello"})
 
     assert response.status_code == 200
-    assert captured[-1]["agent"] == "reviewer"
+    assert captured[-1]["execution"]["agent"] == "reviewer"
 
 
 def test_chat_reuses_codex_upstream_session_after_first_response(tmp_path: Path, monkeypatch) -> None:
     captured_upstream_ids: list[str | None] = []
     captured_messages: list[list[dict[str, object]]] = []
 
-    class FakeCodexModelClient:
+    class FakeHttpModelClient:
         def __init__(self, *args, upstream_session_id=None, **kwargs) -> None:
             captured_upstream_ids.append(upstream_session_id)
 
@@ -928,7 +923,7 @@ def test_chat_reuses_codex_upstream_session_after_first_response(tmp_path: Path,
             captured_messages.append(messages)
             return ModelResponse(content="ok", tool_calls=[], upstream_session_id="codex-thread-1")
 
-    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
     config = make_config(tmp_path)
     client = auth_client(config, runtime=None)
 
@@ -955,7 +950,7 @@ def test_chat_uses_app_config_model_for_default_codex_sessions_and_reuses_upstre
     captured_models: list[str] = []
     captured_upstream_ids: list[str | None] = []
 
-    class FakeCodexModelClient:
+    class FakeHttpModelClient:
         def __init__(self, *args, model: str, upstream_session_id=None, **kwargs) -> None:
             captured_models.append(model)
             captured_upstream_ids.append(upstream_session_id)
@@ -963,7 +958,7 @@ def test_chat_uses_app_config_model_for_default_codex_sessions_and_reuses_upstre
         async def complete(self, _messages):
             return ModelResponse(content="ok", tool_calls=[], upstream_session_id="codex-thread-1")
 
-    monkeypatch.setattr("personal_agent_gateway.runtime_factory.CodexModelClient", FakeCodexModelClient)
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
     config = make_config(tmp_path)
     config.model = "gpt-5.5"
     client = auth_client(config, runtime=None)
@@ -981,7 +976,7 @@ def test_chat_reuses_claude_upstream_session_after_first_response(tmp_path: Path
     captured_upstream_ids: list[str | None] = []
     captured_messages: list[list[dict[str, object]]] = []
 
-    class FakeClaudeModelClient:
+    class FakeHttpModelClient:
         def __init__(self, *args, upstream_session_id=None, **kwargs) -> None:
             captured_upstream_ids.append(upstream_session_id)
 
@@ -989,7 +984,7 @@ def test_chat_reuses_claude_upstream_session_after_first_response(tmp_path: Path
             captured_messages.append(messages)
             return ModelResponse(content="ok", tool_calls=[], upstream_session_id="claude-session-1")
 
-    monkeypatch.setattr("personal_agent_gateway.runtime_factory.ClaudeModelClient", FakeClaudeModelClient)
+    monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
     config = make_config(tmp_path)
     client = auth_client(config, runtime=None)
 

@@ -5,8 +5,8 @@ from personal_agent_gateway.agent_session_link import AgentSessionLinkService
 from personal_agent_gateway.config import AppConfig, ConfigError
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
-from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelClient, OpenAIModelClient
 from personal_agent_gateway.personas import persona_system_prompt
+from personal_agent_gateway.remote_model_client import HttpModelClient
 from personal_agent_gateway.runtime import AgentRuntime
 from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.space_policies import SpacePolicyService
@@ -44,21 +44,9 @@ class AgentRuntimeFactory:
     ) -> AgentRuntime:
         workspace_root, read_roots, write_mode = self._space_context(persona_id)
         if backend == "claude":
-            client = ClaudeModelClient(
-                binary=self._config.claude_binary,
-                model=model,
-                workspace_root=workspace_root,
-                effort=str(options.get("effort") or "high"),
-                permission_mode=str(
-                    "bypassPermissions"
-                    if write_mode == "full_access"
-                    else self._config.claude_permission_mode
-                    if write_mode is not None
-                    else options.get("permission_mode") or self._config.claude_permission_mode
-                ),
-                agent=str(options["agent"]) if options.get("agent") else None,
-                timeout_seconds=self._config.codex_timeout_seconds,
-                additional_dirs=read_roots,
+            client = self._remote_client(
+                "claude", model,
+                self._claude_execution(workspace_root, read_roots, write_mode, options),
             )
             session_id = self._transcript.start_new(
                 origin="hook",
@@ -73,24 +61,9 @@ class AgentRuntimeFactory:
                 read_roots=read_roots,
             )
         if backend == "codex":
-            client = CodexModelClient(
-                binary=self._config.codex_binary,
-                model=model,
-                workspace_root=workspace_root,
-                sandbox=(
-                    "danger-full-access"
-                    if write_mode == "full_access"
-                    else "workspace-write"
-                    if write_mode is not None
-                    else str(options.get("sandbox") or self._config.codex_sandbox)
-                ),
-                approval_policy=str(
-                    options.get("approval_policy") or self._config.codex_approval_policy
-                ),
-                profile=str(options["profile"]) if options.get("profile") else None,
-                effort=str(options.get("effort") or "high"),
-                timeout_seconds=self._config.codex_timeout_seconds,
-                idle_timeout_seconds=self._config.codex_idle_timeout_seconds,
+            client = self._remote_client(
+                "codex", model,
+                self._codex_execution(workspace_root, read_roots, write_mode, options),
             )
             session_id = self._transcript.start_new(
                 origin="hook",
@@ -151,22 +124,11 @@ class AgentRuntimeFactory:
                     await self._event_bus.publish({"type": "codex.event", **event, "session_id": session_id})
 
             return self._runtime(
-                CodexModelClient(
-                    binary=self._config.codex_binary,
-                    model=model,
-                    workspace_root=workspace_root,
-                    sandbox=(
-                        "danger-full-access" if write_mode == "full_access" else "workspace-write"
-                        if write_mode is not None
-                        else str(options["sandbox"])
-                    ),
-                    approval_policy=str(options["approval_policy"]),
-                    profile=str(options["profile"]) if options.get("profile") else None,
-                    effort=str(options["effort"]) if options.get("effort") else None,
-                    upstream_session_id=link.upstream_session_id if link is not None else None,
-                    timeout_seconds=self._config.codex_timeout_seconds,
-                    idle_timeout_seconds=self._config.codex_idle_timeout_seconds,
+                self._remote_client(
+                    "codex", model,
+                    self._codex_execution(workspace_root, read_roots, write_mode, options),
                     on_event=publish_codex_event,
+                    upstream_session_id=link.upstream_session_id if link is not None else None,
                 ),
                 history_mode=history_mode,
                 on_upstream_session_id=record_upstream_session,
@@ -178,22 +140,10 @@ class AgentRuntimeFactory:
 
         if agent_id == "claude":
             return self._runtime(
-                ClaudeModelClient(
-                    binary=self._config.claude_binary,
-                    model=model,
-                    workspace_root=workspace_root,
-                    effort=str(options["effort"]),
-                    permission_mode=(
-                        "bypassPermissions"
-                        if write_mode == "full_access"
-                        else self._config.claude_permission_mode
-                        if write_mode is not None
-                        else str(options["permission_mode"])
-                    ),
-                    agent=str(options["agent"]) if options.get("agent") else None,
+                self._remote_client(
+                    "claude", model,
+                    self._claude_execution(workspace_root, read_roots, write_mode, options),
                     upstream_session_id=link.upstream_session_id if link is not None else None,
-                    timeout_seconds=self._config.codex_timeout_seconds,
-                    additional_dirs=read_roots,
                 ),
                 history_mode=history_mode,
                 on_upstream_session_id=record_upstream_session,
@@ -218,19 +168,9 @@ class AgentRuntimeFactory:
                     )
 
             return self._runtime(
-                CodexModelClient(
-                    binary=config.codex_binary,
-                    model=config.model,
-                    workspace_root=workspace_root,
-                    sandbox=(
-                        "danger-full-access" if write_mode == "full_access" else "workspace-write"
-                        if write_mode is not None
-                        else config.codex_sandbox
-                    ),
-                    approval_policy=config.codex_approval_policy,
-                    effort="high",
-                    timeout_seconds=config.codex_timeout_seconds,
-                    idle_timeout_seconds=config.codex_idle_timeout_seconds,
+                self._remote_client(
+                    "codex", config.model,
+                    self._codex_execution(workspace_root, read_roots, write_mode, {}),
                     on_event=publish_codex_event,
                 ),
                 session_id=effective_session_id,
@@ -244,10 +184,52 @@ class AgentRuntimeFactory:
             raise ConfigError("OPENAI_API_KEY is required when AGENT_MODEL_PROVIDER=openai")
 
         return self._runtime(
-            OpenAIModelClient(api_key=config.openai_api_key or "", model=config.model),
+            self._remote_client(
+                "openai", config.model,
+                {"workspace_root": str(workspace_root)},
+            ),
             session_id=effective_session_id,
             workspace_root=workspace_root,
             read_roots=read_roots,
+        )
+
+    def _codex_execution(self, workspace_root, read_roots, write_mode, options) -> dict[str, object]:
+        return {
+            "workspace_root": str(workspace_root),
+            "read_roots": [str(p) for p in (read_roots or [])],
+            "sandbox": (
+                "danger-full-access" if write_mode == "full_access"
+                else "workspace-write" if write_mode is not None
+                else str(options.get("sandbox") or self._config.codex_sandbox)
+            ),
+            "approval_policy": str(options.get("approval_policy") or self._config.codex_approval_policy),
+            "effort": str(options.get("effort") or "high"),
+            "profile": str(options["profile"]) if options.get("profile") else "",
+        }
+
+    def _claude_execution(self, workspace_root, read_roots, write_mode, options) -> dict[str, object]:
+        return {
+            "workspace_root": str(workspace_root),
+            "read_roots": [str(p) for p in (read_roots or [])],
+            "permission_mode": (
+                "bypassPermissions" if write_mode == "full_access"
+                else self._config.claude_permission_mode if write_mode is not None
+                else str(options.get("permission_mode") or self._config.claude_permission_mode)
+            ),
+            "effort": str(options.get("effort") or "high"),
+            "agent": str(options["agent"]) if options.get("agent") else "",
+        }
+
+    def _remote_client(self, provider, model, execution, *, on_event=None, upstream_session_id=None) -> HttpModelClient:
+        return HttpModelClient(
+            base_url=self._config.lmg_base_url,
+            provider=provider,
+            model=model,
+            execution=execution,
+            on_event=on_event,
+            upstream_session_id=upstream_session_id,
+            timeout_seconds=self._config.codex_timeout_seconds,
+            idle_timeout_seconds=self._config.codex_idle_timeout_seconds,
         )
 
     def _runtime(

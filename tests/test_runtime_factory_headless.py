@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from personal_agent_gateway.config import AppConfig, ConfigError
-from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelClient
+from personal_agent_gateway.remote_model_client import HttpModelClient
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.transcript import TranscriptStore
@@ -26,7 +26,9 @@ def test_headless_codex_runtime_uses_codex_client(tmp_path: Path) -> None:
         {},
         hook_run_id="hook-run-1",
     )
-    assert isinstance(runtime._model, CodexModelClient)
+    assert isinstance(runtime._model, HttpModelClient)
+    assert runtime._model._provider == "codex"
+    assert runtime._model._execution
 
 
 def test_headless_claude_runtime_uses_claude_client(tmp_path: Path) -> None:
@@ -36,7 +38,9 @@ def test_headless_claude_runtime_uses_claude_client(tmp_path: Path) -> None:
         {},
         hook_run_id="hook-run-1",
     )
-    assert isinstance(runtime._model, ClaudeModelClient)
+    assert isinstance(runtime._model, HttpModelClient)
+    assert runtime._model._provider == "claude"
+    assert runtime._model._execution
 
 
 def test_headless_unsupported_backend_raises(tmp_path: Path) -> None:
