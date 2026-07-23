@@ -77,3 +77,26 @@ def test_dashboard_usage_returns_provider_usage(tmp_path: Path, monkeypatch) -> 
     assert claude["available"] is False
     assert claude["usage_status"] == "unavailable"
     assert claude["availability_error"] == "not found"
+
+
+def test_dashboard_sessions_requires_session(tmp_path: Path) -> None:
+    client = TestClient(create_app(make_config(tmp_path)))
+
+    response = client.get("/api/dashboard/sessions")
+
+    assert response.status_code == 401
+
+
+def test_dashboard_sessions_proxies_lmg(tmp_path: Path, monkeypatch) -> None:
+    import personal_agent_gateway.api.dashboard as dash
+
+    monkeypatch.setattr(
+        dash, "fetch_sessions", lambda _config: [{"upstream_id": "s1", "provider": "codex"}]
+    )
+    client = TestClient(create_app(make_config(tmp_path)))
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
+
+    response = client.get("/api/dashboard/sessions")
+
+    assert response.status_code == 200
+    assert response.json() == {"sessions": [{"upstream_id": "s1", "provider": "codex"}]}
