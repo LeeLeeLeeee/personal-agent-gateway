@@ -60,8 +60,9 @@ from personal_agent_gateway.intake import IntakeGate
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.mail_knowledge import MailKnowledgeService, MailWorkspaceProjector
-from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelClient, ModelClient
+from personal_agent_gateway.model_client import ModelClient
 from personal_agent_gateway.personas import PersonaService
+from personal_agent_gateway.remote_model_client import HttpModelClient
 from personal_agent_gateway.runtime import AgentRuntime
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.rule_sets import RuleSetService
@@ -546,43 +547,52 @@ def _team_model_factory(
         raw_options = agent.persona_snapshot.get("default_options")
         options = raw_options if isinstance(raw_options, dict) else {}
         if agent.backend == "claude":
-            return ClaudeModelClient(
-                binary=config.claude_binary,
-                model=agent.model,
-                workspace_root=workspace_root,
-                effort=str(options.get("effort") or "high"),
-                permission_mode=str(
+            claude_execution: dict[str, object] = {
+                "workspace_root": str(workspace_root),
+                "read_roots": [str(p) for p in (*read_dirs, *artifact_dirs)],
+                "permission_mode": str(
                     "bypassPermissions"
                     if space_policy and space_policy.write_mode == "full_access"
                     else config.claude_permission_mode
                     if space_policy
                     else options.get("permission_mode") or config.claude_permission_mode
                 ),
-                agent=str(options["agent"]) if options.get("agent") else None,
-                timeout_seconds=config.codex_timeout_seconds,
+                "effort": str(options.get("effort") or "high"),
+                "agent": str(options["agent"]) if options.get("agent") else "",
+            }
+            return HttpModelClient(
+                base_url=config.lmg_base_url,
+                provider="claude",
+                model=agent.model,
+                execution=claude_execution,
                 upstream_session_id=session,
-                additional_dirs=[*read_dirs, *artifact_dirs],
+                timeout_seconds=config.codex_timeout_seconds,
+                idle_timeout_seconds=config.codex_idle_timeout_seconds,
             )
-        return CodexModelClient(
-            binary=config.codex_binary,
-            model=agent.model,
-            workspace_root=workspace_root,
-            sandbox=(
+        codex_execution: dict[str, object] = {
+            "workspace_root": str(workspace_root),
+            "read_roots": [str(p) for p in artifact_dirs],
+            "sandbox": (
                 "danger-full-access"
                 if space_policy and space_policy.write_mode == "full_access"
                 else "workspace-write"
                 if space_policy
                 else str(options.get("sandbox") or config.codex_sandbox)
             ),
-            approval_policy=str(
+            "approval_policy": str(
                 options.get("approval_policy") or config.codex_approval_policy
             ),
-            profile=str(options["profile"]) if options.get("profile") else None,
-            effort=str(options.get("effort") or "high"),
+            "effort": str(options.get("effort") or "high"),
+            "profile": str(options["profile"]) if options.get("profile") else "",
+        }
+        return HttpModelClient(
+            base_url=config.lmg_base_url,
+            provider="codex",
+            model=agent.model,
+            execution=codex_execution,
+            upstream_session_id=session,
             timeout_seconds=config.codex_timeout_seconds,
             idle_timeout_seconds=config.codex_idle_timeout_seconds,
-            upstream_session_id=session,
-            additional_write_dirs=artifact_dirs,
         )
 
     return team_model_factory

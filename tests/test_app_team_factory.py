@@ -1,6 +1,6 @@
 from personal_agent_gateway.app import _team_model_factory
 from personal_agent_gateway.config import AppConfig
-from personal_agent_gateway.model_client import ClaudeModelClient, CodexModelClient
+from personal_agent_gateway.remote_model_client import HttpModelClient
 from personal_agent_gateway.teams import TeamAgent
 
 
@@ -23,12 +23,16 @@ def _agent(
 
 def test_factory_picks_codex_by_default(tmp_path):
     factory = _team_model_factory(_config(tmp_path))
-    assert isinstance(factory(_agent("codex")), CodexModelClient)
+    client = factory(_agent("codex"))
+    assert isinstance(client, HttpModelClient)
+    assert client._provider == "codex"
 
 
 def test_factory_picks_claude_when_backend_claude(tmp_path):
     factory = _team_model_factory(_config(tmp_path))
-    assert isinstance(factory(_agent("claude")), ClaudeModelClient)
+    client = factory(_agent("claude"))
+    assert isinstance(client, HttpModelClient)
+    assert client._provider == "claude"
 
 
 def test_factory_applies_codex_persona_options(tmp_path):
@@ -44,10 +48,10 @@ def test_factory_applies_codex_persona_options(tmp_path):
         )
     )
 
-    assert client._effort == "max"
-    assert client._sandbox == "read-only"
-    assert client._approval_policy == "on-request"
-    assert client._profile == "review"
+    assert client._execution["effort"] == "max"
+    assert client._execution["sandbox"] == "read-only"
+    assert client._execution["approval_policy"] == "on-request"
+    assert client._execution["profile"] == "review"
 
 
 def test_factory_applies_claude_persona_options(tmp_path):
@@ -58,6 +62,6 @@ def test_factory_applies_claude_persona_options(tmp_path):
         )
     )
 
-    assert client._effort == "xhigh"
-    assert client._permission_mode == "plan"
-    assert client._agent == "reviewer"
+    assert client._execution["effort"] == "xhigh"
+    assert client._execution["permission_mode"] == "plan"
+    assert client._execution["agent"] == "reviewer"
