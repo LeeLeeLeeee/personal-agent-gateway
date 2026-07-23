@@ -63,8 +63,8 @@ const operationsPayload = {
 };
 
 describe("DashboardView", () => {
-  beforeEach(() => {
-    globalThis.fetch = vi.fn();
+  beforeEach(async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(await jsonResponse({ sessions: [] }));
   });
 
   it("calls the dashboard usage API and renders provider usage as a card and gauge", async () => {
@@ -134,6 +134,7 @@ describe("DashboardView", () => {
     fetch
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(await jsonResponse(operationsPayload))
+      .mockResolvedValueOnce(await jsonResponse({ sessions: [] }))
       .mockResolvedValueOnce(await jsonResponse(completeReport));
 
     render(<DashboardView />);
@@ -144,7 +145,7 @@ describe("DashboardView", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
     expect(await screen.findByRole("heading", { name: "Codex" })).toBeInTheDocument();
   });
 
@@ -178,6 +179,7 @@ describe("DashboardView", () => {
     fetch
       .mockResolvedValueOnce(await jsonResponse(completeReport))
       .mockRejectedValueOnce(new Error("operations offline"))
+      .mockResolvedValueOnce(await jsonResponse({ sessions: [] }))
       .mockResolvedValueOnce(await jsonResponse(operationsPayload));
 
     render(<DashboardView />);
@@ -187,7 +189,7 @@ describe("DashboardView", () => {
     expect(alert).toHaveTextContent("운영 현황을 불러오지 못했습니다.");
 
     await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
     expect(await screen.findByRole("heading", { name: "Release dashboard" })).toBeInTheDocument();
   });
 
@@ -206,5 +208,42 @@ describe("DashboardView", () => {
     expect(await screen.findByText("현재 진행 중인 작업이 없습니다.")).toBeInTheDocument();
     expect(screen.getByText("시스템 상태 정보가 없습니다.")).toBeInTheDocument();
     expect(screen.getByText("조치가 필요한 항목이 없습니다.")).toBeInTheDocument();
+  });
+
+  it("renders local sessions from the dashboard sessions API", async () => {
+    fetch
+      .mockResolvedValueOnce(await jsonResponse(completeReport))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload))
+      .mockResolvedValueOnce(await jsonResponse({
+        sessions: [
+          {
+            upstream_id: "sess-1",
+            provider: "codex",
+            model: "gpt-5",
+            size_bytes: 2048,
+            created_at: "2026-07-20T00:00:00Z",
+            last_run_at: "2026-07-22T00:00:00Z",
+            storage_path: "/data/sessions/sess-1"
+          }
+        ]
+      }));
+
+    render(<DashboardView />);
+
+    expect(await screen.findByText("2.0 KB")).toBeInTheDocument();
+    expect(screen.getByText("gpt-5")).toBeInTheDocument();
+    expect(screen.getByText("/data/sessions/sess-1")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith("/api/dashboard/sessions");
+  });
+
+  it("shows an empty state when there are no local sessions", async () => {
+    fetch
+      .mockResolvedValueOnce(await jsonResponse(completeReport))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload))
+      .mockResolvedValueOnce(await jsonResponse({ sessions: [] }));
+
+    render(<DashboardView />);
+
+    expect(await screen.findByText("로컬 세션 없음")).toBeInTheDocument();
   });
 });

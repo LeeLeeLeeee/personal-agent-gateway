@@ -143,6 +143,9 @@ export const api = {
   async dashboardUsage() {
     return jsonOrNull(await fetch("/api/dashboard/usage"));
   },
+  async dashboardSessions() {
+    return jsonOrNull(await fetch("/api/dashboard/sessions"));
+  },
   async searchSessions(query) {
     return jsonList(await fetch(`/api/sessions/search?q=${encodeURIComponent(query)}`), "sessions");
   },

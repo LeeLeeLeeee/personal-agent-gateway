@@ -116,6 +116,15 @@ function ProviderUsageCard({ usage }) {
   );
 }
 
+function formatBytes(value) {
+  if (!isNumber(value) || value < 0) return "미확인";
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB"];
+  let n = value / 1024, i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+  return `${n.toFixed(1)} ${units[i]}`;
+}
+
 function errorMessage(error) {
   return typeof error?.detail === "string" ? error.detail : error?.message || "잠시 후 다시 시도해 주세요.";
 }
@@ -329,6 +338,22 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
     };
   }, [operationsReloadKey]);
 
+  const [sessions, setSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [sessionsError, setSessionsError] = useState(null);
+  const [sessionsReloadKey, setSessionsReloadKey] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setSessionsLoading(true);
+    setSessionsError(null);
+    api.dashboardSessions()
+      .then((data) => { if (active) setSessions(Array.isArray(data?.sessions) ? data.sessions : []); })
+      .catch((err) => { if (active) setSessionsError(err); })
+      .finally(() => { if (active) setSessionsLoading(false); });
+    return () => { active = false; };
+  }, [sessionsReloadKey]);
+
   const providers = report?.providers || [];
 
   return (
@@ -385,6 +410,41 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
               <ProviderUsageCard key={usage.provider} usage={usage} />
             ))}
           </div>
+        ) : null}
+      </section>
+
+      <section className="dashboard-usage-section" aria-labelledby="dashboard-sessions-title">
+        <div className="dashboard-section-head">
+          <div>
+            <h2 id="dashboard-sessions-title" className="headline">로컬 세션</h2>
+            <p>로컬 모델 게이트웨이가 관리하는 업스트림 세션입니다.</p>
+          </div>
+          {!sessionsLoading ? (
+            <button type="button" className="btn btn-sm" onClick={() => setSessionsReloadKey((v) => v + 1)}>새로고침</button>
+          ) : null}
+        </div>
+        {sessionsLoading ? <div className="dashboard-state" role="status">세션을 불러오는 중입니다.</div> : null}
+        {!sessionsLoading && sessions.length === 0 ? (
+          <div className="dashboard-state">로컬 세션 없음</div>
+        ) : null}
+        {!sessionsLoading && sessions.length > 0 ? (
+          <table className="dashboard-sessions-table">
+            <thead>
+              <tr><th>Provider</th><th>Model</th><th>용량</th><th>마지막 실행</th><th>생성</th><th>경로</th></tr>
+            </thead>
+            <tbody>
+              {sessions.map((s) => (
+                <tr key={s.upstream_id}>
+                  <td>{s.provider}</td>
+                  <td className="mono">{s.model}</td>
+                  <td className="mono">{formatBytes(s.size_bytes)}</td>
+                  <td>{formatDateTime(s.last_run_at)}</td>
+                  <td>{formatDateTime(s.created_at)}</td>
+                  <td className="mono dashboard-sessions-path">{s.storage_path || "미확인"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         ) : null}
       </section>
 
