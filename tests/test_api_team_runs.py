@@ -797,7 +797,7 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
     assert [agent["name"] for agent in agents] == ["Tech Lead", "QA Tester"]
     stored_agent = client.app.state.team_run_service.get_agent(agents[0]["id"])
     model = client.app.state.team_runtime._model_factory(stored_agent)
-    assert model._workspace_root == Path(run["working_root"]).resolve()
+    assert Path(model._execution["workspace_root"]).resolve() == Path(run["working_root"]).resolve()
 
 
 def test_create_team_run_is_continuous_and_standard_record_remains_readable(
