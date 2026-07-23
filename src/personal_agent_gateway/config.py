@@ -70,6 +70,7 @@ class AppConfig(BaseModel):
     capture_binary: str = _default_capture_binary()
     job_worker_concurrency: int = 1
     hook_poll_interval_seconds: int = 30
+    lmg_base_url: str = "http://127.0.0.1:8788"
 
     @field_validator("web_host")
     @classmethod
@@ -219,6 +220,7 @@ class AppConfig(BaseModel):
                 hook_poll_interval_seconds=int(
                     env.get("AGENT_HOOK_POLL_INTERVAL_SECONDS") or "30"
                 ),
+                lmg_base_url=env.get("LMG_BASE_URL") or "http://127.0.0.1:8788",
             )
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
@@ -271,5 +273,6 @@ def load_config() -> AppConfig:
             "AGENT_CAPTURE_BIN": os.getenv("AGENT_CAPTURE_BIN"),
             "AGENT_JOB_WORKER_CONCURRENCY": os.getenv("AGENT_JOB_WORKER_CONCURRENCY"),
             "AGENT_HOOK_POLL_INTERVAL_SECONDS": os.getenv("AGENT_HOOK_POLL_INTERVAL_SECONDS"),
+            "LMG_BASE_URL": os.getenv("LMG_BASE_URL"),
         }
     )

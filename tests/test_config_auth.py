@@ -172,3 +172,11 @@ def test_require_token_rejects_missing_or_invalid_token() -> None:
 
     assert client.get("/").status_code == 401
     assert client.get("/?token=wrong").status_code == 401
+
+
+def test_lmg_base_url_default_and_override() -> None:
+    base = {"AGENT_WORKSPACE_ROOT": "/ws", "AGENT_SESSION_DIR": "/ws/data/sessions"}
+    cfg = AppConfig.from_env(base)
+    assert cfg.lmg_base_url == "http://127.0.0.1:8788"
+    cfg2 = AppConfig.from_env({**base, "LMG_BASE_URL": "http://127.0.0.1:9999"})
+    assert cfg2.lmg_base_url == "http://127.0.0.1:9999"
