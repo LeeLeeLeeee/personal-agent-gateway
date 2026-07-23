@@ -36,7 +36,7 @@ def test_agents_returns_safe_catalog(tmp_path: Path, monkeypatch) -> None:
             None if binary == "codex-test" else "not found",
         ),
     )
-    monkeypatch.setattr(agents_module, "detect_local_agent_capabilities", lambda _config: None)
+    monkeypatch.setattr(agents_module, "fetch_capabilities", lambda _config: None)
     client = TestClient(create_app(make_config(tmp_path)))
     client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
@@ -88,7 +88,7 @@ def test_active_session_config_defaults_and_can_be_updated_while_empty(tmp_path:
     from personal_agent_gateway import agents as agents_module
 
     monkeypatch.setattr(agents_module, "probe_cli", lambda _binary: agents_module.CliProbeResult(True, None))
-    monkeypatch.setattr(agents_module, "detect_local_agent_capabilities", lambda _config: None)
+    monkeypatch.setattr(agents_module, "fetch_capabilities", lambda _config: None)
     client = TestClient(create_app(make_config(tmp_path)))
     client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
@@ -126,7 +126,7 @@ def test_active_session_config_can_be_selected_from_a_persona(tmp_path: Path, mo
     from personal_agent_gateway import agents as agents_module
 
     monkeypatch.setattr(agents_module, "probe_cli", lambda _binary: agents_module.CliProbeResult(True, None))
-    monkeypatch.setattr(agents_module, "detect_local_agent_capabilities", lambda _config: None)
+    monkeypatch.setattr(agents_module, "fetch_capabilities", lambda _config: None)
     client = TestClient(create_app(make_config(tmp_path)))
     client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
     persona = client.app.state.persona_service.create_persona(
@@ -158,7 +158,7 @@ def test_active_session_config_rejects_invalid_and_locked_updates(tmp_path: Path
     from personal_agent_gateway.transcript import TranscriptStore
 
     monkeypatch.setattr(agents_module, "probe_cli", lambda _binary: agents_module.CliProbeResult(True, None))
-    monkeypatch.setattr(agents_module, "detect_local_agent_capabilities", lambda _config: None)
+    monkeypatch.setattr(agents_module, "fetch_capabilities", lambda _config: None)
     config = make_config(tmp_path)
     store = TranscriptStore(config.session_dir)
     store.start_new()

@@ -36,7 +36,7 @@ def test_dashboard_usage_returns_provider_usage(tmp_path: Path, monkeypatch) -> 
             None if binary == "codex-test" else "not found",
         ),
     )
-    monkeypatch.setattr(agents_module, "detect_local_agent_capabilities", lambda _config: None)
+    monkeypatch.setattr(agents_module, "fetch_capabilities", lambda _config: None)
     client = TestClient(create_app(make_config(tmp_path)))
     client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 

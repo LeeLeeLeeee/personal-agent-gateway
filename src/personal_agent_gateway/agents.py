@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from personal_agent_gateway.config import AppConfig
-from personal_agent_gateway.local_capabilities import detect_local_agent_capabilities
+from personal_agent_gateway.lmg_client import fetch_capabilities
 
 AgentId = Literal["codex", "claude"]
 
@@ -85,7 +85,7 @@ class AgentRegistry:
         self._capability_loader = (
             capability_loader
             if capability_loader is not None
-            else (detect_local_agent_capabilities if probe is None else lambda _config: None)
+            else (fetch_capabilities if probe is None else lambda _config: None)
         )
         self._catalog: list[AgentDescriptor] | None = None
 
