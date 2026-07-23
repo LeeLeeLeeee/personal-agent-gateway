@@ -70,3 +70,28 @@ async def test_run_failed_raises():
     client = HttpModelClient("http://lmg", "codex", "default", {}, transport=_transport(body))
     with pytest.raises(RuntimeError, match="boom"):
         await client.complete([{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.asyncio
+async def test_complete_returns_on_first_run_completed_ignoring_trailing_events():
+    body = _sse(
+        {"kind": "run.completed", "content": "final"},
+        {"kind": "message.completed", "text": "LATE"},
+        {"kind": "run.completed", "content": "OVERWRITE"},
+    )
+    client = HttpModelClient("http://lmg", "codex", "default", {}, transport=_transport(body))
+    resp = await client.complete([{"role": "user", "content": "hi"}])
+    assert resp.content == "final"
+
+
+@pytest.mark.asyncio
+async def test_complete_skips_malformed_lines_without_raising():
+    body = (
+        b"data: not json\n\n"
+        b"event: ping\n\n"
+        b"data: {\"foo\": \"bar\"}\n\n"
+        b'data: {"kind": "run.completed", "content": "ok"}\n\n'
+    )
+    client = HttpModelClient("http://lmg", "codex", "default", {}, transport=_transport(body))
+    resp = await client.complete([{"role": "user", "content": "hi"}])
+    assert resp.content == "ok"

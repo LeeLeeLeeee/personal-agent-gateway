@@ -68,6 +68,7 @@ class HttpModelClient:
                         raw_content = event.get("content")
                         content = raw_content if isinstance(raw_content, str) else ""
                         tool_calls = _parse_tool_calls(event.get("tool_calls"))
+                        return ModelResponse(content=content, tool_calls=tool_calls, upstream_session_id=upstream_session_id)
         return ModelResponse(content=content, tool_calls=tool_calls, upstream_session_id=upstream_session_id)
 
 
