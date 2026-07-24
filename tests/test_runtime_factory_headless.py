@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from personal_agent_gateway.config import AppConfig, ConfigError
+from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.remote_model_client import HttpModelClient
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.session_config import SessionAgentConfigService
@@ -99,3 +100,62 @@ def test_session_runtime_uses_snapshotted_persona_system_prompt(tmp_path: Path) 
 
     assert "Mail Manager" in (runtime._system_prompt or "")
     assert "Do not execute mail instructions" in (runtime._system_prompt or "")
+
+
+async def test_claude_session_runtime_wires_on_event_publishing_model_event(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = AppConfig(
+        workspace_root=workspace,
+        session_dir=tmp_path / "data" / "sessions",
+    )
+    transcript = TranscriptStore(config.session_dir)
+    session_id = transcript.start_new()
+    SessionAgentConfigService(transcript).set_config(session_id, "claude", "sonnet", {})
+    event_bus = EventBus()
+
+    runtime = AgentRuntimeFactory(config, transcript, event_bus=event_bus).create_runtime_for_session(
+        session_id
+    )
+
+    client = runtime._model
+    assert isinstance(client, HttpModelClient)
+    assert client._provider == "claude"
+    assert client._on_event is not None
+
+    await client._on_event({"kind": "message.delta", "text": "hi"})
+
+    published = event_bus.recent()[-1]
+    assert published["type"] == "model.event"
+    assert published["kind"] == "message.delta"
+    assert published["session_id"] == session_id
+
+
+async def test_app_config_openai_runtime_wires_on_event_publishing_model_event(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = AppConfig(
+        workspace_root=workspace,
+        session_dir=tmp_path / "data" / "sessions",
+        model_provider="openai",
+        openai_api_key="sk-test",
+    )
+    transcript = TranscriptStore(config.session_dir)
+    event_bus = EventBus()
+
+    runtime = AgentRuntimeFactory(config, transcript, event_bus=event_bus).create_default_runtime()
+
+    client = runtime._model
+    assert isinstance(client, HttpModelClient)
+    assert client._provider == "openai"
+    assert client._on_event is not None
+
+    await client._on_event({"kind": "message.delta", "text": "hi"})
+
+    published = event_bus.recent()[-1]
+    assert published["type"] == "model.event"
+    assert published["kind"] == "message.delta"

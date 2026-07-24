@@ -119,15 +119,15 @@ class AgentRuntimeFactory:
 
         if agent_id == "codex":
 
-            async def publish_codex_event(event: dict[str, object]) -> None:
+            async def publish_model_event(event: dict[str, object]) -> None:
                 if self._event_bus is not None:
-                    await self._event_bus.publish({"type": "codex.event", **event, "session_id": session_id})
+                    await self._event_bus.publish({"type": "model.event", **event, "session_id": session_id})
 
             return self._runtime(
                 self._remote_client(
                     "codex", model,
                     self._codex_execution(workspace_root, read_roots, write_mode, options),
-                    on_event=publish_codex_event,
+                    on_event=publish_model_event,
                     upstream_session_id=link.upstream_session_id if link is not None else None,
                 ),
                 history_mode=history_mode,
@@ -139,10 +139,16 @@ class AgentRuntimeFactory:
             )
 
         if agent_id == "claude":
+
+            async def publish_model_event(event: dict[str, object]) -> None:
+                if self._event_bus is not None:
+                    await self._event_bus.publish({"type": "model.event", **event, "session_id": session_id})
+
             return self._runtime(
                 self._remote_client(
                     "claude", model,
                     self._claude_execution(workspace_root, read_roots, write_mode, options),
+                    on_event=publish_model_event,
                     upstream_session_id=link.upstream_session_id if link is not None else None,
                 ),
                 history_mode=history_mode,
@@ -161,17 +167,17 @@ class AgentRuntimeFactory:
         effective_session_id = session_id if session_id is not None else self._transcript.active_id()
         if config.model_provider == "codex":
 
-            async def publish_codex_event(event: dict[str, object]) -> None:
+            async def publish_model_event(event: dict[str, object]) -> None:
                 if self._event_bus is not None:
                     await self._event_bus.publish(
-                        {"type": "codex.event", **event, "session_id": effective_session_id}
+                        {"type": "model.event", **event, "session_id": effective_session_id}
                     )
 
             return self._runtime(
                 self._remote_client(
                     "codex", config.model,
                     self._codex_execution(workspace_root, read_roots, write_mode, {}),
-                    on_event=publish_codex_event,
+                    on_event=publish_model_event,
                 ),
                 session_id=effective_session_id,
                 workspace_root=workspace_root,
@@ -183,10 +189,17 @@ class AgentRuntimeFactory:
         if not config.openai_api_key:
             raise ConfigError("OPENAI_API_KEY is required when AGENT_MODEL_PROVIDER=openai")
 
+        async def publish_model_event(event: dict[str, object]) -> None:
+            if self._event_bus is not None:
+                await self._event_bus.publish(
+                    {"type": "model.event", **event, "session_id": effective_session_id}
+                )
+
         return self._runtime(
             self._remote_client(
                 "openai", config.model,
                 {"workspace_root": str(workspace_root)},
+                on_event=publish_model_event,
             ),
             session_id=effective_session_id,
             workspace_root=workspace_root,

@@ -61,9 +61,6 @@ class HttpModelClient:
                         continue
                     if not isinstance(event, dict):
                         continue
-                    raw = event.get("raw")
-                    if self._on_event is not None and isinstance(raw, dict):
-                        await self._on_event(raw)
                     sid = event.get("upstream_session_id")
                     if isinstance(sid, str) and sid:
                         upstream_session_id = sid
@@ -75,6 +72,8 @@ class HttpModelClient:
                         content = raw_content if isinstance(raw_content, str) else ""
                         tool_calls = _parse_tool_calls(event.get("tool_calls"))
                         return ModelResponse(content=content, tool_calls=tool_calls, upstream_session_id=upstream_session_id)
+                    if self._on_event is not None:
+                        await self._on_event(event)
         return ModelResponse(content=content, tool_calls=tool_calls, upstream_session_id=upstream_session_id)
 
 

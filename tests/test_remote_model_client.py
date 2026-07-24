@@ -46,7 +46,36 @@ async def test_complete_relays_raw_to_on_event():
     async def on_event(ev): seen.append(ev)
     client = HttpModelClient("http://lmg", "codex", "default", {}, on_event=on_event, transport=_transport(body))
     await client.complete([{"role": "user", "content": "hi"}])
-    assert raw in seen  # original codex event relayed verbatim
+    assert any(e.get("raw") == raw for e in seen)  # raw stays nested in the relayed normalized event
+
+
+@pytest.mark.asyncio
+async def test_on_event_receives_normalized_events_excluding_terminal():
+    events = [
+        {"kind": "run.started", "run_id": "r1"},
+        {"kind": "message.delta", "text": "Hel", "run_id": "r1", "raw": {"x": 1}},
+        {"kind": "message.completed", "text": "Hello", "run_id": "r1"},
+        {"kind": "run.completed", "content": "Hello", "upstream_session_id": "s1"},
+    ]
+
+    def handler(request):
+        return httpx.Response(200, text=_sse(*events).decode())
+
+    seen = []
+
+    async def on_event(ev):
+        seen.append(ev)
+
+    client = HttpModelClient(
+        base_url="http://lmg", provider="codex", model="codex",
+        execution={}, on_event=on_event,
+        transport=httpx.MockTransport(handler),
+    )
+    result = await client.complete([{"role": "user", "content": "hi"}])
+    kinds = [e["kind"] for e in seen]
+    assert kinds == ["run.started", "message.delta", "message.completed"]
+    assert result.content == "Hello"
+    assert result.upstream_session_id == "s1"
 
 
 @pytest.mark.asyncio
