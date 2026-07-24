@@ -108,16 +108,17 @@ export function timelineFromHistory(events) {
 function toolActivityEntry(event, sid, runId, time, createdAtMs) {
   const tool = event.tool && typeof event.tool === "object" ? event.tool : {};
   const args = tool.arguments && typeof tool.arguments === "object" ? tool.arguments : {};
-  const command = typeof args.command === "string" ? args.command : (tool.name || "tool");
+  const commandSource = typeof args.command === "string"
+    ? args.command
+    : (typeof tool.name === "string" && tool.name ? tool.name : null);
   const exit = typeof args.exit_code === "number" ? args.exit_code : null;
   let status = tool.status === "started" ? "running" : (tool.status || "running");
   if (status === "completed" && exit != null && exit !== 0) status = "failed";
   const done = status === "completed" || status === "failed";
   const output = typeof tool.result === "string" ? tool.result : (tool.result == null ? "" : JSON.stringify(tool.result));
-  return {
+  const entry = {
     type: "command",
     key: `command:${sid}:${runId}:${tool.id || tool.name || ""}`,
-    command,
     status,
     exit,
     lines: linesFrom(output),
@@ -126,6 +127,11 @@ function toolActivityEntry(event, sid, runId, time, createdAtMs) {
     serverOrder: event.event_seq,
     createdAtMs
   };
+  // Only set `command` when a real label source exists. A claude tool_result
+  // (completion) has no name; omitting the key lets the merge preserve the
+  // running row's real command (e.g. "Read") instead of clobbering it.
+  if (commandSource != null) entry.command = commandSource;
+  return entry;
 }
 
 export function entryFromSse(event) {

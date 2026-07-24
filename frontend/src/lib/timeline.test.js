@@ -349,4 +349,31 @@ describe("normalized event mapping", () => {
     expect(entryFromSse({ ...base, kind: "run.completed", content: "x" })).toBeNull();
     expect(entryFromSse({ ...base, kind: "run.failed", error: "boom" })).toBeNull();
   });
+
+  it("stringifies a non-string tool.result into output lines", () => {
+    const e = entryFromSse({
+      ...base, kind: "tool.activity",
+      tool: { id: "c4", name: "Read", arguments: {}, status: "completed", result: [{ type: "text", text: "hi" }] }
+    });
+    expect(e.lines.map((l) => l.text).join("")).toBe(JSON.stringify([{ type: "text", text: "hi" }]));
+  });
+
+  it("omits command on a nameless completion so a merge preserves the running row's label", () => {
+    const started = entryFromSse({
+      ...base, kind: "tool.activity",
+      tool: { id: "c5", name: "Read", arguments: { path: "x" }, status: "started" }
+    });
+    const completed = entryFromSse({
+      ...base, kind: "tool.activity",
+      tool: { id: "c5", status: "completed", result: "file body" }
+    });
+    expect(started.command).toBe("Read");
+    expect(completed.command).toBeUndefined();
+    expect(completed.key).toBe(started.key);
+    // A key-based merge (appendOrReconcileEntry / timelineFromSession) spreads
+    // completed over started; with command omitted, the "Read" label survives.
+    const merged = { ...started, ...completed };
+    expect(merged.command).toBe("Read");
+    expect(merged.status).toBe("completed");
+  });
 });
