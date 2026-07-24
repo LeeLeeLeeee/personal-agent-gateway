@@ -58,10 +58,15 @@ function appendOrReconcileEntry(entries, entry) {
   }
   if (index < 0) return appendOrReconcileCommand(entries, entry);
   const next = entries.slice();
+  const prev = entries[index];
+  const mergedText = entry.append
+    ? `${prev.text || ""}${entry.text || ""}`
+    : entry.text;
   next[index] = {
-    ...entries[index],
+    ...prev,
     ...entry,
-    order: entries[index].order ?? entry.order
+    text: mergedText,
+    order: prev.order ?? entry.order
   };
   return next;
 }
