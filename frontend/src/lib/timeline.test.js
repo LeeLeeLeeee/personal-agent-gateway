@@ -294,3 +294,59 @@ describe("compareEntries", () => {
     expect([second, first].sort(compareEntries).map((e) => e.serverOrder)).toEqual([1, 2]);
   });
 });
+
+describe("normalized event mapping", () => {
+  const base = { type: "model.event", session_id: "s1", run_id: "r1", event_seq: 3 };
+
+  it("maps message.delta to a streaming agent entry with append flag", () => {
+    const e = entryFromSse({ ...base, kind: "message.delta", text: "Hel" });
+    expect(e).toMatchObject({ type: "agent", text: "Hel", streaming: true, append: true });
+    expect(e.key).toBe("agent:s1:r1");
+  });
+
+  it("maps message.completed to a finalized agent entry (no append)", () => {
+    const e = entryFromSse({ ...base, kind: "message.completed", text: "Hello" });
+    expect(e).toMatchObject({ type: "agent", text: "Hello", streaming: false });
+    expect(e.append).toBeUndefined();
+    expect(e.key).toBe("agent:s1:r1");
+  });
+
+  it("maps reasoning.delta to an appending reasoning entry", () => {
+    const e = entryFromSse({ ...base, kind: "reasoning.delta", text: "think" });
+    expect(e).toMatchObject({ type: "reasoning", text: "think", append: true });
+    expect(e.key).toBe("reasoning:s1:r1");
+  });
+
+  it("maps tool.activity to a command entry keyed by tool id", () => {
+    const e = entryFromSse({
+      ...base, kind: "tool.activity",
+      tool: { id: "c1", name: "shell", arguments: { command: "npm test", exit_code: 0 }, status: "completed", result: "ok" }
+    });
+    expect(e).toMatchObject({ type: "command", command: "npm test", status: "completed", exit: 0 });
+    expect(e.key).toBe("command:s1:r1:c1");
+    expect(e.lines.map((l) => l.text)).toEqual(["ok"]);
+  });
+
+  it("marks tool.activity failed when exit_code is non-zero", () => {
+    const e = entryFromSse({
+      ...base, kind: "tool.activity",
+      tool: { id: "c2", name: "shell", arguments: { command: "false", exit_code: 1 }, status: "completed", result: "" }
+    });
+    expect(e.status).toBe("failed");
+  });
+
+  it("marks tool.activity running while started", () => {
+    const e = entryFromSse({
+      ...base, kind: "tool.activity",
+      tool: { id: "c3", name: "Read", arguments: {}, status: "started" }
+    });
+    expect(e).toMatchObject({ type: "command", command: "Read", status: "running", duration: "live" });
+  });
+
+  it("ignores run.started, session.updated, and terminal events", () => {
+    expect(entryFromSse({ ...base, kind: "run.started" })).toBeNull();
+    expect(entryFromSse({ ...base, kind: "session.updated", upstream_session_id: "u1" })).toBeNull();
+    expect(entryFromSse({ ...base, kind: "run.completed", content: "x" })).toBeNull();
+    expect(entryFromSse({ ...base, kind: "run.failed", error: "boom" })).toBeNull();
+  });
+});

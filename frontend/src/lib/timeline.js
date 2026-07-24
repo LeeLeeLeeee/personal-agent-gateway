@@ -105,10 +105,55 @@ export function timelineFromHistory(events) {
   return out;
 }
 
+function toolActivityEntry(event, sid, runId, time, createdAtMs) {
+  const tool = event.tool && typeof event.tool === "object" ? event.tool : {};
+  const args = tool.arguments && typeof tool.arguments === "object" ? tool.arguments : {};
+  const command = typeof args.command === "string" ? args.command : (tool.name || "tool");
+  const exit = typeof args.exit_code === "number" ? args.exit_code : null;
+  let status = tool.status === "started" ? "running" : (tool.status || "running");
+  if (status === "completed" && exit != null && exit !== 0) status = "failed";
+  const done = status === "completed" || status === "failed";
+  const output = typeof tool.result === "string" ? tool.result : (tool.result == null ? "" : JSON.stringify(tool.result));
+  return {
+    type: "command",
+    key: `command:${sid}:${runId}:${tool.id || tool.name || ""}`,
+    command,
+    status,
+    exit,
+    lines: linesFrom(output),
+    time,
+    duration: done ? "" : "live",
+    serverOrder: event.event_seq,
+    createdAtMs
+  };
+}
+
 export function entryFromSse(event) {
+  const createdAtMs = parseCreatedAtMs(event.created_at);
+  const time = fmtDateTime(event.created_at) || nowDateTime();
+  const sid = event.session_id || "legacy";
+  const runId = event.run_id || "";
+  if (typeof event.kind === "string" && event.kind.includes(".")) {
+    switch (event.kind) {
+      case "message.delta":
+        return { type: "agent", key: `agent:${sid}:${runId}`, text: event.text || "", streaming: true, append: true, time, serverOrder: event.event_seq, createdAtMs };
+      case "message.completed":
+        return { type: "agent", key: `agent:${sid}:${runId}`, text: event.text || "", streaming: false, time, serverOrder: event.event_seq, createdAtMs };
+      case "reasoning.delta":
+        return { type: "reasoning", key: `reasoning:${sid}:${runId}`, text: event.text || "", append: true, time, serverOrder: event.event_seq, createdAtMs };
+      case "tool.activity":
+        return toolActivityEntry(event, sid, runId, time, createdAtMs);
+      case "run.started":
+      case "session.updated":
+      case "run.completed":
+      case "run.failed":
+        return null;
+      default:
+        return null;
+    }
+  }
   const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
   const item = payload.item;
-  const createdAtMs = parseCreatedAtMs(event.created_at);
   if (item && typeof item === "object") {
     if (item.type === "command_execution") {
       let status = item.status === "in_progress" ? "running" : (item.status || "running");
