@@ -248,11 +248,23 @@ describe("normalized event mapping", () => {
     expect(e.key).toBe("agent:s1:r1");
   });
 
-  it("maps message.completed to a finalized agent entry (no append)", () => {
+  it("maps message.completed to a finalized agent entry with a per-message key", () => {
+    // codex emits several agent_message items per turn (each a message.completed);
+    // keying by event_seq keeps them as distinct bubbles instead of collapsing
+    // into one. The delta stream stays keyed by run so it accumulates.
     const e = entryFromSse({ ...base, kind: "message.completed", text: "Hello" });
     expect(e).toMatchObject({ type: "agent", text: "Hello", streaming: false });
     expect(e.append).toBeUndefined();
-    expect(e.key).toBe("agent:s1:r1");
+    expect(e.key).toBe("agent:s1:r1:c3");
+  });
+
+  it("gives each message.completed in a run a distinct key (codex multi-message)", () => {
+    const first = entryFromSse({ ...base, kind: "message.completed", text: "one", event_seq: 5 });
+    const second = entryFromSse({ ...base, kind: "message.completed", text: "two", event_seq: 6 });
+    expect(first.key).not.toBe(second.key);
+    // deltas still accumulate under the shared run key
+    const delta = entryFromSse({ ...base, kind: "message.delta", text: "x", event_seq: 7 });
+    expect(delta.key).toBe("agent:s1:r1");
   });
 
   it("maps reasoning.delta to an appending reasoning entry", () => {

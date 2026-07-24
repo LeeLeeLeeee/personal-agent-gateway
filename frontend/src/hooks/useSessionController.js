@@ -176,9 +176,15 @@ export function useSessionController({
             };
           }
           const stamped = stampSessionEntry(state, entry);
+          // On message.completed the finalized bubble is keyed per-message
+          // (event_seq); drop the run-keyed streaming delta bubble it replaces
+          // so a streamed answer doesn't leave a duplicate behind.
+          const baseEntries = parsed.kind === "message.completed"
+            ? removeEntryByKey(state.entries, `agent:${sessionId}:${parsed.run_id || ""}`)
+            : state.entries;
           return {
             ...state,
-            entries: appendOrReconcileEntry(state.entries, stamped.entry),
+            entries: appendOrReconcileEntry(baseEntries, stamped.entry),
             busy: busyNext,
             turnStart: started,
             turnEnd: ended,

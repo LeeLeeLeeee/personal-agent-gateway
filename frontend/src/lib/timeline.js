@@ -134,7 +134,10 @@ export function entryFromSse(event) {
       case "message.delta":
         return { type: "agent", key: `agent:${sid}:${runId}`, text: event.text || "", streaming: true, append: true, time, serverOrder: event.event_seq, createdAtMs };
       case "message.completed":
-        return { type: "agent", key: `agent:${sid}:${runId}`, text: event.text || "", streaming: false, time, serverOrder: event.event_seq, createdAtMs };
+        // Per-message key (event_seq) so codex's multiple agent_message items
+        // in one turn render as distinct bubbles; the streaming delta bubble
+        // (keyed by run) is dropped on completion by the controller.
+        return { type: "agent", key: `agent:${sid}:${runId}:c${event.event_seq}`, text: event.text || "", streaming: false, time, serverOrder: event.event_seq, createdAtMs };
       case "reasoning.delta":
         return { type: "reasoning", key: `reasoning:${sid}:${runId}`, text: event.text || "", append: true, time, serverOrder: event.event_seq, createdAtMs };
       case "tool.activity":

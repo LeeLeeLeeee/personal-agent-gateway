@@ -797,6 +797,34 @@ describe("GatewayApp", () => {
     expect(screen.getAllByText("Hello")).toHaveLength(1);
   });
 
+  it("renders codex's multiple agent messages in one turn as distinct bubbles", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null }
+    });
+
+    await renderGatewayApp();
+
+    await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(MockEventSource.instances.length).toBe(1));
+    const source = MockEventSource.instances[0];
+
+    const base = { type: "model.event", session_id: "session-1", run_id: "r1" };
+    act(() => {
+      // codex sends no deltas; each agent_message is its own message.completed.
+      // They must not collapse into a single bubble (keyed per event_seq).
+      source.emit({ ...base, kind: "message.completed", text: "first message", event_seq: 1 });
+      source.emit({ ...base, kind: "message.completed", text: "second message", event_seq: 2 });
+    });
+
+    expect(await screen.findByText("first message")).toBeInTheDocument();
+    expect(await screen.findByText("second message")).toBeInTheDocument();
+  });
+
   it("ignores duplicate SSE event ids", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
