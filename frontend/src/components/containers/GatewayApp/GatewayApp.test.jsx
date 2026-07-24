@@ -825,6 +825,51 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("second message")).toBeInTheDocument();
   });
 
+  it("opens the most recent conversation instead of a blank Untitled on load", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": { ...status, session_id: "empty-1", session_status: "idle" },
+      "GET /api/sessions": { sessions: [
+        { id: "conv-9", title: "지난 대화", status: "idle", message_count: 4, is_active: false, origin: "chat", created_at: "2026-07-24T02:00:00Z" },
+        { id: "empty-1", title: "Untitled session", status: "idle", message_count: 0, is_active: true, origin: "chat", created_at: "2026-07-24T03:00:00Z" }
+      ] },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "POST /api/sessions/conv-9/activate": { ok: true },
+      "GET /api/sessions/conv-9/history": { events: [{ kind: "assistant", created_at: "2026-07-24T02:01:00Z", payload: { content: "지난 답변입니다" } }] },
+      "GET /api/sessions/conv-9/activity": { events: [] }
+    });
+
+    await renderGatewayApp();
+    await screen.findByLabelText("Agent Gateway");
+
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/sessions/conv-9/activate",
+      expect.objectContaining({ method: "POST" })
+    ));
+    expect(await screen.findByText("지난 답변입니다")).toBeInTheDocument();
+  });
+
+  it("keeps a blank Untitled when there is no prior conversation", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": { ...status, session_id: "empty-1", session_status: "idle" },
+      "GET /api/sessions": { sessions: [
+        { id: "empty-1", title: "Untitled session", status: "idle", message_count: 0, is_active: true, origin: "chat", created_at: "2026-07-24T03:00:00Z" }
+      ] },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null }
+    });
+
+    await renderGatewayApp();
+    await screen.findByLabelText("Agent Gateway");
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/sessions"));
+    const activateCalls = globalThis.fetch.mock.calls.filter(([url]) => String(url).endsWith("/activate"));
+    expect(activateCalls).toHaveLength(0);
+  });
+
   it("ignores duplicate SSE event ids", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },

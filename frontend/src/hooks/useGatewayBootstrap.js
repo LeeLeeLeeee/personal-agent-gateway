@@ -24,14 +24,41 @@ export function useGatewayBootstrap({
   const [activeSessionId, setActiveSessionId] = useState(null);
 
   const loadApp = useCallback(async () => {
-    const [nextStatus, nextSessions, history, nextAgents, nextConfig] = await Promise.all([
+    let [nextStatus, nextSessions, history, nextAgents, nextConfig] = await Promise.all([
       api.getStatus(),
       api.sessions(),
       api.history(),
       api.agents(),
       api.activeSessionConfig()
     ]);
-    const sessionId = nextStatus?.session_id || null;
+    let sessionId = nextStatus?.session_id || null;
+    // On initial load, open the most recent real conversation rather than a
+    // blank/empty session. Switch only when the active session is empty — no
+    // active session, or one still titled "Untitled session" (no messages yet).
+    // An already-active conversation, or an active id we can't classify, is
+    // left as-is. Falls back to the current session if activation fails.
+    const isConversation = (session) => !!(
+      session && session.title && session.title !== "Untitled session"
+      && (session.origin == null || session.origin === "chat")
+    );
+    const activeSummary = (nextSessions || []).find((session) => session.id === sessionId);
+    const activeIsEmpty = sessionId == null
+      || (activeSummary && activeSummary.title === "Untitled session");
+    if (activeIsEmpty) {
+      const latest = (nextSessions || []).find(isConversation);
+      if (latest && latest.id !== sessionId && api.activate) {
+        try {
+          await api.activate(latest.id);
+          sessionId = latest.id;
+          [nextStatus, nextConfig] = await Promise.all([
+            api.getStatus(),
+            api.activeSessionConfig()
+          ]);
+        } catch (_error) {
+          // keep the backend-active session if activation fails
+        }
+      }
+    }
     setActiveSessionId(sessionId);
     activeSessionIdRef.current = sessionId;
     setStatus(withSessionConfigStatus(nextStatus, nextConfig));
