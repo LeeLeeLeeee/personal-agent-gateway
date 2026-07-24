@@ -1,15 +1,5 @@
 import { fmtDateTime, fmtElapsed, nowDateTime } from "./time.js";
 
-function legacyAgentKeySuffix(text) {
-  const source = typeof text === "string" && text ? text : "empty";
-  let hash = 2166136261;
-  for (let index = 0; index < source.length; index += 1) {
-    hash ^= source.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
 function parseCreatedAtMs(createdAt) {
   const parsed = Date.parse(createdAt || "");
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -159,49 +149,6 @@ export function entryFromSse(event) {
     }
   }
   const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
-  const item = payload.item;
-  if (item && typeof item === "object") {
-    if (item.type === "command_execution") {
-      let status = item.status === "in_progress" ? "running" : (item.status || "running");
-      if (status === "completed" && item.exit_code != null && item.exit_code !== 0) status = "failed";
-      const done = status === "completed" || status === "failed";
-      return {
-        type: "command",
-        key: `command:${event.session_id || ""}:${item.id || item.command || ""}`,
-        command: item.command || "command",
-        status,
-        exit: item.exit_code,
-        lines: linesFrom(item.aggregated_output || ""),
-        time: nowDateTime(),
-        duration: done ? "" : "live",
-        serverOrder: event.event_seq,
-        createdAtMs
-      };
-    }
-    if (item.type === "agent_message") {
-      const agentId = item.id || event.event_seq || (event.session_id ? "" : legacyAgentKeySuffix(item.text));
-      return {
-        type: "agent",
-        key: `agent:${event.session_id || "legacy"}:${agentId}`,
-        text: item.text || "",
-        time: fmtDateTime(event.created_at) || nowDateTime(),
-        streaming: false,
-        serverOrder: event.event_seq,
-        createdAtMs
-      };
-    }
-    if (item.type === "reasoning") {
-      return {
-        type: "reasoning",
-        key: `reasoning:${event.session_id || "legacy"}:${item.id || event.event_seq || ""}`,
-        text: item.text || "",
-        time: fmtDateTime(event.created_at) || nowDateTime(),
-        serverOrder: event.event_seq,
-        createdAtMs
-      };
-    }
-    return null;
-  }
   if (event.type === "runtime.user_message.started") {
     return {
       type: "event_row",

@@ -43,28 +43,6 @@ describe("timeline model", () => {
     expect(timeline.map((entry) => entry.order)).toEqual([0, 1]);
   });
 
-  it("maps Codex SSE command and agent events without changing API contracts", () => {
-    expect(entryFromSse({
-      item: {
-        type: "command_execution",
-        id: "cmd-1",
-        command: "npm test",
-        status: "completed",
-        exit_code: 1,
-        aggregated_output: "failed"
-      }
-    })).toEqual(expect.objectContaining({
-      type: "command",
-      key: "command::cmd-1",
-      command: "npm test",
-      status: "failed",
-      exit: 1
-    }));
-
-    expect(entryFromSse({ item: { type: "agent_message", text: "done" } }))
-      .toEqual(expect.objectContaining({ type: "agent", text: "done" }));
-  });
-
   it("merges transcript and durable activity in deterministic order", () => {
     const timeline = timelineFromSession(
       [
@@ -108,12 +86,13 @@ describe("timeline model", () => {
         { kind: "assistant", created_at: "2026-07-09T01:00:02Z", payload: { content: "same answer" } }
       ],
       [{
-        id: 11,
-        event_seq: 2,
+        type: "model.event",
         session_id: "session-1",
-        type: "codex.event",
-        created_at: "2026-07-09T01:00:02Z",
-        payload: { item: { type: "agent_message", id: "agent-1", text: "same answer" } }
+        run_id: "run-1",
+        event_seq: 2,
+        kind: "message.completed",
+        text: "same answer",
+        created_at: "2026-07-09T01:00:02Z"
       }]
     );
 
@@ -126,18 +105,22 @@ describe("timeline model", () => {
       [],
       [
         {
-          event_seq: 1,
+          type: "model.event",
           session_id: "session-1",
-          type: "codex.event",
+          run_id: "run-1",
+          event_seq: 1,
+          kind: "tool.activity",
           created_at: "2026-07-09T01:00:01Z",
-          payload: { item: { type: "command_execution", id: "cmd-1", command: "npm test", status: "in_progress" } }
+          tool: { id: "cmd-1", name: "shell", arguments: { command: "npm test" }, status: "started" }
         },
         {
-          event_seq: 2,
+          type: "model.event",
           session_id: "session-1",
-          type: "codex.event",
+          run_id: "run-1",
+          event_seq: 2,
+          kind: "tool.activity",
           created_at: "2026-07-09T01:00:02Z",
-          payload: { item: { type: "command_execution", id: "cmd-1", command: "npm test", status: "completed", exit_code: 0, aggregated_output: "ok" } }
+          tool: { id: "cmd-1", name: "shell", arguments: { command: "npm test", exit_code: 0 }, status: "completed", result: "ok" }
         }
       ]
     );
@@ -145,29 +128,6 @@ describe("timeline model", () => {
     const commands = timeline.filter((entry) => entry.type === "command");
     expect(commands).toHaveLength(1);
     expect(commands[0]).toEqual(expect.objectContaining({ command: "npm test", status: "completed", exit: 0 }));
-  });
-
-  it("maps normalized SSE envelopes and keeps legacy raw Codex events working", () => {
-    expect(entryFromSse({
-      session_id: "session-1",
-      event_seq: 3,
-      type: "codex.event",
-      created_at: "2026-07-09T01:00:02Z",
-      payload: { item: { type: "agent_message", id: "agent-1", text: "done" } }
-    })).toEqual(expect.objectContaining({
-      type: "agent",
-      key: "agent:session-1:agent-1",
-      text: "done"
-    }));
-
-    const firstLegacy = entryFromSse({ item: { type: "agent_message", text: "legacy one" } });
-    const secondLegacy = entryFromSse({ item: { type: "agent_message", text: "legacy two" } });
-
-    expect(firstLegacy).toEqual(expect.objectContaining({ type: "agent", text: "legacy one" }));
-    expect(secondLegacy).toEqual(expect.objectContaining({ type: "agent", text: "legacy two" }));
-    expect(firstLegacy.key).toMatch(/^agent:legacy:[a-z0-9]+$/);
-    expect(secondLegacy.key).toMatch(/^agent:legacy:[a-z0-9]+$/);
-    expect(firstLegacy.key).not.toBe(secondLegacy.key);
   });
 
   it("maps normalized runtime error and completed events with stable keys and server time", () => {
@@ -228,43 +188,27 @@ describe("timeline model", () => {
 });
 
 describe("reasoning mapping", () => {
-  it("maps codex reasoning items to reasoning entries", () => {
-    const entry = entryFromSse({
-      type: "item.completed",
-      session_id: "s1",
-      event_seq: 7,
-      created_at: "2026-07-10T00:00:01Z",
-      item: { id: "r1", type: "reasoning", text: "thinking about it" }
-    });
-    expect(entry).toMatchObject({ type: "reasoning", text: "thinking about it", serverOrder: 7 });
-    expect(entry.key).toContain("reasoning:");
-  });
-
-  it("ignores reasoning items with no text as empty string", () => {
-    const entry = entryFromSse({
-      type: "item.completed", session_id: "s1", event_seq: 8,
-      item: { id: "r2", type: "reasoning" }
-    });
-    expect(entry).toMatchObject({ type: "reasoning", text: "" });
-  });
-
   it("reconciles persisted reasoning updates by stable reasoning key on reload", () => {
     const timeline = timelineFromSession(
       [],
       [
         {
-          event_seq: 1,
+          type: "model.event",
           session_id: "session-1",
-          type: "item.completed",
+          run_id: "run-1",
+          event_seq: 1,
+          kind: "reasoning.delta",
           created_at: "2026-07-10T00:00:01Z",
-          item: { id: "r1", type: "reasoning", text: "" }
+          text: "thinking"
         },
         {
-          event_seq: 2,
+          type: "model.event",
           session_id: "session-1",
-          type: "item.completed",
+          run_id: "run-1",
+          event_seq: 2,
+          kind: "reasoning.delta",
           created_at: "2026-07-10T00:00:02Z",
-          item: { id: "r1", type: "reasoning", text: "final thought" }
+          text: "final thought"
         }
       ]
     );
