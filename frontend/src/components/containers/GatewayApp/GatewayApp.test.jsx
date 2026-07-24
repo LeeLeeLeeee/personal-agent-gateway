@@ -514,13 +514,19 @@ describe("GatewayApp", () => {
     const source = MockEventSource.instances[0];
 
     act(() => {
-      source.emit({ session_id: "session-2", item: { type: "agent_message", text: "wrong session answer" } });
+      source.emit({
+        type: "model.event", session_id: "session-2", run_id: "run-1", event_seq: 1,
+        kind: "message.completed", text: "wrong session answer"
+      });
     });
 
     expect(screen.queryByText("wrong session answer")).not.toBeInTheDocument();
 
     act(() => {
-      source.emit({ session_id: "session-1", item: { type: "agent_message", text: "active session answer" } });
+      source.emit({
+        type: "model.event", session_id: "session-1", run_id: "run-2", event_seq: 2,
+        kind: "message.completed", text: "active session answer"
+      });
     });
 
     expect(await screen.findByText("active session answer")).toBeInTheDocument();
@@ -558,10 +564,12 @@ describe("GatewayApp", () => {
     act(() => {
       source.emit({
         id: 50,
+        type: "model.event",
         session_id: "session-2",
+        run_id: "run-2",
         event_seq: 1,
-        type: "codex.event",
-        payload: { item: { type: "agent_message", id: "agent-2", text: "background answer" } }
+        kind: "message.completed",
+        text: "background answer"
       });
     });
 
@@ -806,8 +814,12 @@ describe("GatewayApp", () => {
     const source = MockEventSource.instances[0];
 
     act(() => {
-      source.emit({ id: 10, session_id: "session-1", item: { type: "agent_message", text: "streamed once" } });
-      source.emit({ id: 10, session_id: "session-1", item: { type: "agent_message", text: "streamed once" } });
+      const duplicate = {
+        id: 10, type: "model.event", session_id: "session-1", run_id: "run-1",
+        event_seq: 1, kind: "message.completed", text: "streamed once"
+      };
+      source.emit(duplicate);
+      source.emit(duplicate);
     });
 
     expect(await screen.findByText("streamed once")).toBeInTheDocument();
