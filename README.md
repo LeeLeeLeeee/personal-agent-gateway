@@ -5,8 +5,10 @@
 모델 API key를 별도 서버에 저장하지 않고 **이미 로컬에 로그인된 agent CLI**와 workspace를 사용합니다. 대화, 실행 상태와 결과는 사용자 PC에 보존됩니다.
 
 ```text
-Browser -> Cloudflare Tunnel -> Local FastAPI -> Codex CLI / Claude Code -> Local Workspace
+Browser -> Cloudflare Tunnel -> Local FastAPI -> local-model-gateway (LMG) -> Codex CLI / Claude Code -> Local Workspace
 ```
+
+> 로컬 CLI 실행·탐지는 별도 데몬 **[local-model-gateway](https://github.com/LeeLeeLeeee/local-model-gateway)(LMG)** 로 분리되어 있습니다. Gateway는 `LMG_BASE_URL`(기본 `http://127.0.0.1:8788`)로 LMG에 위임합니다.
 
 ## 화면 미리보기
 
@@ -41,8 +43,9 @@ flowchart LR
     Policy --> Jobs
     Policy --> Hooks
     Policy --> Team
-    Chat --> CLI[Codex / Claude CLI]
-    Team --> CLI
+    Chat --> LMG[local-model-gateway]
+    Team --> LMG
+    LMG --> CLI[Codex / Claude CLI]
     Jobs --> WS[Workspace / Worktree]
     CLI --> WS
     Chat --> State[SQLite / Transcript / Artifacts]
@@ -145,10 +148,17 @@ npm --prefix frontend test -- --run
 npm --prefix frontend run build
 ```
 
-CLI model과 option 탐지 결과는 다음 명령으로 확인합니다.
+CLI model과 option 탐지는 LMG가 담당합니다. 탐지 결과는 실행 중인 LMG에서 확인합니다.
 
 ```bash
-node scripts/detect_local_agent_capabilities.mjs --pretty
+curl http://127.0.0.1:8788/v1/models
 ```
 
 개발 서버 분리 실행과 Troubleshooting은 [설치·운영 가이드](docs/knowledge/gateway-setup-guide.md#개발-모드)를 참고하세요.
+
+## 최근 변경 (2026-07)
+
+- **로컬 실행 분리**: 로컬 CLI 실행/탐지/세션 관리를 [local-model-gateway](https://github.com/LeeLeeLeeee/local-model-gateway)(LMG)로 분리. Gateway는 HTTP+SSE로 위임(`LMG_BASE_URL`).
+- **정규화 이벤트 이행**: 프런트가 LMG의 정규화 이벤트(`message.delta`/`reasoning.delta`/`tool.activity`/…)를 직접 소비 → Codex뿐 아니라 **Claude도 라이브 스트리밍 UI**를 표시. Codex의 턴당 여러 메시지는 각각 별도 버블로 렌더.
+- **대시보드 로컬 세션 패널**: LMG가 관리하는 업스트림 세션 현황을 읽기 전용으로 표시.
+- **Chat 진입 UX**: 앱 로드 시 빈 세션 대신 **가장 최근 대화 세션**을 엽니다(대화가 없을 때만 새 세션).
