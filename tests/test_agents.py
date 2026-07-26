@@ -179,8 +179,13 @@ def test_registry_uses_detected_models_and_model_specific_efforts(tmp_path: Path
         registry.validate_config("codex", "gpt-new", {"effort": "high"})
 
 
-def test_registry_retains_not_ready_catalog_without_probing_local_cli(
+@pytest.mark.parametrize(
+    "status",
+    ["unreachable", "unauthorized", "protocol_error", "not_ready"],
+)
+def test_registry_blocks_gateway_failures_without_probing_local_cli(
     tmp_path: Path,
+    status: str,
 ) -> None:
     payload = {
         "schema_version": 1,
@@ -200,24 +205,19 @@ def test_registry_retains_not_ready_catalog_without_probing_local_cli(
         make_config(tmp_path),
         probe=unexpected_probe,
         capability_loader=lambda _config: LmgQueryResult(
-            data=payload,
-            status="not_ready",
+            data=payload if status == "not_ready" else None,
+            status=status,
         ),
     )
 
     codex = registry.get("codex")
 
-    assert codex.models == ["gpt-detected"]
+    expected_model = "gpt-detected" if status == "not_ready" else "default"
+    assert expected_model in codex.models
     assert codex.available is False
-    assert codex.availability_error == "gateway_not_ready"
+    assert codex.availability_error == f"gateway_{status}"
     with pytest.raises(ValueError, match="Agent unavailable"):
-        registry.validate_config("codex", "gpt-detected", {})
-    assert registry.validate_config(
-        "codex",
-        "gpt-detected",
-        {},
-        require_available=False,
-    )["model"] == "gpt-detected"
+        registry.validate_config("codex", expected_model, {})
 
 
 def test_registry_recovers_after_short_negative_cache_ttl(tmp_path: Path) -> None:

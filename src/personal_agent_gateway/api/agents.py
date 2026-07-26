@@ -66,7 +66,6 @@ def set_active_session_config(
             requested_agent,
             requested_model,
             requested_options,
-            require_available=False,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

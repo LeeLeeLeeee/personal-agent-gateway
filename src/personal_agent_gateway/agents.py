@@ -93,14 +93,17 @@ class AgentRegistry:
         self._capability_loader = (
             capability_loader
             if capability_loader is not None
-            else (fetch_capabilities if probe is None else lambda _config: None)
+            else (
+                fetch_capabilities
+                if probe is None and config.lmg_local_token is not None
+                else lambda _config: None
+            )
         )
         self._catalog: list[AgentDescriptor] | None = None
         self._cache_ttl_seconds = cache_ttl_seconds
         self._failure_ttl_seconds = failure_ttl_seconds
         self._clock = clock
         self._catalog_expires_at = 0.0
-        self._gateway_status = "legacy"
 
     def catalog(self) -> list[AgentDescriptor]:
         now = self._clock()
@@ -109,7 +112,6 @@ class AgentRegistry:
             detected, readiness = _loaded_capabilities(loaded)
             providers = detected.get("providers")
             provider_map = providers if isinstance(providers, dict) else {}
-            self._gateway_status = readiness or "legacy"
             self._catalog = [
                 self._codex(
                     _provider_payload(provider_map, "codex"),
@@ -139,14 +141,9 @@ class AgentRegistry:
         agent_id: str,
         model: str,
         options: dict[str, Any],
-        *,
-        require_available: bool = True,
     ) -> dict[str, Any]:
         descriptor = self.get(agent_id)
-        allow_not_ready_catalog = (
-            not require_available and self._gateway_status == "not_ready"
-        )
-        if not descriptor.available and not allow_not_ready_catalog:
+        if not descriptor.available:
             raise ValueError(f"Agent unavailable: {agent_id}")
         if model not in descriptor.models:
             raise ValueError(f"Unsupported model for {agent_id}: {model}")
@@ -330,7 +327,7 @@ def _loaded_capabilities(
 
 
 def _gateway_probe(status: str | None) -> CliProbeResult | None:
-    if status not in {"ready", "not_ready"}:
+    if status is None:
         return None
     if status == "ready":
         return CliProbeResult(True, None)

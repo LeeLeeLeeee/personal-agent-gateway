@@ -39,7 +39,7 @@ def _session_row(**overrides):
 
 
 def test_fetch_capabilities_returns_payload():
-    payload = {"schema_version": 1, "gateway_status": "ready", "providers": {"codex": {"available": True, "models": [{"id": "x"}]}}}
+    payload = {"protocol_version": "1.1", "schema_version": 1, "gateway_status": "ready", "providers": {"codex": {"available": True, "models": [{"id": "x"}]}}}
     def handler(request):
         assert request.headers["authorization"] == "Bearer local-secret"
         return httpx.Response(200, json=payload)
@@ -48,7 +48,7 @@ def test_fetch_capabilities_returns_payload():
 
 
 def test_fetch_capabilities_protocol_error_on_bad_schema():
-    def handler(request): return httpx.Response(200, json={"schema_version": 2, "providers": {}})
+    def handler(request): return httpx.Response(200, json={"protocol_version": "1.1", "schema_version": 2, "providers": {}})
     assert fetch_capabilities(
         _cfg(), transport=httpx.MockTransport(handler)
     ).status == "protocol_error"
@@ -63,6 +63,7 @@ def test_fetch_capabilities_unreachable_on_http_error():
 
 def test_fetch_capabilities_retains_catalog_when_gateway_is_not_ready():
     payload = {
+        "protocol_version": "1.1",
         "schema_version": 1,
         "gateway_status": "not_ready",
         "providers": {"codex": {"available": True, "models": [{"id": "x"}]}},
@@ -77,6 +78,44 @@ def test_fetch_capabilities_retains_catalog_when_gateway_is_not_ready():
         status="not_ready",
         message="로컬 모델 게이트웨이가 준비되지 않았습니다.",
     )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "protocol_version": "1.0",
+            "schema_version": 1,
+            "gateway_status": "ready",
+            "providers": {},
+        },
+        {
+            "protocol_version": "1.1",
+            "schema_version": 1,
+            "gateway_status": "ready",
+            "providers": {"codex": {"available": "yes"}},
+        },
+        {
+            "protocol_version": "1.1",
+            "schema_version": 1,
+            "gateway_status": "ready",
+            "providers": {"codex": {"available": True, "models": [{"label": "x"}]}},
+        },
+        {
+            "protocol_version": "1.1",
+            "schema_version": 1,
+            "gateway_status": "ready",
+            "providers": {"codex": {"available": True, "options": []}},
+        },
+    ],
+)
+def test_fetch_capabilities_rejects_protocol_or_capability_mismatch(payload):
+    def handler(request):
+        return httpx.Response(200, json=payload)
+
+    assert fetch_capabilities(
+        _cfg(), transport=httpx.MockTransport(handler)
+    ).status == "protocol_error"
 
 
 def test_fetch_sessions_returns_list():
@@ -266,14 +305,14 @@ def test_lmg_requests_omit_authorization_when_direct_config_has_no_token():
         assert "authorization" not in request.headers
         return httpx.Response(
             200,
-            json={"schema_version": 1, "gateway_status": "ready", "providers": {}},
+            json={"protocol_version": "1.1", "schema_version": 1, "gateway_status": "ready", "providers": {}},
         )
 
     assert fetch_capabilities(
         config,
         transport=httpx.MockTransport(handler),
     ) == LmgQueryResult(
-        data={"schema_version": 1, "gateway_status": "ready", "providers": {}},
+        data={"protocol_version": "1.1", "schema_version": 1, "gateway_status": "ready", "providers": {}},
         status="ready",
     )
 

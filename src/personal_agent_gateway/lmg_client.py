@@ -14,6 +14,7 @@ LmgStatus = Literal[
     "protocol_error",
 ]
 T = TypeVar("T")
+_LMG_PROTOCOL_VERSION = "1.1"
 
 
 @dataclass(frozen=True)
@@ -78,11 +79,7 @@ def fetch_capabilities(
         payload = response.json()
     except ValueError:
         return _query_failure("protocol_error")
-    if (
-        not isinstance(payload, dict)
-        or payload.get("schema_version") != 1
-        or not isinstance(payload.get("providers"), dict)
-    ):
+    if not _valid_capabilities(payload):
         return _query_failure("protocol_error")
     gateway_status = payload.get("gateway_status")
     if gateway_status not in {"ready", "not_ready"}:
@@ -91,6 +88,58 @@ def fetch_capabilities(
         data={str(key): value for key, value in payload.items()},
         status=gateway_status,
         message=_STATUS_MESSAGES.get(gateway_status),
+    )
+
+
+def _valid_capabilities(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("protocol_version") != _LMG_PROTOCOL_VERSION:
+        return False
+    if type(payload.get("schema_version")) is not int:
+        return False
+    if payload["schema_version"] != 1:
+        return False
+    providers = payload.get("providers")
+    if not isinstance(providers, dict):
+        return False
+    for provider_id, capabilities in providers.items():
+        if not isinstance(provider_id, str) or not provider_id:
+            return False
+        if not _valid_provider_capabilities(capabilities):
+            return False
+    return True
+
+
+def _valid_provider_capabilities(capabilities: object) -> bool:
+    if not isinstance(capabilities, dict):
+        return False
+    if not isinstance(capabilities.get("available"), bool):
+        return False
+    for key in ("version", "error"):
+        value = capabilities.get(key)
+        if value is not None and not isinstance(value, str):
+            return False
+    for key in ("options", "defaults", "usage"):
+        value = capabilities.get(key)
+        if value is not None and not isinstance(value, dict):
+            return False
+    source = capabilities.get("source")
+    if source is not None and (
+        not isinstance(source, list)
+        or not all(isinstance(item, str) for item in source)
+    ):
+        return False
+    models = capabilities.get("models")
+    if models is None:
+        return True
+    if not isinstance(models, list):
+        return False
+    return all(
+        isinstance(model, dict)
+        and isinstance(model.get("id"), str)
+        and bool(model["id"])
+        for model in models
     )
 
 
