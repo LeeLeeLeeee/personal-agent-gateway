@@ -182,7 +182,7 @@ PAG는 실제 provider/model, Space 실행 정책, provider 옵션, Persona snap
 
 `session.updated`를 받으면 terminal 결과보다 먼저 Chat transcript에 upstream link를 기록합니다. 따라서 그 뒤 `run.failed` 또는 `run.aborted`가 발생해도 다음 요청은 확인된 upstream ID를 이어갈 수 있습니다. Chat 삭제는 연결된 upstream 세션을 모두 순차적으로 삭제한 후 진행하며, 하나라도 실패하면 실패 ID를 포함한 502를 반환하고 Chat transcript와 activity를 보존합니다. 이미 없는 LMG 세션의 삭제는 성공으로 처리됩니다.
 
-인증된 `GET /api/audit/session-consistency`는 PAG link와 LMG의 `personal-agent-gateway` 소비자 세션을 읽기 전용으로 비교해 `missing_in_lmg`, `unlinked_in_pag`, `context_mismatch`를 반환합니다. LMG가 응답하지 않거나 응답을 신뢰할 수 없으면 빈 차이 목록으로 바꾸지 않고 503을 반환합니다.
+인증된 `GET /api/audit/session-consistency`는 PAG에 저장된 link와 LMG의 세션·전송 상관관계 메타데이터를 읽기 전용으로 비교해 `missing_in_lmg`, `unlinked_in_pag`, `context_mismatch`를 반환합니다. `context_mismatch`는 동일한 provider/upstream 세션에 저장된 PAG 세션 소유권 또는 fingerprint가 서로 다른 경우를 뜻하며, 현재 Chat 설정을 다시 계산해 비교하는 항목은 아닙니다. LMG가 응답하지 않거나 응답을 신뢰할 수 없으면 빈 차이 목록으로 바꾸지 않고 503을 반환합니다.
 
 개발 서버 분리 실행과 Troubleshooting은 [설치·운영 가이드](docs/knowledge/gateway-setup-guide.md#개발-모드)를 참고하세요.
 

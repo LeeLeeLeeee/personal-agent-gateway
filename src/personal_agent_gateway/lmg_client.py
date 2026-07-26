@@ -9,6 +9,20 @@ class LMGQueryError(RuntimeError):
     """Raised when an authoritative LMG query cannot be completed."""
 
 
+_SESSION_REQUIRED_STRINGS = ("provider", "upstream_id")
+_SESSION_OPTIONAL_STRINGS = (
+    "model",
+    "workspace_root",
+    "consumer",
+    "consumer_session_id",
+    "consumer_run_id",
+    "consumer_context_fingerprint",
+    "created_at",
+    "last_run_at",
+    "storage_path",
+)
+
+
 def _lmg_headers(config: AppConfig) -> dict[str, str]:
     if config.lmg_local_token is None:
         return {}
@@ -62,9 +76,30 @@ def fetch_sessions_strict(
         payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:
         raise LMGQueryError("Unable to query local model gateway sessions") from exc
-    if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+    if not isinstance(payload, list) or not all(
+        _valid_session_row(row) for row in payload
+    ):
         raise LMGQueryError("Invalid local model gateway sessions response")
     return payload
+
+
+def _valid_session_row(row: object) -> bool:
+    if not isinstance(row, dict):
+        return False
+    for field in _SESSION_REQUIRED_STRINGS:
+        value = row.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return False
+    for field in _SESSION_OPTIONAL_STRINGS:
+        value = row.get(field)
+        if field in row and value is not None and not isinstance(value, str):
+            return False
+    size_bytes = row.get("size_bytes")
+    return not (
+        "size_bytes" in row
+        and size_bytes is not None
+        and (not isinstance(size_bytes, int) or isinstance(size_bytes, bool))
+    )
 
 
 def delete_session(

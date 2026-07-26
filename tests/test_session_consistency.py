@@ -62,6 +62,11 @@ def test_report_classifies_missing_unlinked_and_context_mismatch_read_only(
             "upstream_id": "other-consumer",
             "consumer": "some-other-service",
         },
+        {
+            "provider": "codex",
+            "upstream_id": "headless",
+            "consumer": "personal-agent-gateway",
+        },
     ]
     before_lmg = list(lmg_sessions)
 
@@ -117,6 +122,7 @@ def test_report_uses_provider_with_upstream_identity(tmp_path: Path) -> None:
                 "provider": "claude",
                 "upstream_id": "shared",
                 "consumer": "personal-agent-gateway",
+                "consumer_session_id": "other-chat",
             }
         ]
     ).payload()
@@ -126,3 +132,86 @@ def test_report_uses_provider_with_upstream_identity(tmp_path: Path) -> None:
         "unlinked_in_pag": 1,
         "context_mismatch": 0,
     }
+
+
+def test_report_uses_all_lmg_consumers_to_check_missing_links(tmp_path: Path) -> None:
+    transcript = TranscriptStore(tmp_path)
+    chat = transcript.start_new()
+    context = _context("codex", "shared")
+    AgentSessionLinkService(transcript).record(chat, context, "shared")
+
+    report = SessionConsistencyService(transcript).report(
+        [
+            {
+                "provider": "codex",
+                "upstream_id": "shared",
+                "consumer": "some-other-service",
+            }
+        ]
+    ).payload()
+
+    assert report["counts"] == {
+        "missing_in_lmg": 0,
+        "unlinked_in_pag": 0,
+        "context_mismatch": 0,
+    }
+
+
+def test_report_excludes_headless_pag_rows_from_unlinked_checks(
+    tmp_path: Path,
+) -> None:
+    transcript = TranscriptStore(tmp_path)
+
+    report = SessionConsistencyService(transcript).report(
+        [
+            {
+                "provider": "codex",
+                "upstream_id": "headless",
+                "consumer": "personal-agent-gateway",
+            },
+            {
+                "provider": "claude",
+                "upstream_id": "blank-session",
+                "consumer": "personal-agent-gateway",
+                "consumer_session_id": "",
+            },
+        ]
+    ).payload()
+
+    assert report["counts"] == {
+        "missing_in_lmg": 0,
+        "unlinked_in_pag": 0,
+        "context_mismatch": 0,
+    }
+
+
+def test_report_detects_owner_mismatch_even_with_matching_fingerprint(
+    tmp_path: Path,
+) -> None:
+    transcript = TranscriptStore(tmp_path)
+    chat = transcript.start_new()
+    context = _context("codex", "same")
+    AgentSessionLinkService(transcript).record(chat, context, "shared")
+
+    report = SessionConsistencyService(transcript).report(
+        [
+            {
+                "provider": "codex",
+                "upstream_id": "shared",
+                "consumer": "personal-agent-gateway",
+                "consumer_session_id": "different-chat",
+                "consumer_context_fingerprint": context.fingerprint(),
+            }
+        ]
+    ).payload()
+
+    assert report["context_mismatch"] == [
+        {
+            "provider": "codex",
+            "upstream_session_id": "shared",
+            "consumer_session_id": chat,
+            "lmg_consumer_session_id": "different-chat",
+            "pag_context_fingerprint": context.fingerprint(),
+            "lmg_context_fingerprint": context.fingerprint(),
+        }
+    ]

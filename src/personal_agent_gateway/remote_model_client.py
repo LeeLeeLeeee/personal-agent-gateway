@@ -183,8 +183,11 @@ class HttpModelClient:
 
             sid = event.get("upstream_session_id")
             if isinstance(sid, str) and sid:
+                if upstream_session_id is not None and sid != upstream_session_id:
+                    raise contextual_protocol_error("upstream_session_id_changed")
                 upstream_session_id = sid
-                self._upstream_session_id = sid
+                if kind == "session.updated":
+                    self._upstream_session_id = sid
             if kind == "message.delta":
                 partial_content += str(event.get("text", ""))
             elif kind == "message.completed":

@@ -203,6 +203,80 @@ async def test_session_update_immediately_changes_resume_id_even_when_run_fails(
 
 
 @pytest.mark.asyncio
+async def test_complete_rejects_upstream_session_id_change() -> None:
+    body = _sse(
+        {"kind": "session.updated", "upstream_session_id": "session-1"},
+        {
+            "kind": "run.completed",
+            "content": "done",
+            "upstream_session_id": "session-2",
+        },
+    )
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        transport=_transport(body),
+    )
+
+    with pytest.raises(
+        RemoteRunProtocolError,
+        match="upstream_session_id_changed",
+    ):
+        await client.complete([{"role": "user", "content": "hi"}])
+
+    assert client._upstream_session_id == "session-1"
+
+
+@pytest.mark.asyncio
+async def test_complete_rejects_changed_session_id_when_resuming() -> None:
+    body = _sse(
+        {"kind": "session.updated", "upstream_session_id": "different"},
+        {"kind": "run.completed", "content": "done"},
+    )
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        upstream_session_id="existing",
+        transport=_transport(body),
+    )
+
+    with pytest.raises(
+        RemoteRunProtocolError,
+        match="upstream_session_id_changed",
+    ):
+        await client.complete([{"role": "user", "content": "hi"}])
+
+    assert client._upstream_session_id == "existing"
+
+
+@pytest.mark.asyncio
+async def test_terminal_session_id_is_returned_but_not_saved_for_resume() -> None:
+    body = _sse(
+        {
+            "kind": "run.completed",
+            "content": "done",
+            "upstream_session_id": "terminal-only",
+        },
+    )
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        transport=_transport(body),
+    )
+
+    result = await client.complete([{"role": "user", "content": "hi"}])
+
+    assert result.upstream_session_id == "terminal-only"
+    assert client._upstream_session_id is None
+
+
+@pytest.mark.asyncio
 async def test_complete_omits_authorization_without_token():
     cap = {}
     body = _sse({"kind": "run.completed", "content": "x"})

@@ -69,6 +69,26 @@ def test_fetch_sessions_strict_preserves_valid_empty_list():
     ) == []
 
 
+def test_fetch_sessions_strict_accepts_typed_session_rows():
+    rows = [
+        {
+            "provider": "codex",
+            "upstream_id": "session-1",
+            "consumer": None,
+            "consumer_session_id": "chat-1",
+            "size_bytes": 0,
+        }
+    ]
+
+    def handler(request):
+        return httpx.Response(200, json=rows)
+
+    assert fetch_sessions_strict(
+        _cfg(),
+        transport=httpx.MockTransport(handler),
+    ) == rows
+
+
 @pytest.mark.parametrize(
     "response",
     [
@@ -81,6 +101,45 @@ def test_fetch_sessions_strict_preserves_valid_empty_list():
 )
 def test_fetch_sessions_strict_raises_typed_error(response):
     def handler(request): return response
+
+    with pytest.raises(LMGQueryError):
+        fetch_sessions_strict(_cfg(), transport=httpx.MockTransport(handler))
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {},
+        {"provider": "", "upstream_id": "session-1"},
+        {"provider": " ", "upstream_id": "session-1"},
+        {"provider": 1, "upstream_id": "session-1"},
+        {"provider": "codex", "upstream_id": ""},
+        {"provider": "codex", "upstream_id": None},
+        {
+            "provider": "codex",
+            "upstream_id": "session-1",
+            "consumer": 1,
+        },
+        {
+            "provider": "codex",
+            "upstream_id": "session-1",
+            "consumer_session_id": [],
+        },
+        {
+            "provider": "codex",
+            "upstream_id": "session-1",
+            "size_bytes": "large",
+        },
+        {
+            "provider": "codex",
+            "upstream_id": "session-1",
+            "size_bytes": True,
+        },
+    ],
+)
+def test_fetch_sessions_strict_rejects_invalid_session_rows(row):
+    def handler(request):
+        return httpx.Response(200, json=[row])
 
     with pytest.raises(LMGQueryError):
         fetch_sessions_strict(_cfg(), transport=httpx.MockTransport(handler))

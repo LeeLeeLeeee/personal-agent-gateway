@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from threading import Lock
 from typing import Literal
 
-
 RunStatus = Literal["idle", "running", "waiting_approval", "failed"]
 
 
@@ -24,11 +23,12 @@ class SessionRunRegistry:
     def __init__(self) -> None:
         self._running: dict[str, SessionRunState] = {}
         self._tasks: dict[str, tuple[str, asyncio.Task]] = {}
+        self._deleting: set[str] = set()
         self._lock = Lock()
 
     def start(self, session_id: str, request_id: str) -> None:
         with self._lock:
-            if session_id in self._running:
+            if session_id in self._running or session_id in self._deleting:
                 raise SessionAlreadyRunningError(session_id)
             self._running[session_id] = SessionRunState(
                 session_id=session_id,
@@ -38,7 +38,7 @@ class SessionRunRegistry:
 
     def start_if_exists(self, session_id: str, request_id: str, exists: Callable[[], bool]) -> bool:
         with self._lock:
-            if session_id in self._running:
+            if session_id in self._running or session_id in self._deleting:
                 raise SessionAlreadyRunningError(session_id)
             if not exists():
                 return False
@@ -96,9 +96,14 @@ class SessionRunRegistry:
 
     def delete_if_idle(self, session_id: str, delete: Callable[[], bool]) -> bool:
         with self._lock:
-            if session_id in self._running:
+            if session_id in self._running or session_id in self._deleting:
                 raise SessionAlreadyRunningError(session_id)
+            self._deleting.add(session_id)
+        try:
             return delete()
+        finally:
+            with self._lock:
+                self._deleting.discard(session_id)
 
     def status(self, session_id: str | None, has_pending: bool, has_failed: bool) -> RunStatus:
         if self.is_running(session_id):

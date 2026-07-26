@@ -1,4 +1,5 @@
 import asyncio
+from threading import Event, Thread
 
 import pytest
 
@@ -45,6 +46,86 @@ def test_delete_if_idle_rejects_running_session_without_callback() -> None:
         registry.delete_if_idle("session-1", delete_session)
 
     assert called is False
+
+
+def test_delete_if_idle_does_not_block_unrelated_sessions() -> None:
+    registry = SessionRunRegistry()
+    deleting = Event()
+    release_delete = Event()
+    delete_finished = Event()
+    unrelated_started = Event()
+
+    def delete_session() -> bool:
+        deleting.set()
+        release_delete.wait(timeout=2)
+        return True
+
+    def run_delete() -> None:
+        registry.delete_if_idle("session-1", delete_session)
+        delete_finished.set()
+
+    def start_unrelated() -> None:
+        registry.start("session-2", "request-2")
+        unrelated_started.set()
+
+    delete_thread = Thread(target=run_delete)
+    delete_thread.start()
+    start_thread = Thread(target=start_unrelated)
+    start_thread_started = False
+    try:
+        assert deleting.wait(timeout=1)
+        start_thread.start()
+        start_thread_started = True
+        assert unrelated_started.wait(timeout=1)
+        assert registry.is_running("session-2") is True
+    finally:
+        release_delete.set()
+        delete_thread.join(timeout=2)
+        if start_thread_started:
+            start_thread.join(timeout=2)
+
+    assert delete_finished.is_set()
+
+
+def test_delete_if_idle_reserves_same_session_until_callback_finishes() -> None:
+    registry = SessionRunRegistry()
+    deleting = Event()
+    release_delete = Event()
+
+    def delete_session() -> bool:
+        deleting.set()
+        release_delete.wait(timeout=2)
+        return True
+
+    delete_thread = Thread(
+        target=lambda: registry.delete_if_idle("session-1", delete_session)
+    )
+    delete_thread.start()
+    try:
+        assert deleting.wait(timeout=1)
+        with pytest.raises(SessionAlreadyRunningError):
+            registry.start("session-1", "request-1")
+        with pytest.raises(SessionAlreadyRunningError):
+            registry.delete_if_idle("session-1", lambda: True)
+    finally:
+        release_delete.set()
+        delete_thread.join(timeout=2)
+
+    registry.start("session-1", "request-2")
+    assert registry.is_running("session-1") is True
+
+
+def test_delete_if_idle_releases_reservation_after_callback_error() -> None:
+    registry = SessionRunRegistry()
+
+    def fail_delete() -> bool:
+        raise RuntimeError("delete failed")
+
+    with pytest.raises(RuntimeError, match="delete failed"):
+        registry.delete_if_idle("session-1", fail_delete)
+
+    registry.start("session-1", "request-1")
+    assert registry.is_running("session-1") is True
 
 
 def test_start_if_exists_checks_existence_and_marks_running_atomically() -> None:
