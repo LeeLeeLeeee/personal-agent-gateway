@@ -11,6 +11,8 @@ const STATUS_LABELS = {
   unavailable: "실행 불가"
 };
 
+const DEFAULT_VISIBLE_SESSION_COUNT = 5;
+
 function isNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -342,6 +344,7 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState(null);
   const [sessionsReloadKey, setSessionsReloadKey] = useState(0);
+  const [showAllSessions, setShowAllSessions] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -355,6 +358,10 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
   }, [sessionsReloadKey]);
 
   const providers = report?.providers || [];
+  const visibleSessions = showAllSessions
+    ? sessions
+    : sessions.slice(0, DEFAULT_VISIBLE_SESSION_COUNT);
+  const hiddenSessionCount = sessions.length - visibleSessions.length;
 
   return (
     <section className="screen dashboard-view">
@@ -428,23 +435,35 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
           <div className="dashboard-state">로컬 세션 없음</div>
         ) : null}
         {!sessionsLoading && sessions.length > 0 ? (
-          <table className="dashboard-sessions-table">
-            <thead>
-              <tr><th>Provider</th><th>Model</th><th>용량</th><th>마지막 실행</th><th>생성</th><th>경로</th></tr>
-            </thead>
-            <tbody>
-              {sessions.map((s) => (
-                <tr key={s.upstream_id}>
-                  <td>{s.provider}</td>
-                  <td className="mono">{s.model}</td>
-                  <td className="mono">{formatBytes(s.size_bytes)}</td>
-                  <td>{formatDateTime(s.last_run_at)}</td>
-                  <td>{formatDateTime(s.created_at)}</td>
-                  <td className="mono dashboard-sessions-path">{s.storage_path || "미확인"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            <table className="dashboard-sessions-table">
+              <thead>
+                <tr><th>Provider</th><th>Model</th><th>용량</th><th>마지막 실행</th><th>생성</th><th>Workspace</th><th>세션 로그</th></tr>
+              </thead>
+              <tbody>
+                {visibleSessions.map((s) => (
+                  <tr key={s.upstream_id}>
+                    <td>{s.provider}</td>
+                    <td className="mono">{s.model}</td>
+                    <td className="mono">{formatBytes(s.size_bytes)}</td>
+                    <td>{formatDateTime(s.last_run_at)}</td>
+                    <td>{formatDateTime(s.created_at)}</td>
+                    <td className="mono dashboard-sessions-path">{s.workspace_root || "미확인"}</td>
+                    <td className="mono dashboard-sessions-path">{s.storage_path || "미확인"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {hiddenSessionCount > 0 ? (
+              <button
+                type="button"
+                className="btn btn-sm dashboard-sessions-more"
+                onClick={() => setShowAllSessions(true)}
+              >
+                더보기 ({hiddenSessionCount})
+              </button>
+            ) : null}
+          </>
         ) : null}
       </section>
 

@@ -223,6 +223,7 @@ describe("DashboardView", () => {
             size_bytes: 2048,
             created_at: "2026-07-20T00:00:00Z",
             last_run_at: "2026-07-22T00:00:00Z",
+            workspace_root: "/workspace/project",
             storage_path: "/data/sessions/sess-1"
           }
         ]
@@ -232,8 +233,38 @@ describe("DashboardView", () => {
 
     expect(await screen.findByText("2.0 KB")).toBeInTheDocument();
     expect(screen.getByText("gpt-5")).toBeInTheDocument();
+    expect(screen.getByText("/workspace/project")).toBeInTheDocument();
     expect(screen.getByText("/data/sessions/sess-1")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith("/api/dashboard/sessions");
+  });
+
+  it("shows the five newest sessions until the user asks for more", async () => {
+    const sessions = Array.from({ length: 7 }, (_, index) => ({
+      upstream_id: `sess-${index + 1}`,
+      provider: "codex",
+      model: `model-${index + 1}`,
+      size_bytes: 1024,
+      created_at: `2026-07-${String(26 - index).padStart(2, "0")}T00:00:00Z`,
+      last_run_at: `2026-07-${String(26 - index).padStart(2, "0")}T00:00:00Z`,
+      workspace_root: `/workspace/project-${index + 1}`,
+      storage_path: `/data/sessions/sess-${index + 1}`
+    }));
+    fetch
+      .mockResolvedValueOnce(await jsonResponse(completeReport))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload))
+      .mockResolvedValueOnce(await jsonResponse({ sessions }));
+
+    render(<DashboardView />);
+
+    expect(await screen.findByText("model-1")).toBeInTheDocument();
+    expect(screen.getByText("model-5")).toBeInTheDocument();
+    expect(screen.queryByText("model-6")).not.toBeInTheDocument();
+    expect(screen.queryByText("model-7")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "더보기 (2)" }));
+
+    expect(screen.getByText("model-6")).toBeInTheDocument();
+    expect(screen.getByText("model-7")).toBeInTheDocument();
   });
 
   it("shows an empty state when there are no local sessions", async () => {

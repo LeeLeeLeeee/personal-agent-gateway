@@ -55,6 +55,10 @@
   overflow-wrap: anywhere;
 }
 
+.dashboard-sessions-more {
+  margin-top: 12px;
+}
+
 .dashboard-section-head h2 {
   font-size: 20px;
 }
