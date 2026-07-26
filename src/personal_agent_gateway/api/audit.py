@@ -2,9 +2,30 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from personal_agent_gateway.api.dependencies import session_dependency
 from personal_agent_gateway.audit import AuditEvent
-
+from personal_agent_gateway.lmg_client import (
+    LMGQueryError,
+    fetch_sessions_strict,
+)
+from personal_agent_gateway.session_consistency import SessionConsistencyService
 
 router = APIRouter(prefix="/api/audit", tags=["audit"])
+
+
+@router.get("/session-consistency")
+def session_consistency(
+    request: Request,
+    _session: None = session_dependency,
+) -> dict[str, object]:
+    try:
+        sessions = fetch_sessions_strict(request.app.state.app_config)
+    except LMGQueryError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Local model gateway consistency check unavailable",
+        ) from exc
+    return SessionConsistencyService(
+        request.app.state.transcript_store
+    ).report(sessions).payload()
 
 
 @router.get("/events")

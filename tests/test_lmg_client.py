@@ -1,7 +1,14 @@
 import httpx
+import pytest
 
 from personal_agent_gateway.config import AppConfig
-from personal_agent_gateway.lmg_client import delete_session, fetch_capabilities, fetch_sessions
+from personal_agent_gateway.lmg_client import (
+    LMGQueryError,
+    delete_session,
+    fetch_capabilities,
+    fetch_sessions,
+    fetch_sessions_strict,
+)
 
 
 def _cfg(base="http://lmg", token="local-secret"):
@@ -51,6 +58,40 @@ def test_fetch_sessions_empty_on_http_error():
 def test_fetch_sessions_empty_on_non_list():
     def handler(request): return httpx.Response(200, json={"oops": 1})
     assert fetch_sessions(_cfg(), transport=httpx.MockTransport(handler)) == []
+
+
+def test_fetch_sessions_strict_preserves_valid_empty_list():
+    def handler(request): return httpx.Response(200, json=[])
+
+    assert fetch_sessions_strict(
+        _cfg(),
+        transport=httpx.MockTransport(handler),
+    ) == []
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(401),
+        httpx.Response(503),
+        httpx.Response(200, content=b"not-json"),
+        httpx.Response(200, json={"sessions": []}),
+        httpx.Response(200, json=[None]),
+    ],
+)
+def test_fetch_sessions_strict_raises_typed_error(response):
+    def handler(request): return response
+
+    with pytest.raises(LMGQueryError):
+        fetch_sessions_strict(_cfg(), transport=httpx.MockTransport(handler))
+
+
+def test_fetch_sessions_strict_raises_on_network_error():
+    def handler(request):
+        raise httpx.ConnectError("offline", request=request)
+
+    with pytest.raises(LMGQueryError):
+        fetch_sessions_strict(_cfg(), transport=httpx.MockTransport(handler))
 
 
 def test_delete_session_calls_encoded_lmg_session_url():
@@ -104,3 +145,13 @@ def test_delete_session_returns_false_on_http_error():
         "s1",
         transport=httpx.MockTransport(handler),
     ) is False
+
+
+def test_delete_session_accepts_legacy_not_found_as_success():
+    def handler(request): return httpx.Response(404)
+
+    assert delete_session(
+        _cfg(),
+        "already-gone",
+        transport=httpx.MockTransport(handler),
+    ) is True

@@ -115,7 +115,7 @@ LMG에도 동일한 `LMG_LOCAL_TOKEN`을 설정해야 합니다. LMG에서 실�
 LMG_ALLOWED_ROOTS=/absolute/path/to/workspace:/another/allowed/root
 ```
 
-LMG는 loopback(`127.0.0.1` 또는 `::1`)에서만 수신하고 `/livez`만 무인증으로 제공합니다. 공유 토큰은 브라우저와 우발적인 로컬 호출을 막지만 같은 사용자 권한의 악성 로컬 프로세스를 격리하지 않습니다. PAG가 보내는 `consumer`, `consumer_session_id`, `consumer_run_id`는 추적 정보이며 권한 판단에 사용되지 않습니다.
+LMG는 loopback(`127.0.0.1` 또는 `::1`)에서만 수신하고 `/livez`만 무인증으로 제공합니다. 공유 토큰은 브라우저와 우발적인 로컬 호출을 막지만 같은 사용자 권한의 악성 로컬 프로세스를 격리하지 않습니다. PAG가 보내는 `consumer`, `consumer_session_id`, `consumer_run_id`, `consumer_context_fingerprint`는 추적 정보이며 권한 판단에 사용되지 않습니다.
 
 React UI를 build합니다.
 
@@ -175,6 +175,14 @@ PAG는 LMG의 SSE를 EOF까지 검증하고 다음 terminal 중 정확히 하나
 | `run.aborted` + `run_timeout` | `timed_out` | `run_timeout` |
 
 terminal 없는 EOF는 `upstream_stream_incomplete`, 중복 terminal·terminal 뒤의 추가 이벤트·잘못된 JSON·shape·`run_id`는 `provider_protocol_error`로 처리합니다. 실패·중단의 `partial_content`는 transcript와 activity에 진단 정보로만 보존하며 정상 assistant 메시지나 성공 산출물로 노출하지 않습니다.
+
+### Chat과 LMG 세션 수명주기
+
+PAG는 실제 provider/model, Space 실행 정책, provider 옵션, Persona snapshot, rules가 합성된 system prompt를 canonical JSON으로 직렬화한 SHA-256 context fingerprint를 사용합니다. 같은 Chat이라도 이 컨텍스트가 달라지면 기존 upstream 세션을 resume하지 않습니다. 이전 `options_fingerprint` 형식의 link는 삭제 대상에는 포함하지만 안전한 컨텍스트 일치를 증명할 수 없어 resume에는 사용하지 않습니다.
+
+`session.updated`를 받으면 terminal 결과보다 먼저 Chat transcript에 upstream link를 기록합니다. 따라서 그 뒤 `run.failed` 또는 `run.aborted`가 발생해도 다음 요청은 확인된 upstream ID를 이어갈 수 있습니다. Chat 삭제는 연결된 upstream 세션을 모두 순차적으로 삭제한 후 진행하며, 하나라도 실패하면 실패 ID를 포함한 502를 반환하고 Chat transcript와 activity를 보존합니다. 이미 없는 LMG 세션의 삭제는 성공으로 처리됩니다.
+
+인증된 `GET /api/audit/session-consistency`는 PAG link와 LMG의 `personal-agent-gateway` 소비자 세션을 읽기 전용으로 비교해 `missing_in_lmg`, `unlinked_in_pag`, `context_mismatch`를 반환합니다. LMG가 응답하지 않거나 응답을 신뢰할 수 없으면 빈 차이 목록으로 바꾸지 않고 503을 반환합니다.
 
 개발 서버 분리 실행과 Troubleshooting은 [설치·운영 가이드](docs/knowledge/gateway-setup-guide.md#개발-모드)를 참고하세요.
 

@@ -1,6 +1,5 @@
 import asyncio
 import json
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -44,7 +43,6 @@ class AgentRuntime:
         job_service: JobService | None = None,
         event_bus: EventBus | None = None,
         history_mode: Literal["full", "latest_user"] = "full",
-        on_upstream_session_id: Callable[[str], None] | None = None,
         session_id: str | None = None,
         system_prompt: str | None = None,
         archive_service: ArchiveService | None = None,
@@ -56,7 +54,6 @@ class AgentRuntime:
         self._job_service = job_service
         self._event_bus = event_bus
         self._history_mode = history_mode
-        self._on_upstream_session_id = on_upstream_session_id
         self._session_id = session_id
         self._system_prompt = system_prompt
         self._archive_service = archive_service
@@ -73,7 +70,6 @@ class AgentRuntime:
             job_service=self._job_service,
             event_bus=self._event_bus,
             history_mode=self._history_mode,
-            on_upstream_session_id=self._on_upstream_session_id,
             session_id=session_id,
             system_prompt=self._system_prompt,
             archive_service=self._archive_service,
@@ -198,8 +194,6 @@ class AgentRuntime:
                 )
             messages[0:0] = system_messages
             response = await self._model.complete(messages)
-            if response.upstream_session_id and self._on_upstream_session_id is not None:
-                self._on_upstream_session_id(response.upstream_session_id)
 
             if not response.tool_calls:
                 content = response.content
@@ -289,12 +283,6 @@ class AgentRuntime:
         session_id: str | None = None,
     ) -> RuntimeResult:
         payload = _runtime_error_payload(exc)
-        if (
-            isinstance(exc, RemoteRunError)
-            and exc.upstream_session_id
-            and self._on_upstream_session_id is not None
-        ):
-            self._on_upstream_session_id(exc.upstream_session_id)
         self._append("runtime_error", payload, session_id)
         await self._publish("runtime.error", {"session_id": session_id, **payload})
         return RuntimeResult(

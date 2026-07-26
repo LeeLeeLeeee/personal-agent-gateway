@@ -85,6 +85,7 @@ class HttpModelClient:
         local_token: str | None = None,
         consumer: str = "personal-agent-gateway",
         consumer_session_id: str | None = None,
+        consumer_context_fingerprint: str | None = None,
         timeout_seconds: float = 3600,
         idle_timeout_seconds: float = 600,
         timeout_grace_seconds: float = 5,
@@ -99,6 +100,7 @@ class HttpModelClient:
         self._local_token = local_token
         self._consumer = consumer
         self._consumer_session_id = consumer_session_id
+        self._consumer_context_fingerprint = consumer_context_fingerprint
         self._timeout_seconds = timeout_seconds
         self._idle_timeout_seconds = idle_timeout_seconds
         self._timeout_grace_seconds = timeout_grace_seconds
@@ -124,6 +126,11 @@ class HttpModelClient:
         }
         if self._consumer_session_id is not None:
             body["consumer_session_id"] = self._consumer_session_id
+        if (
+            self._consumer_session_id is not None
+            and self._consumer_context_fingerprint is not None
+        ):
+            body["consumer_context_fingerprint"] = self._consumer_context_fingerprint
         upstream_session_id = self._upstream_session_id
         headers = {}
         if self._local_token is not None:
@@ -177,6 +184,7 @@ class HttpModelClient:
             sid = event.get("upstream_session_id")
             if isinstance(sid, str) and sid:
                 upstream_session_id = sid
+                self._upstream_session_id = sid
             if kind == "message.delta":
                 partial_content += str(event.get("text", ""))
             elif kind == "message.completed":

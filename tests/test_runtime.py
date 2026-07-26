@@ -696,9 +696,7 @@ async def test_remote_failure_preserves_redacted_details_without_success_message
         ),
     )
     bus = EventBus()
-    recorded: list[str] = []
     runtime.attach_event_bus(bus)
-    runtime._on_upstream_session_id = recorded.append
 
     result = await runtime.handle_user_message("hello")
 
@@ -707,7 +705,6 @@ async def test_remote_failure_preserves_redacted_details_without_success_message
     assert result.diagnostic == "provider failed"
     assert result.messages == [{"role": "assistant", "content": "Error: provider failed"}]
     assert "partial" not in str(result.messages)
-    assert recorded == ["native-1"]
     expected = {
         "message": "provider failed",
         "error_code": "provider_process_failed",
@@ -867,23 +864,6 @@ async def test_approval_remote_failure_uses_same_termination_path(tmp_path: Path
     assert event_payloads(transcript)[-1][0] == "runtime_error"
     assert bus.recent()[-1]["type"] == "runtime.error"
     assert bus.recent()[-1]["termination"] == "timed_out"
-
-
-@pytest.mark.asyncio
-async def test_runtime_records_upstream_session_id_after_model_response(tmp_path: Path) -> None:
-    transcript = TranscriptStore(tmp_path / "sessions")
-    recorded: list[str] = []
-    model = CapturingModel(ModelResponse("hello", [], upstream_session_id="native-1"))
-    runtime = AgentRuntime(
-        transcript=transcript,
-        tools=WorkspaceTools(tmp_path, ApprovalStore()),
-        model=model,
-        on_upstream_session_id=recorded.append,
-    )
-
-    await runtime.handle_user_message("hello")
-
-    assert recorded == ["native-1"]
 
 
 @pytest.mark.asyncio

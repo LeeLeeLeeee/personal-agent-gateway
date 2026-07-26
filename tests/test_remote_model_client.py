@@ -118,6 +118,7 @@ async def test_complete_sends_authenticated_consumer_tracking():
         {},
         local_token="local-secret",
         consumer_session_id="pag-session-1",
+        consumer_context_fingerprint="context-fp-1",
         transport=_transport(body, cap),
     )
 
@@ -126,6 +127,7 @@ async def test_complete_sends_authenticated_consumer_tracking():
     assert cap["headers"]["authorization"] == "Bearer local-secret"
     assert cap["body"]["consumer"] == "personal-agent-gateway"
     assert cap["body"]["consumer_session_id"] == "pag-session-1"
+    assert cap["body"]["consumer_context_fingerprint"] == "context-fp-1"
     uuid.UUID(cap["body"]["consumer_run_id"])
 
 
@@ -155,7 +157,49 @@ async def test_complete_creates_new_consumer_run_id_per_call():
 
     assert requests[0]["consumer_run_id"] != requests[1]["consumer_run_id"]
     assert all("consumer_session_id" not in request for request in requests)
+    assert all("consumer_context_fingerprint" not in request for request in requests)
     assert all(request["consumer"] == "personal-agent-gateway" for request in requests)
+
+
+@pytest.mark.asyncio
+async def test_session_update_immediately_changes_resume_id_even_when_run_fails():
+    requests = []
+    responses = [
+        _sse(
+            {"kind": "session.updated", "upstream_session_id": "native-1"},
+            {
+                "kind": "run.failed",
+                "error": "failed",
+                "error_code": "provider_process_failed",
+                "upstream_session_id": "native-1",
+            },
+        ),
+        _sse({"kind": "run.completed", "content": "recovered"}),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            content=responses[len(requests) - 1],
+            headers={"content-type": "text/event-stream"},
+        )
+
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(RemoteRunFailedError):
+        await client.complete([{"role": "user", "content": "first"}])
+    await client.complete([{"role": "user", "content": "retry"}])
+
+    assert client._upstream_session_id == "native-1"
+    assert requests[0]["session"]["upstream_id"] == ""
+    assert requests[1]["session"]["upstream_id"] == "native-1"
 
 
 @pytest.mark.asyncio

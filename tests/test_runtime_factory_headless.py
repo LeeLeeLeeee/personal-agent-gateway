@@ -72,7 +72,8 @@ def test_headless_runtime_uses_isolated_inactive_hook_session(tmp_path: Path) ->
     assert hook_session.id == runtime._session_id
     assert hook_session.hook_run_id == "hook-run-1"
     assert runtime._model._local_token == "local-secret"
-    assert runtime._model._consumer_session_id == hook_session.id
+    assert runtime._model._consumer_session_id is None
+    assert runtime._model._consumer_context_fingerprint is None
 
 
 def test_session_runtime_tracks_pag_session_id(tmp_path: Path) -> None:
@@ -83,6 +84,7 @@ def test_session_runtime_tracks_pag_session_id(tmp_path: Path) -> None:
 
     assert runtime._model._local_token == "local-secret"
     assert runtime._model._consumer_session_id == session_id
+    assert runtime._model._consumer_context_fingerprint
 
 
 def test_session_runtime_uses_snapshotted_persona_system_prompt(tmp_path: Path) -> None:
@@ -144,6 +146,56 @@ async def test_claude_session_runtime_wires_on_event_publishing_model_event(
     assert published["type"] == "model.event"
     assert published["kind"] == "message.delta"
     assert published["session_id"] == session_id
+
+
+async def test_session_update_records_link_before_terminal_and_next_runtime_resumes(
+    tmp_path: Path,
+) -> None:
+    factory = _factory(tmp_path)
+    session_id = factory._transcript.start_new()
+    runtime = factory.create_runtime_for_session(session_id)
+    client = runtime._model
+    assert isinstance(client, HttpModelClient)
+    assert client._on_event is not None
+
+    await client._on_event(
+        {
+            "kind": "session.updated",
+            "run_id": "run-1",
+            "upstream_session_id": "native-1",
+        }
+    )
+
+    resumed = factory.create_runtime_for_session(session_id)
+    assert resumed._model._upstream_session_id == "native-1"
+    assert resumed._history_mode == "latest_user"
+
+
+async def test_changed_execution_context_does_not_resume_upstream_session(
+    tmp_path: Path,
+) -> None:
+    factory = _factory(tmp_path)
+    session_id = factory._transcript.start_new()
+    first = factory.create_runtime_for_session(session_id)
+    assert first._model._on_event is not None
+    await first._model._on_event(
+        {
+            "kind": "session.updated",
+            "run_id": "run-1",
+            "upstream_session_id": "native-1",
+        }
+    )
+    SessionAgentConfigService(factory._transcript).set_config(
+        session_id,
+        "codex",
+        "default",
+        {"effort": "medium"},
+    )
+
+    changed = factory.create_runtime_for_session(session_id)
+
+    assert changed._model._upstream_session_id is None
+    assert changed._history_mode == "full"
 
 
 async def test_app_config_openai_runtime_wires_on_event_publishing_model_event(

@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from personal_agent_gateway.agent_session_link import AgentSessionLinkService
+from personal_agent_gateway.agent_session_link import (
+    AgentSessionContext,
+    AgentSessionLinkService,
+)
 from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.config import AppConfig, ConfigError
@@ -56,7 +59,6 @@ class AgentRuntimeFactory:
                 "claude",
                 model,
                 self._claude_execution(workspace_root, read_roots, write_mode, options),
-                consumer_session_id=session_id,
             )
             return self._runtime(
                 client,
@@ -76,7 +78,6 @@ class AgentRuntimeFactory:
                 "codex",
                 model,
                 self._codex_execution(workspace_root, read_roots, write_mode, options),
-                consumer_session_id=session_id,
             )
             return self._runtime(
                 client,
@@ -108,40 +109,39 @@ class AgentRuntimeFactory:
         workspace_root, read_roots, write_mode = self._space_context(session_config.persona_id)
         agent_id, model, options = self._effective_session_runtime_config(session_config)
         system_prompt = persona_system_prompt(session_config.persona_snapshot)
-        link_service = AgentSessionLinkService(self._transcript)
-        link = link_service.latest(
-            session_id=session_id,
+        execution = (
+            self._codex_execution(workspace_root, read_roots, write_mode, options)
+            if agent_id == "codex"
+            else self._claude_execution(workspace_root, read_roots, write_mode, options)
+        )
+        context = AgentSessionContext(
             agent_id=agent_id,
             model=model,
-            options=options,
+            execution=execution,
+            persona_id=session_config.persona_id,
+            persona_snapshot=session_config.persona_snapshot,
+            system_prompt=system_prompt,
         )
+        link_service = AgentSessionLinkService(self._transcript)
+        link = link_service.latest(session_id, context)
         history_mode = "latest_user" if link is not None else "full"
-
-        def record_upstream_session(upstream_session_id: str) -> None:
-            link_service.record(
-                session_id=session_id,
-                agent_id=agent_id,
-                model=model,
-                options=options,
-                upstream_session_id=upstream_session_id,
-            )
+        publish_model_event = self._chat_model_event_callback(
+            session_id,
+            link_service,
+            context,
+        )
 
         if agent_id == "codex":
-
-            async def publish_model_event(event: dict[str, object]) -> None:
-                if self._event_bus is not None:
-                    await self._event_bus.publish({"type": "model.event", **event, "session_id": session_id})
-
             return self._runtime(
                 self._remote_client(
                     "codex", model,
-                    self._codex_execution(workspace_root, read_roots, write_mode, options),
+                    execution,
                     on_event=publish_model_event,
                     upstream_session_id=link.upstream_session_id if link is not None else None,
                     consumer_session_id=session_id,
+                    consumer_context_fingerprint=context.fingerprint(),
                 ),
                 history_mode=history_mode,
-                on_upstream_session_id=record_upstream_session,
                 session_id=session_id,
                 system_prompt=system_prompt,
                 persona_id=session_config.persona_id,
@@ -150,21 +150,16 @@ class AgentRuntimeFactory:
             )
 
         if agent_id == "claude":
-
-            async def publish_model_event(event: dict[str, object]) -> None:
-                if self._event_bus is not None:
-                    await self._event_bus.publish({"type": "model.event", **event, "session_id": session_id})
-
             return self._runtime(
                 self._remote_client(
                     "claude", model,
-                    self._claude_execution(workspace_root, read_roots, write_mode, options),
+                    execution,
                     on_event=publish_model_event,
                     upstream_session_id=link.upstream_session_id if link is not None else None,
                     consumer_session_id=session_id,
+                    consumer_context_fingerprint=context.fingerprint(),
                 ),
                 history_mode=history_mode,
-                on_upstream_session_id=record_upstream_session,
                 session_id=session_id,
                 system_prompt=system_prompt,
                 persona_id=session_config.persona_id,
@@ -179,23 +174,14 @@ class AgentRuntimeFactory:
         workspace_root, read_roots, write_mode = self._space_context(None)
         effective_session_id = session_id if session_id is not None else self._transcript.active_id()
         if config.model_provider == "codex":
-
-            async def publish_model_event(event: dict[str, object]) -> None:
-                if self._event_bus is not None:
-                    await self._event_bus.publish(
-                        {"type": "model.event", **event, "session_id": effective_session_id}
-                    )
-
-            return self._runtime(
-                self._remote_client(
-                    "codex", config.model,
-                    self._codex_execution(workspace_root, read_roots, write_mode, {}),
-                    on_event=publish_model_event,
-                    consumer_session_id=effective_session_id,
-                ),
-                session_id=effective_session_id,
-                workspace_root=workspace_root,
-                read_roots=read_roots,
+            execution = self._codex_execution(workspace_root, read_roots, write_mode, {})
+            return self._create_app_remote_runtime(
+                "codex",
+                config.model,
+                execution,
+                effective_session_id,
+                workspace_root,
+                read_roots,
             )
 
         if config.model_provider != "openai":
@@ -203,23 +189,94 @@ class AgentRuntimeFactory:
         if not config.openai_api_key:
             raise ConfigError("OPENAI_API_KEY is required when AGENT_MODEL_PROVIDER=openai")
 
-        async def publish_model_event(event: dict[str, object]) -> None:
-            if self._event_bus is not None:
-                await self._event_bus.publish(
-                    {"type": "model.event", **event, "session_id": effective_session_id}
-                )
+        return self._create_app_remote_runtime(
+            "openai",
+            config.model,
+            {"workspace_root": str(workspace_root)},
+            effective_session_id,
+            workspace_root,
+            read_roots,
+        )
 
+    def _create_app_remote_runtime(
+        self,
+        provider: str,
+        model: str,
+        execution: dict[str, object],
+        session_id: str | None,
+        workspace_root: Path,
+        read_roots: list[Path],
+    ) -> AgentRuntime:
+        context = AgentSessionContext(
+            agent_id=provider,
+            model=model,
+            execution=execution,
+            persona_id=None,
+            persona_snapshot=None,
+            system_prompt=None,
+        )
+        link_service = AgentSessionLinkService(self._transcript)
+        is_chat_session = (
+            session_id is not None
+            and self._transcript.session_origin(session_id) == "chat"
+        )
+        link = (
+            link_service.latest(session_id, context)
+            if is_chat_session and session_id is not None
+            else None
+        )
+        on_event = (
+            self._chat_model_event_callback(session_id, link_service, context)
+            if is_chat_session and session_id is not None
+            else self._model_event_callback(session_id)
+        )
         return self._runtime(
             self._remote_client(
-                "openai", config.model,
-                {"workspace_root": str(workspace_root)},
-                on_event=publish_model_event,
-                consumer_session_id=effective_session_id,
+                provider,
+                model,
+                execution,
+                on_event=on_event,
+                upstream_session_id=link.upstream_session_id if link is not None else None,
+                consumer_session_id=session_id if is_chat_session else None,
+                consumer_context_fingerprint=(
+                    context.fingerprint() if is_chat_session else None
+                ),
             ),
-            session_id=effective_session_id,
+            history_mode="latest_user" if link is not None else "full",
+            session_id=session_id,
             workspace_root=workspace_root,
             read_roots=read_roots,
         )
+
+    def _chat_model_event_callback(
+        self,
+        session_id: str,
+        link_service: AgentSessionLinkService,
+        context: AgentSessionContext,
+    ):
+        async def on_event(event: dict[str, object]) -> None:
+            upstream_session_id = event.get("upstream_session_id")
+            if (
+                event.get("kind") == "session.updated"
+                and isinstance(upstream_session_id, str)
+                and upstream_session_id
+            ):
+                link_service.record(session_id, context, upstream_session_id)
+            if self._event_bus is not None:
+                await self._event_bus.publish(
+                    {"type": "model.event", **event, "session_id": session_id}
+                )
+
+        return on_event
+
+    def _model_event_callback(self, session_id: str | None):
+        async def on_event(event: dict[str, object]) -> None:
+            if self._event_bus is not None:
+                await self._event_bus.publish(
+                    {"type": "model.event", **event, "session_id": session_id}
+                )
+
+        return on_event
 
     def _codex_execution(self, workspace_root, read_roots, write_mode, options) -> dict[str, object]:
         return {
@@ -257,6 +314,7 @@ class AgentRuntimeFactory:
         on_event=None,
         upstream_session_id=None,
         consumer_session_id: str | None = None,
+        consumer_context_fingerprint: str | None = None,
     ) -> HttpModelClient:
         return HttpModelClient(
             base_url=self._config.lmg_base_url,
@@ -268,6 +326,7 @@ class AgentRuntimeFactory:
             local_token=self._config.lmg_local_token,
             consumer="personal-agent-gateway",
             consumer_session_id=consumer_session_id,
+            consumer_context_fingerprint=consumer_context_fingerprint,
             timeout_seconds=self._config.codex_timeout_seconds,
             idle_timeout_seconds=self._config.codex_idle_timeout_seconds,
         )
@@ -276,7 +335,6 @@ class AgentRuntimeFactory:
         self,
         model,
         history_mode: str = "full",
-        on_upstream_session_id=None,
         session_id: str | None = None,
         system_prompt: str | None = None,
         persona_id: str | None = None,
@@ -294,7 +352,6 @@ class AgentRuntimeFactory:
             job_service=self._job_service,
             event_bus=self._event_bus,
             history_mode=history_mode,
-            on_upstream_session_id=on_upstream_session_id,
             session_id=session_id,
             system_prompt=system_prompt,
             archive_service=self._archive_service,

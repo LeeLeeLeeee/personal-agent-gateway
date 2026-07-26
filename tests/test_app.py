@@ -470,30 +470,63 @@ def test_delete_session_cascades_to_linked_lmg_session(tmp_path: Path, monkeypat
     assert store.exists(session_id) is False
 
 
-def test_delete_session_preserves_chat_when_lmg_delete_fails(tmp_path: Path, monkeypatch) -> None:
+def test_delete_session_attempts_all_links_and_preserves_chat_until_retry_succeeds(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     config = make_config(tmp_path)
     store = TranscriptStore(config.session_dir)
     session_id = store.start_new()
-    store.append_to(
-        session_id,
-        "agent_session_link",
-        {
-            "agent_id": "codex",
-            "model": "default",
-            "options_fingerprint": "fingerprint",
-            "upstream_session_id": "codex-session-1",
-        },
-    )
+    upstream_ids = ["codex-session-1", "codex-session-2", "codex-session-3"]
+    for upstream_id in upstream_ids:
+        store.append_to(
+            session_id,
+            "agent_session_link",
+            {
+                "agent_id": "codex",
+                "model": "default",
+                "options_fingerprint": "fingerprint",
+                "upstream_session_id": upstream_id,
+            },
+        )
+    calls: list[str] = []
+    retrying = False
+
+    def delete_upstream(_config, upstream_id):
+        calls.append(upstream_id)
+        return retrying or upstream_id != "codex-session-2"
+
     monkeypatch.setattr(
         "personal_agent_gateway.api.chat_sessions.delete_lmg_session",
-        lambda _config, _upstream_id: False,
+        delete_upstream,
     )
     client = auth_client(config, FakeRuntime())
+    activity_service = client.app.state.session_activity_service
+    activity_service.record(
+        session_id,
+        "runtime.completed",
+        "runtime",
+        {"pending_approval": None},
+    )
 
     response = client.delete(f"/api/sessions/{session_id}")
 
     assert response.status_code == 502
+    assert response.json()["detail"] == {
+        "message": "Failed to delete linked local model sessions",
+        "upstream_session_ids": ["codex-session-2"],
+    }
+    assert calls == upstream_ids
     assert store.exists(session_id) is True
+    assert len(activity_service.list(session_id)) == 1
+
+    retrying = True
+    retry = client.delete(f"/api/sessions/{session_id}")
+
+    assert retry.status_code == 200
+    assert calls == upstream_ids + upstream_ids
+    assert store.exists(session_id) is False
+    assert activity_service.list(session_id) == []
 
 
 def test_sessions_api_hides_hook_transcripts_from_chat_routes(tmp_path: Path) -> None:
@@ -1046,11 +1079,24 @@ def test_chat_reuses_codex_upstream_session_after_first_response(tmp_path: Path,
     captured_messages: list[list[dict[str, object]]] = []
 
     class FakeHttpModelClient:
-        def __init__(self, *args, upstream_session_id=None, **kwargs) -> None:
+        def __init__(
+            self,
+            *args,
+            upstream_session_id=None,
+            on_event=None,
+            **kwargs,
+        ) -> None:
             captured_upstream_ids.append(upstream_session_id)
+            self._on_event = on_event
 
         async def complete(self, messages):
             captured_messages.append(messages)
+            await self._on_event(
+                {
+                    "kind": "session.updated",
+                    "upstream_session_id": "codex-thread-1",
+                }
+            )
             return ModelResponse(content="ok", tool_calls=[], upstream_session_id="codex-thread-1")
 
     monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
@@ -1083,11 +1129,25 @@ def test_chat_uses_app_config_model_for_default_codex_sessions_and_reuses_upstre
     captured_upstream_ids: list[str | None] = []
 
     class FakeHttpModelClient:
-        def __init__(self, *args, model: str, upstream_session_id=None, **kwargs) -> None:
+        def __init__(
+            self,
+            *args,
+            model: str,
+            upstream_session_id=None,
+            on_event=None,
+            **kwargs,
+        ) -> None:
             captured_models.append(model)
             captured_upstream_ids.append(upstream_session_id)
+            self._on_event = on_event
 
         async def complete(self, _messages):
+            await self._on_event(
+                {
+                    "kind": "session.updated",
+                    "upstream_session_id": "codex-thread-1",
+                }
+            )
             return ModelResponse(content="ok", tool_calls=[], upstream_session_id="codex-thread-1")
 
     monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
@@ -1109,11 +1169,24 @@ def test_chat_reuses_claude_upstream_session_after_first_response(tmp_path: Path
     captured_messages: list[list[dict[str, object]]] = []
 
     class FakeHttpModelClient:
-        def __init__(self, *args, upstream_session_id=None, **kwargs) -> None:
+        def __init__(
+            self,
+            *args,
+            upstream_session_id=None,
+            on_event=None,
+            **kwargs,
+        ) -> None:
             captured_upstream_ids.append(upstream_session_id)
+            self._on_event = on_event
 
         async def complete(self, messages):
             captured_messages.append(messages)
+            await self._on_event(
+                {
+                    "kind": "session.updated",
+                    "upstream_session_id": "claude-session-1",
+                }
+            )
             return ModelResponse(content="ok", tool_calls=[], upstream_session_id="claude-session-1")
 
     monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)

@@ -364,12 +364,18 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
             upstream_session_ids = AgentSessionLinkService(
                 context.transcript
             ).upstream_session_ids(session_id)
-            for upstream_session_id in upstream_session_ids:
-                if delete_lmg_session(context.config, upstream_session_id):
-                    continue
+            failed_upstream_ids = [
+                upstream_session_id
+                for upstream_session_id in upstream_session_ids
+                if not delete_lmg_session(context.config, upstream_session_id)
+            ]
+            if failed_upstream_ids:
                 raise HTTPException(
                     status_code=502,
-                    detail="Failed to delete linked local model session",
+                    detail={
+                        "message": "Failed to delete linked local model sessions",
+                        "upstream_session_ids": failed_upstream_ids,
+                    },
                 )
             return context.transcript.delete(session_id)
 

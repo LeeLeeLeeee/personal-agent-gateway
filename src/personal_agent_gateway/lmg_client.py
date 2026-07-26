@@ -5,6 +5,10 @@ import httpx
 from personal_agent_gateway.config import AppConfig
 
 
+class LMGQueryError(RuntimeError):
+    """Raised when an authoritative LMG query cannot be completed."""
+
+
 def _lmg_headers(config: AppConfig) -> dict[str, str]:
     if config.lmg_local_token is None:
         return {}
@@ -44,6 +48,25 @@ def fetch_sessions(config, *, transport: httpx.BaseTransport | None = None) -> l
     return payload if isinstance(payload, list) else []
 
 
+def fetch_sessions_strict(
+    config,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> list[dict[str, object]]:
+    """Fetch LMG sessions without converting an unavailable LMG into an empty list."""
+    url = f"{config.lmg_base_url.rstrip('/')}/v1/sessions"
+    try:
+        with httpx.Client(timeout=10.0, transport=transport) as client:
+            response = client.get(url, headers=_lmg_headers(config))
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise LMGQueryError("Unable to query local model gateway sessions") from exc
+    if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+        raise LMGQueryError("Invalid local model gateway sessions response")
+    return payload
+
+
 def delete_session(
     config,
     upstream_session_id: str,
@@ -55,6 +78,8 @@ def delete_session(
     try:
         with httpx.Client(timeout=10.0, transport=transport) as client:
             response = client.delete(url, headers=_lmg_headers(config))
+        if response.status_code == 404:
+            return True
         response.raise_for_status()
     except (httpx.HTTPError, ValueError):
         return False
