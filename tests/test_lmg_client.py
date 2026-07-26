@@ -1,15 +1,25 @@
 import httpx
+
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.lmg_client import delete_session, fetch_capabilities, fetch_sessions
 
 
-def _cfg(base="http://lmg"):
-    return AppConfig.from_env({"AGENT_WORKSPACE_ROOT": "/ws", "AGENT_SESSION_DIR": "/ws/data/sessions", "LMG_BASE_URL": base})
+def _cfg(base="http://lmg", token="local-secret"):
+    return AppConfig.from_env(
+        {
+            "AGENT_WORKSPACE_ROOT": "/ws",
+            "AGENT_SESSION_DIR": "/ws/data/sessions",
+            "LMG_BASE_URL": base,
+            "LMG_LOCAL_TOKEN": token,
+        }
+    )
 
 
 def test_fetch_capabilities_returns_payload():
     payload = {"schema_version": 1, "providers": {"codex": {"available": True, "models": [{"id": "x"}]}}}
-    def handler(request): return httpx.Response(200, json=payload)
+    def handler(request):
+        assert request.headers["authorization"] == "Bearer local-secret"
+        return httpx.Response(200, json=payload)
     got = fetch_capabilities(_cfg(), transport=httpx.MockTransport(handler))
     assert got == payload
 
@@ -27,7 +37,9 @@ def test_fetch_capabilities_none_on_http_error():
 def test_fetch_sessions_returns_list():
     rows = [{"upstream_id": "s1", "provider": "codex", "model": "default",
              "size_bytes": 100, "created_at": "t", "last_run_at": "t", "storage_path": "/p"}]
-    def handler(request): return httpx.Response(200, json=rows)
+    def handler(request):
+        assert request.headers["authorization"] == "Bearer local-secret"
+        return httpx.Response(200, json=rows)
     assert fetch_sessions(_cfg(), transport=httpx.MockTransport(handler)) == rows
 
 
@@ -47,6 +59,7 @@ def test_delete_session_calls_encoded_lmg_session_url():
     def handler(request):
         captured["method"] = request.method
         captured["path"] = request.url.raw_path
+        captured["authorization"] = request.headers["authorization"]
         return httpx.Response(204)
 
     deleted = delete_session(
@@ -59,7 +72,28 @@ def test_delete_session_calls_encoded_lmg_session_url():
     assert captured == {
         "method": "DELETE",
         "path": b"/v1/sessions/claude%2Fsession%20id",
+        "authorization": "Bearer local-secret",
     }
+
+
+def test_lmg_requests_omit_authorization_when_direct_config_has_no_token():
+    config = AppConfig(
+        workspace_root="/ws",
+        session_dir="/ws/data/sessions",
+        lmg_local_token=None,
+    )
+
+    def handler(request):
+        assert "authorization" not in request.headers
+        return httpx.Response(
+            200,
+            json={"schema_version": 1, "providers": {}},
+        )
+
+    assert fetch_capabilities(
+        config,
+        transport=httpx.MockTransport(handler),
+    ) == {"schema_version": 1, "providers": {}}
 
 
 def test_delete_session_returns_false_on_http_error():

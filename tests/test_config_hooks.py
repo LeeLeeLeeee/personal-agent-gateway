@@ -17,6 +17,7 @@ def test_hooks_config_from_env() -> None:
             "AGENT_WORKSPACE_ROOT": "/tmp/ws",
             "AGENT_SESSION_DIR": "/tmp/data/sessions",
             "AGENT_HOOK_POLL_INTERVAL_SECONDS": "15",
+            "LMG_LOCAL_TOKEN": "local-secret",
         }
     )
     assert config.hook_poll_interval_seconds == 15

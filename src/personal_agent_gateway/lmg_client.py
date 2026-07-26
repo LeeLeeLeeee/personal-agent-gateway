@@ -2,6 +2,14 @@ from urllib.parse import quote
 
 import httpx
 
+from personal_agent_gateway.config import AppConfig
+
+
+def _lmg_headers(config: AppConfig) -> dict[str, str]:
+    if config.lmg_local_token is None:
+        return {}
+    return {"Authorization": f"Bearer {config.lmg_local_token}"}
+
 
 def fetch_capabilities(config, *, transport: httpx.BaseTransport | None = None) -> dict | None:
     """Fetch /v1/models from the local-model-gateway and return the capability
@@ -10,7 +18,7 @@ def fetch_capabilities(config, *, transport: httpx.BaseTransport | None = None) 
     url = f"{config.lmg_base_url.rstrip('/')}/v1/models"
     try:
         with httpx.Client(timeout=10.0, transport=transport) as client:
-            response = client.get(url)
+            response = client.get(url, headers=_lmg_headers(config))
         response.raise_for_status()
         payload = response.json()
     except (httpx.HTTPError, ValueError):
@@ -28,7 +36,7 @@ def fetch_sessions(config, *, transport: httpx.BaseTransport | None = None) -> l
     url = f"{config.lmg_base_url.rstrip('/')}/v1/sessions"
     try:
         with httpx.Client(timeout=10.0, transport=transport) as client:
-            response = client.get(url)
+            response = client.get(url, headers=_lmg_headers(config))
         response.raise_for_status()
         payload = response.json()
     except (httpx.HTTPError, ValueError):
@@ -46,7 +54,7 @@ def delete_session(
     url = f"{config.lmg_base_url.rstrip('/')}/v1/sessions/{encoded_session_id}"
     try:
         with httpx.Client(timeout=10.0, transport=transport) as client:
-            response = client.delete(url)
+            response = client.delete(url, headers=_lmg_headers(config))
         response.raise_for_status()
     except (httpx.HTTPError, ValueError):
         return False

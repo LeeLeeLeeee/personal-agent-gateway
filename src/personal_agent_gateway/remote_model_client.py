@@ -1,9 +1,15 @@
 import json
+import uuid
 from collections.abc import Awaitable, Callable
 
 import httpx
 
-from personal_agent_gateway.model_client import INTERNAL_TOOL_NAMES, ModelResponse, ToolCall, WIRE_TOOL_NAMES
+from personal_agent_gateway.model_client import (
+    INTERNAL_TOOL_NAMES,
+    WIRE_TOOL_NAMES,
+    ModelResponse,
+    ToolCall,
+)
 
 
 class HttpModelClient:
@@ -16,6 +22,9 @@ class HttpModelClient:
         *,
         on_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
         upstream_session_id: str | None = None,
+        local_token: str | None = None,
+        consumer: str = "personal-agent-gateway",
+        consumer_session_id: str | None = None,
         timeout_seconds: int = 3600,
         idle_timeout_seconds: int = 600,
         transport: httpx.AsyncBaseTransport | None = None,
@@ -26,6 +35,9 @@ class HttpModelClient:
         self._execution = execution
         self._on_event = on_event
         self._upstream_session_id = upstream_session_id
+        self._local_token = local_token
+        self._consumer = consumer
+        self._consumer_session_id = consumer_session_id
         self._timeout_seconds = timeout_seconds
         self._idle_timeout_seconds = idle_timeout_seconds
         self._transport = transport
@@ -44,13 +56,25 @@ class HttpModelClient:
             "execution": self._execution,
             "timeout_ms": self._timeout_seconds * 1000,
             "idle_timeout_ms": self._idle_timeout_seconds * 1000,
+            "consumer": self._consumer,
+            "consumer_run_id": str(uuid.uuid4()),
             **body_extra,
         }
+        if self._consumer_session_id is not None:
+            body["consumer_session_id"] = self._consumer_session_id
         content = ""
         tool_calls: list[ToolCall] = []
         upstream_session_id = self._upstream_session_id
+        headers = {}
+        if self._local_token is not None:
+            headers["Authorization"] = f"Bearer {self._local_token}"
         async with httpx.AsyncClient(timeout=None, transport=self._transport) as client:
-            async with client.stream("POST", f"{self._base_url}/v1/runs", json=body) as response:
+            async with client.stream(
+                "POST",
+                f"{self._base_url}/v1/runs",
+                json=body,
+                headers=headers,
+            ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):

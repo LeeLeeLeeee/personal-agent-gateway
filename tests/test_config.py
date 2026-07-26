@@ -14,6 +14,7 @@ def test_claude_permission_mode_from_env(tmp_path):
         "AGENT_WORKSPACE_ROOT": str(tmp_path),
         "AGENT_SESSION_DIR": str(tmp_path / "sessions"),
         "AGENT_CLAUDE_PERMISSION_MODE": "plan",
+        "LMG_LOCAL_TOKEN": "local-secret",
     })
     assert config.claude_permission_mode == "plan"
 
@@ -23,6 +24,7 @@ def test_load_config_forwards_claude_permission_mode(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("AGENT_SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setenv("AGENT_CLAUDE_PERMISSION_MODE", "bypassPermissions")
+    monkeypatch.setenv("LMG_LOCAL_TOKEN", "local-secret")
     assert load_config().claude_permission_mode == "bypassPermissions"
 
 
@@ -36,6 +38,7 @@ def test_codex_timeout_defaults_and_idle_timeout_from_env(tmp_path):
         "AGENT_SESSION_DIR": str(tmp_path / "sessions"),
         "AGENT_CODEX_TIMEOUT_SECONDS": "7200",
         "AGENT_CODEX_IDLE_TIMEOUT_SECONDS": "900",
+        "LMG_LOCAL_TOKEN": "local-secret",
     })
     assert configured.codex_timeout_seconds == 7200
     assert configured.codex_idle_timeout_seconds == 900
@@ -54,4 +57,5 @@ def test_job_worker_concurrency_rejects_unsupported_values(tmp_path):
             "AGENT_WORKSPACE_ROOT": str(tmp_path),
             "AGENT_SESSION_DIR": str(tmp_path / "sessions"),
             "AGENT_JOB_WORKER_CONCURRENCY": "2",
+            "LMG_LOCAL_TOKEN": "local-secret",
         })

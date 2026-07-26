@@ -1,4 +1,6 @@
 import json
+import uuid
+
 import httpx
 import pytest
 
@@ -16,6 +18,7 @@ def _transport(body: bytes, capture: dict | None = None):
     def handler(request: httpx.Request) -> httpx.Response:
         if capture is not None:
             capture["body"] = json.loads(request.content)
+            capture["headers"] = dict(request.headers)
         return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
     return httpx.MockTransport(handler)
 
@@ -91,6 +94,74 @@ async def test_complete_sends_provider_model_execution_and_resume():
     assert cap["body"]["model"] == "claude-sonnet-5"
     assert cap["body"]["session"]["upstream_id"] == "prev"
     assert cap["body"]["execution"]["sandbox"] == "workspace-write"
+
+
+@pytest.mark.asyncio
+async def test_complete_sends_authenticated_consumer_tracking():
+    cap = {}
+    body = _sse({"kind": "run.completed", "content": "x"})
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        local_token="local-secret",
+        consumer_session_id="pag-session-1",
+        transport=_transport(body, cap),
+    )
+
+    await client.complete([{"role": "user", "content": "hi"}])
+
+    assert cap["headers"]["authorization"] == "Bearer local-secret"
+    assert cap["body"]["consumer"] == "personal-agent-gateway"
+    assert cap["body"]["consumer_session_id"] == "pag-session-1"
+    uuid.UUID(cap["body"]["consumer_run_id"])
+
+
+@pytest.mark.asyncio
+async def test_complete_creates_new_consumer_run_id_per_call():
+    requests = []
+    body = _sse({"kind": "run.completed", "content": "x"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            content=body,
+            headers={"content-type": "text/event-stream"},
+        )
+
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.complete([{"role": "user", "content": "first"}])
+    await client.complete([{"role": "user", "content": "second"}])
+
+    assert requests[0]["consumer_run_id"] != requests[1]["consumer_run_id"]
+    assert all("consumer_session_id" not in request for request in requests)
+    assert all(request["consumer"] == "personal-agent-gateway" for request in requests)
+
+
+@pytest.mark.asyncio
+async def test_complete_omits_authorization_without_token():
+    cap = {}
+    body = _sse({"kind": "run.completed", "content": "x"})
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        transport=_transport(body, cap),
+    )
+
+    await client.complete([{"role": "user", "content": "hi"}])
+
+    assert "authorization" not in cap["headers"]
 
 
 @pytest.mark.asyncio

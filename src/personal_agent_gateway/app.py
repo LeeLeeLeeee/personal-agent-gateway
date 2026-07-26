@@ -76,8 +76,11 @@ from personal_agent_gateway.runners.shell import ShellRunner
 from personal_agent_gateway.schedules import ScheduleService
 from personal_agent_gateway.scheduler_loop import SchedulerLoop
 from personal_agent_gateway.security_settings import SecuritySettingsService
-from personal_agent_gateway.space_policies import SpacePolicyService
-from personal_agent_gateway.space_policies import policy_from_snapshot
+from personal_agent_gateway.space_policies import (
+    SpacePolicy,
+    SpacePolicyService,
+    policy_from_snapshot,
+)
 from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
 from personal_agent_gateway.sources.email import ImapEmailAdapter
 from personal_agent_gateway.team_directory import TeamService
@@ -555,18 +558,13 @@ def _team_model_factory(
         workspace_root.mkdir(parents=True, exist_ok=True)
         run = team_runs.get_team_run(agent.team_run_id) if team_runs else None
         space_policy = policy_from_snapshot(run.space_policy) if run else None
-        read_dirs = (
-            [Path(space_policy.read_path)]
-            if space_policy and space_policy.read_path
-            else []
-        )
-        artifact_dirs = [Path(run.artifact_root)] if run and run.artifact_root else []
+        read_roots = _team_cli_read_roots(workspace_root, space_policy)
         raw_options = agent.persona_snapshot.get("default_options")
         options = raw_options if isinstance(raw_options, dict) else {}
         if agent.backend == "claude":
             claude_execution: dict[str, object] = {
                 "workspace_root": str(workspace_root),
-                "read_roots": [str(p) for p in (*read_dirs, *artifact_dirs)],
+                "read_roots": read_roots,
                 "permission_mode": str(
                     "bypassPermissions"
                     if space_policy and space_policy.write_mode == "full_access"
@@ -583,12 +581,15 @@ def _team_model_factory(
                 model=agent.model,
                 execution=claude_execution,
                 upstream_session_id=session,
+                local_token=config.lmg_local_token,
+                consumer="personal-agent-gateway",
+                consumer_session_id=agent.team_run_id,
                 timeout_seconds=config.codex_timeout_seconds,
                 idle_timeout_seconds=config.codex_idle_timeout_seconds,
             )
         codex_execution: dict[str, object] = {
             "workspace_root": str(workspace_root),
-            "read_roots": [str(p) for p in artifact_dirs],
+            "read_roots": read_roots,
             "sandbox": (
                 "danger-full-access"
                 if space_policy and space_policy.write_mode == "full_access"
@@ -608,11 +609,33 @@ def _team_model_factory(
             model=agent.model,
             execution=codex_execution,
             upstream_session_id=session,
+            local_token=config.lmg_local_token,
+            consumer="personal-agent-gateway",
+            consumer_session_id=agent.team_run_id,
             timeout_seconds=config.codex_timeout_seconds,
             idle_timeout_seconds=config.codex_idle_timeout_seconds,
         )
 
     return team_model_factory
+
+
+def _team_cli_read_roots(
+    workspace_root: Path,
+    space_policy: SpacePolicy | None,
+) -> list[str]:
+    if space_policy is None or not space_policy.read_path:
+        return []
+    canonical_workspace = workspace_root.resolve()
+    canonical_read_root = Path(space_policy.read_path).resolve()
+    try:
+        canonical_read_root.relative_to(canonical_workspace)
+    except ValueError as exc:
+        if space_policy.read_mode == "home":
+            return []
+        raise ValueError(
+            "CLI read path must be inside the team workspace"
+        ) from exc
+    return [str(canonical_read_root)]
 
 
 def _select_frontend_index(package_dir: Path) -> Path:

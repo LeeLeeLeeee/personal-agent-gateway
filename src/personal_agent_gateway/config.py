@@ -71,6 +71,7 @@ class AppConfig(BaseModel):
     job_worker_concurrency: int = 1
     hook_poll_interval_seconds: int = 30
     lmg_base_url: str = "http://127.0.0.1:8788"
+    lmg_local_token: str | None = None
 
     @field_validator("web_host")
     @classmethod
@@ -157,11 +158,14 @@ class AppConfig(BaseModel):
         token = env.get("AGENT_WEB_TOKEN")
         workspace_root = env.get("AGENT_WORKSPACE_ROOT")
         session_dir = env.get("AGENT_SESSION_DIR")
+        lmg_local_token = (env.get("LMG_LOCAL_TOKEN") or "").strip()
 
         if not workspace_root:
             raise ConfigError("AGENT_WORKSPACE_ROOT is required")
         if not session_dir:
             raise ConfigError("AGENT_SESSION_DIR is required")
+        if not lmg_local_token:
+            raise ConfigError("LMG_LOCAL_TOKEN is required")
 
         session_path = Path(session_dir)
         data_root = session_path.parent
@@ -221,6 +225,7 @@ class AppConfig(BaseModel):
                     env.get("AGENT_HOOK_POLL_INTERVAL_SECONDS") or "30"
                 ),
                 lmg_base_url=env.get("LMG_BASE_URL") or "http://127.0.0.1:8788",
+                lmg_local_token=lmg_local_token,
             )
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
@@ -274,5 +279,6 @@ def load_config() -> AppConfig:
             "AGENT_JOB_WORKER_CONCURRENCY": os.getenv("AGENT_JOB_WORKER_CONCURRENCY"),
             "AGENT_HOOK_POLL_INTERVAL_SECONDS": os.getenv("AGENT_HOOK_POLL_INTERVAL_SECONDS"),
             "LMG_BASE_URL": os.getenv("LMG_BASE_URL"),
+            "LMG_LOCAL_TOKEN": os.getenv("LMG_LOCAL_TOKEN"),
         }
     )

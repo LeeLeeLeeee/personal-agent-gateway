@@ -47,14 +47,16 @@ class AgentRuntimeFactory:
     ) -> AgentRuntime:
         workspace_root, read_roots, write_mode = self._space_context(persona_id)
         if backend == "claude":
-            client = self._remote_client(
-                "claude", model,
-                self._claude_execution(workspace_root, read_roots, write_mode, options),
-            )
             session_id = self._transcript.start_new(
                 origin="hook",
                 hook_run_id=hook_run_id,
                 activate=False,
+            )
+            client = self._remote_client(
+                "claude",
+                model,
+                self._claude_execution(workspace_root, read_roots, write_mode, options),
+                consumer_session_id=session_id,
             )
             return self._runtime(
                 client,
@@ -65,14 +67,16 @@ class AgentRuntimeFactory:
                 read_roots=read_roots,
             )
         if backend == "codex":
-            client = self._remote_client(
-                "codex", model,
-                self._codex_execution(workspace_root, read_roots, write_mode, options),
-            )
             session_id = self._transcript.start_new(
                 origin="hook",
                 hook_run_id=hook_run_id,
                 activate=False,
+            )
+            client = self._remote_client(
+                "codex",
+                model,
+                self._codex_execution(workspace_root, read_roots, write_mode, options),
+                consumer_session_id=session_id,
             )
             return self._runtime(
                 client,
@@ -134,6 +138,7 @@ class AgentRuntimeFactory:
                     self._codex_execution(workspace_root, read_roots, write_mode, options),
                     on_event=publish_model_event,
                     upstream_session_id=link.upstream_session_id if link is not None else None,
+                    consumer_session_id=session_id,
                 ),
                 history_mode=history_mode,
                 on_upstream_session_id=record_upstream_session,
@@ -156,6 +161,7 @@ class AgentRuntimeFactory:
                     self._claude_execution(workspace_root, read_roots, write_mode, options),
                     on_event=publish_model_event,
                     upstream_session_id=link.upstream_session_id if link is not None else None,
+                    consumer_session_id=session_id,
                 ),
                 history_mode=history_mode,
                 on_upstream_session_id=record_upstream_session,
@@ -185,6 +191,7 @@ class AgentRuntimeFactory:
                     "codex", config.model,
                     self._codex_execution(workspace_root, read_roots, write_mode, {}),
                     on_event=publish_model_event,
+                    consumer_session_id=effective_session_id,
                 ),
                 session_id=effective_session_id,
                 workspace_root=workspace_root,
@@ -207,6 +214,7 @@ class AgentRuntimeFactory:
                 "openai", config.model,
                 {"workspace_root": str(workspace_root)},
                 on_event=publish_model_event,
+                consumer_session_id=effective_session_id,
             ),
             session_id=effective_session_id,
             workspace_root=workspace_root,
@@ -240,7 +248,16 @@ class AgentRuntimeFactory:
             "agent": str(options["agent"]) if options.get("agent") else "",
         }
 
-    def _remote_client(self, provider, model, execution, *, on_event=None, upstream_session_id=None) -> HttpModelClient:
+    def _remote_client(
+        self,
+        provider,
+        model,
+        execution,
+        *,
+        on_event=None,
+        upstream_session_id=None,
+        consumer_session_id: str | None = None,
+    ) -> HttpModelClient:
         return HttpModelClient(
             base_url=self._config.lmg_base_url,
             provider=provider,
@@ -248,6 +265,9 @@ class AgentRuntimeFactory:
             execution=execution,
             on_event=on_event,
             upstream_session_id=upstream_session_id,
+            local_token=self._config.lmg_local_token,
+            consumer="personal-agent-gateway",
+            consumer_session_id=consumer_session_id,
             timeout_seconds=self._config.codex_timeout_seconds,
             idle_timeout_seconds=self._config.codex_idle_timeout_seconds,
         )

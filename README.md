@@ -106,7 +106,16 @@ AGENT_WEB_PORT=8787
 AGENT_WORKSPACE_ROOT=/absolute/path/to/workspace
 AGENT_MODEL_PROVIDER=codex
 AGENT_MODEL=default
+LMG_LOCAL_TOKEN=replace-with-a-long-random-value
 ```
+
+LMG에도 동일한 `LMG_LOCAL_TOKEN`을 설정해야 합니다. LMG에서 실행 경로를 제한하려면 OS path-list separator(macOS/Linux `:`, Windows `;`)로 `LMG_ALLOWED_ROOTS`를 지정합니다.
+
+```bash
+LMG_ALLOWED_ROOTS=/absolute/path/to/workspace:/another/allowed/root
+```
+
+LMG는 loopback(`127.0.0.1` 또는 `::1`)에서만 수신하고 `/livez`만 무인증으로 제공합니다. 공유 토큰은 브라우저와 우발적인 로컬 호출을 막지만 같은 사용자 권한의 악성 로컬 프로세스를 격리하지 않습니다. PAG가 보내는 `consumer`, `consumer_session_id`, `consumer_run_id`는 추적 정보이며 권한 판단에 사용되지 않습니다.
 
 React UI를 build합니다.
 
@@ -151,7 +160,7 @@ npm --prefix frontend run build
 CLI model과 option 탐지는 LMG가 담당합니다. 탐지 결과는 실행 중인 LMG에서 확인합니다.
 
 ```bash
-curl http://127.0.0.1:8788/v1/models
+curl -H "Authorization: Bearer $LMG_LOCAL_TOKEN" http://127.0.0.1:8788/v1/models
 ```
 
 개발 서버 분리 실행과 Troubleshooting은 [설치·운영 가이드](docs/knowledge/gateway-setup-guide.md#개발-모드)를 참고하세요.

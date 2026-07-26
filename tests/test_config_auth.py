@@ -17,6 +17,7 @@ from personal_agent_gateway.config import (
 @pytest.fixture(autouse=True)
 def disable_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("personal_agent_gateway.config.load_dotenv", lambda: None)
+    monkeypatch.setenv("LMG_LOCAL_TOKEN", "local-secret")
 
 
 def test_load_config_does_not_require_web_token(
@@ -30,6 +31,30 @@ def test_load_config_does_not_require_web_token(
     config = load_config()
 
     assert config.web_token is None
+
+
+def test_load_config_reads_lmg_local_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AGENT_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("AGENT_SESSION_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("LMG_LOCAL_TOKEN", " local-secret ")
+
+    config = load_config()
+
+    assert config.lmg_local_token == "local-secret"
+
+
+def test_from_env_rejects_blank_lmg_local_token() -> None:
+    with pytest.raises(ConfigError, match="LMG_LOCAL_TOKEN is required"):
+        AppConfig.from_env(
+            {
+                "AGENT_WORKSPACE_ROOT": "/ws",
+                "AGENT_SESSION_DIR": "/ws/data/sessions",
+                "LMG_LOCAL_TOKEN": " ",
+            }
+        )
 
 
 def test_load_config_rejects_non_loopback_host(
@@ -52,6 +77,7 @@ def test_load_config_reads_cookie_secure_flag() -> None:
             "AGENT_WORKSPACE_ROOT": ".",
             "AGENT_SESSION_DIR": "./data/sessions",
             "AGENT_COOKIE_SECURE": "true",
+            "LMG_LOCAL_TOKEN": "local-secret",
         }
     )
 
@@ -175,7 +201,11 @@ def test_require_token_rejects_missing_or_invalid_token() -> None:
 
 
 def test_lmg_base_url_default_and_override() -> None:
-    base = {"AGENT_WORKSPACE_ROOT": "/ws", "AGENT_SESSION_DIR": "/ws/data/sessions"}
+    base = {
+        "AGENT_WORKSPACE_ROOT": "/ws",
+        "AGENT_SESSION_DIR": "/ws/data/sessions",
+        "LMG_LOCAL_TOKEN": "local-secret",
+    }
     cfg = AppConfig.from_env(base)
     assert cfg.lmg_base_url == "http://127.0.0.1:8788"
     cfg2 = AppConfig.from_env({**base, "LMG_BASE_URL": "http://127.0.0.1:9999"})

@@ -16,6 +16,7 @@ def _factory(tmp_path: Path) -> AgentRuntimeFactory:
     config = AppConfig(
         workspace_root=workspace,
         session_dir=tmp_path / "data" / "sessions",
+        lmg_local_token="local-secret",
     )
     return AgentRuntimeFactory(config, TranscriptStore(config.session_dir))
 
@@ -70,6 +71,18 @@ def test_headless_runtime_uses_isolated_inactive_hook_session(tmp_path: Path) ->
     hook_session = factory._transcript.list_sessions(origin="hook")[0]
     assert hook_session.id == runtime._session_id
     assert hook_session.hook_run_id == "hook-run-1"
+    assert runtime._model._local_token == "local-secret"
+    assert runtime._model._consumer_session_id == hook_session.id
+
+
+def test_session_runtime_tracks_pag_session_id(tmp_path: Path) -> None:
+    factory = _factory(tmp_path)
+    session_id = factory._transcript.start_new()
+
+    runtime = factory.create_runtime_for_session(session_id)
+
+    assert runtime._model._local_token == "local-secret"
+    assert runtime._model._consumer_session_id == session_id
 
 
 def test_session_runtime_uses_snapshotted_persona_system_prompt(tmp_path: Path) -> None:
