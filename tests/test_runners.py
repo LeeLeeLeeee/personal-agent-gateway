@@ -70,9 +70,19 @@ def test_capture_command_uses_macos_screencapture(tmp_path: Path) -> None:
 
 
 class FakeAgentRuntime:
-    def __init__(self, response_text: str, pending_approval: dict | None = None) -> None:
+    def __init__(
+        self,
+        response_text: str,
+        pending_approval: dict | None = None,
+        termination: str = "completed",
+        error_code: str | None = None,
+        diagnostic: str | None = None,
+    ) -> None:
         self._response_text = response_text
         self._pending_approval = pending_approval
+        self._termination = termination
+        self._error_code = error_code
+        self._diagnostic = diagnostic
         self.received_prompt: str | None = None
 
     async def handle_user_message(self, content: str) -> RuntimeResult:
@@ -80,12 +90,28 @@ class FakeAgentRuntime:
         return RuntimeResult(
             messages=[{"role": "assistant", "content": self._response_text}],
             pending_approval=self._pending_approval,
+            termination=self._termination,
+            error_code=self._error_code,
+            diagnostic=self._diagnostic,
         )
 
 
 class FakeAgentRuntimeFactory:
-    def __init__(self, response_text: str, pending_approval: dict | None = None) -> None:
-        self.runtime = FakeAgentRuntime(response_text, pending_approval)
+    def __init__(
+        self,
+        response_text: str,
+        pending_approval: dict | None = None,
+        termination: str = "completed",
+        error_code: str | None = None,
+        diagnostic: str | None = None,
+    ) -> None:
+        self.runtime = FakeAgentRuntime(
+            response_text,
+            pending_approval,
+            termination,
+            error_code,
+            diagnostic,
+        )
 
     def create_default_runtime(self) -> FakeAgentRuntime:
         return self.runtime
@@ -118,3 +144,23 @@ async def test_agent_runner_reports_failure_when_turn_needs_approval() -> None:
 
     assert result.exit_code == 1
     assert "approval" in result.stderr.lower()
+
+
+async def test_agent_runner_reports_non_completed_termination_as_failure() -> None:
+    runner = AgentRunner(
+        FakeAgentRuntimeFactory(
+            "Error: deadline",
+            termination="timed_out",
+            error_code="run_timeout",
+            diagnostic="remote_run_timeout",
+        )
+    )
+
+    result = await runner.run("agent.instruct", {"prompt": "do a thing"})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "timed_out" in result.stderr
+    assert result.error_code == "run_timeout"
+    assert result.diagnostic == "remote_run_timeout"
+    assert "Error: deadline" not in result.stderr

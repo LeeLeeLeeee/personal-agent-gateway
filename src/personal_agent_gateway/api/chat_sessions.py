@@ -91,6 +91,7 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
             return {
                 "messages": [],
                 "pending_approval": False,
+                "termination": "cancelled",
                 "session_id": session_id,
                 "request_id": request_id,
                 "last_event_id": _last_session_event_id(
@@ -566,22 +567,32 @@ def _event_payload(event: BaseModel) -> dict[str, object]:
 
 
 def _runtime_response(result: RuntimeResult) -> dict[str, object]:
-    return {"messages": result.messages, "pending_approval": result.pending_approval}
+    payload: dict[str, object] = {
+        "messages": result.messages,
+        "pending_approval": result.pending_approval,
+        "termination": result.termination,
+    }
+    if result.error_code is not None:
+        payload["error_code"] = result.error_code
+    if result.diagnostic is not None:
+        payload["diagnostic"] = result.diagnostic
+    return payload
 
 
 def _runtime_audit_status(result: RuntimeResult) -> str:
-    for message in result.messages:
-        content = message.get("content")
-        if isinstance(content, str) and content.startswith("Error:"):
-            return "failed"
-    return "success"
+    return "success" if result.termination == "completed" else "failed"
 
 
 def _compat_chat_response(payload: dict[str, object]) -> dict[str, object]:
-    return {
+    response = {
         "messages": payload["messages"],
         "pending_approval": payload["pending_approval"],
+        "termination": payload["termination"],
     }
+    for key in ("error_code", "diagnostic"):
+        if key in payload:
+            response[key] = payload[key]
+    return response
 
 
 def _session_payload(
@@ -611,7 +622,7 @@ def _session_status(
 def _last_activity_event_id(events: list[object]) -> int | None:
     if not events:
         return None
-    return int(getattr(events[-1], "id"))
+    return int(events[-1].id)
 
 
 def _last_session_event_id(

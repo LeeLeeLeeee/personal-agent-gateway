@@ -16,8 +16,8 @@ from personal_agent_gateway.mail_knowledge import (
     build_mail_team_instruction,
 )
 from personal_agent_gateway.personas import persona_system_prompt
-from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.redaction import redact_text
+from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycles import (
     TeamCycleRequest,
@@ -26,6 +26,18 @@ from personal_agent_gateway.team_cycles import (
 )
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.teams import TeamRun, TeamRunCycle, TeamRunService
+
+
+def _termination_message(result: object) -> str:
+    termination = str(getattr(result, "termination", "failed"))
+    error_code = getattr(result, "error_code", None)
+    diagnostic = getattr(result, "diagnostic", None)
+    details = [termination]
+    if isinstance(error_code, str) and error_code:
+        details.append(error_code)
+    if isinstance(diagnostic, str) and diagnostic:
+        details.append(diagnostic)
+    return f"Agent turn terminated: {' | '.join(details)}."
 
 
 class HookRunner:
@@ -147,6 +159,12 @@ class HookRunner:
             self._hook_runs.mark_failed(
                 run_id,
                 "Agent turn paused awaiting tool approval; hook runs cannot approve tool calls.",
+            )
+            status = "failed"
+        elif result.termination != "completed":
+            self._hook_runs.mark_failed(
+                run_id,
+                _termination_message(result),
             )
             status = "failed"
         else:
@@ -518,7 +536,7 @@ class HookRunner:
                     self._interruption or "Gateway shutdown interrupted hook run",
                 )
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 message = self._safe_error(run_id, exc)
                 self._last_error = message
                 self._fail_if_active(run_id, message)

@@ -1,5 +1,5 @@
+import asyncio
 import json
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -8,14 +8,24 @@ from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ModelClient, ToolCall
+from personal_agent_gateway.redaction import is_sensitive_key, redact_text
+from personal_agent_gateway.remote_model_client import (
+    RemoteRunAbortedError,
+    RemoteRunError,
+)
 from personal_agent_gateway.tools import ShellResult, WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptEvent, TranscriptStore
+
+RuntimeTermination = Literal["completed", "failed", "cancelled", "timed_out"]
 
 
 @dataclass(frozen=True)
 class RuntimeResult:
     messages: list[dict[str, object]]
     pending_approval: dict[str, object] | None
+    termination: RuntimeTermination = "completed"
+    error_code: str | None = None
+    diagnostic: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,12 +100,15 @@ class AgentRuntime:
                 {
                     "session_id": session_id,
                     "pending_approval": result.pending_approval,
+                    "termination": result.termination,
                 },
             )
             return result
-        except Exception as exc:
-            await self._publish("runtime.error", {"message": _redact_text(str(exc)), "session_id": session_id})
-            return self._handle_runtime_error(exc, session_id)
+        except asyncio.CancelledError:
+            await self._record_cancellation(session_id)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return await self._handle_runtime_error(exc, session_id)
 
     async def approve(self, approval_id: str) -> RuntimeResult:
         session_id: str | None = None
@@ -120,9 +133,14 @@ class AgentRuntime:
                 session_id,
             )
             self._append("tool_result", _shell_result_payload(result, pending.tool_call_id), session_id)
-            return await self._run_model_loop(session_id)
-        except Exception as exc:
-            return self._handle_runtime_error(exc, session_id)
+            runtime_result = await self._run_model_loop(session_id)
+            await self._publish_completion(runtime_result, session_id)
+            return runtime_result
+        except asyncio.CancelledError:
+            await self._record_cancellation(session_id)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return await self._handle_runtime_error(exc, session_id)
 
     async def deny(self, approval_id: str) -> RuntimeResult:
         session_id: str | None = None
@@ -146,12 +164,17 @@ class AgentRuntime:
                 },
                 session_id,
             )
-            return RuntimeResult(
+            runtime_result = RuntimeResult(
                 messages=[{"role": "assistant", "content": "Command denied."}],
                 pending_approval=None,
             )
-        except Exception as exc:
-            return self._handle_runtime_error(exc, session_id)
+            await self._publish_completion(runtime_result, session_id)
+            return runtime_result
+        except asyncio.CancelledError:
+            await self._record_cancellation(session_id)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return await self._handle_runtime_error(exc, session_id)
 
     async def _run_model_loop(self, session_id: str) -> RuntimeResult:
         for _iteration in range(8):
@@ -260,12 +283,54 @@ class AgentRuntime:
     def _restore_pending_shell(self, pending: PendingShellRequest) -> None:
         self._tools.approvals.restore_pending(pending.approval_id, pending.command)
 
-    def _handle_runtime_error(self, exc: Exception, session_id: str | None = None) -> RuntimeResult:
-        message = _redact_text(str(exc))
-        self._append("runtime_error", {"message": message}, session_id)
+    async def _handle_runtime_error(
+        self,
+        exc: Exception,
+        session_id: str | None = None,
+    ) -> RuntimeResult:
+        payload = _runtime_error_payload(exc)
+        if (
+            isinstance(exc, RemoteRunError)
+            and exc.upstream_session_id
+            and self._on_upstream_session_id is not None
+        ):
+            self._on_upstream_session_id(exc.upstream_session_id)
+        self._append("runtime_error", payload, session_id)
+        await self._publish("runtime.error", {"session_id": session_id, **payload})
         return RuntimeResult(
-            messages=[{"role": "assistant", "content": f"Error: {message}"}],
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": f"Error: {payload['message']}",
+                }
+            ],
             pending_approval=None,
+            termination=payload["termination"],
+            error_code=str(payload["error_code"]),
+            diagnostic=str(payload["message"]),
+        )
+
+    async def _record_cancellation(self, session_id: str | None) -> None:
+        await self._handle_runtime_error(
+            RemoteRunAbortedError(
+                "run_cancelled",
+                "remote_run_cancelled",
+            ),
+            session_id,
+        )
+
+    async def _publish_completion(
+        self,
+        result: RuntimeResult,
+        session_id: str | None,
+    ) -> None:
+        await self._publish(
+            "runtime.completed",
+            {
+                "session_id": session_id,
+                "pending_approval": result.pending_approval,
+                "termination": result.termination,
+            },
         )
 
     def _resolve_session_id(self, create: bool) -> str | None:
@@ -458,10 +523,10 @@ def _redact_payload(payload: dict[str, object]) -> dict[str, object]:
 
 
 def _redact_value(key: str, value: object) -> object:
-    if key in {"AGENT_WEB_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"}:
+    if is_sensitive_key(key):
         return "[redacted]"
     if isinstance(value, str):
-        return _redact_text(value)
+        return redact_text(value)
     if isinstance(value, dict):
         return {str(child_key): _redact_value(str(child_key), child_value) for child_key, child_value in value.items()}
     if isinstance(value, list):
@@ -469,11 +534,22 @@ def _redact_value(key: str, value: object) -> object:
     return value
 
 
-def _redact_text(value: str) -> str:
-    redacted = value
-    for name in ("AGENT_WEB_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"):
-        redacted = redacted.replace(name, "[redacted]")
-        secret = os.getenv(name)
-        if secret:
-            redacted = redacted.replace(secret, "[redacted]")
-    return redacted
+def _runtime_error_payload(exc: Exception) -> dict[str, object]:
+    termination: RuntimeTermination = "failed"
+    code = "runtime_error"
+    payload: dict[str, object] = {
+        "message": redact_text(exc),
+        "error_code": code,
+        "termination": termination,
+    }
+    if not isinstance(exc, RemoteRunError):
+        return payload
+
+    if isinstance(exc, RemoteRunAbortedError):
+        termination = "timed_out" if exc.code == "run_timeout" else "cancelled"
+    payload["error_code"] = exc.code
+    payload["termination"] = termination
+    payload["partial_content"] = redact_text(exc.partial_content)
+    if exc.upstream_session_id:
+        payload["upstream_session_id"] = redact_text(exc.upstream_session_id)
+    return payload

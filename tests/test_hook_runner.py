@@ -27,6 +27,9 @@ from personal_agent_gateway.teams import TeamRunService
 class FakeRuntimeResult:
     messages: list
     pending_approval: object
+    termination: str = "completed"
+    error_code: str | None = None
+    diagnostic: str | None = None
 
 
 class FakeRuntime:
@@ -78,7 +81,7 @@ def _setup(tmp_path: Path, runtime: FakeRuntime):
 @pytest.mark.asyncio
 async def test_run_one_success_records_result_and_publishes(tmp_path: Path) -> None:
     runtime = FakeRuntime(FakeRuntimeResult([{"content": "done"}], None))
-    runner, runs, run, hook, bus = _setup(tmp_path, runtime)
+    runner, runs, run, _hook, bus = _setup(tmp_path, runtime)
 
     await runner.run_one(run.id)
 
@@ -94,11 +97,35 @@ async def test_run_one_success_records_result_and_publishes(tmp_path: Path) -> N
 @pytest.mark.asyncio
 async def test_run_one_pending_approval_marks_failed(tmp_path: Path) -> None:
     runtime = FakeRuntime(FakeRuntimeResult([{"content": "partial"}], {"id": "a1"}))
-    runner, runs, run, hook, bus = _setup(tmp_path, runtime)
+    runner, runs, run, _hook, _bus = _setup(tmp_path, runtime)
 
     await runner.run_one(run.id)
 
     assert runs.get_run(run.id).status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_run_one_non_completed_termination_marks_failed(tmp_path: Path) -> None:
+    runtime = FakeRuntime(
+        FakeRuntimeResult(
+            [{"content": "Error: deadline"}],
+            None,
+            "timed_out",
+            "run_timeout",
+            "remote_run_timeout",
+        )
+    )
+    runner, runs, run, _hook, bus = _setup(tmp_path, runtime)
+
+    await runner.run_one(run.id)
+
+    updated = runs.get_run(run.id)
+    assert updated.status == "failed"
+    assert updated.error_message == (
+        "Agent turn terminated: timed_out | run_timeout | remote_run_timeout."
+    )
+    assert "Error: deadline" not in str(updated.error_message)
+    assert bus.recent()[-1]["status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -446,7 +473,6 @@ async def test_library_enabled_team_hook_saves_review_draft(
         archive,
     ) = _setup_team_hook(tmp_path, library_draft_enabled=True)
     await runner.run_one(run.id)
-    linked = runs.get_run(run.id)
     request = cycles.claim_next(team_run.id)
     assert request is not None
     cycle = teams.create_cycle(

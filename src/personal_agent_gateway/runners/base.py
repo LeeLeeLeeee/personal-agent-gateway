@@ -9,6 +9,8 @@ class RunResult:
     stdout: str
     stderr: str
     artifact_paths: list[Path]
+    error_code: str | None = None
+    diagnostic: str | None = None
 
 
 class Runner(Protocol):

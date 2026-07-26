@@ -32,9 +32,30 @@ class AgentRunner:
                 stderr="Agent turn paused awaiting tool approval; scheduled runs cannot approve tool calls.",
                 artifact_paths=[],
             )
+        if result.termination != "completed":
+            return RunResult(
+                exit_code=1,
+                stdout="",
+                stderr=_termination_message(result),
+                artifact_paths=[],
+                error_code=result.error_code,
+                diagnostic=result.diagnostic,
+            )
         return RunResult(
             exit_code=0,
             stdout=response_text,
             stderr="",
             artifact_paths=[],
         )
+
+
+def _termination_message(result: object) -> str:
+    termination = str(getattr(result, "termination", "failed"))
+    error_code = getattr(result, "error_code", None)
+    diagnostic = getattr(result, "diagnostic", None)
+    details = [termination]
+    if isinstance(error_code, str) and error_code:
+        details.append(error_code)
+    if isinstance(diagnostic, str) and diagnostic:
+        details.append(diagnostic)
+    return f"Agent turn terminated: {' | '.join(details)}."

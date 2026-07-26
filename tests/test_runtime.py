@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -8,9 +9,14 @@ from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.capabilities import CapabilityRegistry
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ModelResponse, ToolCall
 from personal_agent_gateway.personas import PersonaService
+from personal_agent_gateway.remote_model_client import (
+    RemoteRunAbortedError,
+    RemoteRunFailedError,
+)
 from personal_agent_gateway.runtime import AgentRuntime
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
@@ -495,6 +501,8 @@ async def test_approving_shell_request_appends_result_and_resumes_model(
             ModelResponse(content="command finished", tool_calls=[]),
         ],
     )
+    bus = EventBus()
+    runtime.attach_event_bus(bus)
     pending = await runtime.handle_user_message("run command")
 
     result = await runtime.approve(str(pending.pending_approval["id"]))
@@ -555,6 +563,8 @@ async def test_approving_shell_request_appends_result_and_resumes_model(
             ),
         },
     ]
+    assert bus.recent()[-1]["type"] == "runtime.completed"
+    assert bus.recent()[-1]["pending_approval"] is None
 
 
 @pytest.mark.asyncio
@@ -574,6 +584,8 @@ async def test_denying_shell_request_appends_tool_denial(tmp_path: Path) -> None
             )
         ],
     )
+    bus = EventBus()
+    runtime.attach_event_bus(bus)
     pending = await runtime.handle_user_message("run command")
 
     result = await runtime.deny(str(pending.pending_approval["id"]))
@@ -590,6 +602,8 @@ async def test_denying_shell_request_appends_tool_denial(tmp_path: Path) -> None
         },
     )
     assert not (workspace / "denied.txt").exists()
+    assert bus.recent()[-1]["type"] == "runtime.completed"
+    assert bus.recent()[-1]["pending_approval"] is None
 
 
 @pytest.mark.asyncio
@@ -652,10 +666,207 @@ async def test_runtime_errors_append_runtime_error_and_return_message(tmp_path: 
 
     assert result.messages == [{"role": "assistant", "content": "Error: model unavailable"}]
     assert result.pending_approval is None
+    assert result.termination == "failed"
+    assert result.error_code == "runtime_error"
+    assert result.diagnostic == "model unavailable"
     assert event_payloads(transcript)[-1] == (
         "runtime_error",
-        {"message": "model unavailable"},
+        {
+            "message": "model unavailable",
+            "error_code": "runtime_error",
+            "termination": "failed",
+        },
     )
+
+
+@pytest.mark.asyncio
+async def test_remote_failure_preserves_redacted_details_without_success_message(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-value")
+    runtime, transcript, _tools, _model, _workspace = make_runtime(
+        tmp_path,
+        [],
+        error=RemoteRunFailedError(
+            "provider_process_failed",
+            "provider failed",
+            partial_content="partial secret-value",
+            upstream_session_id="native-1",
+        ),
+    )
+    bus = EventBus()
+    recorded: list[str] = []
+    runtime.attach_event_bus(bus)
+    runtime._on_upstream_session_id = recorded.append
+
+    result = await runtime.handle_user_message("hello")
+
+    assert result.termination == "failed"
+    assert result.error_code == "provider_process_failed"
+    assert result.diagnostic == "provider failed"
+    assert result.messages == [{"role": "assistant", "content": "Error: provider failed"}]
+    assert "partial" not in str(result.messages)
+    assert recorded == ["native-1"]
+    expected = {
+        "message": "provider failed",
+        "error_code": "provider_process_failed",
+        "termination": "failed",
+        "partial_content": "partial [redacted]",
+        "upstream_session_id": "native-1",
+    }
+    assert event_payloads(transcript)[-1] == ("runtime_error", expected)
+    runtime_event = bus.recent()[-1]
+    assert runtime_event["type"] == "runtime.error"
+    assert runtime_event["session_id"] == transcript.active_id()
+    for key, value in expected.items():
+        assert runtime_event[key] == value
+
+
+@pytest.mark.asyncio
+async def test_runtime_redacts_all_environment_secrets_private_keys_and_limits_partial(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    secrets = {
+        "LMG_LOCAL_TOKEN": "local-token-value",
+        "ANTHROPIC_API_KEY": "anthropic-token-value",
+        "MY_CUSTOM_SECRET": "custom-secret-value",
+    }
+    for name, value in secrets.items():
+        monkeypatch.setenv(name, value)
+    private_key = (
+        "-----BEGIN PRIVATE KEY-----\n"
+        "private-material\n"
+        "-----END PRIVATE KEY-----"
+    )
+    partial = " ".join([*secrets.values(), private_key, "x" * 5000])
+    runtime, transcript, _tools, _model, _workspace = make_runtime(
+        tmp_path,
+        [],
+        error=RemoteRunFailedError(
+            "provider_process_failed",
+            f"failed {secrets['LMG_LOCAL_TOKEN']}",
+            partial_content=partial,
+        ),
+    )
+
+    result = await runtime.handle_user_message("hello")
+
+    payload = event_payloads(transcript)[-1][1]
+    serialized = json.dumps(payload)
+    for secret in secrets.values():
+        assert secret not in serialized
+    assert "private-material" not in serialized
+    assert "[redacted-private-key]" in str(payload["partial_content"])
+    assert len(str(payload["partial_content"])) <= 2000
+    assert result.diagnostic == "failed [redacted]"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_turn_records_one_typed_runtime_error_before_reraising(
+    tmp_path: Path,
+) -> None:
+    started = asyncio.Event()
+
+    class BlockingModel:
+        async def complete(
+            self,
+            _messages: list[dict[str, object]],
+        ) -> ModelResponse:
+            started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    transcript = TranscriptStore(tmp_path / "sessions")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    bus = EventBus()
+    runtime = AgentRuntime(
+        transcript,
+        WorkspaceTools(workspace, ApprovalStore()),
+        BlockingModel(),
+        event_bus=bus,
+    )
+    task = asyncio.create_task(runtime.handle_user_message("wait"))
+    await started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    errors = [
+        payload
+        for kind, payload in event_payloads(transcript)
+        if kind == "runtime_error"
+    ]
+    assert errors == [
+        {
+            "message": "remote_run_cancelled",
+            "error_code": "run_cancelled",
+            "termination": "cancelled",
+            "partial_content": "",
+        }
+    ]
+    activity = [event for event in bus.recent() if event["type"] == "runtime.error"]
+    assert len(activity) == 1
+    assert activity[0]["error_code"] == "run_cancelled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "termination"),
+    [
+        ("run_cancelled", "cancelled"),
+        ("run_timeout", "timed_out"),
+    ],
+)
+async def test_remote_abort_maps_runtime_termination(
+    tmp_path: Path,
+    code: str,
+    termination: str,
+) -> None:
+    runtime, transcript, _tools, _model, _workspace = make_runtime(
+        tmp_path,
+        [],
+        error=RemoteRunAbortedError(code, "aborted", partial_content="partial"),
+    )
+
+    result = await runtime.handle_user_message("hello")
+
+    assert result.termination == termination
+    assert event_payloads(transcript)[-1][1]["termination"] == termination
+    assert event_payloads(transcript)[-1][1]["partial_content"] == "partial"
+
+
+@pytest.mark.asyncio
+async def test_approval_remote_failure_uses_same_termination_path(tmp_path: Path) -> None:
+    runtime, transcript, _tools, model, _workspace = make_runtime(
+        tmp_path,
+        [
+            ModelResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="shell-call",
+                        name="shell.run",
+                        arguments={"command": "printf ok"},
+                    )
+                ],
+            )
+        ],
+    )
+    bus = EventBus()
+    runtime.attach_event_bus(bus)
+    pending = await runtime.handle_user_message("run command")
+    model.error = RemoteRunAbortedError("run_timeout", "deadline")
+
+    result = await runtime.approve(str(pending.pending_approval["id"]))
+
+    assert result.termination == "timed_out"
+    assert event_payloads(transcript)[-1][0] == "runtime_error"
+    assert bus.recent()[-1]["type"] == "runtime.error"
+    assert bus.recent()[-1]["termination"] == "timed_out"
 
 
 @pytest.mark.asyncio

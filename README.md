@@ -163,6 +163,19 @@ CLI model과 option 탐지는 LMG가 담당합니다. 탐지 결과는 실행 �
 curl -H "Authorization: Bearer $LMG_LOCAL_TOKEN" http://127.0.0.1:8788/v1/models
 ```
 
+### LMG run 종료 계약
+
+PAG는 LMG의 SSE를 EOF까지 검증하고 다음 terminal 중 정확히 하나만 허용합니다.
+
+| terminal | Chat `termination` | 허용되는 `error_code` |
+| --- | --- | --- |
+| `run.completed` | `completed` | 없음 |
+| `run.failed` | `failed` | `provider_unavailable`, `provider_process_failed`, `provider_protocol_error` |
+| `run.aborted` + `run_cancelled` | `cancelled` | `run_cancelled` |
+| `run.aborted` + `run_timeout` | `timed_out` | `run_timeout` |
+
+terminal 없는 EOF는 `upstream_stream_incomplete`, 중복 terminal·terminal 뒤의 추가 이벤트·잘못된 JSON·shape·`run_id`는 `provider_protocol_error`로 처리합니다. 실패·중단의 `partial_content`는 transcript와 activity에 진단 정보로만 보존하며 정상 assistant 메시지나 성공 산출물로 노출하지 않습니다.
+
 개발 서버 분리 실행과 Troubleshooting은 [설치·운영 가이드](docs/knowledge/gateway-setup-guide.md#개발-모드)를 참고하세요.
 
 ## 최근 변경 (2026-07)

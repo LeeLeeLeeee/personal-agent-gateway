@@ -8,13 +8,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import personal_agent_gateway.app as app_module
-from personal_agent_gateway.api.chat_sessions import _sse_events
+from personal_agent_gateway.api.chat_sessions import _runtime_audit_status, _sse_events
 from personal_agent_gateway.app import _select_frontend_index, create_app, main
 from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse, ToolCall
+from personal_agent_gateway.remote_model_client import RemoteRunFailedError
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
@@ -372,7 +373,10 @@ def test_chat_records_runtime_events_for_sse_subscribers(tmp_path: Path) -> None
     assert recent[0]["message"] == "remember this"
     assert recent[1]["activity_id"] == 2
     assert recent[1]["event_seq"] == 2
-    assert recent[1]["payload"] == {"pending_approval": None}
+    assert recent[1]["payload"] == {
+        "pending_approval": None,
+        "termination": "completed",
+    }
 
 
 def test_codex_stream_events_include_active_session_id(tmp_path: Path, monkeypatch) -> None:
@@ -696,6 +700,7 @@ async def test_interrupt_cancels_in_flight_chat_end_to_end(tmp_path: Path) -> No
 
     assert chat_response.status_code == 200
     assert chat_response.json()["interrupted"] is True
+    assert chat_response.json()["termination"] == "cancelled"
 
     activity_events = app.state.session_activity_service.list(session_id)
     assert any(event.type == "runtime.interrupted" for event in activity_events)
@@ -763,8 +768,57 @@ def test_chat_returns_runtime_output(tmp_path: Path) -> None:
     assert response.json() == {
         "messages": [{"role": "assistant", "content": "reply: hello"}],
         "pending_approval": {"id": "approval-1", "command": "printf ok"},
+        "termination": "completed",
     }
     assert runtime.messages == ["hello"]
+
+
+def test_upstream_unavailable_returns_chat_200_with_failed_termination(tmp_path: Path) -> None:
+    class UnavailableModel:
+        async def complete(self, _messages: list[dict[str, object]]) -> ModelResponse:
+            raise RemoteRunFailedError(
+                "provider_unavailable",
+                "remote_provider_unavailable",
+            )
+
+    config = make_config(tmp_path)
+    runtime = AgentRuntime(
+        TranscriptStore(config.session_dir),
+        WorkspaceTools(config.workspace_root, ApprovalStore()),
+        UnavailableModel(),
+    )
+    client = auth_client(config, runtime)
+
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "Error: remote_provider_unavailable",
+            }
+        ],
+        "pending_approval": None,
+        "termination": "failed",
+        "error_code": "provider_unavailable",
+        "diagnostic": "remote_provider_unavailable",
+    }
+
+
+def test_runtime_audit_status_uses_termination_not_message_text() -> None:
+    completed = RuntimeResult(
+        messages=[{"role": "assistant", "content": "Error: quoted example"}],
+        pending_approval=None,
+    )
+    failed = RuntimeResult(
+        messages=[{"role": "assistant", "content": "looks normal"}],
+        pending_approval=None,
+        termination="failed",
+    )
+
+    assert _runtime_audit_status(completed) == "success"
+    assert _runtime_audit_status(failed) == "failed"
 
 
 def test_chat_requires_otp_session_after_totp_is_configured(tmp_path: Path) -> None:
@@ -905,6 +959,7 @@ def test_chat_without_explicit_session_config_falls_back_to_app_config(tmp_path:
     assert response.json() == {
         "messages": [{"role": "assistant", "content": "legacy"}],
         "pending_approval": None,
+        "termination": "completed",
     }
     assert captured == [{"provider": "openai", "model": "legacy-model"}]
 
@@ -1169,6 +1224,9 @@ def test_reset_invalidates_real_runtime_pending_approval(tmp_path: Path) -> None
             }
         ],
         "pending_approval": None,
+        "termination": "failed",
+        "error_code": "runtime_error",
+        "diagnostic": f"No pending approval: {pending['id']}",
     }
     assert not (config.workspace_root / "stale.txt").exists()
 
@@ -1278,6 +1336,7 @@ def test_approve_resumes_execution(tmp_path: Path) -> None:
     assert response.json() == {
         "messages": [{"role": "assistant", "content": "approved approval-1"}],
         "pending_approval": None,
+        "termination": "completed",
     }
     assert runtime.approved == ["approval-1"]
 
@@ -1293,6 +1352,7 @@ def test_deny_records_denial(tmp_path: Path) -> None:
     assert response.json() == {
         "messages": [{"role": "assistant", "content": "denied approval-1"}],
         "pending_approval": None,
+        "termination": "completed",
     }
     assert runtime.denied == ["approval-1"]
 
@@ -1328,6 +1388,7 @@ def test_real_runtime_approve_resumes_execution(tmp_path: Path) -> None:
     assert response.json() == {
         "messages": [{"role": "assistant", "content": "done"}],
         "pending_approval": None,
+        "termination": "completed",
     }
     assert (config.workspace_root / "ran.txt").read_text(encoding="utf-8") == "ran"
 
@@ -1361,6 +1422,7 @@ def test_real_runtime_deny_records_denial(tmp_path: Path) -> None:
     assert response.json() == {
         "messages": [{"role": "assistant", "content": "Command denied."}],
         "pending_approval": None,
+        "termination": "completed",
     }
     assert not (config.workspace_root / "denied.txt").exists()
     events = client.get("/api/history").json()["events"]

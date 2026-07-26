@@ -3,7 +3,6 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-
 _SENSITIVE_KEY = re.compile(r"token|key|secret|password|otp|recovery", re.IGNORECASE)
 _BODY_KEYS = {"prompt", "message", "content", "stdout", "stderr", "file_content"}
 _PRIVATE_KEY = re.compile(
@@ -18,6 +17,10 @@ def environment_secrets() -> list[str]:
         for key, value in os.environ.items()
         if value and _SENSITIVE_KEY.search(key)
     ]
+
+
+def is_sensitive_key(value: object) -> bool:
+    return _SENSITIVE_KEY.search(str(value)) is not None
 
 
 def redact_text(value: object, *, secrets: Iterable[str] = (), limit: int = 2000) -> str:
