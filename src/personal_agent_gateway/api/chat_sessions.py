@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Annotated
 from uuid import uuid4
@@ -14,7 +15,12 @@ from personal_agent_gateway.api.dependencies import record_domain_audit, session
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.intake import IntakeClosedError, IntakeGate
-from personal_agent_gateway.lmg_client import delete_session as delete_lmg_session
+from personal_agent_gateway.lmg_client import (
+    LMGDeleteError,
+)
+from personal_agent_gateway.lmg_client import (
+    delete_session as delete_lmg_session,
+)
 from personal_agent_gateway.run_state import SessionAlreadyRunningError, SessionRunRegistry
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.session_activity import (
@@ -23,6 +29,9 @@ from personal_agent_gateway.session_activity import (
 )
 from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.transcript import TranscriptStore
+
+_LMG_DELETE_TIMEOUT_SECONDS = 3.0
+_LMG_DELETE_MAX_WORKERS = 4
 
 
 class ChatRequest(BaseModel):
@@ -361,20 +370,65 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
         require_session_id(session_id)
 
         def delete_chat_and_upstream() -> bool:
-            upstream_session_ids = AgentSessionLinkService(
-                context.transcript
-            ).upstream_session_ids(session_id)
-            failed_upstream_ids = [
-                upstream_session_id
-                for upstream_session_id in upstream_session_ids
-                if not delete_lmg_session(context.config, upstream_session_id)
-            ]
-            if failed_upstream_ids:
+            link_service = AgentSessionLinkService(context.transcript)
+            unique_links = {
+                (link.agent_id, link.upstream_session_id): link
+                for link in link_service.links(session_id)
+            }
+            links = list(unique_links.values())
+            executor = ThreadPoolExecutor(
+                max_workers=min(_LMG_DELETE_MAX_WORKERS, max(1, len(links)))
+            )
+            futures = {
+                executor.submit(
+                    delete_lmg_session,
+                    context.config,
+                    link.upstream_session_id,
+                    provider=link.agent_id,
+                    consumer_session_id=session_id,
+                    timeout_seconds=_LMG_DELETE_TIMEOUT_SECONDS,
+                ): link
+                for link in links
+            }
+            done, pending = wait(futures, timeout=_LMG_DELETE_TIMEOUT_SECONDS)
+            failed: list[dict[str, str]] = []
+            for future in done:
+                link = futures[future]
+                try:
+                    future.result()
+                except LMGDeleteError as exc:
+                    failed.append(
+                        {
+                            "provider": link.agent_id,
+                            "upstream_session_id": link.upstream_session_id,
+                            "code": exc.code,
+                        }
+                    )
+                else:
+                    link_service.remove(session_id, link)
+            for future in pending:
+                link = futures[future]
+                future.cancel()
+                failed.append(
+                    {
+                        "provider": link.agent_id,
+                        "upstream_session_id": link.upstream_session_id,
+                        "code": "delete_timeout",
+                    }
+                )
+            executor.shutdown(wait=False, cancel_futures=True)
+            if failed:
                 raise HTTPException(
                     status_code=502,
                     detail={
                         "message": "Failed to delete linked local model sessions",
-                        "upstream_session_ids": failed_upstream_ids,
+                        "failures": sorted(
+                            failed,
+                            key=lambda item: (
+                                item["provider"],
+                                item["upstream_session_id"],
+                            ),
+                        ),
                     },
                 )
             return context.transcript.delete(session_id)

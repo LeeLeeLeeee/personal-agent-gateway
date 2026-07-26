@@ -407,6 +407,60 @@ async def test_provider_unavailable_503_does_not_expose_response_body():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "gateway_code", "expected_code", "diagnostic"),
+    [
+        (409, "session_busy", "session_busy", "remote_session_busy"),
+        (
+            409,
+            "session_identity_conflict",
+            "session_identity_conflict",
+            "remote_session_identity_conflict",
+        ),
+        (
+            409,
+            "storage_metadata_stale",
+            "storage_metadata_stale",
+            "remote_storage_metadata_stale",
+        ),
+        (
+            429,
+            "capacity_exceeded",
+            "capacity_exceeded",
+            "remote_capacity_exceeded",
+        ),
+    ],
+)
+async def test_pre_stream_gateway_errors_are_typed(
+    status_code,
+    gateway_code,
+    expected_code,
+    diagnostic,
+):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code,
+            json={"code": gateway_code, "error": "sensitive detail"},
+            request=request,
+        )
+
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(RemoteRunFailedError) as raised:
+        await client.complete([{"role": "user", "content": "hi"}])
+
+    assert raised.value.code == expected_code
+    assert str(raised.value) == diagnostic
+    assert "sensitive detail" not in str(raised.value)
+
+
+@pytest.mark.asyncio
 async def test_request_error_uses_stable_code_and_diagnostic():
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("socket detail", request=request)

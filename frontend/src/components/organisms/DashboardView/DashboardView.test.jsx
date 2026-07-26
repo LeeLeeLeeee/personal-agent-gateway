@@ -12,6 +12,10 @@ function jsonResponse(body) {
   });
 }
 
+function readySessions(sessions = []) {
+  return { sessions, lmg: { status: "ready", message: null } };
+}
+
 const completeReport = {
   detected_at: "2026-07-22T00:00:00Z",
   providers: [
@@ -64,7 +68,7 @@ const operationsPayload = {
 
 describe("DashboardView", () => {
   beforeEach(async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(await jsonResponse({ sessions: [] }));
+    globalThis.fetch = vi.fn().mockResolvedValue(await jsonResponse(readySessions()));
   });
 
   it("calls the dashboard usage API and renders provider usage as a card and gauge", async () => {
@@ -134,7 +138,7 @@ describe("DashboardView", () => {
     fetch
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(await jsonResponse(operationsPayload))
-      .mockResolvedValueOnce(await jsonResponse({ sessions: [] }))
+      .mockResolvedValueOnce(await jsonResponse(readySessions()))
       .mockResolvedValueOnce(await jsonResponse(completeReport));
 
     render(<DashboardView />);
@@ -179,7 +183,7 @@ describe("DashboardView", () => {
     fetch
       .mockResolvedValueOnce(await jsonResponse(completeReport))
       .mockRejectedValueOnce(new Error("operations offline"))
-      .mockResolvedValueOnce(await jsonResponse({ sessions: [] }))
+      .mockResolvedValueOnce(await jsonResponse(readySessions()))
       .mockResolvedValueOnce(await jsonResponse(operationsPayload));
 
     render(<DashboardView />);
@@ -214,8 +218,7 @@ describe("DashboardView", () => {
     fetch
       .mockResolvedValueOnce(await jsonResponse(completeReport))
       .mockResolvedValueOnce(await jsonResponse(operationsPayload))
-      .mockResolvedValueOnce(await jsonResponse({
-        sessions: [
+      .mockResolvedValueOnce(await jsonResponse(readySessions([
           {
             upstream_id: "sess-1",
             provider: "codex",
@@ -226,8 +229,7 @@ describe("DashboardView", () => {
             workspace_root: "/workspace/project",
             storage_path: "/data/sessions/sess-1"
           }
-        ]
-      }));
+        ])));
 
     render(<DashboardView />);
 
@@ -252,7 +254,7 @@ describe("DashboardView", () => {
     fetch
       .mockResolvedValueOnce(await jsonResponse(completeReport))
       .mockResolvedValueOnce(await jsonResponse(operationsPayload))
-      .mockResolvedValueOnce(await jsonResponse({ sessions }));
+      .mockResolvedValueOnce(await jsonResponse(readySessions(sessions)));
 
     render(<DashboardView />);
 
@@ -271,10 +273,31 @@ describe("DashboardView", () => {
     fetch
       .mockResolvedValueOnce(await jsonResponse(completeReport))
       .mockResolvedValueOnce(await jsonResponse(operationsPayload))
-      .mockResolvedValueOnce(await jsonResponse({ sessions: [] }));
+      .mockResolvedValueOnce(await jsonResponse(readySessions()));
 
     render(<DashboardView />);
 
     expect(await screen.findByText("로컬 세션 없음")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["unreachable", "로컬 모델 게이트웨이에 연결할 수 없습니다."],
+    ["unauthorized", "로컬 모델 게이트웨이 인증에 실패했습니다."],
+    ["not_ready", "로컬 모델 게이트웨이가 준비되지 않았습니다."],
+    ["protocol_error", "로컬 모델 게이트웨이 응답 형식이 올바르지 않습니다."]
+  ])("shows the %s LMG state instead of an empty session list", async (status, message) => {
+    fetch
+      .mockResolvedValueOnce(await jsonResponse(completeReport))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload))
+      .mockResolvedValueOnce(await jsonResponse({
+        sessions: [],
+        lmg: { status, message }
+      }));
+
+    render(<DashboardView />);
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.queryByText("로컬 세션 없음")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
   });
 });

@@ -1,4 +1,5 @@
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -6,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from personal_agent_gateway.config import AppConfig
-from personal_agent_gateway.lmg_client import fetch_capabilities
+from personal_agent_gateway.lmg_client import LmgQueryResult, fetch_capabilities
 
 AgentId = Literal["codex", "claude"]
 
@@ -49,7 +50,10 @@ class CliProbeResult:
 
 
 Probe = Callable[[str], CliProbeResult]
-CapabilityLoader = Callable[[AppConfig], dict[str, object] | None]
+CapabilityLoader = Callable[
+    [AppConfig],
+    LmgQueryResult[dict[str, object]] | dict[str, object] | None,
+]
 
 
 def probe_cli(binary: str) -> CliProbeResult:
@@ -79,6 +83,10 @@ class AgentRegistry:
         config: AppConfig,
         probe: Probe | None = None,
         capability_loader: CapabilityLoader | None = None,
+        *,
+        cache_ttl_seconds: float = 30.0,
+        failure_ttl_seconds: float = 2.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config = config
         self._probe = probe or probe_cli
@@ -88,16 +96,36 @@ class AgentRegistry:
             else (fetch_capabilities if probe is None else lambda _config: None)
         )
         self._catalog: list[AgentDescriptor] | None = None
+        self._cache_ttl_seconds = cache_ttl_seconds
+        self._failure_ttl_seconds = failure_ttl_seconds
+        self._clock = clock
+        self._catalog_expires_at = 0.0
+        self._gateway_status = "legacy"
 
     def catalog(self) -> list[AgentDescriptor]:
-        if self._catalog is None:
-            detected = self._capability_loader(self._config) or {}
+        now = self._clock()
+        if self._catalog is None or now >= self._catalog_expires_at:
+            loaded = self._capability_loader(self._config)
+            detected, readiness = _loaded_capabilities(loaded)
             providers = detected.get("providers")
             provider_map = providers if isinstance(providers, dict) else {}
+            self._gateway_status = readiness or "legacy"
             self._catalog = [
-                self._codex(_provider_payload(provider_map, "codex")),
-                self._claude(_provider_payload(provider_map, "claude")),
+                self._codex(
+                    _provider_payload(provider_map, "codex"),
+                    readiness=readiness,
+                ),
+                self._claude(
+                    _provider_payload(provider_map, "claude"),
+                    readiness=readiness,
+                ),
             ]
+            ttl = (
+                self._cache_ttl_seconds
+                if readiness in {None, "ready"}
+                else self._failure_ttl_seconds
+            )
+            self._catalog_expires_at = now + max(ttl, 0.0)
         return self._catalog
 
     def get(self, agent_id: str) -> AgentDescriptor:
@@ -111,9 +139,14 @@ class AgentRegistry:
         agent_id: str,
         model: str,
         options: dict[str, Any],
+        *,
+        require_available: bool = True,
     ) -> dict[str, Any]:
         descriptor = self.get(agent_id)
-        if not descriptor.available:
+        allow_not_ready_catalog = (
+            not require_available and self._gateway_status == "not_ready"
+        )
+        if not descriptor.available and not allow_not_ready_catalog:
             raise ValueError(f"Agent unavailable: {agent_id}")
         if model not in descriptor.models:
             raise ValueError(f"Unsupported model for {agent_id}: {model}")
@@ -140,8 +173,13 @@ class AgentRegistry:
             raise ValueError(f"Unsupported effort for {agent_id} model {model}: {effort}")
         return {"agent_id": descriptor.id, "model": model, "options": dict(options)}
 
-    def _codex(self, capabilities: dict[str, object]) -> AgentDescriptor:
-        probe = self._probe(self._config.codex_binary)
+    def _codex(
+        self,
+        capabilities: dict[str, object],
+        *,
+        readiness: str | None,
+    ) -> AgentDescriptor:
+        probe = _gateway_probe(readiness) or self._probe(self._config.codex_binary)
         fallback_models = _fallback_models(
             ["default", "gpt-5.5", "gpt-5.4"],
             ["low", "medium", "high", "xhigh"],
@@ -209,8 +247,13 @@ class AgentRegistry:
             capability_source=_string_list(capabilities.get("source")) or ["fallback"],
         )
 
-    def _claude(self, capabilities: dict[str, object]) -> AgentDescriptor:
-        probe = self._probe(self._config.claude_binary)
+    def _claude(
+        self,
+        capabilities: dict[str, object],
+        *,
+        readiness: str | None,
+    ) -> AgentDescriptor:
+        probe = _gateway_probe(readiness) or self._probe(self._config.claude_binary)
         fallback_models = _fallback_models(
             ["default", "best", "sonnet", "opus", "haiku", "sonnet[1m]", "opus[1m]", "opusplan"],
             ["low", "medium", "high", "xhigh", "max"],
@@ -276,6 +319,22 @@ def _provider_payload(providers: dict[object, object], provider: str) -> dict[st
     if not isinstance(value, dict):
         return {}
     return {str(key): item for key, item in value.items()}
+
+
+def _loaded_capabilities(
+    loaded: LmgQueryResult[dict[str, object]] | dict[str, object] | None,
+) -> tuple[dict[str, object], str | None]:
+    if isinstance(loaded, LmgQueryResult):
+        return loaded.data or {}, loaded.status
+    return loaded or {}, None
+
+
+def _gateway_probe(status: str | None) -> CliProbeResult | None:
+    if status not in {"ready", "not_ready"}:
+        return None
+    if status == "ready":
+        return CliProbeResult(True, None)
+    return CliProbeResult(False, f"gateway_{status}")
 
 
 def _string(value: object) -> str:

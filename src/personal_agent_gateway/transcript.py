@@ -21,6 +21,7 @@ TranscriptKind = Literal[
     "session_config_set",
     "session_metadata_set",
     "agent_session_link",
+    "agent_session_unlink",
 ]
 SessionStatus = Literal["idle", "waiting_approval", "failed"]
 SessionOrigin = Literal["chat", "hook"]

@@ -3,7 +3,9 @@ import pytest
 
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.lmg_client import (
+    LMGDeleteError,
     LMGQueryError,
+    LmgQueryResult,
     delete_session,
     fetch_capabilities,
     fetch_sessions,
@@ -37,41 +39,70 @@ def _session_row(**overrides):
 
 
 def test_fetch_capabilities_returns_payload():
-    payload = {"schema_version": 1, "providers": {"codex": {"available": True, "models": [{"id": "x"}]}}}
+    payload = {"schema_version": 1, "gateway_status": "ready", "providers": {"codex": {"available": True, "models": [{"id": "x"}]}}}
     def handler(request):
         assert request.headers["authorization"] == "Bearer local-secret"
         return httpx.Response(200, json=payload)
     got = fetch_capabilities(_cfg(), transport=httpx.MockTransport(handler))
-    assert got == payload
+    assert got == LmgQueryResult(data=payload, status="ready")
 
 
-def test_fetch_capabilities_none_on_bad_schema():
+def test_fetch_capabilities_protocol_error_on_bad_schema():
     def handler(request): return httpx.Response(200, json={"schema_version": 2, "providers": {}})
-    assert fetch_capabilities(_cfg(), transport=httpx.MockTransport(handler)) is None
+    assert fetch_capabilities(
+        _cfg(), transport=httpx.MockTransport(handler)
+    ).status == "protocol_error"
 
 
-def test_fetch_capabilities_none_on_http_error():
+def test_fetch_capabilities_unreachable_on_http_error():
     def handler(request): return httpx.Response(500)
-    assert fetch_capabilities(_cfg(), transport=httpx.MockTransport(handler)) is None
+    assert fetch_capabilities(
+        _cfg(), transport=httpx.MockTransport(handler)
+    ).status == "unreachable"
+
+
+def test_fetch_capabilities_retains_catalog_when_gateway_is_not_ready():
+    payload = {
+        "schema_version": 1,
+        "gateway_status": "not_ready",
+        "providers": {"codex": {"available": True, "models": [{"id": "x"}]}},
+    }
+
+    def handler(request): return httpx.Response(200, json=payload)
+
+    assert fetch_capabilities(
+        _cfg(), transport=httpx.MockTransport(handler)
+    ) == LmgQueryResult(
+        data=payload,
+        status="not_ready",
+        message="로컬 모델 게이트웨이가 준비되지 않았습니다.",
+    )
 
 
 def test_fetch_sessions_returns_list():
     rows = [{"upstream_id": "s1", "provider": "codex", "model": "default",
-             "size_bytes": 100, "created_at": "t", "last_run_at": "t", "storage_path": "/p"}]
+             "workspace_root": "", "size_bytes": 100, "created_at": "t",
+             "last_run_at": "t", "storage_path": "/p"}]
     def handler(request):
         assert request.headers["authorization"] == "Bearer local-secret"
         return httpx.Response(200, json=rows)
-    assert fetch_sessions(_cfg(), transport=httpx.MockTransport(handler)) == rows
+    assert fetch_sessions(
+        _cfg(), transport=httpx.MockTransport(handler)
+    ) == LmgQueryResult(data=rows, status="ready")
 
 
-def test_fetch_sessions_empty_on_http_error():
+def test_fetch_sessions_unreachable_on_http_error():
     def handler(request): return httpx.Response(500)
-    assert fetch_sessions(_cfg(), transport=httpx.MockTransport(handler)) == []
+    assert fetch_sessions(
+        _cfg(), transport=httpx.MockTransport(handler)
+    ).status == "unreachable"
 
 
-def test_fetch_sessions_empty_on_non_list():
+def test_fetch_sessions_protocol_error_on_non_list():
     def handler(request): return httpx.Response(200, json={"oops": 1})
-    assert fetch_sessions(_cfg(), transport=httpx.MockTransport(handler)) == []
+    assert fetch_sessions(
+        _cfg(), transport=httpx.MockTransport(handler)
+    ).status == "protocol_error"
 
 
 def test_fetch_sessions_strict_preserves_valid_empty_list():
@@ -207,13 +238,19 @@ def test_delete_session_calls_encoded_lmg_session_url():
     deleted = delete_session(
         _cfg(),
         "claude/session id",
+        provider="claude",
+        consumer_session_id="chat-1",
         transport=httpx.MockTransport(handler),
     )
 
     assert deleted is True
     assert captured == {
         "method": "DELETE",
-        "path": b"/v1/sessions/claude%2Fsession%20id",
+        "path": (
+            b"/v1/sessions/claude%2Fsession%20id"
+            b"?provider=claude&consumer=personal-agent-gateway"
+            b"&consumer_session_id=chat-1"
+        ),
         "authorization": "Bearer local-secret",
     }
 
@@ -229,23 +266,45 @@ def test_lmg_requests_omit_authorization_when_direct_config_has_no_token():
         assert "authorization" not in request.headers
         return httpx.Response(
             200,
-            json={"schema_version": 1, "providers": {}},
+            json={"schema_version": 1, "gateway_status": "ready", "providers": {}},
         )
 
     assert fetch_capabilities(
         config,
         transport=httpx.MockTransport(handler),
-    ) == {"schema_version": 1, "providers": {}}
+    ) == LmgQueryResult(
+        data={"schema_version": 1, "gateway_status": "ready", "providers": {}},
+        status="ready",
+    )
 
 
-def test_delete_session_returns_false_on_http_error():
+def test_delete_session_raises_typed_error_on_http_error():
     def handler(request): return httpx.Response(500)
 
-    assert delete_session(
-        _cfg(),
-        "s1",
-        transport=httpx.MockTransport(handler),
-    ) is False
+    with pytest.raises(LMGDeleteError, match="session deletion failed") as error:
+        delete_session(
+            _cfg(),
+            "s1",
+            provider="codex",
+            consumer_session_id="chat-1",
+            transport=httpx.MockTransport(handler),
+        )
+    assert error.value.code == "delete_failed"
+
+
+def test_delete_session_preserves_storage_metadata_stale_code():
+    def handler(request):
+        return httpx.Response(409, json={"code": "storage_metadata_stale"})
+
+    with pytest.raises(LMGDeleteError) as error:
+        delete_session(
+            _cfg(),
+            "s1",
+            provider="codex",
+            consumer_session_id="chat-1",
+            transport=httpx.MockTransport(handler),
+        )
+    assert error.value.code == "storage_metadata_stale"
 
 
 def test_delete_session_accepts_legacy_not_found_as_success():
@@ -254,5 +313,7 @@ def test_delete_session_accepts_legacy_not_found_as_success():
     assert delete_session(
         _cfg(),
         "already-gone",
+        provider="codex",
+        consumer_session_id="chat-1",
         transport=httpx.MockTransport(handler),
     ) is True

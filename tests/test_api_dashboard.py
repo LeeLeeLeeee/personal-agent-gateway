@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from personal_agent_gateway.app import create_app
 from personal_agent_gateway.config import AppConfig
+from personal_agent_gateway.lmg_client import LmgQueryResult
 
 
 def make_config(tmp_path: Path) -> AppConfig:
@@ -91,7 +92,12 @@ def test_dashboard_sessions_proxies_lmg(tmp_path: Path, monkeypatch) -> None:
     import personal_agent_gateway.api.dashboard as dash
 
     monkeypatch.setattr(
-        dash, "fetch_sessions", lambda _config: [{"upstream_id": "s1", "provider": "codex"}]
+        dash,
+        "fetch_sessions",
+        lambda _config: LmgQueryResult(
+            data=[{"upstream_id": "s1", "provider": "codex"}],
+            status="ready",
+        ),
     )
     client = TestClient(create_app(make_config(tmp_path)))
     client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
@@ -99,4 +105,37 @@ def test_dashboard_sessions_proxies_lmg(tmp_path: Path, monkeypatch) -> None:
     response = client.get("/api/dashboard/sessions")
 
     assert response.status_code == 200
-    assert response.json() == {"sessions": [{"upstream_id": "s1", "provider": "codex"}]}
+    assert response.json() == {
+        "sessions": [{"upstream_id": "s1", "provider": "codex"}],
+        "lmg": {"status": "ready", "message": None},
+    }
+
+
+def test_dashboard_sessions_exposes_lmg_failure_without_fake_empty_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import personal_agent_gateway.api.dashboard as dash
+
+    monkeypatch.setattr(
+        dash,
+        "fetch_sessions",
+        lambda _config: LmgQueryResult(
+            data=None,
+            status="not_ready",
+            message="로컬 모델 게이트웨이가 준비되지 않았습니다.",
+        ),
+    )
+    client = TestClient(create_app(make_config(tmp_path)))
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
+
+    response = client.get("/api/dashboard/sessions")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sessions": [],
+        "lmg": {
+            "status": "not_ready",
+            "message": "로컬 모델 게이트웨이가 준비되지 않았습니다.",
+        },
+    }

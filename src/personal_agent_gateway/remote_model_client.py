@@ -236,18 +236,9 @@ class HttpModelClient:
                     ) as response,
                 ):
                     response_opened = True
-                    if response.status_code == 503:
-                        raise RemoteRunFailedError(
-                            "provider_unavailable",
-                            "remote_provider_unavailable",
-                        )
-                    try:
-                        response.raise_for_status()
-                    except httpx.HTTPStatusError as exc:
-                        raise RemoteRunFailedError(
-                            "provider_process_failed",
-                            f"remote_gateway_http_{response.status_code}",
-                        ) from exc
+                    if not response.is_success:
+                        await response.aread()
+                        raise _http_run_error(response)
 
                     async for line in response.aiter_lines():
                         if line == "":
@@ -386,6 +377,43 @@ def _terminal_result(
         error or "remote_run_aborted",
         partial_content=partial_content,
         upstream_session_id=upstream_session_id,
+    )
+
+
+def _http_run_error(response: httpx.Response) -> RemoteRunFailedError:
+    code = ""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("code"), str):
+        code = payload["code"]
+    typed_errors = {
+        (409, "session_busy"): ("session_busy", "remote_session_busy"),
+        (409, "session_identity_conflict"): (
+            "session_identity_conflict",
+            "remote_session_identity_conflict",
+        ),
+        (409, "storage_metadata_stale"): (
+            "storage_metadata_stale",
+            "remote_storage_metadata_stale",
+        ),
+        (429, "capacity_exceeded"): (
+            "capacity_exceeded",
+            "remote_capacity_exceeded",
+        ),
+    }
+    mapped = typed_errors.get((response.status_code, code))
+    if mapped is not None:
+        return RemoteRunFailedError(*mapped)
+    if response.status_code == 503:
+        return RemoteRunFailedError(
+            "provider_unavailable",
+            "remote_provider_unavailable",
+        )
+    return RemoteRunFailedError(
+        "provider_process_failed",
+        f"remote_gateway_http_{response.status_code}",
     )
 
 

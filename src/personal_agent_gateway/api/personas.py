@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 from personal_agent_gateway.api.dependencies import session_dependency
 from personal_agent_gateway.personas import Persona
 
-
 router = APIRouter(prefix="/api/personas", tags=["personas"])
 
 
@@ -44,6 +43,7 @@ def create_persona(request: Request, payload: PersonaRequest, _session: None = s
             payload.default_backend,
             payload.default_model,
             payload.default_options,
+            require_available=False,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -87,6 +87,7 @@ def update_persona(request: Request, persona_id: str, payload: PersonaUpdateRequ
                 next_backend,
                 next_model,
                 next_options,
+                require_available=False,
             )
             requested.update(
                 default_backend=validated["agent_id"],

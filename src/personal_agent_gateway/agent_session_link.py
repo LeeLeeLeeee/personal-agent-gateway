@@ -43,6 +43,22 @@ class AgentSessionLinkService:
     def links(self, session_id: str) -> list[AgentSessionLink]:
         links: list[AgentSessionLink] = []
         for event in self._transcript.load(session_id):
+            if event.kind == "agent_session_unlink":
+                agent_id = event.payload.get("agent_id")
+                upstream_session_id = event.payload.get("upstream_session_id")
+                if not isinstance(agent_id, str) or not isinstance(
+                    upstream_session_id, str
+                ):
+                    continue
+                links = [
+                    link
+                    for link in links
+                    if not (
+                        link.agent_id == agent_id
+                        and link.upstream_session_id == upstream_session_id
+                    )
+                ]
+                continue
             if event.kind != "agent_session_link":
                 continue
             payload = event.payload
@@ -67,6 +83,22 @@ class AgentSessionLinkService:
                 )
             )
         return links
+
+    def remove(self, session_id: str, link: AgentSessionLink) -> None:
+        if not any(
+            candidate.agent_id == link.agent_id
+            and candidate.upstream_session_id == link.upstream_session_id
+            for candidate in self.links(session_id)
+        ):
+            return
+        self._transcript.append_to(
+            session_id,
+            "agent_session_unlink",
+            {
+                "agent_id": link.agent_id,
+                "upstream_session_id": link.upstream_session_id,
+            },
+        )
 
     def upstream_session_ids(self, session_id: str) -> list[str]:
         upstream_session_ids: list[str] = []

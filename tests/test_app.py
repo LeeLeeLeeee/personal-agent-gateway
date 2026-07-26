@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -8,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import personal_agent_gateway.app as app_module
+from personal_agent_gateway.agent_session_link import AgentSessionLinkService
 from personal_agent_gateway.api.chat_sessions import _runtime_audit_status, _sse_events
 from personal_agent_gateway.app import _select_frontend_index, create_app, main
 from personal_agent_gateway.approval import ApprovalStore
@@ -459,7 +461,9 @@ def test_delete_session_cascades_to_linked_lmg_session(tmp_path: Path, monkeypat
     deleted_upstream_ids: list[str] = []
     monkeypatch.setattr(
         "personal_agent_gateway.api.chat_sessions.delete_lmg_session",
-        lambda _config, upstream_id: deleted_upstream_ids.append(upstream_id) or True,
+        lambda _config, upstream_id, **_kwargs: (
+            deleted_upstream_ids.append(upstream_id) or True
+        ),
     )
     client = auth_client(config, FakeRuntime())
 
@@ -492,9 +496,13 @@ def test_delete_session_attempts_all_links_and_preserves_chat_until_retry_succee
     calls: list[str] = []
     retrying = False
 
-    def delete_upstream(_config, upstream_id):
+    def delete_upstream(_config, upstream_id, **_kwargs):
+        from personal_agent_gateway.lmg_client import LMGDeleteError
+
         calls.append(upstream_id)
-        return retrying or upstream_id != "codex-session-2"
+        if not retrying and upstream_id == "codex-session-2":
+            raise LMGDeleteError("storage_metadata_stale", "stale")
+        return True
 
     monkeypatch.setattr(
         "personal_agent_gateway.api.chat_sessions.delete_lmg_session",
@@ -514,19 +522,76 @@ def test_delete_session_attempts_all_links_and_preserves_chat_until_retry_succee
     assert response.status_code == 502
     assert response.json()["detail"] == {
         "message": "Failed to delete linked local model sessions",
-        "upstream_session_ids": ["codex-session-2"],
+        "failures": [
+            {
+                "provider": "codex",
+                "upstream_session_id": "codex-session-2",
+                "code": "storage_metadata_stale",
+            }
+        ],
     }
-    assert calls == upstream_ids
+    assert sorted(calls) == upstream_ids
     assert store.exists(session_id) is True
+    assert AgentSessionLinkService(store).upstream_session_ids(session_id) == [
+        "codex-session-2"
+    ]
     assert len(activity_service.list(session_id)) == 1
 
     retrying = True
     retry = client.delete(f"/api/sessions/{session_id}")
 
     assert retry.status_code == 200
-    assert calls == upstream_ids + upstream_ids
+    assert sorted(calls) == sorted(upstream_ids + ["codex-session-2"])
     assert store.exists(session_id) is False
     assert activity_service.list(session_id) == []
+
+
+def test_delete_session_returns_within_upstream_timeout(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    store.append_to(
+        session_id,
+        "agent_session_link",
+        {
+            "agent_id": "codex",
+            "model": "default",
+            "options_fingerprint": "fingerprint",
+            "upstream_session_id": "slow-session",
+        },
+    )
+
+    def slow_delete(_config, _upstream_id, **_kwargs):
+        time.sleep(0.2)
+        return True
+
+    monkeypatch.setattr(
+        "personal_agent_gateway.api.chat_sessions._LMG_DELETE_TIMEOUT_SECONDS",
+        0.02,
+    )
+    monkeypatch.setattr(
+        "personal_agent_gateway.api.chat_sessions.delete_lmg_session",
+        slow_delete,
+    )
+    client = auth_client(config, FakeRuntime())
+
+    started_at = time.monotonic()
+    response = client.delete(f"/api/sessions/{session_id}")
+    elapsed = time.monotonic() - started_at
+
+    assert response.status_code == 502
+    assert elapsed < 0.15
+    assert response.json()["detail"]["failures"] == [
+        {
+            "provider": "codex",
+            "upstream_session_id": "slow-session",
+            "code": "delete_timeout",
+        }
+    ]
+    assert store.exists(session_id) is True
 
 
 def test_sessions_api_hides_hook_transcripts_from_chat_routes(tmp_path: Path) -> None:

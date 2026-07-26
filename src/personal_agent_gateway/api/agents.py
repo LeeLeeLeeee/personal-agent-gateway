@@ -8,7 +8,6 @@ from personal_agent_gateway.api.dependencies import session_dependency
 from personal_agent_gateway.personas import persona_snapshot
 from personal_agent_gateway.session_config import SessionAgentConfigService
 
-
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 session_config_router = APIRouter(prefix="/api/sessions/active/config", tags=["agents"])
 
@@ -67,6 +66,7 @@ def set_active_session_config(
             requested_agent,
             requested_model,
             requested_options,
+            require_available=False,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

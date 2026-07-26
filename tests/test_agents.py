@@ -1,10 +1,11 @@
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from personal_agent_gateway.agents import AgentRegistry, CliProbeResult, probe_cli
 from personal_agent_gateway.config import AppConfig
+from personal_agent_gateway.lmg_client import LmgQueryResult
 
 
 def make_config(tmp_path: Path) -> AppConfig:
@@ -176,3 +177,75 @@ def test_registry_uses_detected_models_and_model_specific_efforts(tmp_path: Path
     assert registry.validate_config("codex", "gpt-new", {"effort": "low"})["model"] == "gpt-new"
     with pytest.raises(ValueError, match="Unsupported effort"):
         registry.validate_config("codex", "gpt-new", {"effort": "high"})
+
+
+def test_registry_retains_not_ready_catalog_without_probing_local_cli(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "gateway_status": "not_ready",
+        "providers": {
+            "codex": {
+                "available": True,
+                "models": [{"id": "gpt-detected", "label": "GPT Detected"}],
+            }
+        },
+    }
+
+    def unexpected_probe(_binary: str) -> CliProbeResult:
+        raise AssertionError("PAG must not probe a CLI owned by LMG")
+
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        probe=unexpected_probe,
+        capability_loader=lambda _config: LmgQueryResult(
+            data=payload,
+            status="not_ready",
+        ),
+    )
+
+    codex = registry.get("codex")
+
+    assert codex.models == ["gpt-detected"]
+    assert codex.available is False
+    assert codex.availability_error == "gateway_not_ready"
+    with pytest.raises(ValueError, match="Agent unavailable"):
+        registry.validate_config("codex", "gpt-detected", {})
+    assert registry.validate_config(
+        "codex",
+        "gpt-detected",
+        {},
+        require_available=False,
+    )["model"] == "gpt-detected"
+
+
+def test_registry_recovers_after_short_negative_cache_ttl(tmp_path: Path) -> None:
+    now = [0.0]
+    status = ["not_ready"]
+    payload = {
+        "schema_version": 1,
+        "gateway_status": "ready",
+        "providers": {
+            "codex": {
+                "available": True,
+                "models": [{"id": "gpt-detected", "label": "GPT Detected"}],
+            }
+        },
+    }
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        capability_loader=lambda _config: LmgQueryResult(
+            data=payload,
+            status=status[0],
+        ),
+        failure_ttl_seconds=2,
+        clock=lambda: now[0],
+    )
+
+    assert registry.get("codex").available is False
+    status[0] = "ready"
+    now[0] = 1
+    assert registry.get("codex").available is False
+    now[0] = 2
+    assert registry.get("codex").available is True

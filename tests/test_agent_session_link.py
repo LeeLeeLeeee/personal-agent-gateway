@@ -115,6 +115,20 @@ def test_session_link_deduplicates_same_context_provider_and_upstream(tmp_path: 
     assert len(service.links(session_id)) == 1
 
 
+def test_removed_session_link_is_not_resumable_or_retried(tmp_path: Path) -> None:
+    transcript = TranscriptStore(tmp_path)
+    session_id = transcript.start_new()
+    service = AgentSessionLinkService(transcript)
+    context = AgentSessionContext("codex", "default", {}, None, None, None)
+    link = service.record(session_id, context, "thread-1")
+
+    service.remove(session_id, link)
+
+    assert service.links(session_id) == []
+    assert service.latest(session_id, context) is None
+    assert service.upstream_session_ids(session_id) == []
+
+
 def test_legacy_link_is_deletable_but_never_resumable(tmp_path: Path) -> None:
     transcript = TranscriptStore(tmp_path)
     session_id = transcript.start_new()

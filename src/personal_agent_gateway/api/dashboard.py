@@ -21,4 +21,11 @@ def dashboard_sessions(
     request: Request,
     _session: None = session_dependency,
 ) -> dict[str, object]:
-    return {"sessions": fetch_sessions(request.app.state.app_config)}
+    result = fetch_sessions(request.app.state.app_config)
+    return {
+        "sessions": result.data or [],
+        "lmg": {
+            "status": result.status,
+            "message": result.message,
+        },
+    }

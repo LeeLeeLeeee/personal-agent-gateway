@@ -343,6 +343,7 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState(null);
+  const [lmgStatus, setLmgStatus] = useState({ status: "ready", message: null });
   const [sessionsReloadKey, setSessionsReloadKey] = useState(0);
   const [showAllSessions, setShowAllSessions] = useState(false);
 
@@ -351,8 +352,25 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
     setSessionsLoading(true);
     setSessionsError(null);
     api.dashboardSessions()
-      .then((data) => { if (active) setSessions(Array.isArray(data?.sessions) ? data.sessions : []); })
-      .catch((err) => { if (active) setSessionsError(err); })
+      .then((data) => {
+        if (!active) return;
+        const nextLmgStatus = data?.lmg;
+        if (!nextLmgStatus || typeof nextLmgStatus.status !== "string") {
+          setSessions([]);
+          setLmgStatus({
+            status: "protocol_error",
+            message: "로컬 모델 게이트웨이 응답 형식이 올바르지 않습니다."
+          });
+          return;
+        }
+        setSessions(Array.isArray(data?.sessions) ? data.sessions : []);
+        setLmgStatus(nextLmgStatus);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setSessions([]);
+        setSessionsError(err);
+      })
       .finally(() => { if (active) setSessionsLoading(false); });
     return () => { active = false; };
   }, [sessionsReloadKey]);
@@ -431,10 +449,22 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
           ) : null}
         </div>
         {sessionsLoading ? <div className="dashboard-state" role="status">세션을 불러오는 중입니다.</div> : null}
-        {!sessionsLoading && sessions.length === 0 ? (
+        {!sessionsLoading && sessionsError ? (
+          <div className="dashboard-state dashboard-state-error" role="alert">
+            <strong>로컬 모델 게이트웨이에 연결할 수 없습니다.</strong>
+            <button type="button" className="btn btn-sm" onClick={() => setSessionsReloadKey((v) => v + 1)}>다시 시도</button>
+          </div>
+        ) : null}
+        {!sessionsLoading && !sessionsError && lmgStatus.status !== "ready" ? (
+          <div className="dashboard-state dashboard-state-error" role="alert">
+            <strong>{lmgStatus.message || "로컬 모델 게이트웨이 상태를 확인할 수 없습니다."}</strong>
+            <button type="button" className="btn btn-sm" onClick={() => setSessionsReloadKey((v) => v + 1)}>다시 시도</button>
+          </div>
+        ) : null}
+        {!sessionsLoading && !sessionsError && lmgStatus.status === "ready" && sessions.length === 0 ? (
           <div className="dashboard-state">로컬 세션 없음</div>
         ) : null}
-        {!sessionsLoading && sessions.length > 0 ? (
+        {!sessionsLoading && !sessionsError && lmgStatus.status === "ready" && sessions.length > 0 ? (
           <>
             <table className="dashboard-sessions-table">
               <thead>
