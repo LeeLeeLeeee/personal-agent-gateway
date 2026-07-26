@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from personal_agent_gateway.agent_session_link import (
@@ -8,7 +10,7 @@ from personal_agent_gateway.agent_session_link import (
 )
 from personal_agent_gateway.app import create_app
 from personal_agent_gateway.config import AppConfig
-from personal_agent_gateway.lmg_client import LMGQueryError
+from personal_agent_gateway.lmg_client import LMGQueryError, fetch_sessions_strict
 
 
 def _config(tmp_path: Path) -> AppConfig:
@@ -94,3 +96,51 @@ def test_session_consistency_redacts_lmg_query_failure(
         "Local model gateway consistency check unavailable"
     )
     assert "secret" not in response.text
+
+
+def _lmg_session_row(**overrides):
+    row = {
+        "provider": "codex",
+        "upstream_id": "upstream-1",
+        "model": "",
+        "workspace_root": "",
+        "created_at": "2026-07-27T00:00:00Z",
+        "last_run_at": "2026-07-27T00:00:00Z",
+        "size_bytes": 0,
+    }
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [{"provider": "codex", "upstream_id": "incomplete"}],
+        [_lmg_session_row(size_bytes=-1)],
+        [_lmg_session_row(), _lmg_session_row(provider="claude")],
+    ],
+)
+def test_session_consistency_returns_503_for_invalid_lmg_inventory(
+    tmp_path: Path,
+    monkeypatch,
+    rows,
+) -> None:
+    client = _authenticated_client(tmp_path)
+
+    def fetch_invalid(config):
+        transport = httpx.MockTransport(
+            lambda _request: httpx.Response(200, json=rows)
+        )
+        return fetch_sessions_strict(config, transport=transport)
+
+    monkeypatch.setattr(
+        "personal_agent_gateway.api.audit.fetch_sessions_strict",
+        fetch_invalid,
+    )
+
+    response = client.get("/api/audit/session-consistency")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Local model gateway consistency check unavailable"
+    )

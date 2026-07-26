@@ -22,6 +22,20 @@ def _cfg(base="http://lmg", token="local-secret"):
     )
 
 
+def _session_row(**overrides):
+    row = {
+        "provider": "codex",
+        "upstream_id": "session-1",
+        "model": "",
+        "workspace_root": "",
+        "created_at": "2026-07-27T00:00:00Z",
+        "last_run_at": "2026-07-27T00:00:00Z",
+        "size_bytes": 0,
+    }
+    row.update(overrides)
+    return row
+
+
 def test_fetch_capabilities_returns_payload():
     payload = {"schema_version": 1, "providers": {"codex": {"available": True, "models": [{"id": "x"}]}}}
     def handler(request):
@@ -71,13 +85,10 @@ def test_fetch_sessions_strict_preserves_valid_empty_list():
 
 def test_fetch_sessions_strict_accepts_typed_session_rows():
     rows = [
-        {
-            "provider": "codex",
-            "upstream_id": "session-1",
-            "consumer": None,
-            "consumer_session_id": "chat-1",
-            "size_bytes": 0,
-        }
+        _session_row(
+            consumer=None,
+            consumer_session_id="chat-1",
+        )
     ]
 
     def handler(request):
@@ -107,39 +118,70 @@ def test_fetch_sessions_strict_raises_typed_error(response):
 
 
 @pytest.mark.parametrize(
-    "row",
+    "missing_field",
     [
-        {},
-        {"provider": "", "upstream_id": "session-1"},
-        {"provider": " ", "upstream_id": "session-1"},
-        {"provider": 1, "upstream_id": "session-1"},
-        {"provider": "codex", "upstream_id": ""},
-        {"provider": "codex", "upstream_id": None},
-        {
-            "provider": "codex",
-            "upstream_id": "session-1",
-            "consumer": 1,
-        },
-        {
-            "provider": "codex",
-            "upstream_id": "session-1",
-            "consumer_session_id": [],
-        },
-        {
-            "provider": "codex",
-            "upstream_id": "session-1",
-            "size_bytes": "large",
-        },
-        {
-            "provider": "codex",
-            "upstream_id": "session-1",
-            "size_bytes": True,
-        },
+        "provider",
+        "upstream_id",
+        "model",
+        "workspace_root",
+        "created_at",
+        "last_run_at",
+        "size_bytes",
     ],
 )
-def test_fetch_sessions_strict_rejects_invalid_session_rows(row):
+def test_fetch_sessions_strict_rejects_missing_required_fields(missing_field):
+    row = _session_row()
+    row.pop(missing_field)
+
     def handler(request):
         return httpx.Response(200, json=[row])
+
+    with pytest.raises(LMGQueryError):
+        fetch_sessions_strict(_cfg(), transport=httpx.MockTransport(handler))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("provider", ""),
+        ("provider", " "),
+        ("provider", 1),
+        ("upstream_id", ""),
+        ("upstream_id", None),
+        ("model", None),
+        ("workspace_root", []),
+        ("created_at", 1),
+        ("last_run_at", {}),
+        ("consumer", 1),
+        ("consumer_session_id", []),
+        ("storage_path", 1),
+        ("size_bytes", "large"),
+        ("size_bytes", True),
+        ("size_bytes", None),
+        ("size_bytes", -1),
+    ],
+)
+def test_fetch_sessions_strict_rejects_invalid_session_field_types(field, value):
+    row = _session_row(**{field: value})
+
+    def handler(request):
+        return httpx.Response(200, json=[row])
+
+    with pytest.raises(LMGQueryError):
+        fetch_sessions_strict(_cfg(), transport=httpx.MockTransport(handler))
+
+
+@pytest.mark.parametrize("second_provider", ["codex", "claude"])
+def test_fetch_sessions_strict_rejects_duplicate_global_upstream_ids(
+    second_provider,
+):
+    rows = [
+        _session_row(),
+        _session_row(provider=second_provider),
+    ]
+
+    def handler(request):
+        return httpx.Response(200, json=rows)
 
     with pytest.raises(LMGQueryError):
         fetch_sessions_strict(_cfg(), transport=httpx.MockTransport(handler))

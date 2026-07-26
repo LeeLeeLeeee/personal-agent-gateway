@@ -9,16 +9,18 @@ class LMGQueryError(RuntimeError):
     """Raised when an authoritative LMG query cannot be completed."""
 
 
-_SESSION_REQUIRED_STRINGS = ("provider", "upstream_id")
-_SESSION_OPTIONAL_STRINGS = (
+_SESSION_REQUIRED_NONEMPTY_STRINGS = ("provider", "upstream_id")
+_SESSION_REQUIRED_STRINGS = (
     "model",
     "workspace_root",
+    "created_at",
+    "last_run_at",
+)
+_SESSION_OPTIONAL_STRINGS = (
     "consumer",
     "consumer_session_id",
     "consumer_run_id",
     "consumer_context_fingerprint",
-    "created_at",
-    "last_run_at",
     "storage_path",
 )
 
@@ -76,29 +78,45 @@ def fetch_sessions_strict(
         payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:
         raise LMGQueryError("Unable to query local model gateway sessions") from exc
-    if not isinstance(payload, list) or not all(
-        _valid_session_row(row) for row in payload
-    ):
+    if not _valid_session_rows(payload):
         raise LMGQueryError("Invalid local model gateway sessions response")
     return payload
+
+
+def _valid_session_rows(payload: object) -> bool:
+    if not isinstance(payload, list):
+        return False
+    upstream_ids: set[str] = set()
+    for row in payload:
+        if not _valid_session_row(row):
+            return False
+        upstream_id = row["upstream_id"]
+        if upstream_id in upstream_ids:
+            return False
+        upstream_ids.add(upstream_id)
+    return True
 
 
 def _valid_session_row(row: object) -> bool:
     if not isinstance(row, dict):
         return False
-    for field in _SESSION_REQUIRED_STRINGS:
+    for field in _SESSION_REQUIRED_NONEMPTY_STRINGS:
         value = row.get(field)
         if not isinstance(value, str) or not value.strip():
+            return False
+    for field in _SESSION_REQUIRED_STRINGS:
+        if field not in row or not isinstance(row[field], str):
             return False
     for field in _SESSION_OPTIONAL_STRINGS:
         value = row.get(field)
         if field in row and value is not None and not isinstance(value, str):
             return False
     size_bytes = row.get("size_bytes")
-    return not (
+    return (
         "size_bytes" in row
-        and size_bytes is not None
-        and (not isinstance(size_bytes, int) or isinstance(size_bytes, bool))
+        and isinstance(size_bytes, int)
+        and not isinstance(size_bytes, bool)
+        and size_bytes >= 0
     )
 
 
