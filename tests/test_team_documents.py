@@ -62,7 +62,7 @@ def authed_client_with_run(tmp_path: Path):
             "execution_policy": "triggered",
         },
     ).json()["team_run"]
-    workspace = Path(run["workspace_root"])
+    workspace = Path(run["working_root"])
     workspace.mkdir(parents=True, exist_ok=True)
     return client, run, workspace
 
@@ -91,3 +91,17 @@ def test_documents_content_rejects_traversal(authed_client_with_run):
         f"/api/team-runs/{run['id']}/documents/content", params={"path": "../../etc/passwd"}
     )
     assert resp.status_code == 400
+
+
+def test_documents_fall_back_to_legacy_workspace_root(authed_client_with_run):
+    client, run, _ = authed_client_with_run
+    legacy_root = Path(run["workspace_root"])
+    (legacy_root / "legacy.md").write_text("legacy", encoding="utf-8")
+    client.app.state.database.execute(
+        "update team_runs set working_root = null where id = ?",
+        (run["id"],),
+    )
+
+    listing = client.get(f"/api/team-runs/{run['id']}/documents").json()["documents"]
+
+    assert [document["path"] for document in listing] == ["legacy.md"]

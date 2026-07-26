@@ -133,14 +133,22 @@ describe("TeamRunDetail", () => {
           messages: [
             { id: "m1", kind: "query", sender_agent_id: "a2", content: "which schema?", created_at: "2026-07-13T00:00:00Z" },
             { id: "m2", kind: "answer", sender_agent_id: "a1", content: "use schema X", created_at: "2026-07-13T00:01:00Z" },
-            { id: "m3", kind: "agent_output", sender_agent_id: "a2", content: "API built", metadata: { task_id: "t1" }, created_at: "2026-07-13T00:02:00Z" }
+            {
+              id: "m3",
+              kind: "agent_output",
+              sender_agent_id: "a2",
+              content: "API built",
+              metadata: { task_id: "t1", files_created: ["src/api.py"] },
+              created_at: "2026-07-13T00:02:00Z"
+            }
           ]
         }}
       />
     );
 
     await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
-    expect(screen.getByText("DOCS 1")).toBeInTheDocument();
+    expect(screen.getByText("FILES 1")).toBeInTheDocument();
+    expect(screen.getByText("REPORTS 1")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("tab", { name: "OVERVIEW" }));
     await userEvent.click(screen.getByText(/SHARED \/ HANDOFFS/));
@@ -254,7 +262,7 @@ describe("TeamRunDetail", () => {
     expect(await screen.findByRole("heading", { name: "hi" })).toBeInTheDocument();
   });
 
-  it("shows overview by default and keeps reports collapsed away from raw activity", async () => {
+  it("shows completed-run reports expanded by default and keeps raw activity separate", async () => {
     render(
       <TeamRunDetail
         detail={{
@@ -271,10 +279,7 @@ describe("TeamRunDetail", () => {
 
     expect(screen.getByText("All shipped.")).toBeInTheDocument();
     expect(screen.queryByText("Planning started")).not.toBeInTheDocument();
-    expect(screen.getByText("Feature built")).not.toBeVisible();
-
-    await userEvent.click(screen.getByText(/AGENT REPORTS/));
-    expect(screen.getByText("Feature built")).toBeInTheDocument();
+    expect(screen.getByText("Feature built")).toBeVisible();
 
     await userEvent.click(screen.getByRole("tab", { name: "ACTIVITY" }));
     expect(screen.getByText("Planning started")).toBeInTheDocument();

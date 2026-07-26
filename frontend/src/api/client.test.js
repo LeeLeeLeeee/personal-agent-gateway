@@ -8,6 +8,31 @@ function jsonResponse(body, ok = true) {
 describe("api client", () => {
   beforeEach(() => {
     globalThis.fetch = vi.fn();
+    globalThis.history.replaceState({}, "", "/");
+  });
+
+  it("forwards the setup token from the browser URL", async () => {
+    globalThis.history.replaceState({}, "", "/?token=setup%20token");
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ secret: "secret" }))
+      .mockResolvedValueOnce(jsonResponse({ enabled: true, recovery_codes: [] }));
+
+    await api.setupStart();
+    await api.setupVerify("123456");
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/auth/setup/start?token=setup%20token",
+      { method: "POST" }
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/auth/setup/verify?token=setup%20token",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ otp: "123456" })
+      })
+    );
   });
 
   it("keeps existing auth and chat endpoints", async () => {
@@ -502,5 +527,69 @@ describe("api client", () => {
     expect(fetch).toHaveBeenNthCalledWith(4, "/api/hooks/h1/run-now", expect.objectContaining({ method: "POST" }));
     expect(fetch).toHaveBeenNthCalledWith(5, "/api/hooks/h1/runs");
     expect(fetch).toHaveBeenNthCalledWith(6, "/api/hooks/test-connection", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("supports Archive Library, revision, request, and map endpoints", async () => {
+    const entryPayload = {
+      kind: "reference",
+      title: "Release sources",
+      summary: "Verified release references",
+      content_markdown: "# Release sources",
+      tags: ["release"],
+      source_urls: ["https://example.com"],
+      persona_ids: ["persona 1"],
+      change_summary: "",
+      request_id: "request 1"
+    };
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ entries: [{ id: "entry-1" }] }))
+      .mockResolvedValueOnce(jsonResponse({ entry: { id: "entry-1", current_revision: 1 } }))
+      .mockResolvedValueOnce(jsonResponse({ entry: { id: "entry-1", current_revision: 2 } }))
+      .mockResolvedValueOnce(jsonResponse({ revisions: [{ id: "revision-1" }] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [{ id: "request-1", status: "open" }] }))
+      .mockResolvedValueOnce(jsonResponse({ request: { id: "request-1", status: "deferred" } }))
+      .mockResolvedValueOnce(jsonResponse({ nodes: [], edges: [] }));
+
+    await expect(api.archiveEntries({
+      query: "release notes",
+      kind: "reference"
+    })).resolves.toEqual([{ id: "entry-1" }]);
+    await expect(api.publishArchiveEntry(entryPayload)).resolves.toMatchObject({
+      id: "entry-1",
+      current_revision: 1
+    });
+    await expect(api.reviseArchiveEntry("entry 1", entryPayload)).resolves.toMatchObject({
+      id: "entry-1",
+      current_revision: 2
+    });
+    await expect(api.archiveEntryRevisions("entry 1")).resolves.toEqual([{ id: "revision-1" }]);
+    await expect(api.knowledgeRequests("open")).resolves.toEqual([
+      { id: "request-1", status: "open" }
+    ]);
+    await expect(api.setKnowledgeRequestStatus("request 1", "deferred")).resolves.toEqual({
+      id: "request-1",
+      status: "deferred"
+    });
+    await expect(api.archiveMap()).resolves.toEqual({ nodes: [], edges: [] });
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/archive/entries?q=release+notes&kind=reference&status=published"
+    );
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/archive/entries", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify(entryPayload)
+    }));
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/archive/entries/entry%201", expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify(entryPayload)
+    }));
+    expect(fetch).toHaveBeenNthCalledWith(4, "/api/archive/entries/entry%201/revisions");
+    expect(fetch).toHaveBeenNthCalledWith(5, "/api/archive/requests?status=open");
+    expect(fetch).toHaveBeenNthCalledWith(6, "/api/archive/requests/request%201", expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ status: "deferred" })
+    }));
+    expect(fetch).toHaveBeenNthCalledWith(7, "/api/archive/map");
   });
 });

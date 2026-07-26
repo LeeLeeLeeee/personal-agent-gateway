@@ -9,10 +9,12 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from personal_agent_gateway.agent_session_link import AgentSessionLinkService
 from personal_agent_gateway.api.dependencies import record_domain_audit, session_dependency
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.intake import IntakeClosedError, IntakeGate
+from personal_agent_gateway.lmg_client import delete_session as delete_lmg_session
 from personal_agent_gateway.run_state import SessionAlreadyRunningError, SessionRunRegistry
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
 from personal_agent_gateway.session_activity import (
@@ -356,9 +358,23 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
         _session: None = session_dependency,
     ) -> dict[str, object]:
         require_session_id(session_id)
+
+        def delete_chat_and_upstream() -> bool:
+            upstream_session_ids = AgentSessionLinkService(
+                context.transcript
+            ).upstream_session_ids(session_id)
+            for upstream_session_id in upstream_session_ids:
+                if delete_lmg_session(context.config, upstream_session_id):
+                    continue
+                raise HTTPException(
+                    status_code=502,
+                    detail="Failed to delete linked local model session",
+                )
+            return context.transcript.delete(session_id)
+
         try:
             deleted = context.run_registry.delete_if_idle(
-                session_id, lambda: context.transcript.delete(session_id)
+                session_id, delete_chat_and_upstream
             )
         except SessionAlreadyRunningError as exc:
             raise HTTPException(status_code=409, detail="Session is running") from exc

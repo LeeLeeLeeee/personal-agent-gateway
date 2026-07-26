@@ -20,6 +20,21 @@ class AgentSessionLinkService:
     def __init__(self, transcript: TranscriptStore) -> None:
         self._transcript = transcript
 
+    def upstream_session_ids(self, session_id: str) -> list[str]:
+        upstream_session_ids: list[str] = []
+        seen: set[str] = set()
+        for event in self._transcript.load(session_id):
+            if event.kind != "agent_session_link":
+                continue
+            upstream_session_id = event.payload.get("upstream_session_id")
+            if not isinstance(upstream_session_id, str) or not upstream_session_id:
+                continue
+            if upstream_session_id in seen:
+                continue
+            seen.add(upstream_session_id)
+            upstream_session_ids.append(upstream_session_id)
+        return upstream_session_ids
+
     def latest(
         self,
         session_id: str,

@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 import httpx
 
 
@@ -32,3 +34,20 @@ def fetch_sessions(config, *, transport: httpx.BaseTransport | None = None) -> l
     except (httpx.HTTPError, ValueError):
         return []
     return payload if isinstance(payload, list) else []
+
+
+def delete_session(
+    config,
+    upstream_session_id: str,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> bool:
+    encoded_session_id = quote(upstream_session_id, safe="")
+    url = f"{config.lmg_base_url.rstrip('/')}/v1/sessions/{encoded_session_id}"
+    try:
+        with httpx.Client(timeout=10.0, transport=transport) as client:
+            response = client.delete(url)
+        response.raise_for_status()
+    except (httpx.HTTPError, ValueError):
+        return False
+    return True

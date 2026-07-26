@@ -262,7 +262,11 @@ export function useSessionController({
       return;
     }
     setSessionConfig(saved);
-    await refreshStatusAndSessions();
+    const nextStatus = await refreshStatusAndSessions();
+    const sessionId = nextStatus?.session_id || null;
+    if (!sessionId) return;
+    setActiveSessionId(sessionId);
+    activeSessionIdRef.current = sessionId;
   }
 
   function handleSessionConfigRetry() {

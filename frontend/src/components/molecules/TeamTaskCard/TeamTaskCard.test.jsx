@@ -20,4 +20,21 @@ describe("TeamTaskCard", () => {
     render(<TeamTaskCard task={task} owner={null} onOpen={vi.fn()} />);
     expect(screen.getByText("UNASSIGNED")).toBeInTheDocument();
   });
+
+  it("shows completed work, changed files, and report counts on the card", () => {
+    render(
+      <TeamTaskCard
+        task={{ ...task, status: "completed", result: "Implemented the API and added tests." }}
+        owner={null}
+        fileCount={2}
+        reportCount={1}
+        onOpen={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("COMPLETED")).toBeInTheDocument();
+    expect(screen.getByText("Implemented the API and added tests.")).toBeInTheDocument();
+    expect(screen.getByText("FILES 2")).toBeInTheDocument();
+    expect(screen.getByText("REPORTS 1")).toBeInTheDocument();
+  });
 });

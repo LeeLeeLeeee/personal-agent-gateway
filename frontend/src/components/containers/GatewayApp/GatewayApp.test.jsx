@@ -126,6 +126,29 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("AGENT IDLE")).toBeInTheDocument();
   });
 
+  it("opens the Archive workspace from the primary navigation", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": { items: [], counts: {} },
+      "GET /api/archive/entries?status=published": { entries: [] },
+      "GET /api/personas": { personas: [] },
+      "GET /api/archive/requests": { requests: [] },
+      "GET /api/archive/map": { nodes: [], edges: [] }
+    });
+
+    await renderGatewayApp({ openChat: false });
+    await userEvent.click(await screen.findByRole("button", { name: "Archive" }));
+
+    expect(await screen.findByRole("heading", { name: "Archive" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("opens an operations dashboard item through the existing target navigation handler", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
@@ -934,6 +957,83 @@ describe("GatewayApp", () => {
         body: JSON.stringify({ persona_id: "p1" })
       })
     ));
+  });
+
+  it("sends the first Persona message through the configured session without resetting", async () => {
+    let backendSessionId = null;
+    let resetCalls = 0;
+    let activeConfig = {
+      agent_id: "codex", model: "default", options: {}, editable: true
+    };
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": () => response({
+        ...status,
+        session_id: backendSessionId,
+        session_config: activeConfig
+      }),
+      "GET /api/sessions": () => response({
+        sessions: backendSessionId
+          ? [{
+            id: backendSessionId,
+            title: "Untitled session",
+            status: "idle",
+            message_count: 0,
+            is_active: true,
+            origin: "chat",
+            created_at: "2026-07-24T03:00:00Z"
+          }]
+          : []
+      }),
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [
+        { id: "codex", label: "Codex CLI", available: true, models: ["default"], default_model: "default", defaults: {}, options_schema: [] },
+        { id: "claude", label: "Claude Code", available: true, models: ["sonnet"], default_model: "sonnet", defaults: { effort: "medium" }, options_schema: [] }
+      ] },
+      "GET /api/sessions/active/config": () => response({ config: activeConfig }),
+      "GET /api/personas": { personas: [{
+        id: "p1", name: "Mail Manager", role: "Inbox triage",
+        default_backend: "claude", default_model: "sonnet", default_options: { effort: "medium" }
+      }] },
+      "PUT /api/sessions/active/config": () => {
+        backendSessionId = "persona-session";
+        activeConfig = {
+          persona_id: "p1", persona_snapshot: { id: "p1", name: "Mail Manager" },
+          agent_id: "claude", model: "sonnet", options: { effort: "medium" }, editable: true
+        };
+        return response({ config: activeConfig });
+      },
+      "POST /api/reset": () => {
+        resetCalls += 1;
+        return response({ session_id: "default-session" });
+      },
+      "POST /api/sessions/persona-session/chat": {
+        messages: [{ content: "PERSONA_CHAT_OK" }],
+        pending_approval: null
+      },
+      "GET /api/artifacts": { artifacts: [] }
+    });
+
+    await renderGatewayApp();
+
+    await userEvent.selectOptions(await screen.findByLabelText("Persona"), "p1");
+    await waitFor(() => {
+      const statusCalls = fetch.mock.calls.filter(([url]) => url === "/api/status");
+      expect(statusCalls.length).toBeGreaterThan(1);
+    });
+
+    await userEvent.type(
+      screen.getByPlaceholderText("Message the agent, or describe a local action..."),
+      "hello persona"
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("PERSONA_CHAT_OK")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/persona-session/chat",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(resetCalls).toBe(0);
   });
 
   it("clears config save errors after activating another session", async () => {

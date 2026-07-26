@@ -1083,7 +1083,7 @@ def _doc_kind(path: Path) -> str:
 
 
 def _resolved_workspace(run) -> Path:
-    return Path(run.workspace_root).resolve()
+    return Path(run.working_root or run.workspace_root).resolve()
 
 
 def _safe_child(root: Path, relative: str) -> Path:

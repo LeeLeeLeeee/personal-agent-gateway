@@ -2,11 +2,17 @@ import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelClient
 from personal_agent_gateway.redaction import redact_text
+from personal_agent_gateway.team_results import (
+    TeamRunResultPackager,
+    workspace_changes,
+    workspace_snapshot,
+)
 from personal_agent_gateway.teams import TeamAgent, TeamRun, TeamRunService, TeamTask
 
 PLANNING_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
@@ -142,11 +148,13 @@ class TeamRuntime:
         model_factory: Callable[[TeamAgent], ModelClient],
         event_bus: EventBus | None = None,
         archive_service: ArchiveService | None = None,
+        result_packager: TeamRunResultPackager | None = None,
     ) -> None:
         self._teams = teams
         self._model_factory = model_factory
         self._event_bus = event_bus
         self._archive_service = archive_service
+        self._result_packager = result_packager
 
     def _goal_context(self, run: TeamRun, cycle_id: str | None) -> str:
         if cycle_id is None:
@@ -221,6 +229,7 @@ class TeamRuntime:
                 run = self._teams.set_run_status(run.id, "completed")
                 if cycle_id is not None:
                     self._teams.set_cycle_status(cycle_id, "completed")
+                self._package_results(run, leader, cycle_id)
                 await self._publish({"type": "team.run.completed", "team_run_id": run.id})
                 return run
 
@@ -347,6 +356,8 @@ class TeamRuntime:
                 }
             )
             try:
+                working_root = Path(run.working_root or run.workspace_root)
+                before = workspace_snapshot(working_root)
                 result = await self._run_task(run, leader, worker, task)
                 if isinstance(result, UserDecisionResolution):
                     request = self._teams.defer_task_for_user_decision(
@@ -366,13 +377,17 @@ class TeamRuntime:
                     if result.decision.get("blocking_scope") == "run":
                         return
                     continue
+                changes = workspace_changes(
+                    before,
+                    workspace_snapshot(working_root),
+                )
                 self._teams.append_message(
                     run.id,
                     worker.id,
                     None,
                     "agent_output",
                     result,
-                    {"task_id": task.id},
+                    {"task_id": task.id, **changes},
                     cycle_id=cycle_id,
                 )
                 task, worker = self._teams.finish_task(
@@ -544,6 +559,7 @@ class TeamRuntime:
                         cycle_id, "failed", error_message="All tasks failed"
                     )
                 self._teams.set_agent_status(leader.id, "failed")
+                self._package_results(run, leader, cycle_id)
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": "All tasks failed"})
                 return run
             run = self._teams.set_run_status(run.id, "summarizing")
@@ -568,8 +584,31 @@ class TeamRuntime:
             if cycle_id is not None:
                 self._teams.set_cycle_status(cycle_id, status, summary=summary)
             self._teams.set_agent_status(leader.id, "completed")
+            self._package_results(run, leader, cycle_id)
             await self._publish({"type": "team.run.completed", "team_run_id": run.id})
             return run
+
+    def _package_results(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        cycle_id: str | None,
+    ) -> None:
+        if self._result_packager is None:
+            return
+        try:
+            self._result_packager.build(run, cycle_id)
+        except Exception as exc:  # noqa: BLE001
+            error = redact_text(exc) or type(exc).__name__
+            self._teams.append_message(
+                run.id,
+                leader.id,
+                None,
+                "plan_note",
+                f"Result package generation failed: {error}",
+                {"result_package_error": True},
+                cycle_id=cycle_id,
+            )
 
     async def resume(self, team_run_id: str, cycle_id: str | None = None) -> TeamRun:
         run = self._teams.get_team_run(team_run_id)

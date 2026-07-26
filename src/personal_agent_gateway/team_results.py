@@ -1,0 +1,304 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from datetime import UTC, datetime
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
+
+from personal_agent_gateway.artifacts import Artifact, ArtifactStore
+from personal_agent_gateway.teams import TeamMessage, TeamRun, TeamRunService, TeamTask
+
+WorkspaceSnapshot = dict[str, tuple[int, int]]
+
+_IGNORED_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".cache",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    ".pnpm-store",
+    "coverage",
+}
+_PACKAGE_FILES = {
+    "run-result.json": ("text", "Team Run result", "application/json"),
+    "file-manifest.json": ("text", "Team Run file manifest", "application/json"),
+    "verification.md": ("text", "Team Run verification", "text/markdown"),
+    "workspace.zip": ("other", "Team Run workspace", "application/zip"),
+}
+_VERIFICATION_WORDS = {
+    "test",
+    "qa",
+    "quality",
+    "verify",
+    "verification",
+    "validation",
+    "security",
+    "build",
+    "deploy",
+    "테스트",
+    "검증",
+    "품질",
+    "보안",
+    "빌드",
+    "배포",
+}
+
+
+def _is_sensitive(name: str) -> bool:
+    lowered = name.lower()
+    return lowered == ".env" or lowered.startswith(".env.")
+
+
+def _workspace_files(root: Path):
+    if not root.is_dir():
+        return
+    for current, dirs, files in os.walk(root):
+        dirs[:] = sorted(
+            name
+            for name in dirs
+            if name.lower() not in _IGNORED_DIRS and not (Path(current) / name).is_symlink()
+        )
+        for name in sorted(files):
+            path = Path(current) / name
+            if _is_sensitive(name) or path.is_symlink() or not path.is_file():
+                continue
+            yield path, path.relative_to(root).as_posix()
+
+
+def workspace_snapshot(root: Path) -> WorkspaceSnapshot:
+    snapshot: WorkspaceSnapshot = {}
+    for path, relative in _workspace_files(root):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        snapshot[relative] = (stat.st_size, stat.st_mtime_ns)
+    return snapshot
+
+
+def workspace_changes(before: WorkspaceSnapshot, after: WorkspaceSnapshot) -> dict[str, list[str]]:
+    before_paths = set(before)
+    after_paths = set(after)
+    return {
+        "files_created": sorted(after_paths - before_paths),
+        "files_modified": sorted(
+            path for path in before_paths & after_paths if before[path] != after[path]
+        ),
+        "files_deleted": sorted(before_paths - after_paths),
+    }
+
+
+def _message_paths(message: TeamMessage, key: str) -> list[str]:
+    value = message.metadata.get(key)
+    if not isinstance(value, list):
+        return []
+    return [path for path in value if isinstance(path, str)]
+
+
+class TeamRunResultPackager:
+    def __init__(self, teams: TeamRunService, artifacts: ArtifactStore) -> None:
+        self._teams = teams
+        self._artifacts = artifacts
+
+    def build(self, run: TeamRun, cycle_id: str | None = None) -> list[Artifact]:
+        current = self._teams.get_team_run(run.id)
+        working_root = Path(current.working_root or current.workspace_root).resolve()
+        artifact_root = Path(current.artifact_root or current.workspace_root).resolve()
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        tasks = self._teams.list_tasks(current.id, cycle_id)
+        messages = self._teams.list_messages(current.id, cycle_id)
+
+        result_path = artifact_root / "run-result.json"
+        result_path.write_text(
+            json.dumps(
+                self._result_payload(current, tasks, messages, cycle_id),
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        manifest_path = artifact_root / "file-manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                self._manifest_payload(current, working_root, cycle_id),
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        verification_path = artifact_root / "verification.md"
+        verification_path.write_text(
+            self._verification_markdown(current, tasks, cycle_id),
+            encoding="utf-8",
+        )
+
+        package_names = [
+            result_path.name,
+            manifest_path.name,
+            verification_path.name,
+        ]
+        archive_path = artifact_root / "workspace.zip"
+        if (current.space_policy or {}).get("write_mode") == "isolated":
+            self._write_workspace_archive(working_root, archive_path)
+            package_names.append(archive_path.name)
+        else:
+            archive_path.unlink(missing_ok=True)
+
+        self._delete_previous_registrations(current.id, cycle_id)
+        scope = cycle_id or "run"
+        registered: list[Artifact] = []
+        for name in package_names:
+            artifact_type, title, mime_type = _PACKAGE_FILES[name]
+            registered.append(
+                self._artifacts.register_existing_file(
+                    artifact_type=artifact_type,
+                    title=title,
+                    source_path=artifact_root / name,
+                    relative_path=f"team-runs/{current.id}/{scope}/{name}",
+                    mime_type=mime_type,
+                    tags=["team-run", current.status],
+                    metadata={
+                        "team_run_id": current.id,
+                        "cycle_id": cycle_id,
+                        "package_kind": name,
+                    },
+                )
+            )
+        return registered
+
+    def _result_payload(
+        self,
+        run: TeamRun,
+        tasks: list[TeamTask],
+        messages: list[TeamMessage],
+        cycle_id: str | None,
+    ) -> dict[str, object]:
+        reports: dict[str, list[TeamMessage]] = {}
+        for message in messages:
+            task_id = message.metadata.get("task_id")
+            if message.kind != "agent_output" or not isinstance(task_id, str):
+                continue
+            reports.setdefault(task_id, []).append(message)
+        return {
+            "team_run_id": run.id,
+            "cycle_id": cycle_id,
+            "goal": run.goal,
+            "status": run.status,
+            "summary": run.summary,
+            "error_message": run.error_message,
+            "finished_at": run.finished_at,
+            "working_root": run.working_root or run.workspace_root,
+            "artifact_root": run.artifact_root or run.workspace_root,
+            "tasks": [self._task_payload(task, reports.get(task.id, [])) for task in tasks],
+        }
+
+    @staticmethod
+    def _task_payload(task: TeamTask, reports: list[TeamMessage]) -> dict[str, object]:
+        file_groups = {
+            key: sorted(
+                {
+                    path
+                    for report in reports
+                    for path in _message_paths(report, key)
+                }
+            )
+            for key in ("files_created", "files_modified", "files_deleted")
+        }
+        return {
+            "id": task.id,
+            "cycle_id": task.cycle_id,
+            "title": task.title,
+            "description": task.description,
+            "owner_agent_id": task.owner_agent_id,
+            "status": task.status,
+            "result": task.result,
+            "error_message": task.error_message,
+            **file_groups,
+            "reports": [report.content for report in reports],
+        }
+
+    @staticmethod
+    def _manifest_payload(
+        run: TeamRun, working_root: Path, cycle_id: str | None
+    ) -> dict[str, object]:
+        files: list[dict[str, object]] = []
+        for path, relative in _workspace_files(working_root):
+            try:
+                stat = path.stat()
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            files.append(
+                {
+                    "path": relative,
+                    "size_bytes": stat.st_size,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+                    "sha256": digest,
+                }
+            )
+        return {
+            "team_run_id": run.id,
+            "cycle_id": cycle_id,
+            "working_root": str(working_root),
+            "files": files,
+        }
+
+    @staticmethod
+    def _verification_markdown(run: TeamRun, tasks: list[TeamTask], cycle_id: str | None) -> str:
+        verification_tasks = [
+            task
+            for task in tasks
+            if any(word in task.title.lower() for word in _VERIFICATION_WORDS)
+        ]
+        lines = [
+            "# Team Run Verification",
+            "",
+            f"- Team Run: `{run.id}`",
+            f"- Cycle: `{cycle_id or '-'}`",
+            f"- Run status: `{run.status}`",
+            "",
+        ]
+        if not verification_tasks:
+            lines.append(
+                "전용 검증 태스크가 없어 테스트·빌드·보안 검증 통과 여부를 확정할 수 없습니다."
+            )
+            lines.append("")
+            return "\n".join(lines)
+        lines.extend(["## Verification tasks", ""])
+        for task in verification_tasks:
+            lines.append(f"### {task.title}")
+            lines.append("")
+            lines.append(f"- Status: `{task.status}`")
+            lines.append("")
+            lines.append(task.result or task.error_message or "보고된 결과가 없습니다.")
+            lines.append("")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _write_workspace_archive(working_root: Path, archive_path: Path) -> None:
+        with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:
+            for path, relative in _workspace_files(working_root):
+                try:
+                    archive.write(path, relative)
+                except OSError:
+                    continue
+
+    def _delete_previous_registrations(self, team_run_id: str, cycle_id: str | None) -> None:
+        for artifact in self._artifacts.list():
+            if artifact.metadata.get("team_run_id") != team_run_id:
+                continue
+            if artifact.metadata.get("cycle_id") != cycle_id:
+                continue
+            if artifact.metadata.get("package_kind") not in _PACKAGE_FILES:
+                continue
+            self._artifacts.delete(artifact.id)

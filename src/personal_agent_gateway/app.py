@@ -87,6 +87,7 @@ from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_delivery import TeamRunDeliveryService
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.team_runtime import TeamRuntime
+from personal_agent_gateway.team_results import TeamRunResultPackager
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
 from personal_agent_gateway.transcript import TranscriptStore
 
@@ -188,6 +189,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         _team_model_factory(app_config, app.state.team_run_service),
         event_bus,
         archive_service=app.state.archive_service,
+        result_packager=app.state.team_result_packager,
     )
     app.state.team_run_orchestrator = TeamRunOrchestrator(
         team_run_registry,
@@ -433,6 +435,7 @@ def _attach_local_services(
     job_service = JobService(db, registry)
     schedule_service = ScheduleService(db, registry)
     artifact_store = ArtifactStore(db, config.artifact_root)
+    team_result_packager = TeamRunResultPackager(team_run_service, artifact_store)
     runtime_factory = AgentRuntimeFactory(
         config,
         transcript,
@@ -511,6 +514,7 @@ def _attach_local_services(
     app.state.job_service = job_service
     app.state.schedule_service = schedule_service
     app.state.artifact_store = artifact_store
+    app.state.team_result_packager = team_result_packager
     app.state.job_worker = job_worker
     app.state.scheduler_loop = scheduler_loop
     app.state.persona_service = persona_service

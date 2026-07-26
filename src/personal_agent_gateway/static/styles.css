@@ -3126,6 +3126,31 @@ p {
     font-size: 11.5px;
     line-height: 1.35;
 }
+.team-task-title-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+.team-task-title {
+    flex: 1;
+}
+.team-task-status {
+    flex: none;
+    border: var(--bd-sm);
+    padding: 1px 4px;
+    font-size: 7px;
+    letter-spacing: .6px;
+}
+.team-task-result {
+    display: -webkit-box;
+    margin-top: 6px;
+    overflow: hidden;
+    color: var(--c-dark);
+    font-size: 10px;
+    line-height: 1.4;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+}
 .team-task-meta {
     display: flex;
     align-items: center;
@@ -3169,13 +3194,17 @@ p {
 .team-task-note-warning {
     color: var(--c-warn);
 }
-.team-task-doc-count {
+.team-task-file-count {
     margin-left: auto;
+}
+.team-task-file-count,
+.team-task-report-count {
     color: var(--c-grey);
     font-size: 8px;
     letter-spacing: 0.8px;
 }
-.team-task-doc-count.has-documents {
+.team-task-file-count.has-files,
+.team-task-report-count.has-reports {
     color: var(--c-link);
     font-weight: 700;
 }

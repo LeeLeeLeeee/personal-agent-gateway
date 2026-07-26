@@ -108,6 +108,18 @@ function groupReportsByTask(messages) {
   return grouped;
 }
 
+function taskFileCount(reports) {
+  const files = new Set();
+  for (const report of reports) {
+    for (const key of ["files_created", "files_modified", "files_deleted"]) {
+      const paths = report.metadata?.[key];
+      if (!Array.isArray(paths)) continue;
+      for (const path of paths) files.add(path);
+    }
+  }
+  return files.size;
+}
+
 function TaskDetailDialog({ task, reports, agents, canRetry, retrying, onRetry, onClose }) {
   if (!task) return null;
 
@@ -1145,15 +1157,19 @@ export function TeamRunDetail({
                   </div>
                   <div className="team-task-column-body">
                     {columnTasks.length ? (
-                      columnTasks.map((task) => (
-                        <TeamTaskCard
-                          key={task.id}
-                          task={task}
-                          owner={findAgent(agents, task.owner_agent_id)}
-                          documentCount={(reportsByTask.get(task.id) || []).length}
-                          onOpen={() => setSelectedTaskId(task.id)}
-                        />
-                      ))
+                      columnTasks.map((task) => {
+                        const taskReports = reportsByTask.get(task.id) || [];
+                        return (
+                          <TeamTaskCard
+                            key={task.id}
+                            task={task}
+                            owner={findAgent(agents, task.owner_agent_id)}
+                            fileCount={taskFileCount(taskReports)}
+                            reportCount={taskReports.length}
+                            onOpen={() => setSelectedTaskId(task.id)}
+                          />
+                        );
+                      })
                     ) : (
                       <div className="team-task-empty mono">-</div>
                     )}
@@ -1167,7 +1183,10 @@ export function TeamRunDetail({
 
       {activeTab === "overview" ? (
         <div className="team-overview-disclosures" role="tabpanel" aria-label="Overview">
-          <details className="team-overview-disclosure">
+          <details
+            className="team-overview-disclosure"
+            open={TERMINAL_STATUSES.includes(run.status)}
+          >
             <summary className="mono">AGENT REPORTS <span>{reports.length}</span></summary>
             <div className="team-reports">
               {reports.length ? reports.map((message) => {

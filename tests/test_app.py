@@ -438,6 +438,60 @@ def test_sessions_api_lists_activate_delete_and_searches_sessions(tmp_path: Path
     assert client.get("/api/sessions").json()["sessions"][0]["id"] == second_id
 
 
+def test_delete_session_cascades_to_linked_lmg_session(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    store.append_to(
+        session_id,
+        "agent_session_link",
+        {
+            "agent_id": "claude",
+            "model": "sonnet",
+            "options_fingerprint": "fingerprint",
+            "upstream_session_id": "claude-session-1",
+        },
+    )
+    deleted_upstream_ids: list[str] = []
+    monkeypatch.setattr(
+        "personal_agent_gateway.api.chat_sessions.delete_lmg_session",
+        lambda _config, upstream_id: deleted_upstream_ids.append(upstream_id) or True,
+    )
+    client = auth_client(config, FakeRuntime())
+
+    response = client.delete(f"/api/sessions/{session_id}")
+
+    assert response.status_code == 200
+    assert deleted_upstream_ids == ["claude-session-1"]
+    assert store.exists(session_id) is False
+
+
+def test_delete_session_preserves_chat_when_lmg_delete_fails(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    store = TranscriptStore(config.session_dir)
+    session_id = store.start_new()
+    store.append_to(
+        session_id,
+        "agent_session_link",
+        {
+            "agent_id": "codex",
+            "model": "default",
+            "options_fingerprint": "fingerprint",
+            "upstream_session_id": "codex-session-1",
+        },
+    )
+    monkeypatch.setattr(
+        "personal_agent_gateway.api.chat_sessions.delete_lmg_session",
+        lambda _config, _upstream_id: False,
+    )
+    client = auth_client(config, FakeRuntime())
+
+    response = client.delete(f"/api/sessions/{session_id}")
+
+    assert response.status_code == 502
+    assert store.exists(session_id) is True
+
+
 def test_sessions_api_hides_hook_transcripts_from_chat_routes(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     store = TranscriptStore(config.session_dir)

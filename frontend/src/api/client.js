@@ -52,6 +52,12 @@ async function jsonList(response, key) {
   return body[key] || [];
 }
 
+function authSetupUrl(path) {
+  const token = new URLSearchParams(globalThis.location?.search || "").get("token");
+  if (!token) return path;
+  return `${path}?token=${encodeURIComponent(token)}`;
+}
+
 function apiErrorFromResponse(response, body) {
   return new ApiError({
     status: response.status || 0,
@@ -81,10 +87,10 @@ export const api = {
     return response.ok;
   },
   async setupStart() {
-    return jsonOrNull(await fetch("/api/auth/setup/start", { method: "POST" }));
+    return jsonOrNull(await fetch(authSetupUrl("/api/auth/setup/start"), { method: "POST" }));
   },
   async setupVerify(otp) {
-    return jsonOrNull(await fetch("/api/auth/setup/verify", {
+    return jsonOrNull(await fetch(authSetupUrl("/api/auth/setup/verify"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ otp })

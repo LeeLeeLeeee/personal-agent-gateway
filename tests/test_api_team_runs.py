@@ -898,7 +898,7 @@ def test_documents_only_list_previewable_files_newest_first(tmp_path: Path) -> N
             "execution_policy": "triggered",
         },
     ).json()["team_run"]
-    workspace = Path(run["workspace_root"])
+    workspace = Path(run["working_root"])
     (workspace / "docs").mkdir()
     (workspace / "node_modules" / "pkg").mkdir(parents=True)
     (workspace / "old.md").write_text("old", encoding="utf-8")
@@ -953,7 +953,7 @@ def test_html_and_image_documents_return_safe_preview_payloads(tmp_path: Path) -
             "execution_policy": "triggered",
         },
     ).json()["team_run"]
-    workspace = Path(run["workspace_root"])
+    workspace = Path(run["working_root"])
     (workspace / "page.html").write_text("<h1>Hello</h1>", encoding="utf-8")
     (workspace / "image.webp").write_bytes(b"RIFFxxxxWEBP")
     (workspace / "notes.txt").write_text("hello", encoding="utf-8")
@@ -997,7 +997,7 @@ def test_team_run_detail_aggregate_includes_documents_summary(tmp_path: Path) ->
             "execution_policy": "triggered",
         },
     ).json()["team_run"]
-    workspace = Path(run["workspace_root"])
+    workspace = Path(run["working_root"])
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "notes.md").write_text("hello", encoding="utf-8")
 

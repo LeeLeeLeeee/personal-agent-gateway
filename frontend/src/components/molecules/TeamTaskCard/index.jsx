@@ -13,7 +13,7 @@ function note(task) {
   return null;
 }
 
-export function TeamTaskCard({ task, owner, documentCount = 0, onOpen }) {
+export function TeamTaskCard({ task, owner, fileCount = 0, reportCount = 0, onOpen }) {
   const avatar = owner?.persona_snapshot?.avatar;
   const noteText = note(task);
 
@@ -24,7 +24,13 @@ export function TeamTaskCard({ task, owner, documentCount = 0, onOpen }) {
       aria-label={`Open task ${task.title}`}
       onClick={onOpen}
     >
-      <div className="team-task-title">{task.title}</div>
+      <div className="team-task-title-row">
+        <div className="team-task-title">{task.title}</div>
+        <span className={`team-task-status mono team-task-status-${task.status}`}>
+          {String(task.status || "pending").replace("_", " ").toUpperCase()}
+        </span>
+      </div>
+      {task.result ? <div className="team-task-result">{task.result}</div> : null}
       <div className="team-task-meta">
         <span className="team-task-owner-profile" title={owner?.name || "UNASSIGNED"}>
           {avatar ? (
@@ -39,8 +45,11 @@ export function TeamTaskCard({ task, owner, documentCount = 0, onOpen }) {
             {noteText}
           </span>
         ) : null}
-        <span className={`team-task-doc-count mono${documentCount ? " has-documents" : ""}`}>
-          DOCS {documentCount}
+        <span className={`team-task-file-count mono${fileCount ? " has-files" : ""}`}>
+          FILES {fileCount}
+        </span>
+        <span className={`team-task-report-count mono${reportCount ? " has-reports" : ""}`}>
+          REPORTS {reportCount}
         </span>
       </div>
     </button>
