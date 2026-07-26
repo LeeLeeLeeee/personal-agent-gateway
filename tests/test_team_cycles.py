@@ -22,6 +22,66 @@ def test_cycle_requests_are_idempotent_and_claimed_fifo(tmp_path: Path) -> None:
     assert cycles.claim_next(run.id).id == second.id
 
 
+def test_knowledge_request_uses_triggered_cycle_policy(tmp_path: Path) -> None:
+    _db, _teams, cycles, run = make_triggered_run(tmp_path)
+
+    request = cycles.enqueue_knowledge_request(
+        run.id,
+        "request-1",
+        "Research and draft the requested document",
+        previous_cycle_id=None,
+    )
+
+    assert request.source_type == "knowledge_request"
+    assert request.source_id == "request-1"
+
+
+def test_knowledge_request_retry_uses_a_new_cycle_source(tmp_path: Path) -> None:
+    _db, teams, cycles, run = make_triggered_run(tmp_path)
+    first = cycles.enqueue_knowledge_request(
+        run.id,
+        "request-1",
+        "Research and draft the requested document",
+        previous_cycle_id=None,
+    )
+    claimed = cycles.claim_next(run.id)
+    assert claimed is not None
+    first_cycle = teams.create_cycle(
+        run.id,
+        claimed.source_type,
+        claimed.source_id,
+        request_id=claimed.id,
+    )
+    teams.set_cycle_status(first_cycle.id, "completed", summary="invalid draft")
+    cycles.settle_cycle(first_cycle.id)
+
+    retry = cycles.enqueue_knowledge_request(
+        run.id,
+        "request-1",
+        "Research and draft the requested document",
+        previous_cycle_id=first_cycle.id,
+    )
+    duplicate = cycles.enqueue_knowledge_request(
+        run.id,
+        "request-1",
+        "ignored",
+        previous_cycle_id=first_cycle.id,
+    )
+    claimed_retry = cycles.claim_next(run.id)
+    assert claimed_retry is not None
+    retry_cycle = teams.create_cycle(
+        run.id,
+        claimed_retry.source_type,
+        claimed_retry.source_id,
+        request_id=claimed_retry.id,
+    )
+
+    assert retry.id != first.id
+    assert retry.source_id == "request-1#attempt-2"
+    assert duplicate.id == retry.id
+    assert retry_cycle.source_id == retry.source_id
+
+
 def test_cancel_run_atomically_settles_waiting_auto_lineage_and_blocks_work(
     tmp_path: Path,
 ) -> None:

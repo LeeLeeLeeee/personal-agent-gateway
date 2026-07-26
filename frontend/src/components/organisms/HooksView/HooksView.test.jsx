@@ -82,6 +82,7 @@ describe("HooksView", () => {
       target_kind: "persona",
       target_persona_id: "p1",
       target_team_run_id: null,
+      library_draft_enabled: false,
       prompt_template: "요약: {{subject}}",
       poll_interval_seconds: 300
     }));
@@ -94,6 +95,9 @@ describe("HooksView", () => {
     render(<HooksView hooks={[]} agents={agents} personas={personas} teamRuns={teamRuns} onCreate={onCreate} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} />);
     await user.click(screen.getByRole("button", { name: "CREATE NEW" }));
     await user.click(screen.getByRole("button", { name: "TEAM RUN" }));
+    await user.click(screen.getByRole("checkbox", {
+      name: "Create private Library review draft"
+    }));
     expect(screen.getByRole("option", { name: "Mail inbox" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "One-off" })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "AUTO inbox" })).not.toBeInTheDocument();
@@ -110,7 +114,8 @@ describe("HooksView", () => {
       target_team_run_id: "mail-1",
       target_backend: "",
       target_model: "",
-      target_options: {}
+      target_options: {},
+      library_draft_enabled: true
     }));
   });
 

@@ -25,6 +25,7 @@ import { RulesView } from "../../organisms/RulesView/index.jsx";
 import { SpacesView } from "../../organisms/SpacesView/index.jsx";
 import { SettingsView } from "../../organisms/SettingsView/index.jsx";
 import { ArtifactsView } from "../../organisms/ArtifactsView/index.jsx";
+import { ArchiveView } from "../../organisms/ArchiveView/index.jsx";
 import { JobsView } from "../../organisms/JobsView/index.jsx";
 import { SchedulesView } from "../../organisms/SchedulesView/index.jsx";
 import { OperationsView } from "../../organisms/OperationsView/index.jsx";
@@ -983,6 +984,10 @@ export function GatewayApp() {
             artifacts={artifacts}
             onChange={() => api.artifacts().then(setArtifacts).catch(setScreenError)}
           />
+        </div>
+      ) : screen === "archive" ? (
+        <div className="screen">
+          <ArchiveView />
         </div>
       ) : screen === "jobs" ? (
         <div className="screen">

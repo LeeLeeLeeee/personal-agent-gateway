@@ -3,12 +3,18 @@ from dataclasses import dataclass
 
 import pytest
 
+from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
-from personal_agent_gateway.team_runtime import TeamRuntime, WORKER_PROMPT, _rules_block, _task_delta
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_runtime import (
+    WORKER_PROMPT,
+    TeamRuntime,
+    _rules_block,
+    _task_delta,
+)
 from personal_agent_gateway.teams import TeamRunService
 
 
@@ -1189,3 +1195,79 @@ def test_rules_block_excludes_persona_baseline_for_leader():
     block = _rules_block(snapshot, include_persona_baseline=False)
     assert "persona voice" not in block
     assert "cite paths" not in block
+
+
+@pytest.mark.asyncio
+async def test_team_runtime_uses_archive_and_routes_knowledge_gap_to_library(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, workspace)
+    archive = ArchiveService(db)
+    leader = personas.create_persona("Lead", "Planning", "Plans work", [], [])
+    worker = personas.create_persona("QA", "Quality", "Verifies releases", [], [])
+    archive.publish_entry(
+        actor_type="user",
+        kind="checklist",
+        title="Release verification",
+        summary="Checks required before a release.",
+        content_markdown="Run the smoke suite and attach the test report.",
+        tags=["release", "verification"],
+        source_urls=[],
+        persona_ids=[],
+    )
+    run = teams.create_team_run(
+        "Verify the release",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+    )
+    worker_agent = next(
+        agent for agent in teams.list_agents(run.id) if agent.persona_id == worker.id
+    )
+    plan = json.dumps(
+        [
+            {
+                "title": "Verify release",
+                "description": "Use the release checklist.",
+                "owner_agent_id": worker_agent.id,
+            }
+        ]
+    )
+    leader_model = ScriptedModel([plan, "Release verification completed."])
+    worker_model = ScriptedModel(
+        [
+            (
+                "Smoke suite passed."
+                '<knowledge_request>{"title":"Rollback verification",'
+                '"reason":"No reusable rollback check exists.",'
+                '"suggested_outline":["Trigger rollback","Verify recovery"],'
+                '"source_hints":["release runbook"]}</knowledge_request>'
+            )
+        ]
+    )
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=lambda agent: (
+            leader_model if agent.role == "leader" else worker_model
+        ),
+        archive_service=archive,
+    )
+
+    completed = await runtime.start(run.id)
+
+    assert completed.status == "completed"
+    assert "Release verification" in worker_model.messages[0][0]["content"]
+    task = teams.list_tasks(run.id)[0]
+    assert "<knowledge_request>" not in (task.result or "")
+    assert "Knowledge request sent to Library: Rollback verification" in (
+        task.result or ""
+    )
+    requests = archive.list_requests()
+    assert len(requests) == 1
+    assert requests[0].requested_by_persona_id == worker.id
+    assert requests[0].team_run_id == run.id
+    assert len(archive.list_entries()) == 1

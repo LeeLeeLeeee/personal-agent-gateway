@@ -487,6 +487,143 @@ def _migration_13_space_policies(connection: sqlite3.Connection) -> None:
             connection.execute(f"alter table team_runs add column {name} text")
 
 
+def _migration_14_archive_library(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        create table if not exists archive_entries (
+            id text primary key,
+            kind text not null,
+            title text not null,
+            summary text not null,
+            content_markdown text not null,
+            tags_json text not null default '[]',
+            source_urls_json text not null default '[]',
+            status text not null,
+            current_revision integer not null,
+            created_by text not null,
+            created_at text not null,
+            updated_at text not null
+        );
+
+        create table if not exists archive_revisions (
+            id text primary key,
+            entry_id text not null,
+            revision integer not null,
+            kind text not null,
+            title text not null,
+            summary text not null,
+            content_markdown text not null,
+            tags_json text not null,
+            source_urls_json text not null,
+            change_summary text not null,
+            created_by text not null,
+            created_at text not null,
+            foreign key (entry_id) references archive_entries(id) on delete cascade,
+            unique(entry_id, revision)
+        );
+
+        create table if not exists archive_bindings (
+            entry_id text not null,
+            scope text not null,
+            scope_id text not null default '',
+            created_at text not null,
+            primary key (entry_id, scope, scope_id),
+            foreign key (entry_id) references archive_entries(id) on delete cascade
+        );
+
+        create table if not exists knowledge_requests (
+            id text primary key,
+            title text not null,
+            reason text not null,
+            suggested_outline_json text not null default '[]',
+            source_hints_json text not null default '[]',
+            requested_by_persona_id text,
+            session_id text,
+            team_run_id text,
+            assigned_team_run_id text,
+            status text not null,
+            fulfilled_by_entry_id text,
+            created_at text not null,
+            updated_at text not null,
+            foreign key (requested_by_persona_id) references personas(id) on delete set null,
+            foreign key (team_run_id) references team_runs(id) on delete set null,
+            foreign key (assigned_team_run_id) references team_runs(id) on delete set null,
+            foreign key (fulfilled_by_entry_id) references archive_entries(id) on delete set null
+        );
+
+        create virtual table if not exists archive_entries_fts using fts5(
+            entry_id unindexed,
+            title,
+            summary,
+            content_markdown,
+            tags,
+            tokenize = 'unicode61'
+        );
+
+        create index if not exists idx_archive_entries_status_updated
+        on archive_entries(status, updated_at desc);
+
+        create index if not exists idx_archive_bindings_scope
+        on archive_bindings(scope, scope_id, entry_id);
+
+        create index if not exists idx_archive_revisions_entry_revision
+        on archive_revisions(entry_id, revision desc);
+
+        create index if not exists idx_knowledge_requests_status_created
+        on knowledge_requests(status, created_at desc);
+
+        create index if not exists idx_knowledge_requests_persona_status
+        on knowledge_requests(requested_by_persona_id, status, created_at desc);
+        """
+    )
+
+
+def _migration_15_library_team_drafts(connection: sqlite3.Connection) -> None:
+    hook_columns = _columns(connection, "hooks")
+    if "library_draft_enabled" not in hook_columns:
+        connection.execute(
+            "alter table hooks add column "
+            "library_draft_enabled integer not null default 0"
+        )
+    request_columns = _columns(connection, "knowledge_requests")
+    if "assigned_team_run_id" not in request_columns:
+        connection.execute(
+            "alter table knowledge_requests add column assigned_team_run_id text"
+        )
+    connection.executescript(
+        """
+        create table if not exists archive_draft_origins (
+            entry_id text primary key,
+            source_type text not null,
+            source_id text not null,
+            hook_id text,
+            hook_run_id text,
+            team_run_id text,
+            cycle_id text,
+            knowledge_request_id text,
+            created_at text not null,
+            foreign key (entry_id) references archive_entries(id) on delete cascade,
+            foreign key (hook_id) references hooks(id) on delete set null,
+            foreign key (hook_run_id) references hook_runs(id) on delete set null,
+            foreign key (team_run_id) references team_runs(id) on delete set null,
+            foreign key (cycle_id) references team_run_cycles(id) on delete set null,
+            foreign key (knowledge_request_id)
+                references knowledge_requests(id) on delete set null,
+            unique(source_type, source_id)
+        );
+
+        create index if not exists idx_archive_draft_origins_team_run
+        on archive_draft_origins(team_run_id, created_at desc);
+
+        create index if not exists idx_archive_draft_origins_request
+        on archive_draft_origins(knowledge_request_id);
+
+        create index if not exists idx_knowledge_requests_assigned_team
+        on knowledge_requests(assigned_team_run_id, status, created_at desc);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -501,6 +638,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     (11, "team-cycle-policies", _migration_11_team_cycle_policies),
     (12, "task-retry-cycles", _migration_12_task_retry_cycles),
     (13, "space-policies", _migration_13_space_policies),
+    (14, "archive-library", _migration_14_archive_library),
+    (15, "library-team-drafts", _migration_15_library_team_drafts),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

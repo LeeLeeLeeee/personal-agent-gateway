@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from personal_agent_gateway.api import (
     agents_router,
+    archive_router,
     artifacts_router,
     audit_router,
     auth_router,
@@ -34,6 +35,7 @@ from personal_agent_gateway.api import (
     team_runs_router,
     teams_router,
 )
+from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.artifacts import ArtifactStore
 from personal_agent_gateway.agents import AgentRegistry
 from personal_agent_gateway.api.auth import LoginRateLimiter
@@ -185,6 +187,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
         app.state.team_run_service,
         _team_model_factory(app_config, app.state.team_run_service),
         event_bus,
+        archive_service=app.state.archive_service,
     )
     app.state.team_run_orchestrator = TeamRunOrchestrator(
         team_run_registry,
@@ -279,6 +282,7 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.include_router(jobs_router)
     app.include_router(operations_router)
     app.include_router(artifacts_router)
+    app.include_router(archive_router)
     app.include_router(schedules_router)
     app.include_router(hooks_router)
     app.include_router(agents_router)
@@ -411,6 +415,7 @@ def _attach_local_services(
     session_activity_service = SessionActivityService(db)
     session_activity_publisher = SessionActivityPublisher(session_activity_service, event_bus)
     persona_service = PersonaService(db)
+    archive_service = ArchiveService(db)
     space_policy_service = SpacePolicyService(db)
     space_policy_service.seed_defaults()
     team_cycle_service = TeamCycleService(db)
@@ -434,6 +439,7 @@ def _attach_local_services(
         job_service,
         session_activity_publisher,
         space_policies=space_policy_service,
+        archive_service=archive_service,
     )
     job_worker = JobWorker(
         job_service,
@@ -469,7 +475,13 @@ def _attach_local_services(
         personas=persona_service,
     )
     hook_run_service = HookRunService(db)
-    hook_runner = HookRunner(hook_service, hook_run_service, runtime_factory, event_bus)
+    hook_runner = HookRunner(
+        hook_service,
+        hook_run_service,
+        runtime_factory,
+        event_bus,
+        archive_service,
+    )
     mail_knowledge_service = MailKnowledgeService(db)
     mail_workspace_projector = MailWorkspaceProjector(mail_knowledge_service)
     hook_runner.attach_mail_knowledge(
@@ -502,6 +514,7 @@ def _attach_local_services(
     app.state.job_worker = job_worker
     app.state.scheduler_loop = scheduler_loop
     app.state.persona_service = persona_service
+    app.state.archive_service = archive_service
     app.state.space_policy_service = space_policy_service
     app.state.session_activity_publisher = session_activity_publisher
     app.state.session_activity_service = session_activity_service

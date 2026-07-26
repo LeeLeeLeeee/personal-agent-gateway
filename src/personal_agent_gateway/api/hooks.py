@@ -29,6 +29,7 @@ class CreateHookRequest(BaseModel):
     target_kind: Literal["agent", "persona", "team_run"] = "agent"
     target_persona_id: str | None = None
     target_team_run_id: str | None = None
+    library_draft_enabled: bool = False
     prompt_template: str
     poll_interval_seconds: int = 300
 
@@ -70,6 +71,7 @@ def create_hook(
             target_kind=payload.target_kind,
             target_persona_id=payload.target_persona_id,
             target_team_run_id=payload.target_team_run_id,
+            library_draft_enabled=payload.library_draft_enabled,
         )
     except ValueError as exc:
         record_domain_audit(
@@ -232,6 +234,7 @@ def _hook_payload(hook: Hook) -> dict[str, object]:
         "target_persona_id": hook.target_persona_id,
         "target_persona_snapshot": hook.target_persona_snapshot,
         "target_team_run_id": hook.target_team_run_id,
+        "library_draft_enabled": hook.library_draft_enabled,
         "prompt_template": hook.prompt_template,
         "poll_interval_seconds": hook.poll_interval_seconds,
         "enabled": hook.enabled,

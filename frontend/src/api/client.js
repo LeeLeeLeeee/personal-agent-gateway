@@ -202,6 +202,61 @@ export const api = {
     const res = await fetch(`/api/artifacts/${encodeURIComponent(id)}`, { method: "DELETE" });
     return res.ok;
   },
+  async archiveEntries({ query = "", kind = "", status = "published" } = {}) {
+    const params = new URLSearchParams();
+    if (query.trim()) params.set("q", query.trim());
+    if (kind) params.set("kind", kind);
+    if (status) params.set("status", status);
+    const suffix = params.size ? `?${params.toString()}` : "";
+    return jsonList(await fetch(`/api/archive/entries${suffix}`), "entries");
+  },
+  async publishArchiveEntry(payload) {
+    const body = await jsonOrNull(await fetch("/api/archive/entries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }));
+    return body?.entry || null;
+  },
+  async reviseArchiveEntry(id, payload) {
+    const body = await jsonOrNull(await fetch(`/api/archive/entries/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }));
+    return body?.entry || null;
+  },
+  async archiveEntryRevisions(id) {
+    return jsonList(
+      await fetch(`/api/archive/entries/${encodeURIComponent(id)}/revisions`),
+      "revisions"
+    );
+  },
+  async knowledgeRequests(status = "") {
+    const suffix = status ? `?status=${encodeURIComponent(status)}` : "";
+    return jsonList(await fetch(`/api/archive/requests${suffix}`), "requests");
+  },
+  async setKnowledgeRequestStatus(id, status) {
+    const body = await jsonOrNull(await fetch(`/api/archive/requests/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status })
+    }));
+    return body?.request || null;
+  },
+  async delegateKnowledgeRequest(id, teamRunId) {
+    return jsonOrNull(await fetch(
+      `/api/archive/requests/${encodeURIComponent(id)}/delegate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ team_run_id: teamRunId })
+      }
+    ));
+  },
+  async archiveMap() {
+    return jsonOrNull(await fetch("/api/archive/map"));
+  },
   async settings() {
     const body = await jsonOrNull(await fetch("/api/settings"));
     return body?.settings || null;

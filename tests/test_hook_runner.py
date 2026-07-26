@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.hook_runner import HookRunner
@@ -189,7 +190,7 @@ class FakeTeamRuntime:
         return self.teams.set_run_status(team_run_id, "completed", summary="processed")
 
 
-def _setup_team_hook(tmp_path: Path):
+def _setup_team_hook(tmp_path: Path, *, library_draft_enabled: bool = False):
     db = Database(tmp_path / "app.sqlite")
     db.initialize()
     personas = PersonaService(db)
@@ -218,6 +219,7 @@ def _setup_team_hook(tmp_path: Path):
         poll_interval_seconds=300,
         target_kind="team_run",
         target_team_run_id=team_run.id,
+        library_draft_enabled=library_draft_enabled,
     )
     runs = HookRunService(db)
     run = runs.create_run(hook.id, "k", "s", {"subject": "one"})
@@ -227,16 +229,18 @@ def _setup_team_hook(tmp_path: Path):
     cycles = TeamCycleService(db)
     dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, EventBus())
     orchestrator.add_observer(dispatcher.on_team_run_settled)
+    archive = ArchiveService(db)
     runner = HookRunner(
         hooks,
         runs,
         FakeFactory(FakeRuntime(FakeRuntimeResult([], None))),
         EventBus(),
+        archive,
     )
     runner.attach_team_runtime(teams, orchestrator)
     runner.attach_team_cycle_queue(cycles, dispatcher)
     dispatcher.add_preparer(runner.prepare_team_cycle)
-    return runner, runs, teams, team_run, run, cycles, dispatcher
+    return runner, runs, teams, team_run, run, cycles, dispatcher, archive
 
 
 @pytest.mark.asyncio
@@ -244,7 +248,7 @@ async def test_team_hook_enqueues_shared_cycle_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runner, hook_runs, _teams, _team_run, hook_run, cycles, dispatcher = (
+    runner, hook_runs, _teams, _team_run, hook_run, cycles, dispatcher, _archive = (
         _setup_team_hook(tmp_path)
     )
     enqueued: list[str] = []
@@ -266,9 +270,16 @@ async def test_team_hook_enqueues_shared_cycle_request(
 
 @pytest.mark.asyncio
 async def test_team_hook_rechecks_triggered_policy_before_enqueue(tmp_path: Path) -> None:
-    runner, runs, teams, team_run, hook_run, cycles, _dispatcher = _setup_team_hook(
-        tmp_path
-    )
+    (
+        runner,
+        runs,
+        teams,
+        team_run,
+        hook_run,
+        cycles,
+        _dispatcher,
+        _archive,
+    ) = _setup_team_hook(tmp_path)
     teams._db.execute(
         "update team_runs set execution_policy = 'auto' where id = ?",
         (team_run.id,),
@@ -285,7 +296,9 @@ async def test_team_hook_rechecks_triggered_policy_before_enqueue(tmp_path: Path
 async def test_team_hook_projection_failure_fails_run_cycle_and_settles_request(
     tmp_path: Path,
 ) -> None:
-    runner, runs, teams, team_run, run, cycles, dispatcher = _setup_team_hook(tmp_path)
+    runner, runs, teams, team_run, run, cycles, dispatcher, _archive = (
+        _setup_team_hook(tmp_path)
+    )
 
     class FailingKnowledge:
         def ingest_hook_run(self, *_args):
@@ -309,7 +322,9 @@ async def test_team_hook_projection_failure_fails_run_cycle_and_settles_request(
 def test_startup_reconciliation_repairs_link_and_projects_cycle_status(
     tmp_path: Path,
 ) -> None:
-    runner, runs, teams, team_run, run, cycles, _dispatcher = _setup_team_hook(tmp_path)
+    runner, runs, teams, team_run, run, cycles, _dispatcher, _archive = (
+        _setup_team_hook(tmp_path)
+    )
     request = cycles.enqueue_request(
         team_run.id,
         "hook",
@@ -334,6 +349,190 @@ def test_startup_reconciliation_repairs_link_and_projects_cycle_status(
     assert updated.team_run_cycle_id == cycle.id
     assert updated.status == "interrupted"
     assert updated.error_message == "restart"
+
+
+def test_startup_reconciliation_saves_library_enabled_hook_draft(
+    tmp_path: Path,
+) -> None:
+    runner, runs, teams, team_run, run, cycles, _dispatcher, archive = (
+        _setup_team_hook(tmp_path, library_draft_enabled=True)
+    )
+    request = cycles.enqueue_request(
+        team_run.id,
+        "hook",
+        run.id,
+        "work",
+        previous_cycle_id=None,
+    )
+    claimed = cycles.claim_next(team_run.id)
+    assert claimed is not None
+    cycle = teams.create_cycle(
+        team_run.id,
+        claimed.source_type,
+        claimed.source_id,
+        request_id=request.id,
+    )
+    summary = (
+        "Research complete.\n\n"
+        '<library_draft>{"kind":"checklist","title":"Restart checklist",'
+        '"summary":"Recovered draft.","content_markdown":"- Verify",'
+        '"tags":[],"source_urls":[],"persona_ids":[]}</library_draft>'
+    )
+    teams.set_cycle_status(cycle.id, "completed", summary=summary)
+
+    runner.reconcile_linked_runs()
+
+    drafts = archive.list_entries(status="draft")
+    assert runs.get_run(run.id).result_text == "Research complete."
+    assert len(drafts) == 1
+    assert drafts[0].origin_hook_run_id == run.id
+
+
+def test_startup_reconciliation_saves_latest_knowledge_request_draft(
+    tmp_path: Path,
+) -> None:
+    runner, _runs, teams, team_run, _run, cycles, _dispatcher, archive = (
+        _setup_team_hook(tmp_path)
+    )
+    knowledge_request = archive.create_knowledge_request(
+        title="Recovery procedure",
+        reason="The procedure is missing.",
+        suggested_outline=["Recover", "Verify"],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+    archive.assign_request_team(knowledge_request.id, team_run.id)
+    request = cycles.enqueue_knowledge_request(
+        team_run.id,
+        knowledge_request.id,
+        "work",
+        previous_cycle_id=None,
+    )
+    claimed = cycles.claim_next(team_run.id)
+    assert claimed is not None
+    cycle = teams.create_cycle(
+        team_run.id,
+        claimed.source_type,
+        claimed.source_id,
+        request_id=request.id,
+    )
+    summary = (
+        "Draft ready.\n\n"
+        '<library_draft>{"kind":"procedure","title":"Recovery procedure",'
+        '"summary":"Recovered draft.","content_markdown":"# Recover\\nVerify.",'
+        '"tags":[],"source_urls":[],"persona_ids":[]}</library_draft>'
+    )
+    teams.set_cycle_status(cycle.id, "completed", summary=summary)
+
+    runner.reconcile_linked_runs()
+
+    drafts = archive.list_entries(status="draft")
+    assert len(drafts) == 1
+    assert drafts[0].origin_request_id == knowledge_request.id
+
+
+@pytest.mark.asyncio
+async def test_library_enabled_team_hook_saves_review_draft(
+    tmp_path: Path,
+) -> None:
+    (
+        runner,
+        runs,
+        teams,
+        team_run,
+        run,
+        cycles,
+        _dispatcher,
+        archive,
+    ) = _setup_team_hook(tmp_path, library_draft_enabled=True)
+    await runner.run_one(run.id)
+    linked = runs.get_run(run.id)
+    request = cycles.claim_next(team_run.id)
+    assert request is not None
+    cycle = teams.create_cycle(
+        team_run.id,
+        request.source_type,
+        request.source_id,
+        request_id=request.id,
+    )
+    summary = (
+        "Research complete.\n\n"
+        '<library_draft>{"kind":"checklist","title":"Rollback checklist",'
+        '"summary":"Verified rollback steps.","content_markdown":"- Stop\\n- Roll back\\n- Verify",'
+        '"tags":["rollback"],"source_urls":["https://example.test/runbook"],'
+        '"persona_ids":[]}</library_draft>'
+    )
+    teams.set_cycle_status(cycle.id, "completed", summary=summary)
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    updated = runs.get_run(run.id)
+    drafts = archive.list_entries(status="draft")
+    assert updated.status == "succeeded"
+    assert updated.result_text == "Research complete."
+    assert len(drafts) == 1
+    assert drafts[0].origin_source_type == "hook"
+    assert drafts[0].origin_hook_run_id == run.id
+    assert drafts[0].origin_team_run_id == team_run.id
+    assert drafts[0].origin_cycle_id == cycle.id
+
+
+@pytest.mark.asyncio
+async def test_knowledge_request_cycle_prepares_contract_and_saves_draft(
+    tmp_path: Path,
+) -> None:
+    (
+        runner,
+        _runs,
+        teams,
+        team_run,
+        _run,
+        cycles,
+        _dispatcher,
+        archive,
+    ) = _setup_team_hook(tmp_path)
+    knowledge_request = archive.create_knowledge_request(
+        title="Search verification method",
+        reason="The personas need a reusable source-checking method.",
+        suggested_outline=["Primary sources", "Cross-check", "Record evidence"],
+        source_hints=["Official documentation"],
+        requested_by_persona_id=None,
+    )
+    archive.assign_request_team(knowledge_request.id, team_run.id)
+    request = cycles.enqueue_request(
+        team_run.id,
+        "knowledge_request",
+        f"{knowledge_request.id}#attempt-2",
+        "placeholder",
+        previous_cycle_id=None,
+    )
+    claimed = cycles.claim_next(team_run.id)
+    assert claimed is not None
+    cycle = teams.create_cycle(
+        team_run.id,
+        claimed.source_type,
+        claimed.source_id,
+        request_id=claimed.id,
+    )
+
+    instruction = await runner.prepare_team_cycle(request, cycle)
+
+    assert instruction is not None
+    assert knowledge_request.title in instruction
+    assert "<library_draft>" in instruction
+    summary = (
+        "Draft ready.\n\n"
+        '<library_draft>{"kind":"search_method","title":"Search verification method",'
+        '"summary":"A repeatable evidence check.","content_markdown":"# Method\\nCheck primary sources.",'
+        '"tags":["research"],"source_urls":[],"persona_ids":[]}</library_draft>'
+    )
+    teams.set_cycle_status(cycle.id, "completed", summary=summary)
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    drafts = archive.list_entries(status="draft")
+    assert len(drafts) == 1
+    assert drafts[0].origin_source_type == "knowledge_request"
+    assert drafts[0].origin_request_id == knowledge_request.id
 
 
 @pytest.mark.asyncio

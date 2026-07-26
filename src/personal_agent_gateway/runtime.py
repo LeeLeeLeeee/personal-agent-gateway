@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ModelClient, ToolCall
@@ -36,6 +37,8 @@ class AgentRuntime:
         on_upstream_session_id: Callable[[str], None] | None = None,
         session_id: str | None = None,
         system_prompt: str | None = None,
+        archive_service: ArchiveService | None = None,
+        persona_id: str | None = None,
     ) -> None:
         self._transcript = transcript
         self._tools = tools
@@ -46,6 +49,8 @@ class AgentRuntime:
         self._on_upstream_session_id = on_upstream_session_id
         self._session_id = session_id
         self._system_prompt = system_prompt
+        self._archive_service = archive_service
+        self._persona_id = persona_id
 
     def attach_event_bus(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
@@ -61,6 +66,8 @@ class AgentRuntime:
             on_upstream_session_id=self._on_upstream_session_id,
             session_id=session_id,
             system_prompt=self._system_prompt,
+            archive_service=self._archive_service,
+            persona_id=self._persona_id,
         )
 
     async def handle_user_message(self, content: str) -> RuntimeResult:
@@ -148,21 +155,41 @@ class AgentRuntime:
 
     async def _run_model_loop(self, session_id: str) -> RuntimeResult:
         for _iteration in range(8):
+            events = self._transcript.load(session_id)
             messages = _events_to_messages(
-                self._transcript.load(session_id),
+                events,
                 latest_user_only=self._history_mode == "latest_user",
             )
+            system_messages: list[dict[str, object]] = []
             if self._system_prompt:
-                messages.insert(0, {"role": "system", "content": self._system_prompt})
+                system_messages.append({"role": "system", "content": self._system_prompt})
+            if self._archive_service is not None:
+                system_messages.append(
+                    {
+                        "role": "system",
+                        "content": self._archive_service.prompt_context(
+                            _latest_user_content(events),
+                            persona_id=self._persona_id,
+                        ),
+                    }
+                )
+            messages[0:0] = system_messages
             response = await self._model.complete(messages)
             if response.upstream_session_id and self._on_upstream_session_id is not None:
                 self._on_upstream_session_id(response.upstream_session_id)
 
             if not response.tool_calls:
-                if response.content:
-                    self._append("assistant", {"content": response.content}, session_id)
+                content = response.content
+                if self._archive_service is not None:
+                    content, _requests = self._archive_service.capture_response_requests(
+                        content,
+                        persona_id=self._persona_id,
+                        session_id=session_id,
+                    )
+                if content:
+                    self._append("assistant", {"content": content}, session_id)
                 return RuntimeResult(
-                    messages=[{"role": "assistant", "content": response.content}],
+                    messages=[{"role": "assistant", "content": content}],
                     pending_approval=None,
                 )
 
@@ -316,6 +343,13 @@ def _latest_user_slice(events: list[TranscriptEvent]) -> list[TranscriptEvent]:
         if events[index].kind == "user":
             return events[index:]
     return []
+
+
+def _latest_user_content(events: list[TranscriptEvent]) -> str:
+    for event in reversed(events):
+        if event.kind == "user":
+            return _content(event.payload)
+    return ""
 
 
 def _tool_request_message(payload: dict[str, object]) -> dict[str, object]:

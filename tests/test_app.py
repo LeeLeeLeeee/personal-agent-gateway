@@ -742,7 +742,14 @@ def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Pat
 
     class StubFactory:
         def __init__(
-            self, app_config, transcript, job_service, event_bus, *, space_policies=None
+            self,
+            app_config,
+            transcript,
+            job_service,
+            event_bus,
+            *,
+            space_policies=None,
+            archive_service=None,
         ) -> None:
             created.append(
                 {
@@ -750,6 +757,7 @@ def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Pat
                     "transcript": transcript,
                     "job_service": job_service,
                     "event_bus": event_bus,
+                    "archive_service": archive_service,
                 }
             )
 
@@ -771,6 +779,7 @@ def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Pat
     assert response.json()["messages"][0]["content"] == "reply: factory"
     assert len(created) == 1
     assert created[0]["config"] is config
+    assert created[0]["archive_service"] is client.app.state.archive_service
 
 
 def test_chat_uses_active_session_config_runtime_factory(tmp_path: Path, monkeypatch) -> None:
@@ -779,7 +788,14 @@ def test_chat_uses_active_session_config_runtime_factory(tmp_path: Path, monkeyp
 
     class StubFactory:
         def __init__(
-            self, app_config, transcript, job_service, event_bus, *, space_policies=None
+            self,
+            app_config,
+            transcript,
+            job_service,
+            event_bus,
+            *,
+            space_policies=None,
+            archive_service=None,
         ) -> None:
             self.transcript = transcript
 
@@ -842,6 +858,7 @@ def test_chat_without_explicit_session_config_falls_back_to_app_config(tmp_path:
 def test_chat_passes_codex_profile_from_session_config(tmp_path: Path, monkeypatch) -> None:
     config = make_config(tmp_path)
     captured: list[dict[str, object]] = []
+    monkeypatch.setattr("personal_agent_gateway.agents.fetch_capabilities", lambda _config: None)
 
     class FakeHttpModelClient:
         def __init__(self, **kwargs) -> None:
@@ -943,8 +960,10 @@ def test_chat_reuses_codex_upstream_session_after_first_response(tmp_path: Path,
         for event in events
     )
     assert captured_upstream_ids == [None, "codex-thread-1"]
-    assert captured_messages[0] == [{"role": "user", "content": "first"}]
-    assert captured_messages[1] == [{"role": "user", "content": "second"}]
+    assert captured_messages[0][-1] == {"role": "user", "content": "first"}
+    assert captured_messages[1][-1] == {"role": "user", "content": "second"}
+    assert captured_messages[0][0]["role"] == "system"
+    assert "ARCHIVE POLICY" in captured_messages[0][0]["content"]
 
 
 def test_chat_uses_app_config_model_for_default_codex_sessions_and_reuses_upstream_id(
@@ -1009,8 +1028,10 @@ def test_chat_reuses_claude_upstream_session_after_first_response(tmp_path: Path
         for event in events
     )
     assert captured_upstream_ids == [None, "claude-session-1"]
-    assert captured_messages[0] == [{"role": "user", "content": "first"}]
-    assert captured_messages[1] == [{"role": "user", "content": "second"}]
+    assert captured_messages[0][-1] == {"role": "user", "content": "first"}
+    assert captured_messages[1][-1] == {"role": "user", "content": "second"}
+    assert captured_messages[0][0]["role"] == "system"
+    assert "ARCHIVE POLICY" in captured_messages[0][0]["content"]
 
 
 def test_history_returns_restored_transcript_after_app_recreation(tmp_path: Path) -> None:

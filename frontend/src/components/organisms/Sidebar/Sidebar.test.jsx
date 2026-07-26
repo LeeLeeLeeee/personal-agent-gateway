@@ -10,6 +10,7 @@ describe("Sidebar", () => {
     expect(screen.getByText("Personas")).toBeInTheDocument();
     expect(screen.getByText("Rules")).toBeInTheDocument();
     expect(screen.getByText("Operations")).toBeInTheDocument();
+    expect(screen.getByText("Archive")).toBeInTheDocument();
   });
 
   it("renders a Dashboard nav item before Chat and marks it active", () => {

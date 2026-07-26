@@ -37,6 +37,11 @@ _TERMINAL_CYCLE_STATUSES = {
     "failed",
     "canceled",
 }
+_KNOWLEDGE_REQUEST_ATTEMPT_SEPARATOR = "#attempt-"
+
+
+def knowledge_request_id_from_source(source_id: str) -> str:
+    return source_id.partition(_KNOWLEDGE_REQUEST_ATTEMPT_SEPARATOR)[0]
 
 
 @dataclass(frozen=True)
@@ -124,6 +129,62 @@ class TeamCycleService:
                 auto_series_id=auto_series_id,
                 slot_ordinal=slot_ordinal,
                 retry_of_request_id=retry_of_request_id,
+                now=timestamp,
+            )
+
+    def enqueue_knowledge_request(
+        self,
+        team_run_id: str,
+        knowledge_request_id: str,
+        instruction: str,
+        *,
+        previous_cycle_id: str | None,
+        now: datetime | None = None,
+    ) -> TeamCycleRequest:
+        canonical_id = knowledge_request_id.strip()
+        if not canonical_id:
+            raise ValueError("Knowledge Request id is required")
+        timestamp = _timestamp(now)
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            rows = connection.execute(
+                """
+                select * from team_cycle_requests
+                where team_run_id = ? and source_type = 'knowledge_request'
+                  and (source_id = ? or source_id like ?)
+                order by rowid asc
+                """,
+                (
+                    team_run_id,
+                    canonical_id,
+                    f"{canonical_id}{_KNOWLEDGE_REQUEST_ATTEMPT_SEPARATOR}%",
+                ),
+            ).fetchall()
+            active = next(
+                (row for row in rows if row["status"] in {"queued", "dispatching"}),
+                None,
+            )
+            if active is not None:
+                return _request_from_row(active)
+            source_id = canonical_id
+            if rows:
+                attempt = max(
+                    _knowledge_request_attempt(row["source_id"], canonical_id)
+                    for row in rows
+                ) + 1
+                source_id = (
+                    f"{canonical_id}{_KNOWLEDGE_REQUEST_ATTEMPT_SEPARATOR}{attempt}"
+                )
+            return self._enqueue_request(
+                connection,
+                team_run_id,
+                "knowledge_request",
+                source_id,
+                instruction,
+                previous_cycle_id=previous_cycle_id,
+                auto_series_id=None,
+                slot_ordinal=None,
+                retry_of_request_id=None,
                 now=timestamp,
             )
 
@@ -492,6 +553,29 @@ class TeamCycleService:
                 (team_run_id,),
             )
         ]
+
+    def latest_knowledge_request_attempt(
+        self,
+        team_run_id: str,
+        knowledge_request_id: str,
+    ) -> TeamCycleRequest | None:
+        canonical_id = knowledge_request_id.strip()
+        if not canonical_id:
+            return None
+        row = self._db.fetchone(
+            """
+            select * from team_cycle_requests
+            where team_run_id = ? and source_type = 'knowledge_request'
+              and (source_id = ? or source_id like ?)
+            order by rowid desc limit 1
+            """,
+            (
+                team_run_id,
+                canonical_id,
+                f"{canonical_id}{_KNOWLEDGE_REQUEST_ATTEMPT_SEPARATOR}%",
+            ),
+        )
+        return _request_from_row(row) if row is not None else None
 
     def get_active_series(self, team_run_id: str) -> TeamAutoSeries | None:
         self._require_run_read(team_run_id)
@@ -971,7 +1055,7 @@ class TeamCycleService:
         if not normalized_source_type or not normalized_source_id:
             raise ValueError("Cycle request source type and source id are required")
         expected_policy: ExecutionPolicy
-        if normalized_source_type in {"manual", "hook"}:
+        if normalized_source_type in {"manual", "hook", "knowledge_request"}:
             expected_policy = "triggered"
         elif normalized_source_type in {"auto", "retry"}:
             expected_policy = "auto"
@@ -989,7 +1073,10 @@ class TeamCycleService:
             return _request_from_row(existing)
         if normalized_source_type in {"auto", "retry"} and auto_series_id is None:
             raise ValueError("AUTO cycle requests require an AUTO series")
-        if normalized_source_type in {"manual", "hook"} and auto_series_id is not None:
+        if (
+            normalized_source_type in {"manual", "hook", "knowledge_request"}
+            and auto_series_id is not None
+        ):
             raise ValueError("TRIGGERED cycle requests cannot have an AUTO series")
         if normalized_source_type == "retry" and retry_of_request_id is None:
             raise ValueError("Retry cycle requests require failed request lineage")
@@ -1314,6 +1401,15 @@ def _request_from_row(row: object) -> TeamCycleRequest:
         settled_at=row["settled_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _knowledge_request_attempt(source_id: str, canonical_id: str) -> int:
+    if source_id == canonical_id:
+        return 1
+    suffix = source_id.removeprefix(
+        f"{canonical_id}{_KNOWLEDGE_REQUEST_ATTEMPT_SEPARATOR}"
+    )
+    return int(suffix) if suffix.isdigit() else 1
 
 
 def _series_from_row(row: object) -> TeamAutoSeries:

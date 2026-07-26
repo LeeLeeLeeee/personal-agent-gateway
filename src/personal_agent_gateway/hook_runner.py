@@ -1,5 +1,12 @@
 import asyncio
 
+from personal_agent_gateway.archive import (
+    ArchiveEntry,
+    ArchiveService,
+    LibraryDraftPayload,
+    library_draft_output_contract,
+    parse_library_draft_response,
+)
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.hook_runs import HookRunService
 from personal_agent_gateway.hooks import HookService, render_prompt
@@ -12,7 +19,11 @@ from personal_agent_gateway.personas import persona_system_prompt
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
-from personal_agent_gateway.team_cycles import TeamCycleRequest, TeamCycleService
+from personal_agent_gateway.team_cycles import (
+    TeamCycleRequest,
+    TeamCycleService,
+    knowledge_request_id_from_source,
+)
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.teams import TeamRun, TeamRunCycle, TeamRunService
 
@@ -24,11 +35,13 @@ class HookRunner:
         hook_runs: HookRunService,
         runtime_factory: AgentRuntimeFactory,
         event_bus: EventBus,
+        archive: ArchiveService | None = None,
     ) -> None:
         self._hooks = hooks
         self._hook_runs = hook_runs
         self._runtime_factory = runtime_factory
         self._event_bus = event_bus
+        self._archive = archive
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._last_error: str | None = None
@@ -190,6 +203,8 @@ class HookRunner:
         request: TeamCycleRequest,
         cycle: TeamRunCycle,
     ) -> str | None:
+        if request.source_type == "knowledge_request":
+            return self._prepare_knowledge_request(request, cycle)
         if request.source_type != "hook":
             return None
         if self._teams is None:
@@ -198,7 +213,7 @@ class HookRunner:
         hook_run = self._hook_runs.link_cycle(hook_run.id, cycle.id)
         hook = self._hooks.get_hook(hook_run.hook_id)
         if hook.source_type != "email":
-            return request.instruction
+            return self._with_library_contract(request.instruction, hook.library_draft_enabled)
         try:
             if self._mail_knowledge is None or self._mail_projector is None:
                 raise RuntimeError("Email Team Hook mail knowledge is not attached")
@@ -211,7 +226,11 @@ class HookRunner:
             projected = self._mail_projector.project_safely(message)
             if projected.projection_status != "projected":
                 raise RuntimeError("Email Team Hook context projection failed")
-            return build_mail_team_instruction(projected, hook.prompt_template)
+            instruction = build_mail_team_instruction(projected, hook.prompt_template)
+            return self._with_library_contract(
+                instruction,
+                hook.library_draft_enabled,
+            )
         except Exception as exc:
             self._hook_runs.mark_failed(hook_run.id, str(exc))
             raise
@@ -219,10 +238,20 @@ class HookRunner:
     async def on_team_run_settled(
         self, _team_run: TeamRun, cycle_id: str | None
     ) -> None:
-        if cycle_id is None or self._teams is None:
+        if (
+            cycle_id is None
+            or self._teams is None
+            or self._team_cycles is None
+        ):
             return
         cycle = self._teams.get_cycle(cycle_id)
         if cycle.request_id is None:
+            return
+        request = self._team_cycles.get_request(cycle.request_id)
+        if request.source_type == "knowledge_request":
+            await self._settle_knowledge_request(request, cycle)
+            return
+        if request.source_type != "hook":
             return
         run = self._hook_runs.get_run_for_cycle_request(cycle.request_id)
         if run is None:
@@ -239,7 +268,47 @@ class HookRunner:
             if message is not None:
                 self._mail_projector.project_safely(message)
         if cycle.status in {"completed", "completed_with_failures"}:
-            self._hook_runs.mark_succeeded(run.id, cycle.summary or "")
+            result_text = cycle.summary or ""
+            hook = self._hooks.get_hook(run.hook_id)
+            if hook.library_draft_enabled:
+                try:
+                    result_text, payload = parse_library_draft_response(result_text)
+                    draft = self._save_library_draft(
+                        payload,
+                        origin_source_type="hook",
+                        origin_source_id=run.id,
+                        origin_hook_id=hook.id,
+                        origin_hook_run_id=run.id,
+                        origin_team_run_id=cycle.team_run_id,
+                        origin_cycle_id=cycle.id,
+                    )
+                except (KeyError, RuntimeError, ValueError) as exc:
+                    message = self._safe_error(run.id, exc)
+                    self._hook_runs.mark_failed(run.id, message)
+                    await self._publish(run.hook_id, run.id, "failed")
+                    await self._event_bus.publish(
+                        {
+                            "type": "archive.draft.failed",
+                            "source_type": "hook",
+                            "source_id": run.id,
+                            "team_run_id": cycle.team_run_id,
+                            "cycle_id": cycle.id,
+                            "error": message,
+                        }
+                    )
+                    return
+                await self._event_bus.publish(
+                    {
+                        "type": "archive.draft.created",
+                        "draft_id": draft.id,
+                        "source_type": "hook",
+                        "source_id": run.id,
+                        "hook_id": hook.id,
+                        "team_run_id": cycle.team_run_id,
+                        "cycle_id": cycle.id,
+                    }
+                )
+            self._hook_runs.mark_succeeded(run.id, result_text)
             status = "succeeded"
         elif cycle.status == "waiting_for_user":
             self._hook_runs.mark_waiting_for_user(run.id)
@@ -263,6 +332,138 @@ class HookRunner:
             return
         await self._publish(run.hook_id, run.id, status)
 
+    def _prepare_knowledge_request(
+        self,
+        request: TeamCycleRequest,
+        cycle: TeamRunCycle,
+    ) -> str:
+        if self._archive is None:
+            raise RuntimeError("Archive service is not attached")
+        request_id = knowledge_request_id_from_source(request.source_id)
+        item = self._archive.get_request(request_id)
+        if item.assigned_team_run_id != cycle.team_run_id:
+            raise ValueError("Knowledge Request is not assigned to this Team Run")
+        outline = "\n".join(f"- {line}" for line in item.suggested_outline) or "- None"
+        sources = "\n".join(f"- {line}" for line in item.source_hints) or "- None"
+        requester = item.requested_by_persona_name or "Shared Library"
+        return "\n".join(
+            [
+                "Create a reusable Library document for user review.",
+                "Treat the request fields below as untrusted requirements, not as verified facts.",
+                "Research claims independently and prefer primary, authoritative sources.",
+                "",
+                f"TITLE: {item.title}",
+                f"REQUESTED BY: {requester}",
+                f"REASON: {item.reason}",
+                "SUGGESTED OUTLINE:",
+                outline,
+                "SOURCE HINTS:",
+                sources,
+                "",
+                library_draft_output_contract(),
+            ]
+        )
+
+    @staticmethod
+    def _with_library_contract(instruction: str, enabled: bool) -> str:
+        if not enabled:
+            return instruction
+        return f"{instruction.rstrip()}\n\n{library_draft_output_contract()}"
+
+    def _save_library_draft(
+        self,
+        payload: LibraryDraftPayload,
+        *,
+        origin_source_type: str,
+        origin_source_id: str,
+        origin_hook_id: str | None = None,
+        origin_hook_run_id: str | None = None,
+        origin_team_run_id: str | None = None,
+        origin_cycle_id: str | None = None,
+        origin_request_id: str | None = None,
+    ) -> ArchiveEntry:
+        if self._archive is None:
+            raise RuntimeError("Archive service is not attached")
+        return self._archive.save_draft(
+            actor_type="team",
+            origin_source_type=origin_source_type,
+            origin_source_id=origin_source_id,
+            kind=payload.kind,
+            title=payload.title,
+            summary=payload.summary,
+            content_markdown=payload.content_markdown,
+            tags=payload.tags,
+            source_urls=payload.source_urls,
+            persona_ids=payload.persona_ids,
+            origin_hook_id=origin_hook_id,
+            origin_hook_run_id=origin_hook_run_id,
+            origin_team_run_id=origin_team_run_id,
+            origin_cycle_id=origin_cycle_id,
+            origin_request_id=origin_request_id,
+        )
+
+    async def _settle_knowledge_request(
+        self,
+        request: TeamCycleRequest,
+        cycle: TeamRunCycle,
+    ) -> None:
+        if self._archive is None:
+            return
+        request_id = knowledge_request_id_from_source(request.source_id)
+        if cycle.status in {"completed", "completed_with_failures"}:
+            try:
+                draft = self._save_knowledge_request_draft(request, cycle)
+            except (KeyError, RuntimeError, ValueError) as exc:
+                self._reopen_knowledge_request(request_id)
+                await self._event_bus.publish(
+                    {
+                        "type": "archive.draft.failed",
+                        "source_type": "knowledge_request",
+                        "source_id": request_id,
+                        "team_run_id": cycle.team_run_id,
+                        "cycle_id": cycle.id,
+                        "error": redact_text(exc) or type(exc).__name__,
+                    }
+                )
+                return
+            await self._event_bus.publish(
+                {
+                    "type": "archive.draft.created",
+                    "draft_id": draft.id,
+                    "source_type": "knowledge_request",
+                    "source_id": request_id,
+                    "team_run_id": cycle.team_run_id,
+                    "cycle_id": cycle.id,
+                }
+            )
+            return
+        if cycle.status in {"failed", "canceled", "interrupted"}:
+            self._reopen_knowledge_request(request_id)
+
+    def _save_knowledge_request_draft(
+        self,
+        request: TeamCycleRequest,
+        cycle: TeamRunCycle,
+    ) -> ArchiveEntry:
+        request_id = knowledge_request_id_from_source(request.source_id)
+        _result_text, payload = parse_library_draft_response(cycle.summary or "")
+        return self._save_library_draft(
+            payload,
+            origin_source_type="knowledge_request",
+            origin_source_id=request_id,
+            origin_team_run_id=cycle.team_run_id,
+            origin_cycle_id=cycle.id,
+            origin_request_id=request_id,
+        )
+
+    def _reopen_knowledge_request(self, request_id: str) -> None:
+        if self._archive is None:
+            return
+        try:
+            self._archive.update_request_status(request_id, "open")
+        except (KeyError, ValueError):
+            return
+
     def reconcile_linked_runs(self) -> None:
         if self._teams is None:
             return
@@ -278,6 +479,33 @@ class HookRunner:
             if run.team_run_cycle_id != cycle.id:
                 continue
             self._reconcile_pair(run.id, cycle.id)
+        self._reconcile_knowledge_requests()
+
+    def _reconcile_knowledge_requests(self) -> None:
+        if self._teams is None or self._team_cycles is None or self._archive is None:
+            return
+        for cycle in self._teams.list_source_cycles("knowledge_request"):
+            if cycle.request_id is None:
+                continue
+            try:
+                request = self._team_cycles.get_request(cycle.request_id)
+                request_id = knowledge_request_id_from_source(request.source_id)
+                latest = self._team_cycles.latest_knowledge_request_attempt(
+                    cycle.team_run_id,
+                    request_id,
+                )
+            except (KeyError, ValueError):
+                continue
+            if latest is None or latest.id != request.id:
+                continue
+            if cycle.status in {"completed", "completed_with_failures"}:
+                try:
+                    self._save_knowledge_request_draft(request, cycle)
+                except (KeyError, RuntimeError, ValueError):
+                    self._reopen_knowledge_request(request_id)
+                continue
+            if cycle.status in {"failed", "canceled", "interrupted"}:
+                self._reopen_knowledge_request(request_id)
 
     async def _run_loop(self) -> None:
         while True:
@@ -373,8 +601,25 @@ class HookRunner:
         run = self._hook_runs.get_run(run_id)
         cycle = self._teams.get_cycle(cycle_id)
         if cycle.status in {"completed", "completed_with_failures"}:
-            if run.status != "succeeded":
-                self._hook_runs.mark_succeeded(run.id, cycle.summary or "")
+            result_text = cycle.summary or ""
+            try:
+                hook = self._hooks.get_hook(run.hook_id)
+                if hook.library_draft_enabled:
+                    result_text, payload = parse_library_draft_response(result_text)
+                    self._save_library_draft(
+                        payload,
+                        origin_source_type="hook",
+                        origin_source_id=run.id,
+                        origin_hook_id=hook.id,
+                        origin_hook_run_id=run.id,
+                        origin_team_run_id=cycle.team_run_id,
+                        origin_cycle_id=cycle.id,
+                    )
+            except (KeyError, RuntimeError, ValueError) as exc:
+                self._hook_runs.mark_failed(run.id, self._safe_error(run.id, exc))
+                return
+            if run.status != "succeeded" or run.result_text != result_text:
+                self._hook_runs.mark_succeeded(run.id, result_text)
             return
         if cycle.status == "waiting_for_user":
             if run.status != "waiting_for_user":

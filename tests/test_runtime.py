@@ -5,10 +5,12 @@ from pathlib import Path
 import pytest
 
 from personal_agent_gateway.approval import ApprovalStore
+from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.capabilities import CapabilityRegistry
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ModelResponse, ToolCall
+from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.runtime import AgentRuntime
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
@@ -119,6 +121,72 @@ async def test_runtime_prepends_persona_system_prompt_to_every_model_call(tmp_pa
         "role": "system",
         "content": "Persona: Mail Manager",
     }
+
+
+@pytest.mark.asyncio
+async def test_runtime_uses_published_archive_and_captures_request_marker(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    db = Database(tmp_path / "gateway.db")
+    db.initialize()
+    archive = ArchiveService(db)
+    persona = PersonaService(db).create_persona(
+        "Release Builder",
+        "Implementation",
+        "",
+        [],
+        [],
+    )
+    archive.publish_entry(
+        actor_type="user",
+        kind="procedure",
+        title="Release verification",
+        summary="Verify a release after deployment.",
+        content_markdown="Check health and smoke tests.",
+        tags=["release"],
+        source_urls=[],
+        persona_ids=[],
+    )
+    transcript = TranscriptStore(tmp_path / "sessions")
+    tools = WorkspaceTools(root=workspace, approvals=ApprovalStore())
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                content=(
+                    "I need a reusable rollback guide from you."
+                    '<knowledge_request>{"title":"Rollback guide",'
+                    '"reason":"The archive only covers verification.",'
+                    '"suggested_outline":["Trigger","Steps","Checks"],'
+                    '"source_hints":["deployment config"]}</knowledge_request>'
+                ),
+                tool_calls=[],
+            )
+        ]
+    )
+    runtime = AgentRuntime(
+        transcript,
+        tools,
+        model,
+        archive_service=archive,
+        persona_id=persona.id,
+    )
+
+    result = await runtime.handle_user_message("How should I release and roll back?")
+
+    system_messages = [item["content"] for item in model.calls[0] if item["role"] == "system"]
+    assert any("Release verification" in str(content) for content in system_messages)
+    assert result.messages == [
+        {
+            "role": "assistant",
+            "content": (
+                "I need a reusable rollback guide from you.\n\n"
+                "Knowledge request sent to Library: Rollback guide"
+            ),
+        }
+    ]
+    requests = archive.list_requests()
+    assert len(requests) == 1
+    assert requests[0].requested_by_persona_id == persona.id
 
 
 @pytest.mark.asyncio

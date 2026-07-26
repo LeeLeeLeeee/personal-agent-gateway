@@ -27,6 +27,7 @@ class Hook:
     target_persona_id: str | None
     target_persona_snapshot: dict[str, object]
     target_team_run_id: str | None
+    library_draft_enabled: bool
     prompt_template: str
     poll_interval_seconds: int
     enabled: bool
@@ -66,9 +67,12 @@ class HookService:
         target_kind: Literal["agent", "persona", "team_run"] = "agent",
         target_persona_id: str | None = None,
         target_team_run_id: str | None = None,
+        library_draft_enabled: bool = False,
     ) -> Hook:
         if source_type not in self._adapters:
             raise ValueError(f"Unsupported source type: {source_type}")
+        if library_draft_enabled and target_kind != "team_run":
+            raise ValueError("Library Draft generation requires a Team Run target")
         target_persona_snapshot: dict[str, object] = {}
         if target_kind == "persona":
             if not target_persona_id:
@@ -101,11 +105,11 @@ class HookService:
                 id, name, source_type, connection_ref, filter_json,
                 target_backend, target_model, target_options_json, prompt_template,
                 target_kind, target_persona_id, target_persona_snapshot_json,
-                target_team_run_id,
+                target_team_run_id, library_draft_enabled,
                 poll_interval_seconds, enabled, cursor_json, last_polled_at, last_error,
                 created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, null, null, null, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, null, null, null, ?, ?)
             """,
             (
                 hook_id,
@@ -121,6 +125,7 @@ class HookService:
                 target_persona_id,
                 json.dumps(target_persona_snapshot, ensure_ascii=False, sort_keys=True),
                 target_team_run_id,
+                1 if library_draft_enabled else 0,
                 poll_interval_seconds,
                 stamp,
                 stamp,
@@ -285,6 +290,11 @@ def _hook_from_row(row: object) -> Hook:
             row["target_team_run_id"]
             if "target_team_run_id" in row.keys()
             else None
+        ),
+        library_draft_enabled=(
+            bool(row["library_draft_enabled"])
+            if "library_draft_enabled" in row.keys()
+            else False
         ),
         prompt_template=row["prompt_template"],
         poll_interval_seconds=row["poll_interval_seconds"],

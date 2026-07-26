@@ -1,7 +1,8 @@
 from pathlib import Path
 
-from personal_agent_gateway.approval import ApprovalStore
 from personal_agent_gateway.agent_session_link import AgentSessionLinkService
+from personal_agent_gateway.approval import ApprovalStore
+from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.config import AppConfig, ConfigError
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.jobs import JobService
@@ -22,12 +23,14 @@ class AgentRuntimeFactory:
         job_service: JobService | None = None,
         event_bus: EventBus | None = None,
         space_policies: SpacePolicyService | None = None,
+        archive_service: ArchiveService | None = None,
     ) -> None:
         self._config = config
         self._transcript = transcript
         self._job_service = job_service
         self._event_bus = event_bus
         self._space_policies = space_policies
+        self._archive_service = archive_service
 
     def create_default_runtime(self) -> AgentRuntime:
         return self._create_runtime_for_app_config()
@@ -57,6 +60,7 @@ class AgentRuntimeFactory:
                 client,
                 session_id=session_id,
                 system_prompt=system_prompt,
+                persona_id=persona_id,
                 workspace_root=workspace_root,
                 read_roots=read_roots,
             )
@@ -74,6 +78,7 @@ class AgentRuntimeFactory:
                 client,
                 session_id=session_id,
                 system_prompt=system_prompt,
+                persona_id=persona_id,
                 workspace_root=workspace_root,
                 read_roots=read_roots,
             )
@@ -134,6 +139,7 @@ class AgentRuntimeFactory:
                 on_upstream_session_id=record_upstream_session,
                 session_id=session_id,
                 system_prompt=system_prompt,
+                persona_id=session_config.persona_id,
                 workspace_root=workspace_root,
                 read_roots=read_roots,
             )
@@ -155,6 +161,7 @@ class AgentRuntimeFactory:
                 on_upstream_session_id=record_upstream_session,
                 session_id=session_id,
                 system_prompt=system_prompt,
+                persona_id=session_config.persona_id,
                 workspace_root=workspace_root,
                 read_roots=read_roots,
             )
@@ -252,6 +259,7 @@ class AgentRuntimeFactory:
         on_upstream_session_id=None,
         session_id: str | None = None,
         system_prompt: str | None = None,
+        persona_id: str | None = None,
         workspace_root: Path | None = None,
         read_roots: list[Path] | None = None,
     ) -> AgentRuntime:
@@ -269,6 +277,8 @@ class AgentRuntimeFactory:
             on_upstream_session_id=on_upstream_session_id,
             session_id=session_id,
             system_prompt=system_prompt,
+            archive_service=self._archive_service,
+            persona_id=persona_id,
         )
 
     def _space_context(self, persona_id: str | None) -> tuple[Path, list[Path], str | None]:

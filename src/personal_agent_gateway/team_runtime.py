@@ -3,6 +3,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelClient
 from personal_agent_gateway.redaction import redact_text
@@ -140,10 +141,12 @@ class TeamRuntime:
         teams: TeamRunService,
         model_factory: Callable[[TeamAgent], ModelClient],
         event_bus: EventBus | None = None,
+        archive_service: ArchiveService | None = None,
     ) -> None:
         self._teams = teams
         self._model_factory = model_factory
         self._event_bus = event_bus
+        self._archive_service = archive_service
 
     def _goal_context(self, run: TeamRun, cycle_id: str | None) -> str:
         if cycle_id is None:
@@ -155,6 +158,40 @@ class TeamRuntime:
                 f"Current cycle objective: {objective}"
             )
         return objective or run.goal
+
+    def _archive_block(
+        self,
+        query: str,
+        *,
+        persona_id: str,
+        allow_request: bool,
+    ) -> str:
+        if self._archive_service is None:
+            return ""
+        return (
+            self._archive_service.prompt_context(
+                query,
+                persona_id=persona_id,
+                allow_request=allow_request,
+            )
+            + "\n\n"
+        )
+
+    def _finalize_persona_content(
+        self,
+        content: str,
+        *,
+        persona_id: str,
+        team_run_id: str,
+    ) -> str:
+        if self._archive_service is None:
+            return content
+        clean, _requests = self._archive_service.capture_response_requests(
+            content,
+            persona_id=persona_id,
+            team_run_id=team_run_id,
+        )
+        return clean
 
     async def start(self, team_run_id: str, cycle_id: str | None = None) -> TeamRun:
         run = self._teams.get_team_run(team_run_id)
@@ -221,10 +258,15 @@ class TeamRuntime:
         members = _find_workers(self._teams.list_agents(run.id))
         member_ids = {member.id for member in members}
         model = self._model_factory(leader_agent)
+        goal_context = self._goal_context(run, cycle_id)
         prompt = _space_block(run) + _rules_block(
             self._rules_snapshot(run, cycle_id), include_persona_baseline=False
+        ) + self._archive_block(
+            goal_context,
+            persona_id=leader_agent.persona_id,
+            allow_request=False,
         ) + PLANNING_PROMPT.format(
-            goal=self._goal_context(run, cycle_id),
+            goal=goal_context,
             persona_snapshot_json=json.dumps(leader_agent.persona_snapshot, ensure_ascii=False),
             team_roster_json=_assignment_roster_json(members),
         )
@@ -367,7 +409,11 @@ class TeamRuntime:
         while True:
             req = _parse_needs_info(content)
             if req is None:
-                return content
+                return self._finalize_persona_content(
+                    content,
+                    persona_id=worker_agent.persona_id,
+                    team_run_id=run.id,
+                )
             run = self._teams.get_team_run(run.id)
             worker_agent = self._teams.get_agent(worker.id)
             if task.cycle_id is not None:
@@ -378,10 +424,15 @@ class TeamRuntime:
                 rounds_used = run.rounds_used
                 rounds_budget = run.rounds_budget
             if rounds_used >= rounds_budget or worker_agent.reinvocations >= AGENT_REINVOCATION_CAP:
-                return await self._resume_worker(
+                content = await self._resume_worker(
                     worker.id,
                     "No more consultation is available. Produce your best-effort final "
                     "result now, without a needs_info block.",
+                )
+                return self._finalize_persona_content(
+                    content,
+                    persona_id=worker_agent.persona_id,
+                    team_run_id=run.id,
                 )
             query_message = self._teams.append_message(
                 run.id, worker.id, leader.id, "query", req["question"],
@@ -429,8 +480,13 @@ class TeamRuntime:
     ) -> dict[str, object]:
         leader_agent = self._teams.get_agent(leader.id)
         model = self._model_factory(leader_agent)
-        prompt = _space_block(run) + MEDIATION_PROMPT.format(
-            goal=self._goal_context(run, task.cycle_id),
+        goal_context = self._goal_context(run, task.cycle_id)
+        prompt = _space_block(run) + self._archive_block(
+            f"{goal_context}\n{task.title}\n{question}",
+            persona_id=leader_agent.persona_id,
+            allow_request=False,
+        ) + MEDIATION_PROMPT.format(
+            goal=goal_context,
             task_title=task.title,
             question=question,
             outputs=self._collect_outputs(run, task.cycle_id),
@@ -449,11 +505,16 @@ class TeamRuntime:
         return "\n\n".join(lines) if lines else "(no completed task outputs yet)"
 
     def _worker_prompt(self, run: TeamRun, worker: TeamAgent, task: TeamTask) -> str:
+        goal_context = self._goal_context(run, task.cycle_id)
         prompt = _space_block(run) + _rules_block(
             self._rules_snapshot(run, task.cycle_id), include_persona_baseline=True
+        ) + self._archive_block(
+            f"{goal_context}\n{task.title}\n{task.description}",
+            persona_id=worker.persona_id,
+            allow_request=True,
         ) + WORKER_PROMPT.format(
             persona_snapshot_json=json.dumps(worker.persona_snapshot, ensure_ascii=False),
-            goal=self._goal_context(run, task.cycle_id),
+            goal=goal_context,
             task_title=task.title,
             task_description=task.description,
         )
@@ -566,8 +627,13 @@ class TeamRuntime:
             )
             or "(none)"
         )
-        prompt = _space_block(run) + ADD_WORK_PROMPT.format(
-            goal=self._goal_context(run, cycle_id),
+        goal_context = self._goal_context(run, cycle_id)
+        prompt = _space_block(run) + self._archive_block(
+            f"{goal_context}\n{instruction}",
+            persona_id=leader_agent.persona_id,
+            allow_request=False,
+        ) + ADD_WORK_PROMPT.format(
+            goal=goal_context,
             existing_titles=existing,
             instruction=instruction,
             team_roster_json=_assignment_roster_json(members),
@@ -620,10 +686,15 @@ class TeamRuntime:
         )
         leader_agent = self._teams.get_agent(leader.id)
         model = self._model_factory(leader_agent)
+        goal_context = self._goal_context(run, cycle_id)
         prompt = _space_block(run) + _rules_block(
             self._rules_snapshot(run, cycle_id), include_persona_baseline=False
+        ) + self._archive_block(
+            f"{goal_context}\n{results}",
+            persona_id=leader_agent.persona_id,
+            allow_request=True,
         ) + SYNTHESIS_PROMPT.format(
-            goal=self._goal_context(run, cycle_id), results=results
+            goal=goal_context, results=results
         )
         decision_context = "\n\n".join(
             context
@@ -650,16 +721,21 @@ class TeamRuntime:
         resolution = _parse_mediation_resolution(response.content)
         if resolution["kind"] == "ask_user":
             return UserDecisionResolution(resolution)
+        content = self._finalize_persona_content(
+            response.content,
+            persona_id=leader_agent.persona_id,
+            team_run_id=run.id,
+        )
         self._teams.append_message(
             run.id,
             leader.id,
             None,
             "synthesis",
-            response.content,
+            content,
             {},
             cycle_id=cycle_id,
         )
-        return response.content
+        return content
 
     async def _publish_user_decision_request(
         self,

@@ -1,5 +1,6 @@
 from personal_agent_gateway.api.agents import router as agents_router
 from personal_agent_gateway.api.agents import session_config_router
+from personal_agent_gateway.api.archive import router as archive_router
 from personal_agent_gateway.api.artifacts import router as artifacts_router
 from personal_agent_gateway.api.audit import router as audit_router
 from personal_agent_gateway.api.auth import router as auth_router
@@ -19,6 +20,7 @@ from personal_agent_gateway.api.teams import router as teams_router
 
 __all__ = [
     "agents_router",
+    "archive_router",
     "artifacts_router",
     "audit_router",
     "auth_router",
