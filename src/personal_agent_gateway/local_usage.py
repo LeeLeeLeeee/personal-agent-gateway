@@ -167,8 +167,9 @@ def _rate_limits_by_provider(payload: dict[str, object]) -> dict[str, list[RateL
         if not isinstance(snapshot, dict):
             continue
         provider = snapshot.get("provider")
+        status = snapshot.get("status")
         rate_limits = snapshot.get("rate_limits")
-        if not isinstance(provider, str) or not isinstance(rate_limits, list):
+        if status != "ok" or not isinstance(provider, str) or not isinstance(rate_limits, list):
             continue
         parsed_limits = [_rate_limit(rate_limit) for rate_limit in rate_limits]
         if all(limit is not None for limit in parsed_limits):

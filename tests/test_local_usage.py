@@ -146,6 +146,33 @@ def test_collect_merges_ready_lmg_limits_without_inventing_legacy_quota():
     assert codex.weekly_limit is None
 
 
+def test_collect_omits_valid_limits_from_non_ok_lmg_provider_snapshot():
+    registry = _FakeRegistry([make_descriptor("codex")])
+    ready_usage = LmgQueryResult(
+        data={
+            "collected_at": "2026-07-27T00:00:00Z",
+            "providers": [
+                {
+                    "provider": "codex",
+                    "status": "unconfirmed",
+                    "rate_limits": [
+                        {
+                            "window_minutes": 300,
+                            "used_percent": 25,
+                            "resets_at": "2026-07-27T04:00:00Z",
+                        }
+                    ],
+                }
+            ],
+        },
+        status="ready",
+    )
+
+    report = collect_local_agent_usage(registry, lmg_reader=lambda: ready_usage)
+
+    assert report.providers[0].rate_limits == []
+
+
 def test_collect_lmg_failure_keeps_catalog_availability_and_hides_error():
     registry = _FakeRegistry([make_descriptor("codex", available=False, error="not found")])
 
