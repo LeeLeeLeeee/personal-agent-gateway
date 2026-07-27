@@ -15,6 +15,7 @@ export function useGatewayBootstrap({
   const [authenticated, setAuthenticated] = useState(false);
   const [authStage, setAuthStage] = useState("login");
   const [authError, setAuthError] = useState("");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
   const [setup, setSetup] = useState(null);
   const [recoveryCodes, setRecoveryCodes] = useState([]);
   const [status, setStatus] = useState(null);
@@ -122,13 +123,22 @@ export function useGatewayBootstrap({
   }, [environmentTitle]);
 
   async function handleLogin(otp) {
-    const ok = await api.login(otp);
-    if (!ok) {
-      setAuthError("Invalid code. Session refused.");
-      return;
+    setAuthSubmitting(true);
+    try {
+      const ok = await api.login(otp);
+      if (!ok) {
+        setAuthError("Invalid code. Session refused.");
+        return false;
+      }
+      setAuthError("");
+      await loadApp();
+      return true;
+    } catch (_error) {
+      setAuthError("Unable to sign in. Try again.");
+      return false;
+    } finally {
+      setAuthSubmitting(false);
     }
-    setAuthError("");
-    await loadApp();
   }
 
   async function handleSetupStart() {
@@ -155,6 +165,7 @@ export function useGatewayBootstrap({
     authStage,
     setAuthStage,
     authError,
+    authSubmitting,
     setup,
     recoveryCodes,
     status,

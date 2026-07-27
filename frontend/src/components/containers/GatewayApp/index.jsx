@@ -84,6 +84,7 @@ export function GatewayApp() {
     authStage,
     setAuthStage,
     authError,
+    authSubmitting,
     setup,
     recoveryCodes,
     status,
@@ -101,6 +102,10 @@ export function GatewayApp() {
     handleSetupStart,
     handleSetupVerify
   } = useGatewayBootstrap({ activeSessionIdRef, setSessionStateById });
+
+  async function handleAuthLogin(otp) {
+    if (await handleLogin(otp)) setScreen("dashboard");
+  }
 
   const {
     teamRuns,
@@ -711,7 +716,8 @@ export function GatewayApp() {
           setup={setup}
           recoveryCodes={recoveryCodes}
           authError={authError}
-          onLogin={handleLogin}
+          authSubmitting={authSubmitting}
+          onLogin={handleAuthLogin}
           onSetupStart={handleSetupStart}
           onSetupVerify={handleSetupVerify}
           onContinue={loadApp}
