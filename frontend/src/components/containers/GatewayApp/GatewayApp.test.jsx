@@ -161,7 +161,7 @@ describe("GatewayApp", () => {
 
     await userEvent.click(await screen.findByRole("tab", { name: /Artifacts/ }));
 
-    expect(fetch).toHaveBeenCalledWith("/api/artifacts", expect.anything());
+    expect(fetch).toHaveBeenCalledWith("/api/artifacts");
     expect(screen.getByText("release-report.md")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Artifacts" })).not.toBeInTheDocument();
   });
