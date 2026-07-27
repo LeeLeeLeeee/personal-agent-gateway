@@ -59,6 +59,16 @@ const sessions = [{
   created_at: "2026-07-08T01:00:00Z"
 }];
 
+const artifact = {
+  id: "artifact-1",
+  type: "report",
+  title: "release-report.md",
+  relative_path: "reports/release-report.md",
+  mime_type: "text/markdown",
+  size_bytes: 512,
+  created_at: "2026-07-27T00:00:00Z"
+};
+
 async function renderGatewayApp({ openChat = true, uiProvider = false } = {}) {
   render(uiProvider ? <UiProvider><GatewayApp /></UiProvider> : <GatewayApp />);
   if (openChat) {
@@ -139,7 +149,8 @@ describe("GatewayApp", () => {
       "GET /api/archive/entries?status=published": { entries: [] },
       "GET /api/personas": { personas: [] },
       "GET /api/archive/requests": { requests: [] },
-      "GET /api/archive/map": { nodes: [], edges: [] }
+      "GET /api/archive/map": { nodes: [], edges: [] },
+      "GET /api/artifacts": { artifacts: [artifact] }
     });
 
     await renderGatewayApp({ openChat: false });
@@ -147,6 +158,12 @@ describe("GatewayApp", () => {
 
     expect(await screen.findByRole("heading", { name: "Archive" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.click(await screen.findByRole("tab", { name: /Artifacts/ }));
+
+    expect(fetch).toHaveBeenCalledWith("/api/artifacts", expect.anything());
+    expect(screen.getByText("release-report.md")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Artifacts" })).not.toBeInTheDocument();
   });
 
   it("opens an operations dashboard item through the existing target navigation handler", async () => {

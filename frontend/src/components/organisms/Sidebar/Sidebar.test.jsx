@@ -22,6 +22,13 @@ describe("Sidebar", () => {
     expect(navButtons.indexOf("Dashboard")).toBeLessThan(navButtons.findIndex((text) => text.startsWith("Chat")));
   });
 
+  it("does not render an independent Artifacts navigation item", () => {
+    render(<Sidebar screen="archive" onScreenChange={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Artifacts" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Archive" })).toBeInTheDocument();
+  });
+
   it("renders a Hooks nav item with a badge when hooksBadge > 0", () => {
     render(<Sidebar screen="chat" hooksBadge={3} onScreenChange={vi.fn()} />);
     expect(screen.getByText("Hooks")).toBeInTheDocument();

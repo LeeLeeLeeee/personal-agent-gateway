@@ -62,6 +62,16 @@ const documentationTeam = {
   execution_policy: "triggered"
 };
 
+const artifact = {
+  id: "artifact-1",
+  type: "report",
+  title: "release-report.md",
+  relative_path: "reports/release-report.md",
+  mime_type: "text/markdown",
+  size_bytes: 512,
+  created_at: "2026-07-27T00:00:00Z"
+};
+
 function makeClient() {
   return {
     archiveEntries: vi.fn().mockImplementation(({ status = "published" } = {}) => (
@@ -121,6 +131,16 @@ function makeClient() {
 }
 
 describe("ArchiveView", () => {
+  it("shows managed artifacts and the Library boundary inside Archive", async () => {
+    render(<ArchiveView client={makeClient()} artifacts={[artifact]} onArtifactChange={vi.fn()} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: /Artifacts/ }));
+
+    expect(screen.getByText("release-report.md")).toBeInTheDocument();
+    expect(screen.getByText(/not automatically included in Library or Persona context/i)).toBeInTheDocument();
+  });
+
   it("shows published knowledge and renders an accessible map with distinct gap edges", async () => {
     const client = makeClient();
     const { container } = render(<ArchiveView client={client} />);
