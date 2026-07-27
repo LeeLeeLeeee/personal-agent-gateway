@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../api/client.js";
+import { ArtifactsView } from "../ArtifactsView/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 
 const ENTRY_KINDS = [
@@ -289,7 +290,7 @@ function ArchiveMap({
   );
 }
 
-export function ArchiveView({ client = api }) {
+export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) {
   const [tab, setTab] = useState("library");
   const [entries, setEntries] = useState([]);
   const [drafts, setDrafts] = useState([]);
@@ -568,6 +569,16 @@ export function ArchiveView({ client = api }) {
           onClick={() => setTab("drafts")}
         >
           DRAFTS <span>{drafts.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-label="Artifacts"
+          aria-selected={tab === "artifacts"}
+          className={tab === "artifacts" ? "active" : ""}
+          onClick={() => setTab("artifacts")}
+        >
+          ARTIFACTS <span>{artifacts.length}</span>
         </button>
         <button
           type="button"
@@ -874,6 +885,20 @@ export function ArchiveView({ client = api }) {
             </div>
           </form>
           )}
+        </div>
+      ) : null}
+
+      {!loading && tab === "artifacts" ? (
+        <div className="archive-artifacts" role="tabpanel">
+          <div className="archive-artifacts-boundary" role="note">
+            <strong className="mono">SOURCE ARTIFACTS</strong>
+            <p>
+              Artifacts are original files and outputs created during work. Archive Library contains
+              reviewed, published reusable knowledge. Artifacts are not automatically included in
+              Library or Persona context.
+            </p>
+          </div>
+          <ArtifactsView artifacts={artifacts} onChange={onArtifactChange} />
         </div>
       ) : null}
 

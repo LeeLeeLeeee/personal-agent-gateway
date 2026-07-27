@@ -4652,6 +4652,27 @@ p {
     color: var(--c-grey);
     letter-spacing: 1px;
 }
+.archive-artifacts {
+    border: var(--bd);
+    background: var(--c-white);
+}
+.archive-artifacts-boundary {
+    display: grid;
+    gap: 5px;
+    border-bottom: var(--bd-sm);
+    padding: 14px;
+    background: #eef5ff;
+    color: #173f91;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.archive-artifacts-boundary strong {
+    font-size: 10px;
+    letter-spacing: 1px;
+}
+.archive-artifacts-boundary p {
+    max-width: 780px;
+}
 .archive-library {
     display: grid;
     grid-template-columns: minmax(280px, 0.72fr) minmax(480px, 1.55fr);
