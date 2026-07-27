@@ -28,6 +28,7 @@ from personal_agent_gateway.session_activity import (
     SessionActivityService,
 )
 from personal_agent_gateway.session_config import SessionAgentConfigService
+from personal_agent_gateway.space_policies import CliReadPathError
 from personal_agent_gateway.transcript import TranscriptStore
 
 _LMG_DELETE_TIMEOUT_SECONDS = 3.0
@@ -93,6 +94,14 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
                     context.event_bus.recent(), session_id
                 ),
             }
+        except CliReadPathError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_execution_path",
+                    "message": str(exc),
+                },
+            ) from exc
         except asyncio.CancelledError:
             await context.activity_publisher.publish(
                 {"type": "runtime.interrupted", "session_id": session_id}
