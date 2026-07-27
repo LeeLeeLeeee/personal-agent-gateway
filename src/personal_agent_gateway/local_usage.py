@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 from personal_agent_gateway.agents import AgentDescriptor, AgentRegistry
-from personal_agent_gateway.lmg_client import LmgQueryResult
+from personal_agent_gateway.lmg_client import LmgQueryResult, is_valid_rate_limit
 
 # 확정된 로컬 사용량 소스가 아직 없다. artifacts/dashboard-usage-spec.md §3.2 참고:
 # weekly_limit/used/reset_at 을 로컬에서 안정적으로 얻을 수 있는 CLI 명령·파일이
@@ -177,21 +177,6 @@ def _rate_limits_by_provider(payload: dict[str, object]) -> dict[str, list[RateL
 
 
 def _rate_limit(value: object) -> RateLimit | None:
-    if not isinstance(value, dict):
+    if not isinstance(value, dict) or not is_valid_rate_limit(value):
         return None
-    window_minutes = value.get("window_minutes")
-    used_percent = value.get("used_percent")
-    resets_at = value.get("resets_at")
-    if (
-        not isinstance(window_minutes, int)
-        or isinstance(window_minutes, bool)
-        or not isinstance(used_percent, (int, float))
-        or isinstance(used_percent, bool)
-        or (resets_at is not None and not isinstance(resets_at, str))
-    ):
-        return None
-    return RateLimit(
-        window_minutes=window_minutes,
-        used_percent=used_percent,
-        resets_at=resets_at,
-    )
+    return RateLimit.model_validate(value)

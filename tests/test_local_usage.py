@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from personal_agent_gateway.agents import AgentDescriptor
 from personal_agent_gateway.lmg_client import LmgQueryResult
 from personal_agent_gateway.local_usage import build_usage_report, collect_local_agent_usage
@@ -161,3 +163,35 @@ def test_collect_lmg_failure_keeps_catalog_availability_and_hides_error():
     assert codex.availability_error == "not found"
     assert codex.rate_limits == []
     assert "upstream stderr secret" not in (codex.note or "")
+
+
+@pytest.mark.parametrize(
+    "invalid_limit",
+    [
+        {"window_minutes": 0, "used_percent": 25, "resets_at": None},
+        {"window_minutes": 300, "used_percent": 101, "resets_at": None},
+        {"window_minutes": 300, "used_percent": float("nan"), "resets_at": None},
+        {"window_minutes": 300, "used_percent": 25, "resets_at": "tomorrow"},
+    ],
+)
+def test_collect_omits_invalid_ready_lmg_limits(invalid_limit):
+    registry = _FakeRegistry([make_descriptor("codex")])
+    ready_usage = LmgQueryResult(
+        data={
+            "collected_at": "2026-07-27T00:00:00Z",
+            "providers": [
+                {
+                    "provider": "codex",
+                    "status": "ok",
+                    "rate_limits": [invalid_limit],
+                }
+            ],
+        },
+        status="ready",
+    )
+
+    report = collect_local_agent_usage(registry, lmg_reader=lambda: ready_usage)
+
+    codex = report.providers[0]
+    assert codex.rate_limits == []
+    assert codex.usage_status == "unconfirmed"

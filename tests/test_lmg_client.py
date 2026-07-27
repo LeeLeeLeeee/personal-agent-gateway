@@ -96,6 +96,15 @@ def test_fetch_usage_rejects_invalid_provider_limit_contract(payload):
     assert fetch_usage(_cfg(), transport=_json_transport(payload)).status == "protocol_error"
 
 
+@pytest.mark.parametrize("status", [[], {}])
+def test_fetch_usage_rejects_unhashable_provider_status(status):
+    payload = _usage_payload(
+        providers=[{"provider": "codex", "status": status, "rate_limits": []}]
+    )
+
+    assert fetch_usage(_cfg(), transport=_json_transport(payload)).status == "protocol_error"
+
+
 def test_fetch_capabilities_returns_payload():
     payload = {"protocol_version": "1.1", "schema_version": 1, "gateway_status": "ready", "providers": {"codex": {"available": True, "models": [{"id": "x"}]}}}
     def handler(request):

@@ -221,13 +221,14 @@ def _valid_usage_provider(provider: object) -> bool:
     return (
         isinstance(provider_id, str)
         and bool(provider_id.strip())
+        and isinstance(status, str)
         and status in {"ok", "unconfirmed", "unavailable"}
         and isinstance(rate_limits, list)
-        and all(_valid_rate_limit(rate_limit) for rate_limit in rate_limits)
+        and all(is_valid_rate_limit(rate_limit) for rate_limit in rate_limits)
     )
 
 
-def _valid_rate_limit(rate_limit: object) -> bool:
+def is_valid_rate_limit(rate_limit: object) -> bool:
     if not isinstance(rate_limit, dict):
         return False
     window_minutes = rate_limit.get("window_minutes")
