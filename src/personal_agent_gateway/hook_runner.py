@@ -231,7 +231,7 @@ class HookRunner:
         hook_run = self._hook_runs.link_cycle(hook_run.id, cycle.id)
         hook = self._hooks.get_hook(hook_run.hook_id)
         if hook.source_type != "email":
-            return self._with_library_contract(request.instruction, hook.library_draft_enabled)
+            return request.instruction
         try:
             if self._mail_knowledge is None or self._mail_projector is None:
                 raise RuntimeError("Email Team Hook mail knowledge is not attached")
@@ -245,10 +245,7 @@ class HookRunner:
             if projected.projection_status != "projected":
                 raise RuntimeError("Email Team Hook context projection failed")
             instruction = build_mail_team_instruction(projected, hook.prompt_template)
-            return self._with_library_contract(
-                instruction,
-                hook.library_draft_enabled,
-            )
+            return instruction
         except Exception as exc:
             self._hook_runs.mark_failed(hook_run.id, str(exc))
             raise
@@ -287,45 +284,6 @@ class HookRunner:
                 self._mail_projector.project_safely(message)
         if cycle.status in {"completed", "completed_with_failures"}:
             result_text = cycle.summary or ""
-            hook = self._hooks.get_hook(run.hook_id)
-            if hook.library_draft_enabled:
-                try:
-                    result_text, payload = parse_library_draft_response(result_text)
-                    draft = self._save_library_draft(
-                        payload,
-                        origin_source_type="hook",
-                        origin_source_id=run.id,
-                        origin_hook_id=hook.id,
-                        origin_hook_run_id=run.id,
-                        origin_team_run_id=cycle.team_run_id,
-                        origin_cycle_id=cycle.id,
-                    )
-                except (KeyError, RuntimeError, ValueError) as exc:
-                    message = self._safe_error(run.id, exc)
-                    self._hook_runs.mark_failed(run.id, message)
-                    await self._publish(run.hook_id, run.id, "failed")
-                    await self._event_bus.publish(
-                        {
-                            "type": "archive.draft.failed",
-                            "source_type": "hook",
-                            "source_id": run.id,
-                            "team_run_id": cycle.team_run_id,
-                            "cycle_id": cycle.id,
-                            "error": message,
-                        }
-                    )
-                    return
-                await self._event_bus.publish(
-                    {
-                        "type": "archive.draft.created",
-                        "draft_id": draft.id,
-                        "source_type": "hook",
-                        "source_id": run.id,
-                        "hook_id": hook.id,
-                        "team_run_id": cycle.team_run_id,
-                        "cycle_id": cycle.id,
-                    }
-                )
             self._hook_runs.mark_succeeded(run.id, result_text)
             status = "succeeded"
         elif cycle.status == "waiting_for_user":
@@ -381,12 +339,6 @@ class HookRunner:
                 library_draft_output_contract(),
             ]
         )
-
-    @staticmethod
-    def _with_library_contract(instruction: str, enabled: bool) -> str:
-        if not enabled:
-            return instruction
-        return f"{instruction.rstrip()}\n\n{library_draft_output_contract()}"
 
     def _save_library_draft(
         self,
@@ -620,22 +572,6 @@ class HookRunner:
         cycle = self._teams.get_cycle(cycle_id)
         if cycle.status in {"completed", "completed_with_failures"}:
             result_text = cycle.summary or ""
-            try:
-                hook = self._hooks.get_hook(run.hook_id)
-                if hook.library_draft_enabled:
-                    result_text, payload = parse_library_draft_response(result_text)
-                    self._save_library_draft(
-                        payload,
-                        origin_source_type="hook",
-                        origin_source_id=run.id,
-                        origin_hook_id=hook.id,
-                        origin_hook_run_id=run.id,
-                        origin_team_run_id=cycle.team_run_id,
-                        origin_cycle_id=cycle.id,
-                    )
-            except (KeyError, RuntimeError, ValueError) as exc:
-                self._hook_runs.mark_failed(run.id, self._safe_error(run.id, exc))
-                return
             if run.status != "succeeded" or run.result_text != result_text:
                 self._hook_runs.mark_succeeded(run.id, result_text)
             return

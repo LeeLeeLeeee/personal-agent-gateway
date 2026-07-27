@@ -12,7 +12,6 @@ function targetSummary(hook, teamRuns) {
   if (hook.target_kind === "team_run") {
     const target = teamRuns.find((run) => run.id === hook.target_team_run_id);
     bits.push(`team:${target?.goal || hook.target_team_run_id || "missing"}`);
-    if (hook.library_draft_enabled) bits.push("library:draft");
   } else if (hook.target_kind === "persona") {
     bits.push(`persona:${hook.target_persona_snapshot?.name || hook.target_persona_id || "missing"}`);
   } else {
@@ -35,7 +34,6 @@ function HookForm({ personas, teamRuns, onCreate, onTestConnection }) {
   const [targetPersonaId, setTargetPersonaId] = useState("");
   const [targetKind, setTargetKind] = useState("persona");
   const [targetTeamRunId, setTargetTeamRunId] = useState("");
-  const [libraryDraftEnabled, setLibraryDraftEnabled] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
@@ -99,7 +97,6 @@ function HookForm({ personas, teamRuns, onCreate, onTestConnection }) {
       target_backend: "",
       target_model: "",
       target_options: {},
-      library_draft_enabled: targetKind === "team_run" && libraryDraftEnabled,
       prompt_template: promptTemplate.trim(),
       poll_interval_seconds: (Number(intervalMinutes) || 1) * 60
     });
@@ -110,7 +107,6 @@ function HookForm({ personas, teamRuns, onCreate, onTestConnection }) {
     setFromContains("");
     setSubjectContains("");
     setPromptTemplate("");
-    setLibraryDraftEnabled(false);
     setTestResult(null);
   }
 
@@ -201,18 +197,6 @@ function HookForm({ personas, teamRuns, onCreate, onTestConnection }) {
                   <option key={run.id} value={run.id}>{run.goal}</option>
                 ))}
               </select>
-            </label>
-            <label className="hook-library-draft">
-              <input
-                type="checkbox"
-                aria-label="Create private Library review draft"
-                checked={libraryDraftEnabled}
-                onChange={(event) => setLibraryDraftEnabled(event.target.checked)}
-              />
-              <span>
-                <strong>Create private Library review draft</strong>
-                <small>The team researches and writes; only you can publish.</small>
-              </span>
             </label>
           </>
         )}

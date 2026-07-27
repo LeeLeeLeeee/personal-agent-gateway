@@ -246,8 +246,13 @@ def _setup_team_hook(tmp_path: Path, *, library_draft_enabled: bool = False):
         poll_interval_seconds=300,
         target_kind="team_run",
         target_team_run_id=team_run.id,
-        library_draft_enabled=library_draft_enabled,
     )
+    if library_draft_enabled:
+        db.execute(
+            "update hooks set library_draft_enabled = 1 where id = ?",
+            (hook.id,),
+        )
+        hook = hooks.get_hook(hook.id)
     runs = HookRunService(db)
     run = runs.create_run(hook.id, "k", "s", {"subject": "one"})
     assert run is not None
@@ -378,7 +383,7 @@ def test_startup_reconciliation_repairs_link_and_projects_cycle_status(
     assert updated.error_message == "restart"
 
 
-def test_startup_reconciliation_saves_library_enabled_hook_draft(
+def test_startup_reconciliation_keeps_legacy_library_enabled_hook_out_of_archive(
     tmp_path: Path,
 ) -> None:
     runner, runs, teams, team_run, run, cycles, _dispatcher, archive = (
@@ -409,10 +414,8 @@ def test_startup_reconciliation_saves_library_enabled_hook_draft(
 
     runner.reconcile_linked_runs()
 
-    drafts = archive.list_entries(status="draft")
-    assert runs.get_run(run.id).result_text == "Research complete."
-    assert len(drafts) == 1
-    assert drafts[0].origin_hook_run_id == run.id
+    assert runs.get_run(run.id).result_text == summary
+    assert archive.list_entries(status="draft") == []
 
 
 def test_startup_reconciliation_saves_latest_knowledge_request_draft(
@@ -459,7 +462,7 @@ def test_startup_reconciliation_saves_latest_knowledge_request_draft(
 
 
 @pytest.mark.asyncio
-async def test_library_enabled_team_hook_saves_review_draft(
+async def test_legacy_library_enabled_team_hook_keeps_result_out_of_archive(
     tmp_path: Path,
 ) -> None:
     (
@@ -493,14 +496,9 @@ async def test_library_enabled_team_hook_saves_review_draft(
     await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
 
     updated = runs.get_run(run.id)
-    drafts = archive.list_entries(status="draft")
     assert updated.status == "succeeded"
-    assert updated.result_text == "Research complete."
-    assert len(drafts) == 1
-    assert drafts[0].origin_source_type == "hook"
-    assert drafts[0].origin_hook_run_id == run.id
-    assert drafts[0].origin_team_run_id == team_run.id
-    assert drafts[0].origin_cycle_id == cycle.id
+    assert updated.result_text == summary
+    assert archive.list_entries(status="draft") == []
 
 
 @pytest.mark.asyncio

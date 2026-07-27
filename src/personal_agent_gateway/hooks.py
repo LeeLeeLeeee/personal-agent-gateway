@@ -67,12 +67,9 @@ class HookService:
         target_kind: Literal["agent", "persona", "team_run"] = "agent",
         target_persona_id: str | None = None,
         target_team_run_id: str | None = None,
-        library_draft_enabled: bool = False,
     ) -> Hook:
         if source_type not in self._adapters:
             raise ValueError(f"Unsupported source type: {source_type}")
-        if library_draft_enabled and target_kind != "team_run":
-            raise ValueError("Library Draft generation requires a Team Run target")
         target_persona_snapshot: dict[str, object] = {}
         if target_kind == "persona":
             if not target_persona_id:
@@ -109,7 +106,7 @@ class HookService:
                 poll_interval_seconds, enabled, cursor_json, last_polled_at, last_error,
                 created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, null, null, null, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, null, null, null, ?, ?)
             """,
             (
                 hook_id,
@@ -125,7 +122,6 @@ class HookService:
                 target_persona_id,
                 json.dumps(target_persona_snapshot, ensure_ascii=False, sort_keys=True),
                 target_team_run_id,
-                1 if library_draft_enabled else 0,
                 poll_interval_seconds,
                 stamp,
                 stamp,

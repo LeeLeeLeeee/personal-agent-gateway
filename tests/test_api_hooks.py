@@ -109,7 +109,7 @@ def test_create_hook_rejects_missing_persona_target(tmp_path: Path) -> None:
     assert response.json()["detail"] == "Persona target not found"
 
 
-def test_create_hook_can_target_continuous_team_run(tmp_path: Path) -> None:
+def test_create_hook_rejects_removed_library_draft_option(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     personas = client.app.state.persona_service
     leader = personas.create_persona("Mail lead", "lead", "d", [], [])
@@ -135,24 +135,8 @@ def test_create_hook_can_target_continuous_team_run(tmp_path: Path) -> None:
 
     response = client.post("/api/hooks", json=body)
 
-    assert response.status_code == 200
-    hook = response.json()["hook"]
-    assert hook["target_kind"] == "team_run"
-    assert hook["target_team_run_id"] == team_run.id
-    assert hook["library_draft_enabled"] is True
-
-
-def test_create_hook_rejects_library_draft_for_non_team_target(tmp_path: Path) -> None:
-    client = authenticated_client(tmp_path)
-    body = _create_body()
-    body["library_draft_enabled"] = True
-
-    response = client.post("/api/hooks", json=body)
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == (
-        "Library Draft generation requires a Team Run target"
-    )
+    assert response.status_code == 422
+    assert "library_draft_enabled" in response.text
 
 
 def test_create_hook_rejects_incompatible_team_run_targets(tmp_path: Path) -> None:

@@ -82,10 +82,10 @@ describe("HooksView", () => {
       target_kind: "persona",
       target_persona_id: "p1",
       target_team_run_id: null,
-      library_draft_enabled: false,
       prompt_template: "요약: {{subject}}",
       poll_interval_seconds: 300
     }));
+    expect(onCreate.mock.calls[0][0]).not.toHaveProperty("library_draft_enabled");
     expect(onCreate.mock.calls[0][0].filter.from_contains).toBe("boss");
   });
 
@@ -95,9 +95,9 @@ describe("HooksView", () => {
     render(<HooksView hooks={[]} agents={agents} personas={personas} teamRuns={teamRuns} onCreate={onCreate} onToggle={noop} onRunNow={noop} onDelete={noop} onOpenRuns={noop} onCloseRuns={noop} onTestConnection={noop} />);
     await user.click(screen.getByRole("button", { name: "CREATE NEW" }));
     await user.click(screen.getByRole("button", { name: "TEAM RUN" }));
-    await user.click(screen.getByRole("checkbox", {
+    expect(screen.queryByRole("checkbox", {
       name: "Create private Library review draft"
-    }));
+    })).not.toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Mail inbox" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "One-off" })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "AUTO inbox" })).not.toBeInTheDocument();
@@ -114,9 +114,9 @@ describe("HooksView", () => {
       target_team_run_id: "mail-1",
       target_backend: "",
       target_model: "",
-      target_options: {},
-      library_draft_enabled: true
+      target_options: {}
     }));
+    expect(onCreate.mock.calls[0][0]).not.toHaveProperty("library_draft_enabled");
   });
 
   it("disables Team Run targets when no exact TRIGGERED candidate exists", async () => {
