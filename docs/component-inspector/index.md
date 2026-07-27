@@ -14,6 +14,9 @@ updated_at: 2026-07-27
 
 # Component Inspector Reports
 
+- [GatewayApp OTP Login Flow Analysis — 2026-07-27 13:45](./GatewayApp/2026-07-27-1345.md)
+- [AuthCard OTP Submission Analysis — 2026-07-27 13:45](./AuthCard/2026-07-27-1345.md)
+- [DashboardView Account Limit Analysis — 2026-07-27 13:05](./DashboardView/2026-07-27-1305.md)
 - [ArchiveView Artifacts Navigation Analysis — 2026-07-27 10:30](./ArchiveView/2026-07-27-1030.md)
 - [HooksView Library Draft Removal Analysis — 2026-07-27 09:15](./HooksView/2026-07-27-0915.md)
 - [GatewayApp Initial Dashboard Analysis — 2026-07-22 15:31](./GatewayApp/2026-07-22-1531.md)
