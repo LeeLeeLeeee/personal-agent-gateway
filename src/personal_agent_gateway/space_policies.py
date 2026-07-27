@@ -35,6 +35,23 @@ class EffectiveSpacePolicy:
     policy: SpacePolicy
 
 
+def cli_read_roots(
+    workspace_root: Path,
+    policy: SpacePolicy | None,
+) -> list[Path]:
+    if policy is None or not policy.read_path:
+        return []
+    canonical_workspace = workspace_root.resolve()
+    canonical_read_root = Path(policy.read_path).resolve()
+    try:
+        canonical_read_root.relative_to(canonical_workspace)
+    except ValueError as exc:
+        if policy.read_mode == "home":
+            return []
+        raise ValueError("CLI read path must be inside the workspace") from exc
+    return [canonical_read_root]
+
+
 @dataclass(frozen=True)
 class PreparedSpace:
     working_root: Path

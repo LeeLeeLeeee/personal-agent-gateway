@@ -402,6 +402,10 @@ def _http_run_error(response: httpx.Response) -> RemoteRunFailedError:
             "capacity_exceeded",
             "remote_capacity_exceeded",
         ),
+        (422, "invalid_execution_path"): (
+            "invalid_execution_path",
+            "remote_invalid_execution_path",
+        ),
     }
     mapped = typed_errors.get((response.status_code, code))
     if mapped is not None:

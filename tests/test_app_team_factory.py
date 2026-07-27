@@ -150,7 +150,7 @@ def test_factory_rejects_cli_read_path_outside_workspace(tmp_path, backend):
         ),
     )
 
-    with pytest.raises(ValueError, match="inside the team workspace"):
+    with pytest.raises(ValueError, match="inside the workspace"):
         factory(_agent(backend, workspace_path=str(workspace)))
 
 
