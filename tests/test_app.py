@@ -19,6 +19,7 @@ from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse, ToolCall
 from personal_agent_gateway.remote_model_client import RemoteRunFailedError
 from personal_agent_gateway.runtime import AgentRuntime, RuntimeResult
+from personal_agent_gateway.space_policies import CliReadPathError
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
 
@@ -986,6 +987,37 @@ def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Pat
     assert len(created) == 1
     assert created[0]["config"] is config
     assert created[0]["archive_service"] is client.app.state.archive_service
+
+
+def test_chat_returns_actionable_error_when_runtime_factory_rejects_cli_read_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = make_config(tmp_path)
+
+    class StubFactory:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def create_default_runtime(self) -> FakeRuntime:
+            return FakeRuntime()
+
+        def create_runtime_for_active_session(self) -> FakeRuntime:
+            raise CliReadPathError("CLI read path must be inside the workspace")
+
+        def create_runtime_for_session(self, _session_id: str) -> FakeRuntime:
+            raise CliReadPathError("CLI read path must be inside the workspace")
+
+    monkeypatch.setattr(app_module, "AgentRuntimeFactory", StubFactory)
+    client = auth_client(config, runtime=None)
+
+    response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "invalid_execution_path",
+        "message": "CLI read path must be inside the workspace",
+    }
 
 
 def test_chat_uses_active_session_config_runtime_factory(tmp_path: Path, monkeypatch) -> None:

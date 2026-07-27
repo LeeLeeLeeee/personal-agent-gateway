@@ -35,6 +35,10 @@ class EffectiveSpacePolicy:
     policy: SpacePolicy
 
 
+class CliReadPathError(ValueError):
+    pass
+
+
 def cli_read_roots(
     workspace_root: Path,
     policy: SpacePolicy | None,
@@ -48,7 +52,7 @@ def cli_read_roots(
     except ValueError as exc:
         if policy.read_mode == "home":
             return []
-        raise ValueError("CLI read path must be inside the workspace") from exc
+        raise CliReadPathError("CLI read path must be inside the workspace") from exc
     return [canonical_read_root]
 
 
