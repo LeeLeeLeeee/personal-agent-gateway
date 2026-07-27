@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "../../atoms/Button/index.jsx";
 import { InputField } from "../../atoms/Field/index.jsx";
 
-export function AuthCard({ stage, setup, recoveryCodes, authError, onLogin, onSetupStart, onSetupVerify, onContinue }) {
+export function AuthCard({ stage, setup, recoveryCodes, authError, authSubmitting, onLogin, onSetupStart, onSetupVerify, onContinue }) {
   const [otp, setOtp] = useState("");
   const error = authError ? (
     <div className="mono" style={{ border: "3px solid var(--c-danger)", color: "var(--c-danger)", padding: "12px 14px", marginTop: 16, fontSize: 12 }}>
@@ -58,10 +58,10 @@ export function AuthCard({ stage, setup, recoveryCodes, authError, onLogin, onSe
     <>
       <div className="headline" style={{ fontSize: 22, marginBottom: 6 }}>Sign in</div>
       <div style={{ fontSize: 13, color: "var(--c-dark)", marginBottom: 24 }}>Enter the 6-digit code from your authenticator app.</div>
-      <InputField type="text" inputMode="numeric" maxLength="6" placeholder="000000" value={otp} onChange={(event) => setOtp(event.target.value)} />
+      <InputField type="text" inputMode="numeric" maxLength="6" placeholder="000000" value={otp} disabled={authSubmitting} onChange={(event) => setOtp(event.target.value)} />
       {error}
       <div style={{ marginTop: 24 }}>
-        <Button variant="primary" size="btn-lg" style={{ width: "100%" }} onClick={() => onLogin(otp.trim())}>Continue</Button>
+        <Button variant="primary" size="btn-lg" style={{ width: "100%" }} disabled={authSubmitting} onClick={() => onLogin(otp.trim())}>{authSubmitting ? "Signing in…" : "Continue"}</Button>
       </div>
       <div style={{ marginTop: 20, borderTop: "1px solid #CCC", paddingTop: 16 }}>
         <button className="mono" style={{ background: "none", border: "none", padding: 0, color: "var(--c-link)", cursor: "pointer", textDecoration: "underline", fontSize: 12 }} onClick={onSetupStart}>

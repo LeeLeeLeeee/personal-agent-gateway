@@ -1,9 +1,10 @@
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from personal_agent_gateway.agents import AgentDescriptor, AgentRegistry
+from personal_agent_gateway.lmg_client import LmgQueryResult, is_valid_rate_limit
 
 # 확정된 로컬 사용량 소스가 아직 없다. artifacts/dashboard-usage-spec.md §3.2 참고:
 # weekly_limit/used/reset_at 을 로컬에서 안정적으로 얻을 수 있는 CLI 명령·파일이
@@ -21,6 +22,7 @@ class ProviderUsage(BaseModel):
     availability_error: str | None = None
     version: str = ""
     model: str = ""
+    rate_limits: list["RateLimit"] = Field(default_factory=list)
     weekly_limit: int | None = None
     used: int | None = None
     remaining: int | None = None
@@ -35,7 +37,14 @@ class UsageReport(BaseModel):
     providers: list[ProviderUsage]
 
 
+class RateLimit(BaseModel):
+    window_minutes: int
+    used_percent: float
+    resets_at: str | None = None
+
+
 UsageReader = Callable[[AgentDescriptor], dict[str, object]]
+LmgUsageReader = Callable[[], LmgQueryResult[dict[str, object]]]
 
 
 def _read_usage(_descriptor: AgentDescriptor) -> dict[str, object]:
@@ -128,9 +137,47 @@ def collect_local_agent_usage(
     *,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     reader: UsageReader = _read_usage,
+    lmg_reader: LmgUsageReader | None = None,
 ) -> UsageReport:
-    return build_usage_report(
+    report = build_usage_report(
         registry.catalog(),
         detected_at=now().isoformat(),
         reader=reader,
     )
+    if lmg_reader is None:
+        return report
+    try:
+        lmg_result = lmg_reader()
+    except Exception:
+        return report
+    if lmg_result.status != "ready" or lmg_result.data is None:
+        return report
+    limits_by_provider = _rate_limits_by_provider(lmg_result.data)
+    for provider in report.providers:
+        provider.rate_limits = limits_by_provider.get(provider.provider, [])
+    return report
+
+
+def _rate_limits_by_provider(payload: dict[str, object]) -> dict[str, list[RateLimit]]:
+    providers = payload.get("providers")
+    if not isinstance(providers, list):
+        return {}
+    limits_by_provider: dict[str, list[RateLimit]] = {}
+    for snapshot in providers:
+        if not isinstance(snapshot, dict):
+            continue
+        provider = snapshot.get("provider")
+        status = snapshot.get("status")
+        rate_limits = snapshot.get("rate_limits")
+        if status != "ok" or not isinstance(provider, str) or not isinstance(rate_limits, list):
+            continue
+        parsed_limits = [_rate_limit(rate_limit) for rate_limit in rate_limits]
+        if all(limit is not None for limit in parsed_limits):
+            limits_by_provider[provider] = [limit for limit in parsed_limits if limit is not None]
+    return limits_by_provider
+
+
+def _rate_limit(value: object) -> RateLimit | None:
+    if not isinstance(value, dict) or not is_valid_rate_limit(value):
+        return None
+    return RateLimit.model_validate(value)

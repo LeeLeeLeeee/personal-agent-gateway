@@ -289,10 +289,11 @@ describe("GatewayApp", () => {
     expect(screen.getByText("legacy-model")).toBeInTheDocument();
   });
 
-  it("supports OTP login before loading protected API data", async () => {
+  it("disables OTP submission while authentication is pending and opens Dashboard on success", async () => {
+    const login = deferredResponse();
     installFetch({
       "GET /api/auth/status": { authenticated: false, totp_configured: true },
-      "POST /api/auth/login": {},
+      "POST /api/auth/login": () => login.promise,
       "GET /api/status": status,
       "GET /api/sessions": { sessions },
       "GET /api/history": { events: [] },
@@ -305,9 +306,50 @@ describe("GatewayApp", () => {
     await userEvent.type(await screen.findByPlaceholderText("000000"), "123456");
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/auth/login", expect.any(Object)));
-    await userEvent.click(await screen.findByRole("button", { name: "Chat" }));
-    await waitFor(() => expect(screen.getAllByText("Main chat").length).toBeGreaterThan(0));
+    expect(screen.getByPlaceholderText("000000")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Signing in…" })).toBeDisabled();
+
+    await act(async () => {
+      login.resolve({});
+      await login.promise;
+    });
+
+    expect(await screen.findByRole("heading", { name: "대시보드" })).toBeInTheDocument();
+  });
+
+  it("keeps the sign-in screen when login is rejected", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: false, totp_configured: true },
+      "POST /api/auth/login": () => response({}, false)
+    });
+
+    await renderGatewayApp({ openChat: false });
+    await userEvent.type(await screen.findByPlaceholderText("000000"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await screen.findByText("Invalid code. Session refused.")).toBeInTheDocument();
+    expect(screen.getByText("Sign in")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("000000")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    expect(screen.queryByRole("heading", { name: "대시보드" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the sign-in screen when bootstrap after login fails", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: false, totp_configured: true },
+      "POST /api/auth/login": {},
+      "GET /api/status": () => response({}, false)
+    });
+
+    await renderGatewayApp({ openChat: false });
+    await userEvent.type(await screen.findByPlaceholderText("000000"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await screen.findByText("Unable to sign in. Try again.")).toBeInTheDocument();
+    expect(screen.getByText("Sign in")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("000000")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    expect(screen.queryByRole("heading", { name: "대시보드" })).not.toBeInTheDocument();
   });
 
   it("sends chat messages and renders non-streamed fallback agent responses", async () => {

@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from personal_agent_gateway.agents import AgentDescriptor
+from personal_agent_gateway.lmg_client import LmgQueryResult
 from personal_agent_gateway.local_usage import build_usage_report, collect_local_agent_usage
 
 
@@ -107,3 +110,115 @@ def test_collect_uses_registry_catalog_and_timestamp():
 
     assert report.detected_at == fixed.isoformat()
     assert [provider.provider for provider in report.providers] == ["codex", "claude"]
+
+
+def test_collect_merges_ready_lmg_limits_without_inventing_legacy_quota():
+    registry = _FakeRegistry([make_descriptor("codex")])
+    ready_usage = LmgQueryResult(
+        data={
+            "collected_at": "2026-07-27T00:00:00Z",
+            "providers": [
+                {
+                    "provider": "codex",
+                    "status": "ok",
+                    "rate_limits": [
+                        {
+                            "window_minutes": 300,
+                            "used_percent": 25,
+                            "resets_at": "2026-07-27T04:00:00Z",
+                        }
+                    ],
+                }
+            ],
+        },
+        status="ready",
+    )
+
+    report = collect_local_agent_usage(
+        registry,
+        reader=lambda _: {},
+        lmg_reader=lambda: ready_usage,
+    )
+
+    codex = report.providers[0]
+    assert codex.rate_limits[0].window_minutes == 300
+    assert codex.rate_limits[0].used_percent == 25
+    assert codex.weekly_limit is None
+
+
+def test_collect_omits_valid_limits_from_non_ok_lmg_provider_snapshot():
+    registry = _FakeRegistry([make_descriptor("codex")])
+    ready_usage = LmgQueryResult(
+        data={
+            "collected_at": "2026-07-27T00:00:00Z",
+            "providers": [
+                {
+                    "provider": "codex",
+                    "status": "unconfirmed",
+                    "rate_limits": [
+                        {
+                            "window_minutes": 300,
+                            "used_percent": 25,
+                            "resets_at": "2026-07-27T04:00:00Z",
+                        }
+                    ],
+                }
+            ],
+        },
+        status="ready",
+    )
+
+    report = collect_local_agent_usage(registry, lmg_reader=lambda: ready_usage)
+
+    assert report.providers[0].rate_limits == []
+
+
+def test_collect_lmg_failure_keeps_catalog_availability_and_hides_error():
+    registry = _FakeRegistry([make_descriptor("codex", available=False, error="not found")])
+
+    report = collect_local_agent_usage(
+        registry,
+        lmg_reader=lambda: LmgQueryResult(
+            data=None,
+            status="unreachable",
+            message="upstream stderr secret",
+        ),
+    )
+
+    codex = report.providers[0]
+    assert codex.available is False
+    assert codex.availability_error == "not found"
+    assert codex.rate_limits == []
+    assert "upstream stderr secret" not in (codex.note or "")
+
+
+@pytest.mark.parametrize(
+    "invalid_limit",
+    [
+        {"window_minutes": 0, "used_percent": 25, "resets_at": None},
+        {"window_minutes": 300, "used_percent": 101, "resets_at": None},
+        {"window_minutes": 300, "used_percent": float("nan"), "resets_at": None},
+        {"window_minutes": 300, "used_percent": 25, "resets_at": "tomorrow"},
+    ],
+)
+def test_collect_omits_invalid_ready_lmg_limits(invalid_limit):
+    registry = _FakeRegistry([make_descriptor("codex")])
+    ready_usage = LmgQueryResult(
+        data={
+            "collected_at": "2026-07-27T00:00:00Z",
+            "providers": [
+                {
+                    "provider": "codex",
+                    "status": "ok",
+                    "rate_limits": [invalid_limit],
+                }
+            ],
+        },
+        status="ready",
+    )
+
+    report = collect_local_agent_usage(registry, lmg_reader=lambda: ready_usage)
+
+    codex = report.providers[0]
+    assert codex.rate_limits == []
+    assert codex.usage_status == "unconfirmed"

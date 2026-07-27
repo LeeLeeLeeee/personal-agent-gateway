@@ -55,6 +55,7 @@ def test_dashboard_usage_returns_provider_usage(tmp_path: Path, monkeypatch) -> 
         "availability_error",
         "version",
         "model",
+        "rate_limits",
         "weekly_limit",
         "used",
         "remaining",
@@ -78,6 +79,55 @@ def test_dashboard_usage_returns_provider_usage(tmp_path: Path, monkeypatch) -> 
     assert claude["available"] is False
     assert claude["usage_status"] == "unavailable"
     assert claude["availability_error"] == "not found"
+
+
+def test_dashboard_usage_reads_lmg_limits_with_app_config(tmp_path: Path, monkeypatch) -> None:
+    from personal_agent_gateway import agents as agents_module
+    import personal_agent_gateway.api.dashboard as dash
+
+    monkeypatch.setattr(
+        agents_module,
+        "probe_cli",
+        lambda _binary: agents_module.CliProbeResult(True, None),
+    )
+    monkeypatch.setattr(agents_module, "fetch_capabilities", lambda _config: None)
+    monkeypatch.setattr(
+        dash,
+        "fetch_usage",
+        lambda config: LmgQueryResult(
+            data={
+                "collected_at": "2026-07-27T00:00:00Z",
+                "providers": [
+                    {
+                        "provider": "codex",
+                        "status": "ok",
+                        "rate_limits": [
+                            {
+                                "window_minutes": 300,
+                                "used_percent": 25,
+                                "resets_at": "2026-07-27T04:00:00Z",
+                            }
+                        ],
+                    }
+                ],
+            },
+            status="ready",
+        ),
+    )
+    client = TestClient(create_app(make_config(tmp_path)))
+    client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
+
+    response = client.get("/api/dashboard/usage")
+
+    assert response.status_code == 200
+    codex = response.json()["providers"][0]
+    assert codex["rate_limits"] == [
+        {
+            "window_minutes": 300,
+            "used_percent": 25.0,
+            "resets_at": "2026-07-27T04:00:00Z",
+        }
+    ]
 
 
 def test_dashboard_sessions_requires_session(tmp_path: Path) -> None:

@@ -176,37 +176,6 @@
   font-size: 10px;
 }
 
-.dashboard-usage-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 18px 0 0;
-  border-top: var(--bd-in);
-  border-left: var(--bd-in);
-}
-
-.dashboard-usage-metric {
-  min-width: 0;
-  padding: 11px;
-  border-right: var(--bd-in);
-  border-bottom: var(--bd-in);
-}
-
-.dashboard-usage-metric dt {
-  color: var(--c-grey);
-  font-size: 10px;
-}
-
-.dashboard-usage-metric dd {
-  margin: 5px 0 0;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.dashboard-usage-missing {
-  color: var(--c-warn);
-}
-
 .dashboard-usage-note {
   margin-top: 12px;
   color: var(--c-grey);
