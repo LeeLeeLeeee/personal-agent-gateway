@@ -9,11 +9,13 @@ aliases:
 tags:
   - component
   - analysis
-updated_at: 2026-07-22
+updated_at: 2026-07-27
 ---
 
 # Component Inspector Reports
 
+- [ArchiveView Artifacts Navigation Analysis — 2026-07-27 10:30](./ArchiveView/2026-07-27-1030.md)
+- [HooksView Library Draft Removal Analysis — 2026-07-27 09:15](./HooksView/2026-07-27-0915.md)
 - [GatewayApp Initial Dashboard Analysis — 2026-07-22 15:31](./GatewayApp/2026-07-22-1531.md)
 - [TeamRunDetail Structured Content Analysis — 2026-07-22 15:31](./TeamRunDetail/2026-07-22-1531.md)
 - [DashboardView Operations Expansion Analysis — 2026-07-22 13:21](./DashboardView/2026-07-22-1321.md)
