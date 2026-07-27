@@ -7,10 +7,40 @@ from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.remote_model_client import HttpModelClient
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.session_config import SessionAgentConfigService
+from personal_agent_gateway.space_policies import EffectiveSpacePolicy, SpacePolicy
 from personal_agent_gateway.transcript import TranscriptStore
 
 
-def _factory(tmp_path: Path) -> AgentRuntimeFactory:
+class _SpacePolicies:
+    def __init__(self, policy: SpacePolicy) -> None:
+        self._policy = policy
+
+    def resolve(self, *, persona_id: str | None = None) -> EffectiveSpacePolicy:
+        return EffectiveSpacePolicy("global", self._policy)
+
+
+def _policy(
+    *,
+    read_mode: str,
+    read_path: Path | None,
+) -> SpacePolicy:
+    return SpacePolicy(
+        scope="global",
+        scope_id="",
+        read_mode=read_mode,
+        read_path=str(read_path) if read_path else None,
+        write_mode="isolated",
+        workspace_path=None,
+        created_at="2026-07-27T00:00:00Z",
+        updated_at="2026-07-27T00:00:00Z",
+    )
+
+
+def _factory(
+    tmp_path: Path,
+    *,
+    policy: SpacePolicy | None = None,
+) -> AgentRuntimeFactory:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config = AppConfig(
@@ -18,7 +48,11 @@ def _factory(tmp_path: Path) -> AgentRuntimeFactory:
         session_dir=tmp_path / "data" / "sessions",
         lmg_local_token="local-secret",
     )
-    return AgentRuntimeFactory(config, TranscriptStore(config.session_dir))
+    return AgentRuntimeFactory(
+        config,
+        TranscriptStore(config.session_dir),
+        space_policies=_SpacePolicies(policy) if policy else None,
+    )
 
 
 def test_headless_codex_runtime_uses_codex_client(tmp_path: Path) -> None:
@@ -43,6 +77,56 @@ def test_headless_claude_runtime_uses_claude_client(tmp_path: Path) -> None:
     assert isinstance(runtime._model, HttpModelClient)
     assert runtime._model._provider == "claude"
     assert runtime._model._execution
+
+
+@pytest.mark.parametrize("backend", ["codex", "claude"])
+def test_session_runtime_omits_default_home_read_path_outside_workspace(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    factory = _factory(tmp_path, policy=_policy(read_mode="home", read_path=home))
+    session_id = factory._transcript.start_new()
+    SessionAgentConfigService(factory._transcript).set_config(session_id, backend, "default", {})
+
+    runtime = factory.create_runtime_for_session(session_id)
+
+    assert runtime._model._execution["read_roots"] == []
+
+
+@pytest.mark.parametrize("backend", ["codex", "claude"])
+def test_headless_runtime_omits_default_home_read_path_outside_workspace(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    factory = _factory(tmp_path, policy=_policy(read_mode="home", read_path=home))
+
+    runtime = factory.create_headless_runtime(
+        backend,
+        "default",
+        {},
+        hook_run_id="hook-run-1",
+    )
+
+    assert runtime._model._execution["read_roots"] == []
+
+
+@pytest.mark.parametrize("backend", ["codex", "claude"])
+def test_session_runtime_rejects_selected_read_path_outside_workspace(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    factory = _factory(tmp_path, policy=_policy(read_mode="selected", read_path=selected))
+    session_id = factory._transcript.start_new()
+    SessionAgentConfigService(factory._transcript).set_config(session_id, backend, "default", {})
+
+    with pytest.raises(ValueError, match="inside the workspace"):
+        factory.create_runtime_for_session(session_id)
 
 
 def test_headless_unsupported_backend_raises(tmp_path: Path) -> None:

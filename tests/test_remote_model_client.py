@@ -429,6 +429,12 @@ async def test_provider_unavailable_503_does_not_expose_response_body():
             "capacity_exceeded",
             "remote_capacity_exceeded",
         ),
+        (
+            422,
+            "invalid_execution_path",
+            "invalid_execution_path",
+            "remote_invalid_execution_path",
+        ),
     ],
 )
 async def test_pre_stream_gateway_errors_are_typed(

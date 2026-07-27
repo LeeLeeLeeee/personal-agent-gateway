@@ -79,6 +79,7 @@ from personal_agent_gateway.security_settings import SecuritySettingsService
 from personal_agent_gateway.space_policies import (
     SpacePolicy,
     SpacePolicyService,
+    cli_read_roots,
     policy_from_snapshot,
 )
 from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
@@ -623,19 +624,7 @@ def _team_cli_read_roots(
     workspace_root: Path,
     space_policy: SpacePolicy | None,
 ) -> list[str]:
-    if space_policy is None or not space_policy.read_path:
-        return []
-    canonical_workspace = workspace_root.resolve()
-    canonical_read_root = Path(space_policy.read_path).resolve()
-    try:
-        canonical_read_root.relative_to(canonical_workspace)
-    except ValueError as exc:
-        if space_policy.read_mode == "home":
-            return []
-        raise ValueError(
-            "CLI read path must be inside the team workspace"
-        ) from exc
-    return [str(canonical_read_root)]
+    return [str(path) for path in cli_read_roots(workspace_root, space_policy)]
 
 
 def _select_frontend_index(package_dir: Path) -> Path:

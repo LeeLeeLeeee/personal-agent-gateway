@@ -13,7 +13,7 @@ from personal_agent_gateway.personas import persona_system_prompt
 from personal_agent_gateway.remote_model_client import HttpModelClient
 from personal_agent_gateway.runtime import AgentRuntime
 from personal_agent_gateway.session_config import SessionAgentConfigService
-from personal_agent_gateway.space_policies import SpacePolicyService
+from personal_agent_gateway.space_policies import SpacePolicyService, cli_read_roots
 from personal_agent_gateway.tools import WorkspaceTools
 from personal_agent_gateway.transcript import TranscriptStore
 
@@ -368,7 +368,7 @@ class AgentRuntimeFactory:
             if policy.write_mode == "full_access" and policy.workspace_path
             else self._config.workspace_root
         )
-        read_roots = [Path(policy.read_path).resolve()] if policy.read_path else []
+        read_roots = cli_read_roots(workspace_root, policy)
         return workspace_root, read_roots, policy.write_mode
 
     def _effective_session_runtime_config(self, session_config) -> tuple[str, str, dict[str, object]]:
