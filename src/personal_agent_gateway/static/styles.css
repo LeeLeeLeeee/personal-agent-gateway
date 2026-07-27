@@ -5318,11 +5318,12 @@ p {
     }
     .archive-tabs {
         width: 100%;
+        overflow-x: auto;
     }
     .archive-tabs button {
-        flex: 1;
+        flex: 0 0 auto;
         justify-content: center;
-        min-width: 0;
+        min-width: max-content;
         padding-inline: 8px;
     }
     .archive-editor {

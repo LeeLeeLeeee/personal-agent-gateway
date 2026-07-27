@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { api } from "../../../api/client.js";
 import { ArchiveView } from "./index.jsx";
 
 const entry = {
@@ -139,6 +140,36 @@ describe("ArchiveView", () => {
 
     expect(screen.getByText("release-report.md")).toBeInTheDocument();
     expect(screen.getByText(/not automatically included in Library or Persona context/i)).toBeInTheDocument();
+  });
+
+  it("refreshes Archive artifacts after an embedded artifact is deleted", async () => {
+    const onArtifactChange = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const deleteSpy = vi.spyOn(api, "deleteArtifact").mockResolvedValue(true);
+    const deletedArtifact = {
+      ...artifact,
+      type: "document",
+      mime_type: "application/zip"
+    };
+
+    render(
+      <ArchiveView
+        client={makeClient()}
+        artifacts={[deletedArtifact]}
+        onArtifactChange={onArtifactChange}
+      />
+    );
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: /Artifacts/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Open release-report.md" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith("artifact-1"));
+    await waitFor(() => expect(onArtifactChange).toHaveBeenCalledOnce());
+
+    confirmSpy.mockRestore();
+    deleteSpy.mockRestore();
   });
 
   it("shows published knowledge and renders an accessible map with distinct gap edges", async () => {
