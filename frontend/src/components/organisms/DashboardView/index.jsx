@@ -17,10 +17,6 @@ function isNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function formatAmount(value) {
-  return isNumber(value) ? value.toLocaleString("ko-KR") : "미수집";
-}
-
 function formatDateTime(value) {
   if (!value) return "미수집";
   const date = new Date(value);
@@ -31,36 +27,33 @@ function formatDateTime(value) {
   }).format(date);
 }
 
-function UsageGauge({ label, used, limit }) {
-  if (!isNumber(used) || !isNumber(limit) || limit <= 0) return null;
-  const percent = Math.min(Math.max((used / limit) * 100, 0), 100);
+function rateLimitWindowLabel(windowMinutes) {
+  if (windowMinutes === 300) return "5시간";
+  if (windowMinutes === 10080) return "7일";
+  return isNumber(windowMinutes) ? `${windowMinutes}분` : "기간 미확인";
+}
+
+function RateLimitGauge({ providerLabel, rateLimit }) {
+  if (!isNumber(rateLimit?.used_percent)) return null;
+  const percent = Math.min(Math.max(rateLimit.used_percent, 0), 100);
+  const windowLabel = rateLimitWindowLabel(rateLimit.window_minutes);
 
   return (
     <div className="dashboard-usage-gauge-wrap">
       <div
         className="dashboard-usage-gauge"
         role="progressbar"
-        aria-label={`${label} 주간 사용량`}
+        aria-label={`${providerLabel} ${windowLabel} 한도`}
         aria-valuemin={0}
-        aria-valuemax={limit}
-        aria-valuenow={Math.min(Math.max(used, 0), limit)}
+        aria-valuemax={100}
+        aria-valuenow={percent}
       >
         <span style={{ width: `${percent}%` }} />
       </div>
       <div className="dashboard-usage-gauge-label mono">
-        {formatAmount(used)} / {formatAmount(limit)} ({Math.round(percent)}%)
+        {windowLabel} · {Math.round(percent)}%
+        {rateLimit.resets_at ? ` · 초기화 ${formatDateTime(rateLimit.resets_at)}` : ""}
       </div>
-    </div>
-  );
-}
-
-function UsageMetric({ label, value }) {
-  return (
-    <div className="dashboard-usage-metric">
-      <dt>{label}</dt>
-      <dd className={isNumber(value) ? "mono" : "dashboard-usage-missing"}>
-        {formatAmount(value)}
-      </dd>
     </div>
   );
 }
@@ -69,7 +62,8 @@ function ProviderUsageCard({ usage }) {
   const label = usage.label || usage.provider || "에이전트";
   const status = usage.available === false ? "unavailable" : usage.usage_status;
   const statusLabel = STATUS_LABELS[status] || "확인 필요";
-  const hasGauge = isNumber(usage.used) && isNumber(usage.weekly_limit) && usage.weekly_limit > 0;
+  const rateLimits = Array.isArray(usage.rate_limits) ? usage.rate_limits : [];
+  const collectedRateLimits = rateLimits.filter((rateLimit) => isNumber(rateLimit?.used_percent));
 
   return (
     <article className="dashboard-usage-card" aria-labelledby={`usage-${usage.provider}`}>
@@ -93,24 +87,20 @@ function ProviderUsageCard({ usage }) {
         </div>
       ) : (
         <>
-          {hasGauge ? (
-            <UsageGauge label={label} used={usage.used} limit={usage.weekly_limit} />
+          <p className="dashboard-usage-note">계정 전체 한도</p>
+          {collectedRateLimits.length ? (
+            collectedRateLimits.map((rateLimit) => (
+              <RateLimitGauge
+                key={`${rateLimit.window_minutes}-${rateLimit.resets_at || ""}`}
+                providerLabel={label}
+                rateLimit={rateLimit}
+              />
+            ))
           ) : (
             <div className="dashboard-usage-empty">
-              사용량 데이터가 아직 수집되지 않았습니다.
+              계정 한도를 수집하지 못했습니다.
             </div>
           )}
-          <dl className="dashboard-usage-metrics">
-            <UsageMetric label="주간 한도" value={usage.weekly_limit} />
-            <UsageMetric label="이번 주 사용량" value={usage.used} />
-            <UsageMetric label="남은 한도" value={usage.remaining} />
-            <div className="dashboard-usage-metric">
-              <dt>초기화 시각</dt>
-              <dd className={usage.reset_at ? "mono" : "dashboard-usage-missing"}>
-                {formatDateTime(usage.reset_at)}
-              </dd>
-            </div>
-          </dl>
           {usage.note ? <p className="dashboard-usage-note">{usage.note}</p> : null}
         </>
       )}
@@ -386,7 +376,7 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
       <div className="dashboard-head">
         <div>
           <h1 className="headline">대시보드</h1>
-          <p>로컬 에이전트의 주간 사용량을 한눈에 확인합니다.</p>
+          <p>Codex와 Claude 계정의 현재 한도를 한눈에 확인합니다.</p>
         </div>
         {report?.detected_at ? (
           <div className="dashboard-detected-at mono">
@@ -398,7 +388,7 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
       <section className="dashboard-usage-section" aria-labelledby="dashboard-usage-title">
         <div className="dashboard-section-head">
           <div>
-            <h2 id="dashboard-usage-title" className="headline">이번 주 사용량</h2>
+            <h2 id="dashboard-usage-title" className="headline">계정 한도</h2>
             <p>Codex와 Claude의 확인 가능한 한도만 표시합니다.</p>
           </div>
           {!loading && (report || error) ? (
@@ -412,10 +402,10 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
           ) : null}
         </div>
 
-        {loading ? <div className="dashboard-state" role="status">사용량을 불러오는 중입니다.</div> : null}
+        {loading ? <div className="dashboard-state" role="status">계정 한도를 불러오는 중입니다.</div> : null}
         {!loading && error ? (
           <div className="dashboard-state dashboard-state-error" role="alert">
-            <strong>사용량을 불러오지 못했습니다.</strong>
+            <strong>계정 한도를 불러오지 못했습니다.</strong>
             <span>{typeof error.detail === "string" ? error.detail : "잠시 후 다시 시도해 주세요."}</span>
             <button
               type="button"
@@ -427,7 +417,7 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
           </div>
         ) : null}
         {!loading && !error && providers.length === 0 ? (
-          <div className="dashboard-state">표시할 로컬 에이전트가 없습니다.</div>
+          <div className="dashboard-state">표시할 계정 한도 제공자가 없습니다.</div>
         ) : null}
         {!loading && !error && providers.length > 0 ? (
           <div className="dashboard-usage-grid">
