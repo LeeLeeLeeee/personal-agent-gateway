@@ -329,6 +329,8 @@ describe("GatewayApp", () => {
 
     expect(await screen.findByText("Invalid code. Session refused.")).toBeInTheDocument();
     expect(screen.getByText("Sign in")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("000000")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(screen.queryByRole("heading", { name: "대시보드" })).not.toBeInTheDocument();
   });
 
@@ -345,6 +347,8 @@ describe("GatewayApp", () => {
 
     expect(await screen.findByText("Unable to sign in. Try again.")).toBeInTheDocument();
     expect(screen.getByText("Sign in")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("000000")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(screen.queryByRole("heading", { name: "대시보드" })).not.toBeInTheDocument();
   });
 
