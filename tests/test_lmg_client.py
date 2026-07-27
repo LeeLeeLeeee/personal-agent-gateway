@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -10,6 +12,7 @@ from personal_agent_gateway.lmg_client import (
     fetch_capabilities,
     fetch_sessions,
     fetch_sessions_strict,
+    fetch_usage,
 )
 
 
@@ -36,6 +39,61 @@ def _session_row(**overrides):
     }
     row.update(overrides)
     return row
+
+
+def _usage_payload(**overrides):
+    payload = {
+        "collected_at": "2026-07-27T00:00:00Z",
+        "providers": [
+            {
+                "provider": "codex",
+                "status": "ok",
+                "rate_limits": [
+                    {
+                        "window_minutes": 300,
+                        "used_percent": 25,
+                        "resets_at": "2026-07-27T04:00:00Z",
+                    }
+                ],
+            }
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _json_transport(payload):
+    def handler(request):
+        assert request.method == "GET"
+        assert request.url.path == "/v1/usage"
+        assert request.headers["authorization"] == "Bearer local-secret"
+        return httpx.Response(200, content=json.dumps(payload).encode())
+
+    return httpx.MockTransport(handler)
+
+
+def test_fetch_usage_returns_verified_snapshot():
+    payload = _usage_payload()
+
+    assert fetch_usage(_cfg(), transport=_json_transport(payload)) == LmgQueryResult(
+        data=payload,
+        status="ready",
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _usage_payload(providers=[{"provider": "", "status": "ok", "rate_limits": []}]),
+        _usage_payload(providers=[{"provider": "codex", "status": "unknown", "rate_limits": []}]),
+        _usage_payload(providers=[{"provider": "codex", "status": "ok", "rate_limits": [{"window_minutes": 0, "used_percent": 25, "resets_at": None}]}]),
+        _usage_payload(providers=[{"provider": "codex", "status": "ok", "rate_limits": [{"window_minutes": 300, "used_percent": 101, "resets_at": "2026-07-27T04:00:00Z"}]}]),
+        _usage_payload(providers=[{"provider": "codex", "status": "ok", "rate_limits": [{"window_minutes": 300, "used_percent": float("nan"), "resets_at": None}]}]),
+        _usage_payload(providers=[{"provider": "codex", "status": "ok", "rate_limits": [{"window_minutes": 300, "used_percent": 25, "resets_at": "tomorrow"}]}]),
+    ],
+)
+def test_fetch_usage_rejects_invalid_provider_limit_contract(payload):
+    assert fetch_usage(_cfg(), transport=_json_transport(payload)).status == "protocol_error"
 
 
 def test_fetch_capabilities_returns_payload():

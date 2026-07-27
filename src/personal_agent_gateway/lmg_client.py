@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+from datetime import datetime
+import math
+import re
 from typing import Generic, Literal, TypeVar
 from urllib.parse import quote
 
@@ -15,6 +18,9 @@ LmgStatus = Literal[
 ]
 T = TypeVar("T")
 _LMG_PROTOCOL_VERSION = "1.1"
+_RFC3339_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 
 @dataclass(frozen=True)
@@ -164,6 +170,89 @@ def fetch_sessions(
     if not _valid_session_rows(payload):
         return _query_failure("protocol_error")
     return LmgQueryResult(data=payload, status="ready")
+
+
+def fetch_usage(
+    config: AppConfig,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> LmgQueryResult[dict[str, object]]:
+    """Fetch and strictly validate the LMG account-limit snapshot."""
+    url = f"{config.lmg_base_url.rstrip('/')}/v1/usage"
+    try:
+        with httpx.Client(timeout=10.0, transport=transport) as client:
+            response = client.get(url, headers=_lmg_headers(config))
+    except httpx.HTTPError:
+        return _query_failure("unreachable")
+    failure = _http_failure(response.status_code)
+    if failure is not None:
+        return failure
+    try:
+        payload = response.json()
+    except ValueError:
+        return _query_failure("protocol_error")
+    if not _valid_usage_report(payload):
+        return _query_failure("protocol_error")
+    return LmgQueryResult(
+        data={str(key): value for key, value in payload.items()},
+        status="ready",
+    )
+
+
+def _valid_usage_report(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    collected_at = payload.get("collected_at")
+    providers = payload.get("providers")
+    return (
+        isinstance(collected_at, str)
+        and _is_rfc3339(collected_at)
+        and isinstance(providers, list)
+        and all(_valid_usage_provider(provider) for provider in providers)
+    )
+
+
+def _valid_usage_provider(provider: object) -> bool:
+    if not isinstance(provider, dict):
+        return False
+    provider_id = provider.get("provider")
+    status = provider.get("status")
+    rate_limits = provider.get("rate_limits")
+    return (
+        isinstance(provider_id, str)
+        and bool(provider_id.strip())
+        and status in {"ok", "unconfirmed", "unavailable"}
+        and isinstance(rate_limits, list)
+        and all(_valid_rate_limit(rate_limit) for rate_limit in rate_limits)
+    )
+
+
+def _valid_rate_limit(rate_limit: object) -> bool:
+    if not isinstance(rate_limit, dict):
+        return False
+    window_minutes = rate_limit.get("window_minutes")
+    used_percent = rate_limit.get("used_percent")
+    resets_at = rate_limit.get("resets_at")
+    return (
+        isinstance(window_minutes, int)
+        and not isinstance(window_minutes, bool)
+        and window_minutes > 0
+        and isinstance(used_percent, (int, float))
+        and not isinstance(used_percent, bool)
+        and math.isfinite(used_percent)
+        and 0 <= used_percent <= 100
+        and (resets_at is None or (isinstance(resets_at, str) and _is_rfc3339(resets_at)))
+    )
+
+
+def _is_rfc3339(value: str) -> bool:
+    if not _RFC3339_PATTERN.fullmatch(value):
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
 
 
 def fetch_sessions_strict(
