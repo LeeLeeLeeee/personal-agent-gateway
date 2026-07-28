@@ -687,8 +687,7 @@ class ArchiveService:
         clean = _REQUEST_PATTERN.sub("", content).strip()
         clean = re.sub(r"\n{3,}", "\n\n", clean)
         if requests:
-            titles = ", ".join(request.title for request in requests)
-            notice = f"Knowledge request sent to Library: {titles}"
+            notice = "Library에 요청되었습니다"
             clean = f"{clean}\n\n{notice}" if clean else notice
         return clean, requests
 

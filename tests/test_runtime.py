@@ -186,7 +186,7 @@ async def test_runtime_uses_published_archive_and_captures_request_marker(tmp_pa
             "role": "assistant",
             "content": (
                 "I need a reusable rollback guide from you.\n\n"
-                "Knowledge request sent to Library: Rollback guide"
+                "Library에 요청되었습니다"
             ),
         }
     ]

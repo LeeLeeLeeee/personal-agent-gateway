@@ -1263,9 +1263,7 @@ async def test_team_runtime_uses_archive_and_routes_knowledge_gap_to_library(tmp
     assert "Release verification" in worker_model.messages[0][0]["content"]
     task = teams.list_tasks(run.id)[0]
     assert "<knowledge_request>" not in (task.result or "")
-    assert "Knowledge request sent to Library: Rollback verification" in (
-        task.result or ""
-    )
+    assert "Library에 요청되었습니다" in (task.result or "")
     requests = archive.list_requests()
     assert len(requests) == 1
     assert requests[0].requested_by_persona_id == worker.id
