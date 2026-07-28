@@ -1,7 +1,7 @@
-from dataclasses import dataclass
-from datetime import datetime
 import math
 import re
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Generic, Literal, TypeVar
 from urllib.parse import quote
 
@@ -17,7 +17,7 @@ LmgStatus = Literal[
     "protocol_error",
 ]
 T = TypeVar("T")
-_LMG_PROTOCOL_VERSION = "1.1"
+_LMG_PROTOCOL_MAJOR = "2"
 _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
@@ -43,6 +43,21 @@ class LMGQueryError(RuntimeError):
 
 class LMGDeleteError(LMGQueryError):
     """Raised when a linked LMG session cannot be deleted safely."""
+
+
+class LMGProtocolMismatch(RuntimeError):
+    """Raised when LMG cannot supply a usable execution protocol snapshot."""
+
+
+@dataclass(frozen=True)
+class ProviderExecutionCapabilities:
+    ready: bool
+    readiness_error: str | None
+    resume: bool
+    external_read_only_roots: bool
+    network_modes: tuple[str, ...]
+    sandbox_modes: tuple[str, ...]
+    permission_modes: tuple[str, ...]
 
 
 _SESSION_REQUIRED_NONEMPTY_STRINGS = ("provider", "upstream_id")
@@ -97,10 +112,34 @@ def fetch_capabilities(
     )
 
 
+def fetch_execution_capabilities(
+    config: AppConfig,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> dict[str, ProviderExecutionCapabilities]:
+    result = fetch_capabilities(config, transport=transport)
+    if result.status != "ready" or result.data is None:
+        raise LMGProtocolMismatch(result.message or "LMG execution protocol is unavailable")
+    providers = result.data["providers"]
+    assert isinstance(providers, dict)
+    parsed: dict[str, ProviderExecutionCapabilities] = {}
+    for provider_id, provider in providers.items():
+        assert isinstance(provider_id, str)
+        capability = parse_provider_execution_capabilities(provider)
+        if not capability.ready:
+            raise LMGProtocolMismatch(f"LMG provider is not ready: {provider_id}")
+        parsed[provider_id] = capability
+    return parsed
+
+
 def _valid_capabilities(payload: object) -> bool:
     if not isinstance(payload, dict):
         return False
-    if payload.get("protocol_version") != _LMG_PROTOCOL_VERSION:
+    protocol_version = payload.get("protocol_version")
+    if (
+        not isinstance(protocol_version, str)
+        or protocol_version.split(".", 1)[0] != _LMG_PROTOCOL_MAJOR
+    ):
         return False
     if type(payload.get("schema_version")) is not int:
         return False
@@ -121,6 +160,10 @@ def _valid_provider_capabilities(capabilities: object) -> bool:
     if not isinstance(capabilities, dict):
         return False
     if not isinstance(capabilities.get("available"), bool):
+        return False
+    try:
+        parse_provider_execution_capabilities(capabilities)
+    except LMGProtocolMismatch:
         return False
     for key in ("version", "error"):
         value = capabilities.get(key)
@@ -146,6 +189,46 @@ def _valid_provider_capabilities(capabilities: object) -> bool:
         and isinstance(model.get("id"), str)
         and bool(model["id"])
         for model in models
+    )
+
+
+def parse_provider_execution_capabilities(
+    provider: object,
+) -> ProviderExecutionCapabilities:
+    if not isinstance(provider, dict):
+        raise LMGProtocolMismatch("LMG provider capability data is malformed")
+    ready = provider.get("ready")
+    readiness_error = provider.get("readiness_error")
+    execution = provider.get("execution")
+    if not isinstance(ready, bool):
+        raise LMGProtocolMismatch("LMG provider readiness is missing")
+    if readiness_error is not None and not isinstance(readiness_error, str):
+        raise LMGProtocolMismatch("LMG provider readiness error is malformed")
+    if not isinstance(execution, dict):
+        raise LMGProtocolMismatch("LMG provider execution capabilities are missing")
+    resume = execution.get("resume")
+    external_roots = execution.get("external_read_only_roots")
+    if not isinstance(resume, bool) or not isinstance(external_roots, bool):
+        raise LMGProtocolMismatch("LMG provider execution flags are malformed")
+    collections: dict[str, tuple[str, ...]] = {}
+    for key in ("network_modes", "sandbox_modes", "permission_modes"):
+        value = execution.get(key)
+        if (
+            not isinstance(value, list)
+            or not all(isinstance(item, str) and item for item in value)
+        ):
+            raise LMGProtocolMismatch(f"LMG provider {key} are malformed")
+        collections[key] = tuple(dict.fromkeys(value))
+    if not collections["network_modes"]:
+        raise LMGProtocolMismatch("LMG provider network modes are missing")
+    return ProviderExecutionCapabilities(
+        ready=ready,
+        readiness_error=readiness_error,
+        resume=resume,
+        external_read_only_roots=external_roots,
+        network_modes=collections["network_modes"],
+        sandbox_modes=collections["sandbox_modes"],
+        permission_modes=collections["permission_modes"],
     )
 
 

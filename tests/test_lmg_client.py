@@ -6,14 +6,40 @@ import pytest
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.lmg_client import (
     LMGDeleteError,
+    LMGProtocolMismatch,
     LMGQueryError,
     LmgQueryResult,
+    ProviderExecutionCapabilities,
     delete_session,
     fetch_capabilities,
+    fetch_execution_capabilities,
     fetch_sessions,
     fetch_sessions_strict,
     fetch_usage,
 )
+
+
+def _protocol_2_payload(*, ready: bool = True):
+    return {
+        "protocol_version": "2.0",
+        "schema_version": 1,
+        "gateway_status": "ready" if ready else "not_ready",
+        "providers": {
+            "codex": {
+                "available": True,
+                "ready": ready,
+                "readiness_error": None if ready else "provider_not_ready",
+                "models": [{"id": "x"}],
+                "execution": {
+                    "resume": True,
+                    "external_read_only_roots": False,
+                    "network_modes": ["unspecified", "denied", "required"],
+                    "sandbox_modes": ["read-only", "workspace-write"],
+                    "permission_modes": [],
+                },
+            }
+        },
+    }
 
 
 def _cfg(base="http://lmg", token="local-secret"):
@@ -106,12 +132,59 @@ def test_fetch_usage_rejects_unhashable_provider_status(status):
 
 
 def test_fetch_capabilities_returns_payload():
-    payload = {"protocol_version": "1.1", "schema_version": 1, "gateway_status": "ready", "providers": {"codex": {"available": True, "models": [{"id": "x"}]}}}
+    payload = _protocol_2_payload()
     def handler(request):
         assert request.headers["authorization"] == "Bearer local-secret"
         return httpx.Response(200, json=payload)
     got = fetch_capabilities(_cfg(), transport=httpx.MockTransport(handler))
     assert got == LmgQueryResult(data=payload, status="ready")
+
+
+def test_fetch_execution_capabilities_returns_typed_ready_providers():
+    payload = _protocol_2_payload()
+
+    def handler(request):
+        return httpx.Response(200, json=payload)
+
+    assert fetch_execution_capabilities(
+        _cfg(), transport=httpx.MockTransport(handler)
+    ) == {
+        "codex": ProviderExecutionCapabilities(
+            ready=True,
+            readiness_error=None,
+            resume=True,
+            external_read_only_roots=False,
+            network_modes=("unspecified", "denied", "required"),
+            sandbox_modes=("read-only", "workspace-write"),
+            permission_modes=(),
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {**_protocol_2_payload(), "protocol_version": "1.1"},
+        {key: value for key, value in _protocol_2_payload().items() if key != "protocol_version"},
+        {
+            **_protocol_2_payload(),
+            "providers": {
+                "codex": {
+                    key: value
+                    for key, value in _protocol_2_payload()["providers"]["codex"].items()
+                    if key != "execution"
+                }
+            },
+        },
+        _protocol_2_payload(ready=False),
+    ],
+)
+def test_fetch_execution_capabilities_rejects_unusable_protocol(payload):
+    def handler(request):
+        return httpx.Response(200, json=payload)
+
+    with pytest.raises(LMGProtocolMismatch):
+        fetch_execution_capabilities(_cfg(), transport=httpx.MockTransport(handler))
 
 
 def test_fetch_capabilities_protocol_error_on_bad_schema():
@@ -129,12 +202,7 @@ def test_fetch_capabilities_unreachable_on_http_error():
 
 
 def test_fetch_capabilities_retains_catalog_when_gateway_is_not_ready():
-    payload = {
-        "protocol_version": "1.1",
-        "schema_version": 1,
-        "gateway_status": "not_ready",
-        "providers": {"codex": {"available": True, "models": [{"id": "x"}]}},
-    }
+    payload = _protocol_2_payload(ready=False)
 
     def handler(request): return httpx.Response(200, json=payload)
 
@@ -372,14 +440,24 @@ def test_lmg_requests_omit_authorization_when_direct_config_has_no_token():
         assert "authorization" not in request.headers
         return httpx.Response(
             200,
-            json={"protocol_version": "1.1", "schema_version": 1, "gateway_status": "ready", "providers": {}},
+            json={
+                "protocol_version": "2.0",
+                "schema_version": 1,
+                "gateway_status": "ready",
+                "providers": {},
+            },
         )
 
     assert fetch_capabilities(
         config,
         transport=httpx.MockTransport(handler),
     ) == LmgQueryResult(
-        data={"protocol_version": "1.1", "schema_version": 1, "gateway_status": "ready", "providers": {}},
+        data={
+            "protocol_version": "2.0",
+            "schema_version": 1,
+            "gateway_status": "ready",
+            "providers": {},
+        },
         status="ready",
     )
 

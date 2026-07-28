@@ -5,7 +5,7 @@ import pytest
 
 from personal_agent_gateway.agents import AgentRegistry, CliProbeResult, probe_cli
 from personal_agent_gateway.config import AppConfig
-from personal_agent_gateway.lmg_client import LmgQueryResult
+from personal_agent_gateway.lmg_client import LmgQueryResult, ProviderExecutionCapabilities
 
 
 def make_config(tmp_path: Path) -> AppConfig:
@@ -133,6 +133,14 @@ def test_registry_uses_detected_models_and_model_specific_efforts(tmp_path: Path
         "providers": {
             "codex": {
                 "available": True,
+                "ready": True,
+                "execution": {
+                    "resume": True,
+                    "external_read_only_roots": False,
+                    "network_modes": ["unspecified", "denied", "required"],
+                    "sandbox_modes": ["read-only", "workspace-write"],
+                    "permission_modes": [],
+                },
                 "version": "codex-cli test",
                 "source": ["cli_help", "models_cache"],
                 "models": [
@@ -171,12 +179,60 @@ def test_registry_uses_detected_models_and_model_specific_efforts(tmp_path: Path
     assert codex.model_options[1].efforts == ["low"]
     assert codex.version == "codex-cli test"
     assert codex.capability_source == ["cli_help", "models_cache"]
+    assert codex.execution_capabilities == ProviderExecutionCapabilities(
+        ready=True,
+        readiness_error=None,
+        resume=True,
+        external_read_only_roots=False,
+        network_modes=("unspecified", "denied", "required"),
+        sandbox_modes=("read-only", "workspace-write"),
+        permission_modes=(),
+    )
     assert next(option for option in codex.options_schema if option.name == "profile").choices == [
         "review"
     ]
     assert registry.validate_config("codex", "gpt-new", {"effort": "low"})["model"] == "gpt-new"
     with pytest.raises(ValueError, match="Unsupported effort"):
         registry.validate_config("codex", "gpt-new", {"effort": "high"})
+
+
+def test_registry_keeps_not_ready_provider_visible_but_blocks_execution(tmp_path: Path) -> None:
+    payload = {
+        "protocol_version": "2.0",
+        "schema_version": 1,
+        "gateway_status": "not_ready",
+        "providers": {
+            "codex": {
+                "available": True,
+                "ready": False,
+                "readiness_error": "provider_not_ready",
+                "models": [{"id": "gpt-detected", "label": "GPT Detected"}],
+                "execution": {
+                    "resume": True,
+                    "external_read_only_roots": False,
+                    "network_modes": ["unspecified", "denied", "required"],
+                    "sandbox_modes": ["read-only", "workspace-write"],
+                    "permission_modes": [],
+                },
+            }
+        },
+    }
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        capability_loader=lambda _config: LmgQueryResult(
+            data=payload,
+            status="not_ready",
+        ),
+    )
+
+    codex = registry.get("codex")
+
+    assert codex.models == ["gpt-detected"]
+    assert codex.available is False
+    assert codex.execution_capabilities is not None
+    assert codex.execution_capabilities.ready is False
+    with pytest.raises(ValueError, match="Agent unavailable"):
+        registry.validate_config("codex", "gpt-detected", {})
 
 
 @pytest.mark.parametrize(

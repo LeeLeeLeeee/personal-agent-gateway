@@ -7,7 +7,13 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from personal_agent_gateway.config import AppConfig
-from personal_agent_gateway.lmg_client import LmgQueryResult, fetch_capabilities
+from personal_agent_gateway.lmg_client import (
+    LMGProtocolMismatch,
+    LmgQueryResult,
+    ProviderExecutionCapabilities,
+    fetch_capabilities,
+    parse_provider_execution_capabilities,
+)
 
 AgentId = Literal["codex", "claude"]
 
@@ -41,6 +47,7 @@ class AgentDescriptor(BaseModel):
     defaults: dict[str, Any]
     version: str = ""
     capability_source: list[str] = []
+    execution_capabilities: ProviderExecutionCapabilities | None = None
 
 
 @dataclass(frozen=True)
@@ -242,6 +249,7 @@ class AgentRegistry:
             },
             version=_string(capabilities.get("version")),
             capability_source=_string_list(capabilities.get("source")) or ["fallback"],
+            execution_capabilities=_execution_capabilities(capabilities),
         )
 
     def _claude(
@@ -308,6 +316,7 @@ class AgentRegistry:
             },
             version=_string(capabilities.get("version")),
             capability_source=_string_list(capabilities.get("source")) or ["fallback"],
+            execution_capabilities=_execution_capabilities(capabilities),
         )
 
 
@@ -324,6 +333,17 @@ def _loaded_capabilities(
     if isinstance(loaded, LmgQueryResult):
         return loaded.data or {}, loaded.status
     return loaded or {}, None
+
+
+def _execution_capabilities(
+    provider: dict[str, object],
+) -> ProviderExecutionCapabilities | None:
+    if "execution" not in provider:
+        return None
+    try:
+        return parse_provider_execution_capabilities(provider)
+    except LMGProtocolMismatch:
+        return None
 
 
 def _gateway_probe(status: str | None) -> CliProbeResult | None:
@@ -415,8 +435,16 @@ def _availability(
     capabilities: dict[str, object],
 ) -> tuple[bool, str | None]:
     detected_available = capabilities.get("available")
-    available = probe.available and detected_available is not False
+    detected_ready = capabilities.get("ready")
+    available = (
+        probe.available
+        and detected_available is not False
+        and detected_ready is not False
+        and ("execution" not in capabilities or _execution_capabilities(capabilities) is not None)
+    )
     if available:
         return True, None
-    detected_error = _string(capabilities.get("error"))
+    detected_error = _string(capabilities.get("readiness_error")) or _string(
+        capabilities.get("error")
+    )
     return False, probe.error or detected_error or "unavailable"
