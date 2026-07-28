@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 from pathlib import Path
 
@@ -10,6 +11,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMON = ROOT / "scripts" / "local_runtime_common.ps1"
+START = ROOT / "scripts" / "start_local_runtime.ps1"
+STOP = ROOT / "scripts" / "stop_local_runtime.ps1"
+STATE = ROOT / "data" / "local-runtime-state.json"
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows runtime launcher")
 
@@ -21,6 +25,23 @@ def run_ps(command: str) -> subprocess.CompletedProcess[str]:
             "-NoProfile",
             "-Command",
             f"$ErrorActionPreference = 'Stop'; {command}",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def run_ps_file(path: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(path),
         ],
         cwd=ROOT,
         text=True,
@@ -111,3 +132,52 @@ def test_runtime_state_round_trip(tmp_path: Path) -> None:
             "sid": "S-1-5-21",
         },
     }
+
+
+def test_start_refuses_unknown_runtime_listener() -> None:
+    if STATE.exists():
+        pytest.skip("managed local runtime is active")
+
+    listener: socket.socket | None = None
+    try:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 8787))
+        listener.listen()
+    except OSError:
+        if listener is not None:
+            listener.close()
+        listener = None
+
+    try:
+        before = run_ps(
+            "(Get-NetTCPConnection -State Listen -LocalPort 8787 | "
+            "Select-Object -First 1 -ExpandProperty OwningProcess)"
+        )
+        assert before.returncode == 0, before.stderr
+        owner_pid = int(before.stdout.strip())
+
+        result = run_ps_file(START)
+
+        assert result.returncode != 0
+        assert "port_conflict" in result.stdout + result.stderr
+        after = run_ps(
+            "(Get-NetTCPConnection -State Listen -LocalPort 8787 | "
+            "Select-Object -First 1 -ExpandProperty OwningProcess)"
+        )
+        assert after.returncode == 0, after.stderr
+        assert int(after.stdout.strip()) == owner_pid
+    finally:
+        if listener is not None:
+            listener.close()
+
+
+def test_stop_reports_not_running_without_state() -> None:
+    if STATE.exists():
+        pytest.skip("managed local runtime is active")
+
+    result = run_ps_file(STOP)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "not_running"
+    assert payload["identity"].endswith(r"\Administrator")
