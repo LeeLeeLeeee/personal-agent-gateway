@@ -79,17 +79,21 @@ class ArtifactStore:
         destination = self._resolve_artifact_path(relative_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, destination)
-        return self._register(
-            artifact_type=artifact_type,
-            title=title,
-            path=destination,
-            relative_path=relative_path,
-            mime_type=mime_type,
-            source_job_id=source_job_id,
-            source_session_id=source_session_id,
-            tags=tags or [],
-            metadata=metadata or {},
-        )
+        try:
+            return self._register(
+                artifact_type=artifact_type,
+                title=title,
+                path=destination,
+                relative_path=relative_path,
+                mime_type=mime_type,
+                source_job_id=source_job_id,
+                source_session_id=source_session_id,
+                tags=tags or [],
+                metadata=metadata or {},
+            )
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
 
     def get(self, artifact_id: str) -> Artifact:
         row = self._db.fetchone("select * from artifacts where id = ?", (artifact_id,))

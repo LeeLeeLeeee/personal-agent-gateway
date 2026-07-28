@@ -62,6 +62,34 @@ def test_artifact_store_registers_existing_file(tmp_path: Path) -> None:
     assert (root / "images" / "capture.png").read_bytes() == b"png"
 
 
+def test_register_existing_file_removes_copy_when_registration_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    root = tmp_path / "artifacts"
+    source = tmp_path / "source.txt"
+    source.write_text("content", encoding="utf-8")
+    store = ArtifactStore(db, root)
+
+    def fail_register(**_kwargs):
+        raise OSError("database failed")
+
+    monkeypatch.setattr(store, "_register", fail_register)
+
+    with pytest.raises(OSError, match="database failed"):
+        store.register_existing_file(
+            artifact_type="text",
+            title="source.txt",
+            source_path=source,
+            relative_path="files/source.txt",
+            mime_type="text/plain",
+        )
+
+    assert not (root / "files" / "source.txt").exists()
+
+
 def test_find_by_source_path_and_delete(tmp_path: Path) -> None:
     from personal_agent_gateway.artifacts import ArtifactStore
     from personal_agent_gateway.db import Database
