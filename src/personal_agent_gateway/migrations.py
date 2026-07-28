@@ -2,7 +2,6 @@ import sqlite3
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-
 Migration = tuple[int, str, Callable[[sqlite3.Connection], None]]
 
 
@@ -624,6 +623,16 @@ def _migration_15_library_team_drafts(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_16_explicit_no_source_space(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        update space_policies
+        set read_mode = 'none', read_path = null
+        where read_mode = 'home' and write_mode = 'isolated'
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -640,6 +649,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (13, "space-policies", _migration_13_space_policies),
     (14, "archive-library", _migration_14_archive_library),
     (15, "library-team-drafts", _migration_15_library_team_drafts),
+    (16, "explicit-no-source-space", _migration_16_explicit_no_source_space),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

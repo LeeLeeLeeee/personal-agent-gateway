@@ -6,7 +6,47 @@ from personal_agent_gateway.migrations import (
     LATEST_SCHEMA_VERSION,
     _migration_6_team_run_cycles,
     _migration_11_team_cycle_policies,
+    _migration_16_explicit_no_source_space,
 )
+
+
+def test_migration_16_only_rewrites_home_isolated_policies() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.execute(
+        """
+        create table space_policies (
+            scope text not null,
+            scope_id text not null,
+            read_mode text not null,
+            read_path text,
+            write_mode text not null,
+            workspace_path text,
+            created_at text not null,
+            updated_at text not null
+        )
+        """
+    )
+    rows = [
+        ("global", "", "home", "/home/me", "isolated", None, "t", "t"),
+        ("persona", "p1", "home", "/home/me", "full_access", "/project", "t", "t"),
+        ("team", "t1", "home", "/home/me", "worktree", "/repo", "t", "t"),
+    ]
+    connection.executemany(
+        "insert into space_policies values (?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+
+    _migration_16_explicit_no_source_space(connection)
+
+    migrated = connection.execute(
+        "select scope, read_mode, read_path from space_policies order by scope"
+    ).fetchall()
+    assert [tuple(row) for row in migrated] == [
+        ("global", "none", None),
+        ("persona", "home", "/home/me"),
+        ("team", "home", "/home/me"),
+    ]
 
 
 def _columns(connection: sqlite3.Connection, table: str) -> set[str]:

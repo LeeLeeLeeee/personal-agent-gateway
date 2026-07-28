@@ -8,9 +8,8 @@ from typing import Literal
 
 from personal_agent_gateway.db import Database
 
-
 SpaceScope = Literal["global", "persona", "team"]
-ReadMode = Literal["home", "selected", "all"]
+ReadMode = Literal["none", "home", "selected", "all"]
 WriteMode = Literal["isolated", "worktree", "full_access"]
 
 
@@ -50,8 +49,6 @@ def cli_read_roots(
     try:
         canonical_read_root.relative_to(canonical_workspace)
     except ValueError as exc:
-        if policy.read_mode == "home":
-            return []
         raise CliReadPathError("CLI read path must be inside the workspace") from exc
     return [canonical_read_root]
 
@@ -81,8 +78,8 @@ class SpacePolicyService:
             self.upsert(
                 "global",
                 "",
-                read_mode="home",
-                read_path=str(self._default_home),
+                read_mode="none",
+                read_path=None,
                 write_mode="isolated",
                 workspace_path=None,
             )
@@ -204,7 +201,7 @@ class SpacePolicyService:
         return scope_id
 
     def _normalize_read_path(self, mode: ReadMode, value: str | None) -> str | None:
-        if mode == "all":
+        if mode in {"none", "all"}:
             return None
         candidate = self._default_home if mode == "home" else _required_path(value, "Read path")
         return str(_existing_directory(candidate, "Read path"))
@@ -283,7 +280,7 @@ def policy_from_snapshot(value: dict[str, object] | None) -> SpacePolicy | None:
     return SpacePolicy(
         scope=str(value.get("scope") or "global"),
         scope_id=str(value.get("scope_id") or ""),
-        read_mode=str(value.get("read_mode") or "home"),
+        read_mode=str(value.get("read_mode") or "none"),
         read_path=str(value["read_path"]) if value.get("read_path") else None,
         write_mode=str(value.get("write_mode") or "isolated"),
         workspace_path=(

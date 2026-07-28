@@ -79,6 +79,31 @@ def test_team_creation_always_creates_required_space_policy(tmp_path: Path) -> N
     assert [policy.scope_id for policy in spaces.list_team_policies()] == [team.id]
 
 
+def test_new_isolated_policies_default_to_explicit_no_source(tmp_path: Path) -> None:
+    _, personas, spaces, teams = _services(tmp_path)
+    lead = _persona(personas, "Lead")
+    team = teams.create_team("Crew", "", lead.id, [])
+
+    assert spaces.global_policy().read_mode == "none"
+    assert spaces.global_policy().read_path is None
+    assert spaces.resolve(team_id=team.id).policy.read_mode == "none"
+
+
+def test_none_read_mode_rejects_a_read_path(tmp_path: Path) -> None:
+    _, _, spaces, _ = _services(tmp_path)
+
+    policy = spaces.upsert(
+        "global",
+        "",
+        read_mode="none",
+        read_path=str(tmp_path),
+        write_mode="isolated",
+        workspace_path=None,
+    )
+
+    assert policy.read_path is None
+
+
 def test_worktree_mode_prepares_isolated_git_worktree(tmp_path: Path) -> None:
     _, personas, spaces, teams = _services(tmp_path)
     lead = _persona(personas, "Lead")
@@ -114,4 +139,3 @@ def test_worktree_mode_prepares_isolated_git_worktree(tmp_path: Path) -> None:
         prepared.worktree_branch,
     )
     assert not run_root.exists()
-

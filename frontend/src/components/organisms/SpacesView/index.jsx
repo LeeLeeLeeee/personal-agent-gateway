@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "../../atoms/Button/index.jsx";
 
 const EMPTY_POLICY = {
-  read_mode: "home",
+  read_mode: "none",
   read_path: "",
   write_mode: "isolated",
   workspace_path: ""
@@ -10,7 +10,7 @@ const EMPTY_POLICY = {
 
 function editablePolicy(policy) {
   return {
-    read_mode: policy?.read_mode || "home",
+    read_mode: policy?.read_mode || "none",
     read_path: policy?.read_path || "",
     write_mode: policy?.write_mode || "isolated",
     workspace_path: policy?.workspace_path || ""
@@ -20,7 +20,7 @@ function editablePolicy(policy) {
 function savePayload(policy) {
   return {
     read_mode: policy.read_mode,
-    read_path: policy.read_mode === "all" ? null : policy.read_path || null,
+    read_path: ["none", "all"].includes(policy.read_mode) ? null : policy.read_path || null,
     write_mode: policy.write_mode,
     workspace_path: policy.write_mode === "isolated" ? null : policy.workspace_path || null
   };
@@ -140,12 +140,13 @@ export function SpacesView({
               <span>Readable area</span>
               <select value={draft.read_mode}
                 onChange={(event) => setDraft((value) => ({ ...value, read_mode: event.target.value }))}>
+                <option value="none">No source access</option>
                 <option value="home">Home directory</option>
                 <option value="selected">Selected directory</option>
                 <option value="all">All filesystem</option>
               </select>
             </label>
-            {draft.read_mode !== "all" ? (
+            {!["none", "all"].includes(draft.read_mode) ? (
               <label>
                 <span>{draft.read_mode === "home" ? "Resolved home" : "Directory path"}</span>
                 <input value={draft.read_path}

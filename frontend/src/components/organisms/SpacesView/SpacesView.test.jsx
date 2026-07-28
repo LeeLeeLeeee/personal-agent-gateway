@@ -29,6 +29,24 @@ function props(overrides = {}) {
 }
 
 describe("SpacesView", () => {
+  it("offers explicit no source access and hides its path input", async () => {
+    const onSaveGlobal = vi.fn();
+    const noSourcePolicies = {
+      ...policies,
+      global: { ...globalPolicy, read_mode: "none", read_path: null }
+    };
+    render(<SpacesView {...props({ policies: noSourcePolicies, onSaveGlobal })} />);
+
+    expect(screen.getByRole("option", { name: "No source access" })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("C:\\Users\\you")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Save space" }));
+
+    expect(onSaveGlobal).toHaveBeenCalledWith(expect.objectContaining({
+      read_mode: "none",
+      read_path: null
+    }));
+  });
+
   it("shows the precedence and saves the required global policy", async () => {
     const onSaveGlobal = vi.fn();
     render(<SpacesView {...props({ onSaveGlobal })} />);

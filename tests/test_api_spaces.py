@@ -42,6 +42,8 @@ def test_space_api_exposes_required_global_and_team_and_optional_persona(tmp_pat
 
     initial = client.get("/api/spaces").json()
     assert initial["global"]["effective_source"] == "global"
+    assert initial["global"]["read_mode"] == "none"
+    assert initial["global"]["read_path"] is None
     assert initial["personas"] == []
     assert initial["teams"][0]["scope_id"] == team["id"]
 
@@ -60,6 +62,22 @@ def test_space_api_exposes_required_global_and_team_and_optional_persona(tmp_pat
 
     assert client.delete(f"/api/spaces/personas/{persona_id}").json() == {"deleted": True}
     assert client.get("/api/spaces").json()["personas"] == []
+
+
+def test_space_api_accepts_explicit_no_source(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    saved = client.put(
+        "/api/spaces/global",
+        json={
+            "read_mode": "none",
+            "read_path": str(tmp_path),
+            "write_mode": "isolated",
+        },
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["space_policy"]["read_path"] is None
 
 
 def test_space_api_rejects_relative_paths_and_persona_worktrees(tmp_path: Path) -> None:
@@ -85,4 +103,3 @@ def test_space_api_rejects_relative_paths_and_persona_worktrees(tmp_path: Path) 
         },
     )
     assert worktree.status_code == 400
-

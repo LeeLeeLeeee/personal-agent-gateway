@@ -1,16 +1,16 @@
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import Literal
 
 from personal_agent_gateway.api.dependencies import session_dependency
 from personal_agent_gateway.space_policies import SpacePolicy
-
 
 router = APIRouter(prefix="/api/spaces", tags=["spaces"])
 
 
 class SpacePolicyRequest(BaseModel):
-    read_mode: Literal["home", "selected", "all"]
+    read_mode: Literal["none", "home", "selected", "all"]
     read_path: str | None = None
     write_mode: Literal["isolated", "worktree", "full_access"]
     workspace_path: str | None = None
