@@ -127,6 +127,17 @@ def test_registry_rejects_unavailable_agent_for_new_config(tmp_path: Path) -> No
     with pytest.raises(ValueError, match="Agent unavailable"):
         registry.validate_config("claude", "sonnet", {})
 
+    assert registry.validate_config(
+        "claude",
+        "sonnet",
+        {},
+        require_available=False,
+    ) == {
+        "agent_id": "claude",
+        "model": "sonnet",
+        "options": {},
+    }
+
 
 def test_registry_uses_detected_models_and_model_specific_efforts(tmp_path: Path) -> None:
     detected = {

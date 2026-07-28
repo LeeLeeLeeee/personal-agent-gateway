@@ -67,6 +67,25 @@ def test_create_and_list_personas_api(tmp_path: Path) -> None:
     assert [item["name"] for item in list_response.json()["personas"]] == ["Tech Lead"]
 
 
+def test_create_persona_does_not_require_a_running_gateway(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    config.lmg_base_url = "http://127.0.0.1:1"
+    app = create_app(config)
+    client = TestClient(app)
+    client.cookies.set(
+        "agent_session",
+        app.state.auth_session_service.issue().token,
+    )
+
+    response = client.post(
+        "/api/personas",
+        json={"name": "Offline Lead", "role": "Planning", "description": ""},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["persona"]["default_backend"] == "codex"
+
+
 def test_patch_persona_partial_update_preserves_unset_fields(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
 

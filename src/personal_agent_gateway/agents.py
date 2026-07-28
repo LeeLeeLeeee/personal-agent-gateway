@@ -100,11 +100,9 @@ class AgentRegistry:
         self._capability_loader = (
             capability_loader
             if capability_loader is not None
-            else (
-                fetch_capabilities
-                if probe is None and config.lmg_local_token is not None
-                else lambda _config: None
-            )
+            else fetch_capabilities
+            if probe is None
+            else lambda _config: None
         )
         self._catalog: list[AgentDescriptor] | None = None
         self._cache_ttl_seconds = cache_ttl_seconds
@@ -148,9 +146,11 @@ class AgentRegistry:
         agent_id: str,
         model: str,
         options: dict[str, Any],
+        *,
+        require_available: bool = True,
     ) -> dict[str, Any]:
         descriptor = self.get(agent_id)
-        if not descriptor.available:
+        if require_available and not descriptor.available:
             raise ValueError(f"Agent unavailable: {agent_id}")
         if model not in descriptor.models:
             raise ValueError(f"Unsupported model for {agent_id}: {model}")
