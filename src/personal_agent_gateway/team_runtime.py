@@ -8,6 +8,11 @@ from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelClient
 from personal_agent_gateway.redaction import redact_text
+from personal_agent_gateway.team_outcomes import (
+    TaskOutcome,
+    TaskOutcomeError,
+    parse_task_outcome,
+)
 from personal_agent_gateway.team_results import (
     TeamRunResultPackager,
     workspace_changes,
@@ -57,8 +62,12 @@ ONLY this fenced block and nothing after it:
 ```json
 {{"needs_info": {{"topic": "<short topic>", "question": "<your question>"}}}}
 ```
-Otherwise, return a concise final result tailored to the assigned task and cite the
-evidence you used."""
+Otherwise, the final response must contain only this JSON object and no prose or
+code fences:
+{{"status":"completed|blocked|failed","summary":"concise result",
+"reason_code":"stable-code or null","deliverables":[{{"path":"relative/path",
+"kind":"file kind"}}],"verifications":[{{"name":"verification name",
+"status":"passed|failed","evidence":"concrete evidence"}}]}}"""
 
 SYNTHESIS_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
 Goal: {goal}
@@ -373,10 +382,10 @@ class TeamRuntime:
             try:
                 working_root = Path(run.working_root or run.workspace_root)
                 before = workspace_snapshot(working_root)
-                result = await self._run_task(run, leader, worker, task)
-                if isinstance(result, UserDecisionResolution):
+                outcome = await self._run_task(run, leader, worker, task)
+                if isinstance(outcome, UserDecisionResolution):
                     request = self._teams.defer_task_for_user_decision(
-                        task.id, worker.id, result.decision
+                        task.id, worker.id, outcome.decision
                     )
                     task = self._teams.get_task(task.id)
                     worker = self._teams.get_agent(worker.id)
@@ -389,7 +398,7 @@ class TeamRuntime:
                             "decision_request_id": request.id,
                         }
                     )
-                    if result.decision.get("blocking_scope") == "run":
+                    if outcome.decision.get("blocking_scope") == "run":
                         return
                     continue
                 changes = workspace_changes(
@@ -401,12 +410,20 @@ class TeamRuntime:
                     worker.id,
                     None,
                     "agent_output",
-                    result,
-                    {"task_id": task.id, **changes},
+                    outcome.summary,
+                    {
+                        "task_id": task.id,
+                        "outcome_status": outcome.status,
+                        "reason_code": outcome.reason_code,
+                        **changes,
+                    },
                     cycle_id=cycle_id,
                 )
                 task, worker = self._teams.finish_task(
-                    task.id, worker.id, "completed", result=result
+                    task.id,
+                    worker.id,
+                    "completed",
+                    result=outcome.summary,
                 )
             except asyncio.CancelledError:
                 raise
@@ -426,7 +443,7 @@ class TeamRuntime:
 
     async def _run_task(
         self, run: TeamRun, leader: TeamAgent, worker: TeamAgent, task: TeamTask
-    ) -> str | UserDecisionResolution:
+    ) -> TaskOutcome | UserDecisionResolution:
         worker_agent = self._teams.get_agent(worker.id)
         model = self._model_factory(worker_agent)
         response = await model.complete(
@@ -439,7 +456,7 @@ class TeamRuntime:
         while True:
             req = _parse_needs_info(content)
             if req is None:
-                return self._finalize_persona_content(
+                return self._task_outcome(
                     content,
                     persona_id=worker_agent.persona_id,
                     team_run_id=run.id,
@@ -459,7 +476,7 @@ class TeamRuntime:
                     "No more consultation is available. Produce your best-effort final "
                     "result now, without a needs_info block.",
                 )
-                return self._finalize_persona_content(
+                return self._task_outcome(
                     content,
                     persona_id=worker_agent.persona_id,
                     team_run_id=run.id,
@@ -548,10 +565,43 @@ class TeamRuntime:
             task_title=task.title,
             task_description=task.description,
         )
+        prompt += "\n\nAcceptance criteria:\n" + json.dumps(
+            {
+                "required_outputs": list(task.acceptance.required_outputs),
+                "required_verifications": list(
+                    task.acceptance.required_verifications
+                ),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
         decision_context = self._teams.decision_context_for_task(run.id, task.id)
         if decision_context:
             prompt += f"\n\nResolved user decisions for this task:\n{decision_context}"
         return prompt
+
+    def _task_outcome(
+        self,
+        content: str,
+        *,
+        persona_id: str,
+        team_run_id: str,
+    ) -> TaskOutcome:
+        finalized = self._finalize_persona_content(
+            content,
+            persona_id=persona_id,
+            team_run_id=team_run_id,
+        )
+        try:
+            return parse_task_outcome(finalized)
+        except TaskOutcomeError:
+            return TaskOutcome(
+                status="blocked",
+                summary=finalized,
+                reason_code="invalid_task_outcome",
+                deliverables=(),
+                verifications=(),
+            )
 
     async def _execute_and_synthesize(
         self,

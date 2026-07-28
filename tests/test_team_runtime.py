@@ -16,6 +16,7 @@ from personal_agent_gateway.team_runtime import (
     _rules_block,
     _task_delta,
 )
+from personal_agent_gateway.team_outcomes import TaskOutcome
 from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
 
 
@@ -100,6 +101,75 @@ def test_worker_prompt_presents_a_complete_concrete_assignment() -> None:
     assert "Do not ask the user what work to do" in prompt
     assert "Read CYCLES/cycle-1/MAIL_CONTEXT.md" in prompt
     assert "changed files" not in prompt
+    assert '"deliverables"' in prompt
+    assert '"verifications"' in prompt
+    assert "final response must contain only" in prompt
+
+
+@pytest.mark.asyncio
+async def test_worker_final_response_is_parsed_as_task_outcome(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    task = teams.create_task(run.id, "T", "D")
+    model = FakeModel(
+        json.dumps(
+            {
+                "status": "completed",
+                "summary": "Done",
+                "reason_code": None,
+                "deliverables": [],
+                "verifications": [
+                    {"name": "review", "status": "passed", "evidence": "checked"}
+                ],
+            }
+        )
+    )
+    runtime = TeamRuntime(teams, lambda _agent: model)
+
+    outcome = await runtime._run_task(run, leader_agent, worker_agent, task)
+
+    assert isinstance(outcome, TaskOutcome)
+    assert outcome.status == "completed"
+    assert outcome.summary == "Done"
+
+
+@pytest.mark.asyncio
+async def test_worker_prose_becomes_invalid_task_outcome(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    task = teams.create_task(run.id, "T", "D")
+    runtime = TeamRuntime(teams, lambda _agent: FakeModel("권한이 없어 실패했습니다."))
+
+    outcome = await runtime._run_task(run, leader_agent, worker_agent, task)
+
+    assert isinstance(outcome, TaskOutcome)
+    assert outcome.status == "blocked"
+    assert outcome.reason_code == "invalid_task_outcome"
+    assert outcome.summary == "권한이 없어 실패했습니다."
 
 
 def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
