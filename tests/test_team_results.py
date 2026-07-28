@@ -1,6 +1,6 @@
+import hashlib
 import json
 from pathlib import Path
-from zipfile import ZipFile
 
 import pytest
 
@@ -8,6 +8,8 @@ from personal_agent_gateway.artifacts import ArtifactStore
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
+from personal_agent_gateway.team_artifact_publisher import TeamArtifactPublisher
+from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_results import (
     TeamRunResultPackager,
     workspace_changes,
@@ -65,41 +67,83 @@ def _completed_run(tmp_path: Path, write_mode: str = "isolated"):
     return db, teams, run
 
 
-@pytest.mark.parametrize(
-    ("write_mode", "expects_archive"),
-    [("isolated", True), ("worktree", False), ("full_access", False)],
-)
 def test_result_package_registers_run_outputs(
-    tmp_path: Path, write_mode: str, expects_archive: bool
+    tmp_path: Path,
 ) -> None:
-    db, teams, run = _completed_run(tmp_path, write_mode)
+    db, teams, run = _completed_run(tmp_path)
     artifacts = ArtifactStore(db, tmp_path / "global-artifacts")
+    task = teams.list_tasks(run.id)[0]
+    deliverable = Path(run.working_root or run.workspace_root) / "src" / "api.py"
+    digest = hashlib.sha256(deliverable.read_bytes()).hexdigest()
+    artifacts.register_existing_file(
+        artifact_type="text",
+        title="api.py",
+        source_path=deliverable,
+        relative_path=(
+            f"team-runs/{run.id}/run/deliverables/{task.id}/api.py"
+        ),
+        mime_type="text/x-python",
+        metadata={
+            "source_path": "src/api.py",
+            "sha256": digest,
+            "task_id": task.id,
+            "cycle_id": None,
+            "team_run_id": run.id,
+        },
+    )
+    teams.record_task_outcome(
+        task.id,
+        {
+            "status": "completed",
+            "summary": "API 구현 완료",
+            "reason_code": None,
+            "deliverables": [{"path": "src/api.py", "kind": "text"}],
+            "verifications": [
+                {
+                    "name": "tests",
+                    "status": "passed",
+                    "evidence": "pytest passed",
+                }
+            ],
+        },
+        {
+            "accepted": True,
+            "status": "completed",
+            "reason_code": None,
+            "evidence": {"deliverables": ["src/api.py"]},
+        },
+    )
     packager = TeamRunResultPackager(teams, artifacts)
 
     created = packager.build(run)
 
     names = {artifact.file_path.name for artifact in created}
     expected = {"run-result.json", "file-manifest.json", "verification.md"}
-    if expects_archive:
-        expected.add("workspace.zip")
     assert names == expected
     assert {path.name for path in Path(run.artifact_root).iterdir()} == expected
 
     result = json.loads((Path(run.artifact_root) / "run-result.json").read_text())
+    assert result["protocol_version"] == 1
     assert result["team_run_id"] == run.id
+    assert result["objective"] == run.goal
+    assert result["execution_metadata"] is None
     assert result["tasks"][0]["result"] == "API 구현 완료"
     assert result["tasks"][0]["files_created"] == ["src/api.py"]
+    assert result["tasks"][0]["outcome"]["status"] == "completed"
+    assert result["tasks"][0]["acceptance_result"]["accepted"] is True
+    assert result["deliverables"][0]["sha256"] == digest
 
     manifest = json.loads((Path(run.artifact_root) / "file-manifest.json").read_text())
     assert [item["path"] for item in manifest["files"]] == ["src/api.py"]
-
-    if expects_archive:
-        with ZipFile(Path(run.artifact_root) / "workspace.zip") as archive:
-            assert archive.namelist() == ["src/api.py"]
+    assert not (Path(run.artifact_root) / "workspace.zip").exists()
+    assert "node_modules/ignored.js" not in json.dumps(manifest)
 
     rebuilt = packager.build(run)
     registered = [
-        artifact for artifact in artifacts.list() if artifact.metadata.get("team_run_id") == run.id
+        artifact
+        for artifact in artifacts.list()
+        if artifact.metadata.get("team_run_id") == run.id
+        and artifact.metadata.get("package_kind")
     ]
     assert len(rebuilt) == len(expected)
     assert len(registered) == len(expected)
@@ -149,6 +193,11 @@ async def test_runtime_attaches_file_changes_and_builds_result_package(
                 "title": "Implement API",
                 "description": "Create the endpoint",
                 "owner_agent_id": worker.id,
+                "required": True,
+                "acceptance": {
+                    "required_outputs": ["src/api.py"],
+                    "required_verifications": ["tests"],
+                },
             }
         ]
     )
@@ -164,11 +213,29 @@ async def test_runtime_attaches_file_changes_and_builds_result_package(
             source = working_root / "src" / "api.py"
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_text("print('ok')\n", encoding="utf-8")
-            return ModelResponse(content="API 구현 완료", tool_calls=[])
+            return ModelResponse(
+                content=json.dumps(
+                    {
+                        "status": "completed",
+                        "summary": "API 구현 완료",
+                        "reason_code": None,
+                        "deliverables": [{"path": "src/api.py", "kind": "text"}],
+                        "verifications": [
+                            {
+                                "name": "tests",
+                                "status": "passed",
+                                "evidence": "pytest passed",
+                            }
+                        ],
+                    }
+                ),
+                tool_calls=[],
+            )
 
     runtime = TeamRuntime(
         teams,
         lambda agent: LeaderModel() if agent.role == "leader" else WorkerModel(),
+        artifact_publisher=TeamArtifactPublisher(artifacts),
         result_packager=TeamRunResultPackager(teams, artifacts),
     )
 
@@ -184,9 +251,61 @@ async def test_runtime_attaches_file_changes_and_builds_result_package(
         artifact.metadata.get("package_kind")
         for artifact in artifacts.list()
         if artifact.metadata.get("team_run_id") == run.id
+        and artifact.metadata.get("package_kind")
     } == {
         "run-result.json",
         "file-manifest.json",
         "verification.md",
-        "workspace.zip",
     }
+    assert not (Path(completed.artifact_root) / "workspace.zip").exists()
+
+
+def test_cycle_result_uses_objective_and_stored_execution_metadata(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "runs")
+    leader = personas.create_persona("Lead", "lead", "Plans", [], [])
+    run = teams.create_team_run(
+        "Base goal",
+        leader.id,
+        [],
+        "planning_only",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle_service = TeamCycleService(db)
+    request = cycle_service.enqueue_request(
+        run.id,
+        "hook",
+        "hook-1",
+        "Current objective",
+        previous_cycle_id=None,
+    )
+    assert cycle_service.claim_next(run.id) is not None
+    cycle = teams.create_cycle(
+        run.id,
+        "hook",
+        "hook-1",
+        request_id=request.id,
+    )
+    metadata = {
+        "agents": {
+            "worker-1": {
+                "provider": "codex",
+                "sandbox": "workspace-write",
+                "input_manifest_sha256": "abc123",
+            }
+        }
+    }
+    teams.set_cycle_execution_metadata(cycle.id, metadata)
+    teams.set_cycle_status(cycle.id, "completed", summary="done")
+    run = teams.set_run_status(run.id, "completed", summary="done")
+    artifacts = ArtifactStore(db, tmp_path / "global-artifacts")
+
+    TeamRunResultPackager(teams, artifacts).build(run, cycle.id)
+
+    result = json.loads((Path(run.artifact_root) / "run-result.json").read_text())
+    assert result["objective"] == "Current objective"
+    assert result["execution_metadata"] == metadata

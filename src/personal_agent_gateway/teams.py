@@ -106,6 +106,7 @@ class TeamRunCycle:
     updated_at: str
     request_id: str | None = None
     rules_snapshot: dict | None = None
+    execution_metadata: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -532,6 +533,26 @@ class TeamRunService:
         )
         return self.get_cycle(cycle_id)
 
+    def set_cycle_execution_metadata(
+        self,
+        cycle_id: str,
+        metadata: dict[str, object],
+    ) -> TeamRunCycle:
+        self.get_cycle(cycle_id)
+        self._db.execute(
+            """
+            update team_run_cycles
+            set execution_metadata_json = ?, updated_at = ?
+            where id = ?
+            """,
+            (
+                json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                _now(),
+                cycle_id,
+            ),
+        )
+        return self.get_cycle(cycle_id)
+
     def set_cycle_status(
         self,
         cycle_id: str,
@@ -543,7 +564,8 @@ class TeamRunService:
         started_at = _now() if status == "running" else None
         finished_at = (
             _now()
-            if status in {"completed", "completed_with_failures", "failed", "canceled"}
+            if status
+            in {"completed", "completed_with_failures", "blocked", "failed", "canceled"}
             else None
         )
         self._db.execute(
@@ -2126,6 +2148,12 @@ def _team_run_cycle_from_row(row: object) -> TeamRunCycle:
         rules_snapshot=(
             json.loads(row["rules_snapshot_json"])
             if "rules_snapshot_json" in row.keys() and row["rules_snapshot_json"]
+            else None
+        ),
+        execution_metadata=(
+            json.loads(row["execution_metadata_json"])
+            if "execution_metadata_json" in row.keys()
+            and row["execution_metadata_json"]
             else None
         ),
     )

@@ -616,6 +616,36 @@ def _team_model_factory(
             network=str(options.get("network") or "unspecified"),
         )
         execution = contexts.wire_execution(compiled, agent.backend, options)
+        if team_runs is not None and agent.current_task_id is not None:
+            task = team_runs.get_task(agent.current_task_id)
+            if task.cycle_id is not None:
+                cycle = team_runs.get_cycle(task.cycle_id)
+                existing = (
+                    cycle.execution_metadata
+                    if isinstance(cycle.execution_metadata, dict)
+                    else {}
+                )
+                existing_agents = existing.get("agents")
+                agents_metadata = (
+                    dict(existing_agents)
+                    if isinstance(existing_agents, dict)
+                    else {}
+                )
+                agents_metadata[agent.id] = {
+                    "provider": agent.backend,
+                    "model": agent.model,
+                    **execution,
+                    "input_manifest_path": (
+                        str(compiled.input_manifest_path)
+                        if compiled.input_manifest_path is not None
+                        else None
+                    ),
+                    "input_manifest_sha256": compiled.input_manifest_sha256,
+                }
+                team_runs.set_cycle_execution_metadata(
+                    task.cycle_id,
+                    {**existing, "agents": agents_metadata},
+                )
         return HttpModelClient(
             base_url=config.lmg_base_url,
             provider=agent.backend,

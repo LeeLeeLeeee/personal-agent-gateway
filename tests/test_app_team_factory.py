@@ -24,11 +24,12 @@ def _agent(
     session: str | None = None,
     options: dict[str, object] | None = None,
     workspace_path: str | None = None,
+    current_task_id: str | None = None,
 ) -> TeamAgent:
     return TeamAgent(
         id="a1", team_run_id="r1", name="A", role="member", persona_id="p1",
         persona_snapshot={"default_options": options or {}}, backend=backend, model="default", status="pending",
-        workspace_path=workspace_path, current_task_id=None, reinvocations=0,
+        workspace_path=workspace_path, current_task_id=current_task_id, reinvocations=0,
         upstream_session_id=session, created_at="t", updated_at="t",
     )
 
@@ -39,10 +40,23 @@ class _TeamRuns:
             artifact_root=artifact_root,
             space_policy=space_policy,
         )
+        self.execution_metadata = None
 
     def get_team_run(self, team_run_id: str):
         assert team_run_id == "r1"
         return self._run
+
+    def get_task(self, task_id: str):
+        assert task_id == "task-1"
+        return SimpleNamespace(cycle_id="cycle-1")
+
+    def get_cycle(self, cycle_id: str):
+        assert cycle_id == "cycle-1"
+        return SimpleNamespace(execution_metadata=self.execution_metadata)
+
+    def set_cycle_execution_metadata(self, cycle_id: str, metadata):
+        assert cycle_id == "cycle-1"
+        self.execution_metadata = metadata
 
 
 def _space_policy(
@@ -197,6 +211,36 @@ def test_factory_stages_selected_source_inside_workspace(tmp_path, backend):
     assert inputs == workspace / "_inputs"
     assert (inputs / "01-shared" / "evidence.txt").is_file()
     assert str(artifact_root) not in client._execution["read_roots"]
+
+
+def test_factory_persists_compiled_cycle_execution_metadata(tmp_path):
+    workspace = tmp_path / "r1" / "workspace"
+    artifact_root = tmp_path / "r1" / "artifacts"
+    source_root = tmp_path / "shared"
+    workspace.mkdir(parents=True)
+    artifact_root.mkdir()
+    source_root.mkdir()
+    (source_root / "evidence.txt").write_text("evidence", encoding="utf-8")
+    team_runs = _TeamRuns(
+        artifact_root=str(artifact_root),
+        space_policy=_space_policy(str(source_root)),
+    )
+
+    _factory(_config(tmp_path), team_runs)(
+        _agent(
+            "codex",
+            workspace_path=str(workspace),
+            current_task_id="task-1",
+        )
+    )
+
+    metadata = team_runs.execution_metadata
+    assert metadata is not None
+    agent_metadata = metadata["agents"]["a1"]
+    assert agent_metadata["provider"] == "codex"
+    assert agent_metadata["model"] == "default"
+    assert agent_metadata["sandbox"] == "workspace-write"
+    assert agent_metadata["input_manifest_sha256"]
 
 
 @pytest.mark.parametrize("backend", ["codex", "claude"])
