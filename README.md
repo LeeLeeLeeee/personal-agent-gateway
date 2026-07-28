@@ -138,10 +138,19 @@ Gateway를 실행합니다.
 scripts/run_local.sh
 ```
 
-Codex에 시작을 요청할 때는 일반 sandbox 명령이 아니라 승인된 외부 실행으로
-고정 시작 스크립트를 호출해야 합니다. 런처는 Codex sandbox 계정에서의 직접
-실행을 거부하며 로그인한 Windows 사용자 계정, 실제 프로세스 소유자와 두
-서비스의 health 응답을 검증합니다.
+> **Windows에서 Codex로 실행할 때**
+>
+> Codex가 시작한 장기 실행 프로세스는 Windows Job 수명주기를 상속해 명령이나
+> 사용자 턴 종료와 함께 내려갈 수 있습니다. PAG와 LMG runtime은 Codex에서
+> 시작하지 말고 일반 PowerShell에서 위 시작 스크립트를 직접 실행하세요.
+>
+> AI에게 시작을 요청한 경우 AI는 직접 실행하는 대신 현재 checkout에서 확인한
+> `start_local_runtime.ps1`의 절대 경로와 복사 가능한 PowerShell 명령을
+> 안내해야 합니다. 현재 checkout의 명령은 다음과 같습니다.
+>
+> ```powershell
+> powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\Administrator\playground\personal-agent-gateway\scripts\start_local_runtime.ps1"
+> ```
 
 `http://127.0.0.1:8787`에서 최초 TOTP setup을 진행합니다. 외부 접속과 named tunnel 설정은 [설치·운영 가이드](docs/knowledge/gateway-setup-guide.md#외부-접속)를 따르세요.
 
