@@ -28,6 +28,7 @@ TeamRunStatus = Literal[
     "summarizing",
     "completed",
     "completed_with_failures",
+    "blocked",
     "failed",
     "canceled",
     "interrupted",
@@ -42,6 +43,7 @@ CycleStatus = Literal[
     "interrupted",
     "completed",
     "completed_with_failures",
+    "blocked",
     "failed",
     "canceled",
 ]
@@ -50,7 +52,13 @@ TaskStatus = Literal["pending", "in_progress", "blocked", "completed", "failed",
 DecisionRequestStatus = Literal["collecting", "awaiting_user", "resolved", "canceled"]
 
 _ACTIVE_RUN_STATUSES = {"planning", "running", "summarizing"}
-_TERMINAL_RUN_STATUSES = {"completed", "completed_with_failures", "failed", "canceled"}
+_TERMINAL_RUN_STATUSES = {
+    "completed",
+    "completed_with_failures",
+    "blocked",
+    "failed",
+    "canceled",
+}
 
 
 @dataclass(frozen=True)
@@ -122,6 +130,12 @@ class TeamAgent:
 
 
 @dataclass(frozen=True)
+class TaskAcceptance:
+    required_outputs: tuple[str, ...]
+    required_verifications: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class TeamTask:
     id: str
     team_run_id: str
@@ -129,6 +143,10 @@ class TeamTask:
     description: str
     owner_agent_id: str | None
     status: TaskStatus
+    required: bool
+    acceptance: TaskAcceptance
+    outcome: dict[str, object] | None
+    acceptance_result: dict[str, object] | None
     result: str | None
     error_message: str | None
     created_at: str
@@ -958,19 +976,24 @@ class TeamRunService:
         description: str,
         owner_agent_id: str | None = None,
         cycle_id: str | None = None,
+        *,
+        required: bool = True,
+        acceptance: TaskAcceptance | None = None,
     ) -> TeamTask:
         self.get_team_run(team_run_id)
         if cycle_id is not None:
             self._require_cycle_for_run(team_run_id, cycle_id)
         task_id = uuid4().hex
         now = _now()
+        effective_acceptance = acceptance or TaskAcceptance((), ())
         self._db.execute(
             """
             insert into team_tasks (
                 id, team_run_id, cycle_id, title, description, owner_agent_id, status,
+                required, acceptance_json, outcome_json, acceptance_result_json,
                 result, error_message, created_at, updated_at, started_at, finished_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -980,6 +1003,8 @@ class TeamRunService:
                 description,
                 owner_agent_id,
                 "pending",
+                int(required),
+                _task_acceptance_json(effective_acceptance),
                 None,
                 None,
                 now,
@@ -1075,9 +1100,11 @@ class TeamRunService:
                 """
                 insert into team_tasks (
                     id, team_run_id, cycle_id, retry_of_task_id, title, description,
-                    owner_agent_id, status, result, error_message, created_at,
+                    owner_agent_id, status, required, acceptance_json, outcome_json,
+                    acceptance_result_json, result, error_message, created_at,
                     updated_at, started_at, finished_at
-                ) values (?, ?, ?, ?, ?, ?, ?, 'pending', null, null, ?, ?, null, null)
+                ) values (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, null, null, null,
+                          null, ?, ?, null, null)
                 """,
                 (
                     retry_task_id,
@@ -1087,6 +1114,8 @@ class TeamRunService:
                     task["title"],
                     task["description"],
                     task["owner_agent_id"],
+                    task["required"],
+                    task["acceptance_json"],
                     now,
                     now,
                 ),
@@ -1139,7 +1168,11 @@ class TeamRunService:
     ) -> TeamTask:
         self._get_task(task_id)
         started_at = _now() if status == "in_progress" else None
-        finished_at = _now() if status in ("completed", "failed", "canceled") else None
+        finished_at = (
+            _now()
+            if status in ("blocked", "completed", "failed", "canceled")
+            else None
+        )
         self._db.execute(
             """
             update team_tasks
@@ -2099,6 +2132,11 @@ def _team_agent_from_row(row: object) -> TeamAgent:
 
 
 def _team_task_from_row(row: object) -> TeamTask:
+    acceptance = (
+        json.loads(row["acceptance_json"])
+        if "acceptance_json" in row.keys() and row["acceptance_json"]
+        else {}
+    )
     return TeamTask(
         id=row["id"],
         team_run_id=row["team_run_id"],
@@ -2106,6 +2144,24 @@ def _team_task_from_row(row: object) -> TeamTask:
         description=row["description"],
         owner_agent_id=row["owner_agent_id"],
         status=row["status"],
+        required=bool(row["required"]) if "required" in row.keys() else True,
+        acceptance=TaskAcceptance(
+            required_outputs=tuple(acceptance.get("required_outputs", ())),
+            required_verifications=tuple(
+                acceptance.get("required_verifications", ())
+            ),
+        ),
+        outcome=(
+            json.loads(row["outcome_json"])
+            if "outcome_json" in row.keys() and row["outcome_json"]
+            else None
+        ),
+        acceptance_result=(
+            json.loads(row["acceptance_result_json"])
+            if "acceptance_result_json" in row.keys()
+            and row["acceptance_result_json"]
+            else None
+        ),
         result=row["result"],
         error_message=row["error_message"],
         created_at=row["created_at"],
@@ -2116,6 +2172,17 @@ def _team_task_from_row(row: object) -> TeamTask:
         retry_of_task_id=(
             row["retry_of_task_id"] if "retry_of_task_id" in row.keys() else None
         ),
+    )
+
+
+def _task_acceptance_json(acceptance: TaskAcceptance) -> str:
+    return json.dumps(
+        {
+            "required_outputs": list(acceptance.required_outputs),
+            "required_verifications": list(acceptance.required_verifications),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
     )
 
 

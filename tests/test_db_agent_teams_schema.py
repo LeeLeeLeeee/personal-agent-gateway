@@ -20,6 +20,17 @@ def test_new_tables_and_columns_exist(tmp_path):
     run_cols = _columns(db, "team_runs")
     assert {"team_id", "rules_snapshot_json"} <= run_cols
 
+    task_cols = _columns(db, "team_tasks")
+    assert {
+        "required",
+        "acceptance_json",
+        "outcome_json",
+        "acceptance_result_json",
+    } <= task_cols
+
+    cycle_cols = _columns(db, "team_run_cycles")
+    assert "execution_metadata_json" in cycle_cols
+
 
 def test_migration_adds_columns_to_existing_team_runs(tmp_path):
     db = Database(tmp_path / "app.db")

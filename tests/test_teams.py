@@ -9,7 +9,11 @@ from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.rule_sets import RuleSetService
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_directory import TeamService
-from personal_agent_gateway.teams import TeamRunService, _team_run_display_status
+from personal_agent_gateway.teams import (
+    TaskAcceptance,
+    TeamRunService,
+    _team_run_display_status,
+)
 
 
 @pytest.mark.parametrize(
@@ -694,7 +698,16 @@ def test_retry_failed_task_creates_linked_task_and_preserves_original(tmp_path):
     member = personas.create_persona("W", "work", "d", [], [])
     run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
     completed = teams.create_task(run.id, "done", "kept")
-    failed = teams.create_task(run.id, "failed", "retry me")
+    failed = teams.create_task(
+        run.id,
+        "failed",
+        "retry me",
+        required=False,
+        acceptance=TaskAcceptance(
+            required_outputs=("outputs/report.md",),
+            required_verifications=("pytest",),
+        ),
+    )
     teams.set_task_status(completed.id, "completed", result="kept result")
     teams.set_task_status(failed.id, "failed", error_message="timed out")
     teams.set_run_status(run.id, "completed_with_failures", summary="old summary")
@@ -709,6 +722,11 @@ def test_retry_failed_task_creates_linked_task_and_preserves_original(tmp_path):
     assert retry_task.id != failed.id
     assert retry_task.retry_of_task_id == failed.id
     assert retry_task.status == "pending"
+    assert retry_task.required is False
+    assert retry_task.acceptance == TaskAcceptance(
+        required_outputs=("outputs/report.md",),
+        required_verifications=("pytest",),
+    )
     assert retry_task.result is None
     assert retry_task.error_message is None
     assert retry_task.started_at is None
@@ -726,6 +744,42 @@ def test_retry_failed_task_creates_linked_task_and_preserves_original(tmp_path):
         "retry_task_id": retry_task.id,
         "previous_error": "timed out",
     }
+
+
+def test_task_persists_acceptance_outcome_and_blocked_finish_time(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [], "plan_and_execute", 1)
+
+    task = teams.create_task(
+        run.id,
+        "report",
+        "write report",
+        required=True,
+        acceptance=TaskAcceptance(
+            required_outputs=("outputs/report.md",),
+            required_verifications=("pytest",),
+        ),
+    )
+    teams._db.execute(
+        "update team_tasks set outcome_json = ?, acceptance_result_json = ? where id = ?",
+        (
+            '{"status":"blocked"}',
+            '{"accepted":false}',
+            task.id,
+        ),
+    )
+
+    blocked = teams.set_task_status(task.id, "blocked", error_message="needs input")
+
+    assert blocked.required is True
+    assert blocked.acceptance == TaskAcceptance(
+        required_outputs=("outputs/report.md",),
+        required_verifications=("pytest",),
+    )
+    assert blocked.outcome == {"status": "blocked"}
+    assert blocked.acceptance_result == {"accepted": False}
+    assert blocked.finished_at is not None
 
 
 def test_retry_failed_task_rejects_nonfailed_task_and_nonterminal_run(tmp_path):

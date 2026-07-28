@@ -7,6 +7,7 @@ from personal_agent_gateway.migrations import (
     _migration_6_team_run_cycles,
     _migration_11_team_cycle_policies,
     _migration_16_explicit_no_source_space,
+    _migration_17_team_task_acceptance,
 )
 
 
@@ -47,6 +48,51 @@ def test_migration_16_only_rewrites_home_isolated_policies() -> None:
         ("persona", "home", "/home/me"),
         ("team", "home", "/home/me"),
     ]
+
+
+def test_migration_17_preserves_historic_status_and_adds_acceptance_fields() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        create table team_tasks (
+            id text primary key,
+            status text not null
+        );
+        create table team_run_cycles (
+            id text primary key,
+            status text not null
+        );
+        insert into team_tasks values ('task-1', 'completed');
+        insert into team_run_cycles values ('cycle-1', 'completed');
+        """
+    )
+
+    _migration_17_team_task_acceptance(connection)
+    _migration_17_team_task_acceptance(connection)
+
+    task_columns = {
+        row["name"]: row for row in connection.execute("pragma table_info(team_tasks)")
+    }
+    cycle_columns = {
+        row["name"]: row
+        for row in connection.execute("pragma table_info(team_run_cycles)")
+    }
+    task = connection.execute("select * from team_tasks where id = 'task-1'").fetchone()
+    cycle = connection.execute(
+        "select * from team_run_cycles where id = 'cycle-1'"
+    ).fetchone()
+
+    assert task_columns["required"]["notnull"] == 1
+    assert task_columns["required"]["dflt_value"] == "1"
+    assert task_columns["acceptance_json"]["notnull"] == 1
+    assert task_columns["acceptance_json"]["dflt_value"] == "'{}'"
+    assert {"outcome_json", "acceptance_result_json"} <= task_columns.keys()
+    assert "execution_metadata_json" in cycle_columns
+    assert task["required"] == 1
+    assert task["acceptance_json"] == "{}"
+    assert task["status"] == "completed"
+    assert cycle["status"] == "completed"
 
 
 def _columns(connection: sqlite3.Connection, table: str) -> set[str]:

@@ -633,6 +633,28 @@ def _migration_16_explicit_no_source_space(connection: sqlite3.Connection) -> No
     )
 
 
+def _migration_17_team_task_acceptance(connection: sqlite3.Connection) -> None:
+    task_columns = _columns(connection, "team_tasks")
+    if "required" not in task_columns:
+        connection.execute(
+            "alter table team_tasks add column required integer not null default 1"
+        )
+    if "acceptance_json" not in task_columns:
+        connection.execute(
+            "alter table team_tasks add column acceptance_json text not null default '{}'"
+        )
+    if "outcome_json" not in task_columns:
+        connection.execute("alter table team_tasks add column outcome_json text")
+    if "acceptance_result_json" not in task_columns:
+        connection.execute(
+            "alter table team_tasks add column acceptance_result_json text"
+        )
+    if "execution_metadata_json" not in _columns(connection, "team_run_cycles"):
+        connection.execute(
+            "alter table team_run_cycles add column execution_metadata_json text"
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -650,6 +672,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (14, "archive-library", _migration_14_archive_library),
     (15, "library-team-drafts", _migration_15_library_team_drafts),
     (16, "explicit-no-source-space", _migration_16_explicit_no_source_space),
+    (17, "team-task-acceptance", _migration_17_team_task_acceptance),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
