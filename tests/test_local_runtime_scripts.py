@@ -112,6 +112,59 @@ def test_current_process_owner_matches_runtime_identity() -> None:
     assert result.stdout.strip() == "True"
 
 
+def test_verified_listener_returns_actual_socket_owner() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+
+        result = run_ps(
+            f". '{COMMON}'; "
+            "$identity = Get-HostRuntimeIdentity; "
+            f"(Get-VerifiedListenerProcess -Port {port} "
+            "-ExpectedOwnerSid $identity.sid).Id"
+        )
+
+    assert result.returncode == 0, result.stderr
+    assert int(result.stdout.strip()) == os.getpid()
+
+
+def test_runtime_result_is_written_as_compact_json() -> None:
+    result = run_ps(
+        f". '{COMMON}'; "
+        "Write-RuntimeResult -Result ([ordered]@{status='started'; ready=$true})"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "started", "ready": True}
+    assert "\n" not in result.stdout.rstrip("\r\n")
+
+
+def test_wait_runtime_process_exit_polls_until_process_is_gone() -> None:
+    child = subprocess.Popen(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-Command",
+            "Start-Sleep -Milliseconds 500",
+        ]
+    )
+    try:
+        result = run_ps(
+            f". '{COMMON}'; "
+            f"Wait-RuntimeProcessExit -ProcessId {child.pid} -Seconds 5; "
+            f"($null -eq (Get-Process -Id {child.pid} "
+            "-ErrorAction SilentlyContinue)).ToString()"
+        )
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait()
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "True"
+
+
 def test_runtime_state_round_trip(tmp_path: Path) -> None:
     state_path = str(tmp_path / "runtime-state.json").replace("'", "''")
     result = run_ps(

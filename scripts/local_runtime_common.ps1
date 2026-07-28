@@ -93,3 +93,50 @@ function Get-ListenerProcessId {
     }
     return [int]$listener.OwningProcess
 }
+
+function Get-VerifiedListenerProcess {
+    param(
+        [Parameter(Mandatory = $true)][int]$Port,
+        [Parameter(Mandatory = $true)][string]$ExpectedOwnerSid
+    )
+
+    $processId = Get-ListenerProcessId -Port $Port
+    if ($null -eq $processId) {
+        throw "runtime_listener_missing: port=$Port"
+    }
+    $process = Get-Process -Id $processId -ErrorAction Stop
+    $ownerSid = Get-ProcessOwnerSid -ProcessId $process.Id
+    if (-not [string]::Equals(
+        $ownerSid,
+        $ExpectedOwnerSid,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "runtime_owner_mismatch: port=$Port pid=$processId"
+    }
+    return $process
+}
+
+function Write-RuntimeResult {
+    param([Parameter(Mandatory = $true)]$Result)
+
+    $json = $Result | ConvertTo-Json -Compress -Depth 5
+    Write-Host $json
+}
+
+function Wait-RuntimeProcessExit {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [int]$Seconds = 10
+    )
+
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($null -eq (
+            Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        )) {
+            return
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "process_still_running: pid=$ProcessId"
+}

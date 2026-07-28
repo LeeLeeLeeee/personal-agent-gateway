@@ -1,9 +1,70 @@
+param(
+    [switch]$Worker,
+    [string]$ResultPath
+)
+
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "local_runtime_common.ps1")
 $identity = Assert-HostRuntimeIdentity
 
 $pagRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+
+function Write-StartResult {
+    param([Parameter(Mandatory = $true)]$Result)
+
+    $json = $Result | ConvertTo-Json -Compress -Depth 5
+    $encoding = [Text.UTF8Encoding]::new($false)
+    [IO.File]::WriteAllText($ResultPath, $json, $encoding)
+}
+
+if (-not $Worker) {
+    $resultDirectory = Join-Path $pagRoot "data"
+    New-Item -ItemType Directory -Force -Path $resultDirectory | Out-Null
+    $resultFile = Join-Path $resultDirectory (
+        "local-runtime-result-$([guid]::NewGuid().ToString('N')).json"
+    )
+    $workerArgs = @(
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "`"$PSCommandPath`"",
+        "-Worker",
+        "-ResultPath",
+        "`"$resultFile`""
+    )
+    $workerProcess = Start-Process -FilePath "powershell.exe" `
+        -ArgumentList $workerArgs -WindowStyle Hidden -PassThru
+    $workerProcess.WaitForExit()
+    $workerExitCode = $workerProcess.ExitCode
+    if (Test-Path -LiteralPath $resultFile) {
+        $json = Get-Content -Raw -LiteralPath $resultFile
+        Remove-Item -LiteralPath $resultFile -Force
+        [Console]::Out.WriteLine($json)
+        [Console]::Out.Flush()
+    } else {
+        Write-RuntimeResult -Result ([ordered]@{
+            status = "error"
+            error = "runtime_worker_failed_without_result"
+        })
+        exit 1
+    }
+    exit $workerExitCode
+}
+
+if ([string]::IsNullOrWhiteSpace($ResultPath)) {
+    throw "runtime_worker_result_path_missing"
+}
+
+trap {
+    Write-StartResult -Result ([ordered]@{
+        status = "error"
+        error = $_.Exception.Message
+    })
+    exit 1
+}
+
 $workspaceRoot = [IO.Path]::GetFullPath((Join-Path $pagRoot ".."))
 $lmgRoot = Join-Path $workspaceRoot "local-model-gateway"
 $statePath = Join-Path $pagRoot "data\local-runtime-state.json"
@@ -110,14 +171,14 @@ if ($existing) {
             -Headers @{ Authorization = "Bearer $($env:LMG_LOCAL_TOKEN)" }
         Wait-HttpSuccess -Uri "http://127.0.0.1:8787/health/live"
         Wait-HttpSuccess -Uri "http://127.0.0.1:8787/health/ready"
-        [pscustomobject]@{
+        Write-StartResult -Result ([ordered]@{
             status = "already_running"
             identity = $identity.name
             lmg_pid = $existingLmg.Id
             pag_pid = $existingPag.Id
             lmg_ready = $true
             pag_ready = $true
-        } | ConvertTo-Json -Compress
+        })
         exit 0
     }
     throw "runtime_state_mismatch: remove no processes automatically"
@@ -156,17 +217,15 @@ try {
         -RedirectStandardOutput $lmgOut -RedirectStandardError $lmgErr `
         -WindowStyle Hidden -PassThru
     $started.Add($lmg)
-    if (-not [string]::Equals(
-        (Get-ProcessOwnerSid -ProcessId $lmg.Id),
-        $identity.sid,
-        [StringComparison]::OrdinalIgnoreCase
-    )) {
-        throw "runtime_identity_mismatch: service=lmg pid=$($lmg.Id)"
-    }
 
     Wait-HttpSuccess -Uri "http://127.0.0.1:8788/livez"
     Wait-HttpSuccess -Uri "http://127.0.0.1:8788/readyz" `
         -Headers @{ Authorization = "Bearer $($env:LMG_LOCAL_TOKEN)" }
+    $lmgListener = Get-VerifiedListenerProcess `
+        -Port 8788 -ExpectedOwnerSid $identity.sid
+    if ($lmgListener.Id -ne $lmg.Id) {
+        $started.Add($lmgListener)
+    }
 
     $python = Join-Path $pagRoot ".venv\Scripts\python.exe"
     if (-not (Test-Path -LiteralPath $python)) {
@@ -194,44 +253,42 @@ try {
         -RedirectStandardError (Join-Path $pagData "pag-runtime.err.log") `
         -WindowStyle Hidden -PassThru
     $started.Add($pag)
-    if (-not [string]::Equals(
-        (Get-ProcessOwnerSid -ProcessId $pag.Id),
-        $identity.sid,
-        [StringComparison]::OrdinalIgnoreCase
-    )) {
-        throw "runtime_identity_mismatch: service=pag pid=$($pag.Id)"
-    }
 
     Wait-HttpSuccess -Uri "http://127.0.0.1:8787/health/live"
     Wait-HttpSuccess -Uri "http://127.0.0.1:8787/health/ready"
+    $pagListener = Get-VerifiedListenerProcess `
+        -Port 8787 -ExpectedOwnerSid $identity.sid
+    if ($pagListener.Id -ne $pag.Id) {
+        $started.Add($pagListener)
+    }
 
-    $lmg.Refresh()
-    $pag.Refresh()
+    $lmgListener.Refresh()
+    $pagListener.Refresh()
     $state = [ordered]@{
         schema_version = 1
         started_at = (Get-Date).ToUniversalTime().ToString("o")
         identity = $identity
         lmg = [ordered]@{
-            pid = $lmg.Id
-            started_at = $lmg.StartTime.ToUniversalTime().ToString("o")
-            path = $lmg.Path
+            pid = $lmgListener.Id
+            started_at = $lmgListener.StartTime.ToUniversalTime().ToString("o")
+            path = $lmgListener.Path
         }
         pag = [ordered]@{
-            pid = $pag.Id
-            started_at = $pag.StartTime.ToUniversalTime().ToString("o")
-            path = $pag.Path
+            pid = $pagListener.Id
+            started_at = $pagListener.StartTime.ToUniversalTime().ToString("o")
+            path = $pagListener.Path
         }
     }
     Write-LocalRuntimeState -Path $statePath -State $state
 
-    [pscustomobject]@{
+    Write-StartResult -Result ([ordered]@{
         status = "started"
         identity = $identity.name
-        lmg_pid = $lmg.Id
-        pag_pid = $pag.Id
+        lmg_pid = $lmgListener.Id
+        pag_pid = $pagListener.Id
         lmg_ready = $true
         pag_ready = $true
-    } | ConvertTo-Json -Compress
+    })
 } catch {
     foreach ($process in ($started | Sort-Object StartTime -Descending)) {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue

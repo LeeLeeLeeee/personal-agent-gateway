@@ -8,10 +8,10 @@ $statePath = Join-Path $pagRoot "data\local-runtime-state.json"
 $state = Read-LocalRuntimeState -Path $statePath
 
 if ($null -eq $state) {
-    [pscustomobject]@{
+    Write-RuntimeResult -Result ([ordered]@{
         status = "not_running"
         identity = $identity.name
-    } | ConvertTo-Json -Compress
+    })
     exit 0
 }
 
@@ -52,11 +52,7 @@ foreach ($name in "pag", "lmg") {
     if ($null -ne $process) {
         try {
             Stop-Process -Id $process.Id -Force -ErrorAction Stop
-            Wait-Process -Id $process.Id -Timeout 10 `
-                -ErrorAction SilentlyContinue
-            if (Get-Process -Id $process.Id -ErrorAction SilentlyContinue) {
-                throw "process_still_running"
-            }
+            Wait-RuntimeProcessExit -ProcessId $process.Id
             $stopped += $name
         } catch {
             $failures += [pscustomobject]@{
@@ -69,19 +65,19 @@ foreach ($name in "pag", "lmg") {
 }
 
 if ($failures.Count -gt 0) {
-    [pscustomobject]@{
+    Write-RuntimeResult -Result ([ordered]@{
         status = "partial_failure"
         identity = $identity.name
         stopped = $stopped
         failures = $failures
-    } | ConvertTo-Json -Compress -Depth 4
+    })
     exit 1
 }
 
 Remove-Item -LiteralPath $statePath -Force
 
-[pscustomobject]@{
+Write-RuntimeResult -Result ([ordered]@{
     status = "stopped"
     identity = $identity.name
     stopped = $stopped
-} | ConvertTo-Json -Compress
+})
