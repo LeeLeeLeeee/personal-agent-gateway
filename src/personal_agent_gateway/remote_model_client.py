@@ -406,6 +406,14 @@ def _http_run_error(response: httpx.Response) -> RemoteRunFailedError:
             "invalid_execution_path",
             "remote_invalid_execution_path",
         ),
+        (422, "unsupported_execution_capability"): (
+            "unsupported_execution_capability",
+            "remote_unsupported_execution_capability",
+        ),
+        (503, "provider_not_ready"): (
+            "provider_not_ready",
+            "remote_provider_not_ready",
+        ),
     }
     mapped = typed_errors.get((response.status_code, code))
     if mapped is not None:

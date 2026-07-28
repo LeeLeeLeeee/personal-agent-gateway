@@ -97,7 +97,10 @@ async def test_complete_sends_provider_model_execution_and_resume():
     cap = {}
     body = _sse({"kind": "run.completed", "content": "x"})
     client = HttpModelClient(
-        "http://lmg", "claude", "claude-sonnet-5", {"sandbox": "workspace-write"},
+        "http://lmg",
+        "claude",
+        "claude-sonnet-5",
+        {"sandbox": "workspace-write", "network": "required"},
         upstream_session_id="prev", transport=_transport(body, cap),
     )
     await client.complete([{"role": "user", "content": "hi"}])
@@ -105,6 +108,7 @@ async def test_complete_sends_provider_model_execution_and_resume():
     assert cap["body"]["model"] == "claude-sonnet-5"
     assert cap["body"]["session"]["upstream_id"] == "prev"
     assert cap["body"]["execution"]["sandbox"] == "workspace-write"
+    assert cap["body"]["execution"]["network"] == "required"
 
 
 @pytest.mark.asyncio
@@ -434,6 +438,18 @@ async def test_provider_unavailable_503_does_not_expose_response_body():
             "invalid_execution_path",
             "invalid_execution_path",
             "remote_invalid_execution_path",
+        ),
+        (
+            422,
+            "unsupported_execution_capability",
+            "unsupported_execution_capability",
+            "remote_unsupported_execution_capability",
+        ),
+        (
+            503,
+            "provider_not_ready",
+            "provider_not_ready",
+            "remote_provider_not_ready",
         ),
     ],
 )
