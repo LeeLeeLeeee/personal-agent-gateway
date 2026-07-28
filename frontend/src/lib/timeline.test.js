@@ -258,6 +258,59 @@ describe("normalized event mapping", () => {
     expect(e.key).toBe("agent:s1:r1:c3");
   });
 
+  it("hides a knowledge request marker in a completed message", () => {
+    const text = [
+      "Reusable guidance is missing.",
+      '<knowledge_request>{"title":"Figma guide","reason":"No team guide",',
+      '"suggested_outline":["Pages"],"source_hints":["Current file"]}</knowledge_request>'
+    ].join("\n");
+
+    const entry = entryFromSse({ ...base, kind: "message.completed", text });
+
+    expect(entry.text).toBe(
+      "Reusable guidance is missing.\n\nLibrary에 요청되었습니다"
+    );
+    expect(entry.text).not.toContain("<knowledge_request>");
+  });
+
+  it("shows one notice for multiple valid knowledge request markers", () => {
+    const first = (
+      '<knowledge_request>{"title":"Figma guide","reason":"Missing guide"}</knowledge_request>'
+    );
+    const second = (
+      '<knowledge_request>{"title":"Review guide","reason":"Missing review rules"}</knowledge_request>'
+    );
+
+    const entry = entryFromSse({
+      ...base,
+      kind: "message.completed",
+      text: `${first}\n${second}`
+    });
+
+    expect(entry.text).toBe("Library에 요청되었습니다");
+  });
+
+  it("hides an invalid knowledge request marker without claiming it was saved", () => {
+    const entry = entryFromSse({
+      ...base,
+      kind: "message.completed",
+      text: "Before\n<knowledge_request>{not json}</knowledge_request>\nAfter"
+    });
+
+    expect(entry.text).toBe("Before\n\nAfter");
+    expect(entry.text).not.toContain("Library에 요청되었습니다");
+  });
+
+  it("keeps a normal completed message unchanged", () => {
+    const entry = entryFromSse({
+      ...base,
+      kind: "message.completed",
+      text: "  Hello\n"
+    });
+
+    expect(entry.text).toBe("  Hello\n");
+  });
+
   it("gives each message.completed in a run a distinct key (codex multi-message)", () => {
     const first = entryFromSse({ ...base, kind: "message.completed", text: "one", event_seq: 5 });
     const second = entryFromSse({ ...base, kind: "message.completed", text: "two", event_seq: 6 });

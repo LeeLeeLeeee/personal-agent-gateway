@@ -1,5 +1,45 @@
 import { fmtDateTime, fmtElapsed, nowDateTime } from "./time.js";
 
+const KNOWLEDGE_REQUEST_PATTERN = (
+  /<knowledge_request>\s*(\{.*?\})\s*<\/knowledge_request>/gs
+);
+const KNOWLEDGE_REQUEST_NOTICE = "Library에 요청되었습니다";
+
+function isValidKnowledgeRequest(raw) {
+  try {
+    const payload = JSON.parse(raw);
+    return payload != null
+      && typeof payload === "object"
+      && !Array.isArray(payload)
+      && typeof payload.title === "string"
+      && payload.title.trim().length > 0
+      && typeof payload.reason === "string"
+      && payload.reason.trim().length > 0;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function knowledgeRequestDisplayText(content) {
+  const source = String(content || "");
+  let matched = false;
+  let requested = false;
+  const withoutMarkers = source.replace(
+    KNOWLEDGE_REQUEST_PATTERN,
+    (_marker, raw) => {
+      matched = true;
+      requested = requested || isValidKnowledgeRequest(raw);
+      return "";
+    }
+  );
+  if (!matched) return source;
+  const clean = withoutMarkers.trim().replace(/\n{3,}/g, "\n\n");
+  if (!requested) return clean;
+  return clean
+    ? `${clean}\n\n${KNOWLEDGE_REQUEST_NOTICE}`
+    : KNOWLEDGE_REQUEST_NOTICE;
+}
+
 function parseCreatedAtMs(createdAt) {
   const parsed = Date.parse(createdAt || "");
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -137,7 +177,7 @@ export function entryFromSse(event) {
         // Per-message key (event_seq) so codex's multiple agent_message items
         // in one turn render as distinct bubbles; the streaming delta bubble
         // (keyed by run) is dropped on completion by the controller.
-        return { type: "agent", key: `agent:${sid}:${runId}:c${event.event_seq}`, text: event.text || "", streaming: false, time, serverOrder: event.event_seq, createdAtMs };
+        return { type: "agent", key: `agent:${sid}:${runId}:c${event.event_seq}`, text: knowledgeRequestDisplayText(event.text || ""), streaming: false, time, serverOrder: event.event_seq, createdAtMs };
       case "reasoning.delta":
         return { type: "reasoning", key: `reasoning:${sid}:${runId}`, text: event.text || "", append: true, time, serverOrder: event.event_seq, createdAtMs };
       case "tool.activity":
