@@ -127,11 +127,17 @@ Gateway를 실행합니다.
 
 ```powershell
 # Windows: PAG와 LMG를 함께 필요할 때 시작
-.\scripts\start_local_runtime.ps1
+npm start
 
 # 런처가 기록한 두 프로세스만 안전하게 종료
+npm stop
+
+# PowerShell 스크립트를 직접 실행해도 동일합니다.
+.\scripts\start_local_runtime.ps1
 .\scripts\stop_local_runtime.ps1
 ```
+
+루트 npm 명령은 Windows 전용이며 일반 PowerShell 또는 cmd에서 실행해야 합니다.
 
 ```bash
 # macOS

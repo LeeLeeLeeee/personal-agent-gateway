@@ -1,0 +1,9 @@
+{
+  "name": "personal-agent-gateway-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/start_local_runtime.ps1",
+    "stop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop_local_runtime.ps1"
+  }
+}
