@@ -12,10 +12,11 @@ from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_runtime import (
     WORKER_PROMPT,
     TeamRuntime,
+    _parse_task_plan,
     _rules_block,
     _task_delta,
 )
-from personal_agent_gateway.teams import TeamRunService
+from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
 
 
 @dataclass
@@ -23,7 +24,7 @@ class FakeModel:
     content: str
 
     async def complete(self, messages):
-        return ModelResponse(content=self.content, tool_calls=[])
+        return ModelResponse(content=_complete_plan_fixture(self.content), tool_calls=[])
 
 
 @dataclass
@@ -42,7 +43,38 @@ class ScriptedModel:
         value = self.responses[idx]
         if isinstance(value, Exception):
             raise value
-        return ModelResponse(content=value, tool_calls=[], upstream_session_id=f"sess-{self._calls}")
+        return ModelResponse(
+            content=_complete_plan_fixture(value),
+            tool_calls=[],
+            upstream_session_id=f"sess-{self._calls}",
+        )
+
+
+def _complete_plan_fixture(value):
+    if not isinstance(value, str):
+        return value
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    if not isinstance(parsed, list) or any(
+        not isinstance(item, dict)
+        or "title" not in item
+        or "description" not in item
+        for item in parsed
+    ):
+        return value
+    for item in parsed:
+        item.setdefault("owner_agent_id", None)
+        item.setdefault("required", True)
+        item.setdefault(
+            "acceptance",
+            {
+                "required_outputs": [],
+                "required_verifications": ["worker-result"],
+            },
+        )
+    return json.dumps(parsed)
 
 
 def _factory_by_role(leader_responses, worker_responses):
@@ -68,6 +100,114 @@ def test_worker_prompt_presents_a_complete_concrete_assignment() -> None:
     assert "Do not ask the user what work to do" in prompt
     assert "Read CYCLES/cycle-1/MAIL_CONTEXT.md" in prompt
     assert "changed files" not in prompt
+
+
+def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
+    tasks = _parse_task_plan(
+        json.dumps(
+            [
+                {
+                    "title": "Create D3 guide",
+                    "description": "Write the integrated guide.",
+                    "owner_agent_id": "worker-1",
+                    "required": True,
+                    "acceptance": {
+                        "required_outputs": ["outputs/d3-guide.md"],
+                        "required_verifications": ["markdown-link-check"],
+                    },
+                }
+            ]
+        )
+    )
+
+    assert tasks == [
+        {
+            "title": "Create D3 guide",
+            "description": "Write the integrated guide.",
+            "owner_agent_id": "worker-1",
+            "required": True,
+            "acceptance": TaskAcceptance(
+                required_outputs=("outputs/d3-guide.md",),
+                required_verifications=("markdown-link-check",),
+            ),
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        {
+            "title": "T",
+            "description": "D",
+            "owner_agent_id": None,
+            "acceptance": {
+                "required_outputs": [],
+                "required_verifications": ["pytest"],
+            },
+        },
+        {
+            "title": "T",
+            "description": "D",
+            "owner_agent_id": None,
+            "required": True,
+        },
+        {
+            "title": "T",
+            "description": "D",
+            "owner_agent_id": None,
+            "required": True,
+            "acceptance": {
+                "required_outputs": ["C:/absolute.txt"],
+                "required_verifications": ["pytest"],
+            },
+        },
+        {
+            "title": "T",
+            "description": "D",
+            "owner_agent_id": None,
+            "required": True,
+            "acceptance": {
+                "required_outputs": ["outputs/../secret.txt"],
+                "required_verifications": ["pytest"],
+            },
+        },
+        {
+            "title": "T",
+            "description": "D",
+            "owner_agent_id": None,
+            "required": True,
+            "acceptance": {
+                "required_outputs": ["outputs/a.txt", "outputs/a.txt"],
+                "required_verifications": ["pytest"],
+            },
+        },
+        {
+            "title": "T",
+            "description": "D",
+            "owner_agent_id": None,
+            "required": True,
+            "acceptance": {
+                "required_outputs": [],
+                "required_verifications": [""],
+            },
+        },
+        {
+            "title": "T",
+            "description": "D",
+            "owner_agent_id": None,
+            "required": True,
+            "acceptance": {
+                "required_outputs": [],
+                "required_verifications": ["pytest"],
+            },
+            "unexpected": True,
+        },
+    ],
+)
+def test_task_plan_rejects_incomplete_or_unsafe_acceptance(task) -> None:
+    with pytest.raises(ValueError):
+        _parse_task_plan(json.dumps([task]))
 
 
 def test_cycle_objective_replaces_blank_triggered_run_goal(tmp_path) -> None:
@@ -365,7 +505,7 @@ async def test_all_workers_fail_yields_failed(tmp_path):
     leader = personas.create_persona("L", "lead", "d", [], [])
     member = personas.create_persona("W", "work", "d", [], [])
     run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
-    plan = '[{"title":"T1","description":"d1"}]'
+    plan = _complete_plan_fixture('[{"title":"T1","description":"d1"}]')
     runtime = TeamRuntime(
         teams=teams,
         model_factory=_factory_by_role([plan, "summary"], [RuntimeError("boom")]),
@@ -386,7 +526,7 @@ async def test_worker_query_consumes_round_and_reinvokes(tmp_path):
     leader = personas.create_persona("L", "lead", "d", [], [])
     member = personas.create_persona("W", "work", "d", [], [])
     run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
-    plan = '[{"title":"T1","description":"d1"}]'
+    plan = _complete_plan_fixture('[{"title":"T1","description":"d1"}]')
 
     runtime = TeamRuntime(
         teams=teams,
@@ -724,7 +864,7 @@ async def test_cancel_settles_run_and_task(tmp_path):
     leader = personas.create_persona("L", "lead", "d", [], [])
     member = personas.create_persona("W", "work", "d", [], [])
     run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
-    plan = '[{"title":"T1","description":"d1"}]'
+    plan = _complete_plan_fixture('[{"title":"T1","description":"d1"}]')
     started = asyncio.Event()
 
     class HangingModel:
@@ -856,7 +996,7 @@ async def test_task_added_during_synthesis_is_executed_before_terminal(tmp_path)
     member = personas.create_persona("W", "work", "d", [], [])
     run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
 
-    plan = '[{"title":"T1","description":"d1"}]'
+    plan = _complete_plan_fixture('[{"title":"T1","description":"d1"}]')
     models = {}
 
     def factory(agent):

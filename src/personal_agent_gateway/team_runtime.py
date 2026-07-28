@@ -2,7 +2,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.events import EventBus
@@ -13,7 +13,13 @@ from personal_agent_gateway.team_results import (
     workspace_changes,
     workspace_snapshot,
 )
-from personal_agent_gateway.teams import TeamAgent, TeamRun, TeamRunService, TeamTask
+from personal_agent_gateway.teams import (
+    TaskAcceptance,
+    TeamAgent,
+    TeamRun,
+    TeamRunService,
+    TeamTask,
+)
 
 PLANNING_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
 Goal: {goal}
@@ -23,9 +29,14 @@ Available team members: {team_roster_json}
 Before creating tasks, identify any consequential choice that only the user can make.
 First resolve ambiguity from the goal, frozen rules, and prior user decisions.
 Return ONLY one of:
-1. A JSON array of task objects. Each object must have "title", "description", and
-   "owner_agent_id". Assign the member whose persona role and responsibilities best
-   match the task. Do not assign by list order or previous completion status.
+1. A JSON array of task objects. Each object must contain exactly:
+   {{"title":"...", "description":"...", "owner_agent_id":"member-id or null",
+   "required":true, "acceptance":{{"required_outputs":["relative/path"],
+   "required_verifications":["verification-name"]}}}}
+   Assign the member whose persona role and responsibilities best match the task.
+   Use null only when no member is available. Do not assign by list order or
+   previous completion status. Every task needs at least one required output or
+   verification.
 2. {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why planning cannot safely continue","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 Use ask_user only when the choice materially changes the plan and cannot be inferred safely."""
 
@@ -78,8 +89,10 @@ Use ask_user only when the user must decide. Prefer task scope; use run scope on
 
 ADD_WORK_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
 The user is adding work to an in-flight run. Break the request into concrete tasks.
-Return ONLY a JSON array of task objects. Each object must have "title", "description",
-and "owner_agent_id".
+Return ONLY a JSON array of task objects using the same exact schema:
+{{"title":"...", "description":"...", "owner_agent_id":"member-id or null",
+"required":true, "acceptance":{{"required_outputs":["relative/path"],
+"required_verifications":["verification-name"]}}}}
 Run context:
 {goal}
 Existing tasks: {existing_titles}
@@ -262,7 +275,7 @@ class TeamRuntime:
 
     async def _plan(
         self, run: TeamRun, leader: TeamAgent, cycle_id: str | None = None
-    ) -> list[dict[str, str]] | UserDecisionResolution:
+    ) -> list[dict[str, object]] | UserDecisionResolution:
         leader_agent = self._teams.get_agent(leader.id)
         members = _find_workers(self._teams.list_agents(run.id))
         member_ids = {member.id for member in members}
@@ -310,6 +323,8 @@ class TeamRuntime:
                 task["description"],
                 owner_agent_id=owner_agent_id if owner_agent_id in member_ids else None,
                 cycle_id=cycle_id,
+                required=task["required"],
+                acceptance=task["acceptance"],
             )
             await self._publish({"type": "team.task.created", "team_run_id": run.id, "task_id": created.id})
         self._teams.append_message(
@@ -698,6 +713,8 @@ class TeamRuntime:
                 spec["description"],
                 owner_agent_id=owner_agent_id if owner_agent_id in member_ids else None,
                 cycle_id=cycle_id,
+                required=spec["required"],
+                acceptance=spec["acceptance"],
             )
             created.append(task)
             await self._publish({"type": "team.task.created", "team_run_id": run.id, "task_id": task.id})
@@ -937,27 +954,101 @@ def _agent_delta(agent: TeamAgent) -> dict[str, object]:
     }
 
 
-def _parse_task_plan(content: str) -> list[dict[str, str]]:
+def _parse_task_plan(content: str) -> list[dict[str, object]]:
     stripped = content.strip()
     if stripped.startswith("```"):
-        stripped = stripped.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        raise ValueError("Planner response must not use code fences")
     raw = json.loads(stripped)
     if not isinstance(raw, list):
         raise ValueError("Planner response must be a JSON array")
-    tasks = []
+    tasks: list[dict[str, object]] = []
     for item in raw:
         if not isinstance(item, dict):
             raise ValueError("Planner task must be an object")
+        if set(item) != {
+            "title",
+            "description",
+            "owner_agent_id",
+            "required",
+            "acceptance",
+        }:
+            raise ValueError("Planner task has missing or unknown fields")
         title = item.get("title")
         description = item.get("description")
-        if not isinstance(title, str) or not isinstance(description, str):
+        if (
+            not isinstance(title, str)
+            or not title.strip()
+            or not isinstance(description, str)
+            or not description.strip()
+        ):
             raise ValueError("Planner task requires title and description")
-        task = {"title": title, "description": description}
         owner_agent_id = item.get("owner_agent_id")
-        if isinstance(owner_agent_id, str) and owner_agent_id:
-            task["owner_agent_id"] = owner_agent_id
-        tasks.append(task)
+        if owner_agent_id is not None and (
+            not isinstance(owner_agent_id, str) or not owner_agent_id.strip()
+        ):
+            raise ValueError("Planner task owner must be a member ID or null")
+        required = item.get("required")
+        if not isinstance(required, bool):
+            raise ValueError("Planner task required must be a boolean")
+        acceptance = item.get("acceptance")
+        if not isinstance(acceptance, dict) or set(acceptance) != {
+            "required_outputs",
+            "required_verifications",
+        }:
+            raise ValueError("Planner task requires exact acceptance fields")
+        required_outputs = _string_list(
+            acceptance.get("required_outputs"),
+            "required_outputs",
+        )
+        required_verifications = _string_list(
+            acceptance.get("required_verifications"),
+            "required_verifications",
+        )
+        if len(set(required_outputs)) != len(required_outputs):
+            raise ValueError("Planner task has duplicate required outputs")
+        if len(set(required_verifications)) != len(required_verifications):
+            raise ValueError("Planner task has duplicate required verifications")
+        if any(not _safe_relative_output(path) for path in required_outputs):
+            raise ValueError("Planner task output path must be relative and bounded")
+        if not required_outputs and not required_verifications:
+            raise ValueError("Planner task requires an output or verification")
+        tasks.append(
+            {
+                "title": title.strip(),
+                "description": description.strip(),
+                "owner_agent_id": (
+                    owner_agent_id.strip()
+                    if isinstance(owner_agent_id, str)
+                    else None
+                ),
+                "required": required,
+                "acceptance": TaskAcceptance(
+                    required_outputs=tuple(required_outputs),
+                    required_verifications=tuple(required_verifications),
+                ),
+            }
+        )
     return tasks
+
+
+def _string_list(value: object, field: str) -> list[str]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item.strip() for item in value
+    ):
+        raise ValueError(f"Planner task {field} must be non-empty strings")
+    return [item.strip() for item in value]
+
+
+def _safe_relative_output(value: str) -> bool:
+    posix = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    return (
+        value not in {"", "."}
+        and not posix.is_absolute()
+        and not windows.is_absolute()
+        and ".." not in posix.parts
+        and ".." not in windows.parts
+    )
 
 
 def _parse_mediation_resolution(content: str) -> dict[str, object]:
