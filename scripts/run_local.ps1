@@ -1,5 +1,8 @@
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "local_runtime_common.ps1")
+$null = Assert-HostRuntimeIdentity
+
 Set-Location (Join-Path $PSScriptRoot "..")
 
 $requestedHost = $env:AGENT_WEB_HOST

@@ -126,14 +126,22 @@ npm --prefix frontend run build
 Gateway를 실행합니다.
 
 ```powershell
-# Windows
-.\scripts\run_local.ps1
+# Windows: PAG와 LMG를 함께 필요할 때 시작
+.\scripts\start_local_runtime.ps1
+
+# 런처가 기록한 두 프로세스만 안전하게 종료
+.\scripts\stop_local_runtime.ps1
 ```
 
 ```bash
 # macOS
 scripts/run_local.sh
 ```
+
+Codex에 시작을 요청할 때는 일반 sandbox 명령이 아니라 승인된 외부 실행으로
+고정 시작 스크립트를 호출해야 합니다. 런처는 Codex sandbox 계정에서의 직접
+실행을 거부하며 로그인한 Windows 사용자 계정, 실제 프로세스 소유자와 두
+서비스의 health 응답을 검증합니다.
 
 `http://127.0.0.1:8787`에서 최초 TOTP setup을 진행합니다. 외부 접속과 named tunnel 설정은 [설치·운영 가이드](docs/knowledge/gateway-setup-guide.md#외부-접속)를 따르세요.
 
