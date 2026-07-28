@@ -1,9 +1,12 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from personal_agent_gateway.app import _team_model_factory
 from personal_agent_gateway.config import AppConfig
+from personal_agent_gateway.execution_contract import ExecutionContractError
+from personal_agent_gateway.lmg_client import ProviderExecutionCapabilities
 from personal_agent_gateway.remote_model_client import HttpModelClient
 from personal_agent_gateway.teams import TeamAgent
 
@@ -45,21 +48,58 @@ class _TeamRuns:
 def _space_policy(
     read_path: str | None,
     read_mode: str = "selected",
+    *,
+    write_mode: str = "isolated",
+    workspace_path: str | None = None,
 ) -> dict[str, object]:
     return {
         "scope": "team",
         "scope_id": "team-1",
         "read_mode": read_mode,
         "read_path": read_path,
-        "write_mode": "isolated",
-        "workspace_path": None,
+        "write_mode": write_mode,
+        "workspace_path": workspace_path,
         "created_at": "t",
         "updated_at": "t",
     }
 
 
+class _AgentRegistry:
+    def get(self, provider: str):
+        capabilities = (
+            ProviderExecutionCapabilities(
+                ready=True,
+                readiness_error=None,
+                resume=True,
+                external_read_only_roots=False,
+                network_modes=("unspecified", "denied", "required"),
+                sandbox_modes=("read-only", "workspace-write", "danger-full-access"),
+                permission_modes=(),
+            )
+            if provider == "codex"
+            else ProviderExecutionCapabilities(
+                ready=True,
+                readiness_error=None,
+                resume=True,
+                external_read_only_roots=False,
+                network_modes=("unspecified",),
+                sandbox_modes=(),
+                permission_modes=("default", "acceptEdits", "plan"),
+            )
+        )
+        return SimpleNamespace(available=True, execution_capabilities=capabilities)
+
+
+def _factory(config, team_runs=None):
+    return _team_model_factory(
+        config,
+        team_runs,
+        agent_registry=_AgentRegistry(),
+    )
+
+
 def test_factory_picks_codex_by_default(tmp_path):
-    factory = _team_model_factory(_config(tmp_path))
+    factory = _factory(_config(tmp_path))
     client = factory(_agent("codex"))
     assert isinstance(client, HttpModelClient)
     assert client._provider == "codex"
@@ -69,7 +109,7 @@ def test_factory_picks_codex_by_default(tmp_path):
 
 
 def test_factory_picks_claude_when_backend_claude(tmp_path):
-    factory = _team_model_factory(_config(tmp_path))
+    factory = _factory(_config(tmp_path))
     client = factory(_agent("claude"))
     assert isinstance(client, HttpModelClient)
     assert client._provider == "claude"
@@ -79,7 +119,7 @@ def test_factory_picks_claude_when_backend_claude(tmp_path):
 
 
 def test_factory_applies_codex_persona_options(tmp_path):
-    client = _team_model_factory(_config(tmp_path))(
+    client = _factory(_config(tmp_path))(
         _agent(
             "codex",
             options={
@@ -92,13 +132,13 @@ def test_factory_applies_codex_persona_options(tmp_path):
     )
 
     assert client._execution["effort"] == "max"
-    assert client._execution["sandbox"] == "read-only"
-    assert client._execution["approval_policy"] == "on-request"
+    assert client._execution["sandbox"] == "workspace-write"
+    assert client._execution["approval_policy"] == "never"
     assert client._execution["profile"] == "review"
 
 
 def test_factory_applies_claude_persona_options(tmp_path):
-    client = _team_model_factory(_config(tmp_path))(
+    client = _factory(_config(tmp_path))(
         _agent(
             "claude",
             options={"effort": "xhigh", "permission_mode": "plan", "agent": "reviewer"},
@@ -106,7 +146,7 @@ def test_factory_applies_claude_persona_options(tmp_path):
     )
 
     assert client._execution["effort"] == "xhigh"
-    assert client._execution["permission_mode"] == "plan"
+    assert client._execution["permission_mode"] == "acceptEdits"
     assert client._execution["agent"] == "reviewer"
 
 
@@ -120,11 +160,11 @@ def test_factory_does_not_send_sibling_artifact_root_as_cli_read_root(
     artifact_root = run_root / "artifacts"
     workspace.mkdir(parents=True)
     artifact_root.mkdir()
-    factory = _team_model_factory(
+    factory = _factory(
         _config(tmp_path),
         _TeamRuns(
             artifact_root=str(artifact_root),
-            space_policy=_space_policy(None),
+            space_policy=_space_policy(None, read_mode="none"),
         ),
     )
 
@@ -135,14 +175,15 @@ def test_factory_does_not_send_sibling_artifact_root_as_cli_read_root(
 
 
 @pytest.mark.parametrize("backend", ["codex", "claude"])
-def test_factory_rejects_cli_read_path_outside_workspace(tmp_path, backend):
+def test_factory_stages_selected_source_inside_workspace(tmp_path, backend):
     workspace = tmp_path / "r1" / "workspace"
     artifact_root = tmp_path / "r1" / "artifacts"
     external_read_root = tmp_path / "shared"
     workspace.mkdir(parents=True)
     artifact_root.mkdir()
     external_read_root.mkdir()
-    factory = _team_model_factory(
+    (external_read_root / "evidence.txt").write_text("evidence", encoding="utf-8")
+    factory = _factory(
         _config(tmp_path),
         _TeamRuns(
             artifact_root=str(artifact_root),
@@ -150,19 +191,23 @@ def test_factory_rejects_cli_read_path_outside_workspace(tmp_path, backend):
         ),
     )
 
-    with pytest.raises(ValueError, match="inside the workspace"):
-        factory(_agent(backend, workspace_path=str(workspace)))
+    client = factory(_agent(backend, workspace_path=str(workspace)))
+
+    inputs = Path(client._execution["read_roots"][0])
+    assert inputs == workspace / "_inputs"
+    assert (inputs / "01-shared" / "evidence.txt").is_file()
+    assert str(artifact_root) not in client._execution["read_roots"]
 
 
 @pytest.mark.parametrize("backend", ["codex", "claude"])
-def test_factory_omits_default_home_read_path_outside_workspace(tmp_path, backend):
+def test_factory_requires_bounded_selection_for_home_isolated(tmp_path, backend):
     workspace = tmp_path / "r1" / "workspace"
     artifact_root = tmp_path / "r1" / "artifacts"
     home_read_root = tmp_path / "home"
     workspace.mkdir(parents=True)
     artifact_root.mkdir()
     home_read_root.mkdir()
-    factory = _team_model_factory(
+    factory = _factory(
         _config(tmp_path),
         _TeamRuns(
             artifact_root=str(artifact_root),
@@ -170,6 +215,47 @@ def test_factory_omits_default_home_read_path_outside_workspace(tmp_path, backen
         ),
     )
 
-    client = factory(_agent(backend, workspace_path=str(workspace)))
+    with pytest.raises(ExecutionContractError) as error:
+        factory(_agent(backend, workspace_path=str(workspace)))
 
-    assert client._execution["read_roots"] == []
+    assert error.value.code == "source_scope_requires_selection"
+
+
+@pytest.mark.parametrize("write_mode", ["worktree", "full_access"])
+def test_factory_uses_direct_workspace_without_staging(tmp_path, write_mode):
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    team_runs = _TeamRuns(
+        artifact_root=str(tmp_path / "artifacts"),
+        space_policy=_space_policy(
+            str(workspace),
+            read_mode="home",
+            write_mode=write_mode,
+            workspace_path=str(workspace),
+        ),
+    )
+
+    client = _factory(_config(tmp_path), team_runs)(
+        _agent("codex", workspace_path=str(workspace))
+    )
+
+    assert client._execution["workspace_root"] == str(workspace)
+    assert client._execution["read_roots"] == [str(workspace)]
+    assert not (workspace / "_inputs").exists()
+
+
+def test_factory_accepts_codex_required_network(tmp_path):
+    client = _factory(_config(tmp_path))(
+        _agent("codex", options={"network": "required"})
+    )
+
+    assert client._execution["network"] == "required"
+
+
+def test_factory_rejects_claude_required_network_before_model_call(tmp_path):
+    with pytest.raises(ExecutionContractError) as error:
+        _factory(_config(tmp_path))(
+            _agent("claude", options={"network": "required"})
+        )
+
+    assert error.value.code == "unsupported_execution_capability"

@@ -30,6 +30,7 @@ class ExecutionContextFactory:
     def __init__(self, stager: SourceStager | None = None) -> None:
         self._stager = stager or SourceStager()
         self._cache: dict[tuple[object, ...], CompiledExecution] = {}
+        self._staged_inputs: dict[tuple[tuple[Path, ...], Path], StagedInputs] = {}
 
     def for_session(
         self,
@@ -46,7 +47,7 @@ class ExecutionContextFactory:
         )
         workspace_root = (
             Path(policy.workspace_path).resolve()
-            if policy.write_mode != "isolated" and policy.workspace_path
+            if policy.write_mode == "full_access" and policy.workspace_path
             else consumer_workspace.resolve()
         )
         key = (
@@ -79,10 +80,20 @@ class ExecutionContextFactory:
             ),
             policy,
             capabilities,
-            self._stager,
+            self,
         )
         self._cache[key] = compiled
         return compiled
+
+    def stage(self, roots: tuple[Path, ...], workspace_root: Path) -> StagedInputs:
+        key = (roots, workspace_root)
+        staged = self._staged_inputs.get(key)
+        if staged is not None:
+            self._stager.verify(staged)
+            return staged
+        staged = self._stager.stage(roots, workspace_root)
+        self._staged_inputs[key] = staged
+        return staged
 
     @staticmethod
     def wire_execution(
@@ -129,6 +140,10 @@ class AgentRuntimeFactory:
 
     def create_default_runtime(self) -> AgentRuntime:
         return self._create_runtime_for_app_config()
+
+    @property
+    def execution_contexts(self) -> ExecutionContextFactory:
+        return self._execution_contexts
 
     def create_headless_runtime(
         self,

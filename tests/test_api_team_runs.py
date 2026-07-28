@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from execution_helpers import ready_agent_registry
 from fastapi.testclient import TestClient
 
 from personal_agent_gateway.app import create_app
@@ -29,7 +30,13 @@ def make_config(tmp_path: Path) -> AppConfig:
 
 
 def authenticated_client(tmp_path: Path) -> TestClient:
-    client = TestClient(create_app(make_config(tmp_path)))
+    config = make_config(tmp_path)
+    client = TestClient(
+        create_app(
+            config,
+            agent_registry=ready_agent_registry(config),
+        )
+    )
     client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
     return client
 

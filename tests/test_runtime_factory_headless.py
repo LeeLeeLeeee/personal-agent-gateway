@@ -7,7 +7,7 @@ from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.execution_contract import ExecutionContractError
 from personal_agent_gateway.lmg_client import ProviderExecutionCapabilities
 from personal_agent_gateway.remote_model_client import HttpModelClient
-from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
+from personal_agent_gateway.runtime_factory import AgentRuntimeFactory, ExecutionContextFactory
 from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.space_policies import EffectiveSpacePolicy, SpacePolicy
 from personal_agent_gateway.transcript import TranscriptStore
@@ -148,6 +148,30 @@ def test_selected_source_hook_receives_staged_inputs(tmp_path: Path) -> None:
     inputs = Path(runtime._model._execution["read_roots"][0])
     assert inputs.name == "_inputs"
     assert (inputs / "01-selected" / "source.txt").read_text(encoding="utf-8") == "evidence"
+
+
+def test_selected_inputs_are_shared_across_provider_contexts(tmp_path: Path) -> None:
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    (selected / "source.txt").write_text("evidence", encoding="utf-8")
+    workspace = tmp_path / "run" / "workspace"
+    contexts = ExecutionContextFactory()
+    policy = _policy(read_mode="selected", read_path=selected)
+    agents = _AgentRegistry()
+
+    codex = contexts.for_session(
+        policy,
+        agents.get("codex").execution_capabilities,
+        workspace,
+    )
+    claude = contexts.for_session(
+        policy,
+        agents.get("claude").execution_capabilities,
+        workspace,
+    )
+
+    assert codex.read_roots == claude.read_roots == (workspace.resolve() / "_inputs",)
+    assert codex.input_manifest_sha256 == claude.input_manifest_sha256
 
 
 @pytest.mark.parametrize("backend", ["codex", "claude"])

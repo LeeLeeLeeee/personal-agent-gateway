@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import httpx
+from execution_helpers import ready_agent_registry
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -91,7 +92,13 @@ def make_config(tmp_path: Path) -> AppConfig:
 
 
 def auth_client(config: AppConfig, runtime: AgentRuntime | FakeRuntime) -> TestClient:
-    client = TestClient(create_app(config=config, runtime=runtime))
+    client = TestClient(
+        create_app(
+            config=config,
+            runtime=runtime,
+            agent_registry=ready_agent_registry(config),
+        )
+    )
     client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
     return client
 
@@ -957,6 +964,8 @@ def test_create_app_uses_runtime_factory_when_runtime_not_injected(tmp_path: Pat
             *,
             space_policies=None,
             archive_service=None,
+            agent_registry=None,
+            execution_contexts=None,
         ) -> None:
             created.append(
                 {
@@ -1034,6 +1043,8 @@ def test_chat_uses_active_session_config_runtime_factory(tmp_path: Path, monkeyp
             *,
             space_policies=None,
             archive_service=None,
+            agent_registry=None,
+            execution_contexts=None,
         ) -> None:
             self.transcript = transcript
 
@@ -1133,7 +1144,10 @@ def test_chat_passes_codex_effort_from_session_config(tmp_path: Path, monkeypatc
             return ModelResponse(content="ok", tool_calls=[])
 
     monkeypatch.setattr("personal_agent_gateway.runtime_factory.HttpModelClient", FakeHttpModelClient)
-    client = TestClient(create_app(make_config(tmp_path)))
+    config = make_config(tmp_path)
+    client = TestClient(
+        create_app(config, agent_registry=ready_agent_registry(config))
+    )
     client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
     client.put(

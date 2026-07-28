@@ -14,6 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from personal_agent_gateway.agents import AgentRegistry
 from personal_agent_gateway.api import (
     agents_router,
     archive_router,
@@ -35,14 +36,13 @@ from personal_agent_gateway.api import (
     team_runs_router,
     teams_router,
 )
-from personal_agent_gateway.archive import ArchiveService
-from personal_agent_gateway.artifacts import ArtifactStore
-from personal_agent_gateway.agents import AgentRegistry
 from personal_agent_gateway.api.auth import LoginRateLimiter
 from personal_agent_gateway.api.chat_sessions import (
     ChatSessionContext,
     create_chat_sessions_router,
 )
+from personal_agent_gateway.archive import ArchiveService
+from personal_agent_gateway.artifacts import ArtifactStore
 from personal_agent_gateway.audit import AuditService
 from personal_agent_gateway.auth_sessions import AuthSessionService
 from personal_agent_gateway.auth_store import AuthStore
@@ -50,8 +50,9 @@ from personal_agent_gateway.backup import BackupService
 from personal_agent_gateway.capabilities import CapabilityRegistry
 from personal_agent_gateway.config import AppConfig, load_config
 from personal_agent_gateway.db import Database
-from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.emergency_stop import EmergencyStopService
+from personal_agent_gateway.events import EventBus
+from personal_agent_gateway.execution_contract import ExecutionContractError
 from personal_agent_gateway.health import HealthService
 from personal_agent_gateway.hook_loop import HookLoop
 from personal_agent_gateway.hook_runner import HookRunner
@@ -65,42 +66,47 @@ from personal_agent_gateway.mail_knowledge import MailKnowledgeService, MailWork
 from personal_agent_gateway.model_client import ModelClient
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.remote_model_client import HttpModelClient
-from personal_agent_gateway.runtime import AgentRuntime
-from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
 from personal_agent_gateway.rule_sets import RuleSetService
 from personal_agent_gateway.run_state import SessionRunRegistry, TeamRunRegistry
 from personal_agent_gateway.runners.agent import AgentRunner
 from personal_agent_gateway.runners.capture import CaptureRunner
 from personal_agent_gateway.runners.ffmpeg import FfmpegRunner
 from personal_agent_gateway.runners.shell import ShellRunner
-from personal_agent_gateway.schedules import ScheduleService
+from personal_agent_gateway.runtime import AgentRuntime
+from personal_agent_gateway.runtime_factory import (
+    AgentRuntimeFactory,
+    ExecutionContextFactory,
+)
 from personal_agent_gateway.scheduler_loop import SchedulerLoop
+from personal_agent_gateway.schedules import ScheduleService
 from personal_agent_gateway.security_settings import SecuritySettingsService
+from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
+from personal_agent_gateway.sources.email import ImapEmailAdapter
 from personal_agent_gateway.space_policies import (
     SpacePolicy,
     SpacePolicyService,
-    cli_read_roots,
     policy_from_snapshot,
 )
-from personal_agent_gateway.session_activity import SessionActivityPublisher, SessionActivityService
-from personal_agent_gateway.sources.email import ImapEmailAdapter
-from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycle_loop import TeamCycleLoop
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_delivery import TeamRunDeliveryService
+from personal_agent_gateway.team_directory import TeamService
+from personal_agent_gateway.team_results import TeamRunResultPackager
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.team_runtime import TeamRuntime
-from personal_agent_gateway.team_results import TeamRunResultPackager
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
 from personal_agent_gateway.transcript import TranscriptStore
-
 
 _LOGGER = logging.getLogger("personal_agent_gateway.errors")
 _CORRELATION_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 
-def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = None) -> FastAPI:
+def create_app(
+    config: AppConfig | None = None,
+    runtime: AgentRuntime | None = None,
+    agent_registry: AgentRegistry | None = None,
+) -> FastAPI:
     app_config = config or load_config()
     transcript = TranscriptStore(app_config.session_dir)
 
@@ -174,7 +180,13 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     app.state.event_bus = event_bus
     app.state.run_registry = run_registry
     app.state.team_run_registry = team_run_registry
-    runtime_factory = _attach_local_services(app, app_config, transcript, event_bus)
+    runtime_factory = _attach_local_services(
+        app,
+        app_config,
+        transcript,
+        event_bus,
+        agent_registry=agent_registry,
+    )
     assert app_config.backup_root is not None
     assert app_config.auth_dir is not None
     assert app_config.artifact_root is not None
@@ -190,7 +202,12 @@ def create_app(config: AppConfig | None = None, runtime: AgentRuntime | None = N
     )
     app.state.team_runtime = TeamRuntime(
         app.state.team_run_service,
-        _team_model_factory(app_config, app.state.team_run_service),
+        _team_model_factory(
+            app_config,
+            app.state.team_run_service,
+            execution_contexts=app.state.execution_contexts,
+            agent_registry=app.state.agent_registry,
+        ),
         event_bus,
         archive_service=app.state.archive_service,
         result_packager=app.state.team_result_packager,
@@ -404,7 +421,12 @@ def _internal_error_response(request: Request, exc: Exception) -> JSONResponse:
 
 
 def _attach_local_services(
-    app: FastAPI, config: AppConfig, transcript: TranscriptStore, event_bus: EventBus
+    app: FastAPI,
+    config: AppConfig,
+    transcript: TranscriptStore,
+    event_bus: EventBus,
+    *,
+    agent_registry: AgentRegistry | None = None,
 ) -> AgentRuntimeFactory:
     assert config.app_db_path is not None
     assert config.artifact_root is not None
@@ -440,6 +462,8 @@ def _attach_local_services(
     schedule_service = ScheduleService(db, registry)
     artifact_store = ArtifactStore(db, config.artifact_root)
     team_result_packager = TeamRunResultPackager(team_run_service, artifact_store)
+    effective_agent_registry = agent_registry or AgentRegistry(config)
+    execution_contexts = ExecutionContextFactory()
     runtime_factory = AgentRuntimeFactory(
         config,
         transcript,
@@ -447,6 +471,8 @@ def _attach_local_services(
         session_activity_publisher,
         space_policies=space_policy_service,
         archive_service=archive_service,
+        agent_registry=effective_agent_registry,
+        execution_contexts=execution_contexts,
     )
     job_worker = JobWorker(
         job_service,
@@ -502,12 +528,12 @@ def _attach_local_services(
         interval_seconds=config.hook_poll_interval_seconds,
         intake_gate=intake_gate,
     )
-    agent_registry = AgentRegistry(config)
     audit_service = AuditService(db, retention_days=config.audit_retention_days)
     security_settings = SecuritySettingsService(db, config.access_mode)
     app.state.app_config = config
     app.state.database = db
-    app.state.agent_registry = agent_registry
+    app.state.agent_registry = effective_agent_registry
+    app.state.execution_contexts = execution_contexts
     app.state.auth_store = AuthStore(config.auth_dir)
     app.state.auth_session_service = auth_session_service
     app.state.login_rate_limiter = LoginRateLimiter()
@@ -548,7 +574,13 @@ def main() -> None:
 def _team_model_factory(
     config: AppConfig,
     team_runs: TeamRunService | None = None,
+    *,
+    execution_contexts: ExecutionContextFactory | None = None,
+    agent_registry: AgentRegistry | None = None,
 ) -> Callable[[TeamAgent], ModelClient]:
+    contexts = execution_contexts or ExecutionContextFactory()
+    agents = agent_registry or AgentRegistry(config)
+
     def team_model_factory(agent: TeamAgent) -> ModelClient:
         session = agent.upstream_session_id or None
         workspace_root = (
@@ -558,57 +590,34 @@ def _team_model_factory(
         )
         workspace_root.mkdir(parents=True, exist_ok=True)
         run = team_runs.get_team_run(agent.team_run_id) if team_runs else None
-        space_policy = policy_from_snapshot(run.space_policy) if run else None
-        read_roots = _team_cli_read_roots(workspace_root, space_policy)
+        space_policy = (
+            policy_from_snapshot(run.space_policy)
+            if run
+            else _default_team_space_policy()
+        )
+        if space_policy is None:
+            raise RuntimeError("Team run has no frozen SPACE policy")
         raw_options = agent.persona_snapshot.get("default_options")
         options = raw_options if isinstance(raw_options, dict) else {}
-        if agent.backend == "claude":
-            claude_execution: dict[str, object] = {
-                "workspace_root": str(workspace_root),
-                "read_roots": read_roots,
-                "permission_mode": str(
-                    "bypassPermissions"
-                    if space_policy and space_policy.write_mode == "full_access"
-                    else config.claude_permission_mode
-                    if space_policy
-                    else options.get("permission_mode") or config.claude_permission_mode
-                ),
-                "effort": str(options.get("effort") or "high"),
-                "agent": str(options["agent"]) if options.get("agent") else "",
-            }
-            return HttpModelClient(
-                base_url=config.lmg_base_url,
-                provider="claude",
-                model=agent.model,
-                execution=claude_execution,
-                upstream_session_id=session,
-                local_token=config.lmg_local_token,
-                consumer="personal-agent-gateway",
-                consumer_session_id=agent.team_run_id,
-                timeout_seconds=config.codex_timeout_seconds,
-                idle_timeout_seconds=config.codex_idle_timeout_seconds,
+        descriptor = agents.get(agent.backend)
+        capabilities = descriptor.execution_capabilities
+        if not descriptor.available or capabilities is None:
+            raise ExecutionContractError(
+                "provider_not_ready",
+                "The selected Team provider has no usable execution capability snapshot",
             )
-        codex_execution: dict[str, object] = {
-            "workspace_root": str(workspace_root),
-            "read_roots": read_roots,
-            "sandbox": (
-                "danger-full-access"
-                if space_policy and space_policy.write_mode == "full_access"
-                else "workspace-write"
-                if space_policy
-                else str(options.get("sandbox") or config.codex_sandbox)
-            ),
-            "approval_policy": str(
-                options.get("approval_policy") or config.codex_approval_policy
-            ),
-            "effort": str(options.get("effort") or "high"),
-            "profile": str(options["profile"]) if options.get("profile") else "",
-        }
+        compiled = contexts.for_session(
+            space_policy,
+            capabilities,
+            workspace_root,
+            network=str(options.get("network") or "unspecified"),
+        )
+        execution = contexts.wire_execution(compiled, agent.backend, options)
         return HttpModelClient(
             base_url=config.lmg_base_url,
-            provider="codex",
+            provider=agent.backend,
             model=agent.model,
-            execution=codex_execution,
+            execution=execution,
             upstream_session_id=session,
             local_token=config.lmg_local_token,
             consumer="personal-agent-gateway",
@@ -620,11 +629,17 @@ def _team_model_factory(
     return team_model_factory
 
 
-def _team_cli_read_roots(
-    workspace_root: Path,
-    space_policy: SpacePolicy | None,
-) -> list[str]:
-    return [str(path) for path in cli_read_roots(workspace_root, space_policy)]
+def _default_team_space_policy() -> SpacePolicy:
+    return SpacePolicy(
+        scope="team",
+        scope_id="",
+        read_mode="none",
+        read_path=None,
+        write_mode="isolated",
+        workspace_path=None,
+        created_at="",
+        updated_at="",
+    )
 
 
 def _select_frontend_index(package_dir: Path) -> Path:
