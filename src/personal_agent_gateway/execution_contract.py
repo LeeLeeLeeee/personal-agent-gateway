@@ -94,7 +94,17 @@ def compile_execution(
             input_manifest_sha256=None,
         )
 
-    workspace_root = Path(staging.workspace_root).resolve()
+    configured_workspace = requirements.workspace_root or getattr(
+        staging,
+        "workspace_root",
+        None,
+    )
+    if configured_workspace is None:
+        raise ExecutionContractError(
+            "invalid_execution_path",
+            "An isolated execution requires a workspace root",
+        )
+    workspace_root = Path(configured_workspace).resolve()
     if not requirements.requires_sources:
         return CompiledExecution(
             workspace_root=workspace_root,

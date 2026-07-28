@@ -2,31 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from personal_agent_gateway.artifacts import Artifact, ArtifactStore
+from personal_agent_gateway.file_safety import iter_safe_files
 from personal_agent_gateway.teams import TeamMessage, TeamRun, TeamRunService, TeamTask
 
 WorkspaceSnapshot = dict[str, tuple[int, int]]
 
-_IGNORED_DIRS = {
-    ".git",
-    ".hg",
-    ".svn",
-    ".cache",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    "venv",
-    "__pycache__",
-    "node_modules",
-    ".pnpm-store",
-    "coverage",
-}
 _PACKAGE_FILES = {
     "run-result.json": ("text", "Team Run result", "application/json"),
     "file-manifest.json": ("text", "Team Run file manifest", "application/json"),
@@ -52,25 +37,8 @@ _VERIFICATION_WORDS = {
 }
 
 
-def _is_sensitive(name: str) -> bool:
-    lowered = name.lower()
-    return lowered == ".env" or lowered.startswith(".env.")
-
-
 def _workspace_files(root: Path):
-    if not root.is_dir():
-        return
-    for current, dirs, files in os.walk(root):
-        dirs[:] = sorted(
-            name
-            for name in dirs
-            if name.lower() not in _IGNORED_DIRS and not (Path(current) / name).is_symlink()
-        )
-        for name in sorted(files):
-            path = Path(current) / name
-            if _is_sensitive(name) or path.is_symlink() or not path.is_file():
-                continue
-            yield path, path.relative_to(root).as_posix()
+    yield from iter_safe_files(root)
 
 
 def workspace_snapshot(root: Path) -> WorkspaceSnapshot:
