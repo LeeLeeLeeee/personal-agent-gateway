@@ -95,6 +95,15 @@ class ExecutionContextFactory:
         self._staged_inputs[key] = staged
         return staged
 
+    def staged_inputs_for(self, workspace_root: Path) -> StagedInputs | None:
+        resolved = workspace_root.resolve()
+        for (_roots, staged_workspace), staged in reversed(
+            self._staged_inputs.items()
+        ):
+            if staged_workspace.resolve() == resolved:
+                return staged
+        return None
+
     @staticmethod
     def wire_execution(
         compiled: CompiledExecution,

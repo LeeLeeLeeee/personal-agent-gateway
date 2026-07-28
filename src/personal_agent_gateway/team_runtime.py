@@ -1,13 +1,19 @@
 import asyncio
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelClient
 from personal_agent_gateway.redaction import redact_text
+from personal_agent_gateway.source_staging import StagedInputs
+from personal_agent_gateway.team_acceptance import AcceptanceResult, TeamAcceptanceService
+from personal_agent_gateway.team_artifact_publisher import (
+    ArtifactPublicationError,
+    TeamArtifactPublisher,
+)
 from personal_agent_gateway.team_outcomes import (
     TaskOutcome,
     TaskOutcomeError,
@@ -171,12 +177,18 @@ class TeamRuntime:
         event_bus: EventBus | None = None,
         archive_service: ArchiveService | None = None,
         result_packager: TeamRunResultPackager | None = None,
+        acceptance_service: TeamAcceptanceService | None = None,
+        artifact_publisher: TeamArtifactPublisher | None = None,
+        staged_inputs_resolver: Callable[[Path], StagedInputs | None] | None = None,
     ) -> None:
         self._teams = teams
         self._model_factory = model_factory
         self._event_bus = event_bus
         self._archive_service = archive_service
         self._result_packager = result_packager
+        self._acceptance_service = acceptance_service or TeamAcceptanceService()
+        self._artifact_publisher = artifact_publisher
+        self._staged_inputs_resolver = staged_inputs_resolver
 
     def _goal_context(self, run: TeamRun, cycle_id: str | None) -> str:
         if cycle_id is None:
@@ -419,11 +431,52 @@ class TeamRuntime:
                     },
                     cycle_id=cycle_id,
                 )
+                staged_inputs = (
+                    self._staged_inputs_resolver(working_root)
+                    if self._staged_inputs_resolver is not None
+                    else None
+                )
+                acceptance = self._acceptance_service.evaluate(
+                    task,
+                    outcome,
+                    working_root,
+                    staged_inputs=staged_inputs,
+                )
+                if acceptance.accepted and outcome.deliverables:
+                    try:
+                        if self._artifact_publisher is None:
+                            raise ArtifactPublicationError(
+                                "artifact_publication_failed"
+                            )
+                        self._artifact_publisher.publish(
+                            run.id,
+                            cycle_id,
+                            task,
+                            outcome,
+                            working_root,
+                        )
+                    except ArtifactPublicationError:
+                        acceptance = AcceptanceResult(
+                            accepted=False,
+                            status="failed",
+                            reason_code="artifact_publication_failed",
+                            evidence={},
+                        )
+                self._teams.record_task_outcome(
+                    task.id,
+                    asdict(outcome),
+                    asdict(acceptance),
+                )
                 task, worker = self._teams.finish_task(
                     task.id,
                     worker.id,
-                    "completed",
-                    result=outcome.summary,
+                    acceptance.status,
+                    result=outcome.summary if acceptance.accepted else None,
+                    error_message=(
+                        None
+                        if acceptance.accepted
+                        else acceptance.reason_code or outcome.reason_code
+                    ),
                 )
             except asyncio.CancelledError:
                 raise
@@ -587,14 +640,14 @@ class TeamRuntime:
         persona_id: str,
         team_run_id: str,
     ) -> TaskOutcome:
-        finalized = self._finalize_persona_content(
-            content,
-            persona_id=persona_id,
-            team_run_id=team_run_id,
-        )
         try:
-            return parse_task_outcome(finalized)
+            outcome = parse_task_outcome(content)
         except TaskOutcomeError:
+            finalized = self._finalize_persona_content(
+                content,
+                persona_id=persona_id,
+                team_run_id=team_run_id,
+            )
             return TaskOutcome(
                 status="blocked",
                 summary=finalized,
@@ -602,6 +655,12 @@ class TeamRuntime:
                 deliverables=(),
                 verifications=(),
             )
+        summary = self._finalize_persona_content(
+            outcome.summary,
+            persona_id=persona_id,
+            team_run_id=team_run_id,
+        )
+        return replace(outcome, summary=summary)
 
     async def _execute_and_synthesize(
         self,
@@ -617,15 +676,32 @@ class TeamRuntime:
                 return await self._publish_user_decision_request(run, cycle_id)
             tasks = self._teams.list_tasks(run.id, cycle_id)
             status = _terminal_status(tasks)
-            if status == "failed":
-                run = self._teams.set_run_status(run.id, "failed", error_message="All tasks failed")
+            if status in {"blocked", "failed"}:
+                error = (
+                    "Required task blocked"
+                    if status == "blocked"
+                    else "Required task failed"
+                )
+                run = self._teams.set_run_status(
+                    run.id,
+                    status,
+                    error_message=error,
+                )
                 if cycle_id is not None:
                     self._teams.set_cycle_status(
-                        cycle_id, "failed", error_message="All tasks failed"
+                        cycle_id,
+                        status,
+                        error_message=error,
                     )
                 self._teams.set_agent_status(leader.id, "failed")
                 self._package_results(run, leader, cycle_id)
-                await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": "All tasks failed"})
+                await self._publish(
+                    {
+                        "type": f"team.run.{status}",
+                        "team_run_id": run.id,
+                        "error": error,
+                    }
+                )
                 return run
             run = self._teams.set_run_status(run.id, "summarizing")
             await self._publish({"type": "team.run.summarizing", "team_run_id": run.id})
@@ -954,13 +1030,22 @@ def _assignment_roster_json(members: list[TeamAgent]) -> str:
 
 def _terminal_status(tasks: list[TeamTask]) -> str:
     if not tasks:
-        return "completed"
-    statuses = [task.status for task in tasks]
-    if all(status == "failed" for status in statuses):
         return "failed"
-    if any(status == "failed" for status in statuses):
+    required = [task for task in tasks if task.required]
+    optional = [task for task in tasks if not task.required]
+    if any(task.status == "failed" for task in required):
+        return "failed"
+    if any(task.status == "blocked" for task in required):
+        return "blocked"
+    if all(task.status == "completed" for task in required):
+        if any(task.status in {"blocked", "failed"} for task in optional):
+            return "completed_with_failures"
+        return "completed"
+    if not required and any(
+        task.status in {"blocked", "failed"} for task in optional
+    ):
         return "completed_with_failures"
-    return "completed"
+    return "blocked"
 
 
 def _run_delta(run: TeamRun) -> dict[str, object]:

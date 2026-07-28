@@ -301,6 +301,33 @@ async def test_team_hook_enqueues_shared_cycle_request(
 
 
 @pytest.mark.asyncio
+async def test_blocked_team_cycle_fails_linked_hook_run(tmp_path: Path) -> None:
+    runner, runs, teams, team_run, run, cycles, _dispatcher, _archive = (
+        _setup_team_hook(tmp_path)
+    )
+    await runner.run_one(run.id)
+    request = cycles.claim_next(team_run.id)
+    assert request is not None
+    cycle = teams.create_cycle(
+        team_run.id,
+        request.source_type,
+        request.source_id,
+        request_id=request.id,
+    )
+    teams.set_cycle_status(
+        cycle.id,
+        "blocked",
+        error_message="Required task could not verify its inputs",
+    )
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    updated = runs.get_run(run.id)
+    assert updated.status == "failed"
+    assert updated.error_message == "Required task could not verify its inputs"
+
+
+@pytest.mark.asyncio
 async def test_team_hook_rechecks_triggered_policy_before_enqueue(tmp_path: Path) -> None:
     (
         runner,

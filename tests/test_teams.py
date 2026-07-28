@@ -587,6 +587,42 @@ def test_completed_with_failures_is_terminal(tmp_path):
     assert updated.finished_at is not None
 
 
+def test_task_outcome_and_acceptance_result_are_persisted(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "role", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [], "planning_only", 1)
+    task = teams.create_task(
+        run.id,
+        "T",
+        "D",
+        acceptance=TaskAcceptance((), ("review",)),
+    )
+
+    updated = teams.record_task_outcome(
+        task.id,
+        {
+            "status": "completed",
+            "summary": "done",
+            "reason_code": None,
+            "deliverables": [],
+            "verifications": [
+                {"name": "review", "status": "passed", "evidence": "checked"}
+            ],
+        },
+        {
+            "accepted": True,
+            "status": "completed",
+            "reason_code": None,
+            "evidence": {"verifications": {"review": {"status": "passed"}}},
+        },
+    )
+
+    assert updated.outcome is not None
+    assert updated.outcome["summary"] == "done"
+    assert updated.acceptance_result is not None
+    assert updated.acceptance_result["accepted"] is True
+
+
 def test_persona_snapshot_includes_avatar(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService

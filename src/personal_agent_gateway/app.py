@@ -87,6 +87,7 @@ from personal_agent_gateway.space_policies import (
     SpacePolicyService,
     policy_from_snapshot,
 )
+from personal_agent_gateway.team_artifact_publisher import TeamArtifactPublisher
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycle_loop import TeamCycleLoop
 from personal_agent_gateway.team_cycles import TeamCycleService
@@ -211,6 +212,8 @@ def create_app(
         event_bus,
         archive_service=app.state.archive_service,
         result_packager=app.state.team_result_packager,
+        artifact_publisher=TeamArtifactPublisher(app.state.artifact_store),
+        staged_inputs_resolver=app.state.execution_contexts.staged_inputs_for,
     )
     app.state.team_run_orchestrator = TeamRunOrchestrator(
         team_run_registry,

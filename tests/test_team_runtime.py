@@ -15,6 +15,7 @@ from personal_agent_gateway.team_runtime import (
     _parse_task_plan,
     _rules_block,
     _task_delta,
+    _terminal_status,
 )
 from personal_agent_gateway.team_outcomes import TaskOutcome
 from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
@@ -23,29 +24,39 @@ from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
 @dataclass
 class FakeModel:
     content: str
+    normalize_worker: bool = True
 
     async def complete(self, messages):
-        return ModelResponse(content=_complete_plan_fixture(self.content), tool_calls=[])
+        content = _complete_plan_fixture(self.content)
+        if self.normalize_worker and _is_worker_prompt(messages):
+            content = _complete_worker_fixture(content)
+        return ModelResponse(content=content, tool_calls=[])
 
 
 @dataclass
 class ScriptedModel:
     """호출마다 responses에서 순서대로 반환. 소진되면 마지막 값 반복."""
     responses: list
+    normalize_worker: bool = True
 
     def __post_init__(self):
         self._calls = 0
+        self._is_worker = False
         self.messages = []
 
     async def complete(self, messages):
         self.messages.append(messages)
+        self._is_worker = self._is_worker or _is_worker_prompt(messages)
         idx = min(self._calls, len(self.responses) - 1)
         self._calls += 1
         value = self.responses[idx]
         if isinstance(value, Exception):
             raise value
+        content = _complete_plan_fixture(value)
+        if self.normalize_worker and self._is_worker:
+            content = _complete_worker_fixture(content)
         return ModelResponse(
-            content=_complete_plan_fixture(value),
+            content=content,
             tool_calls=[],
             upstream_session_id=f"sess-{self._calls}",
         )
@@ -78,13 +89,60 @@ def _complete_plan_fixture(value):
     return json.dumps(parsed)
 
 
-def _factory_by_role(leader_responses, worker_responses):
+def _is_worker_prompt(messages) -> bool:
+    return any(
+        "CONCRETE ASSIGNMENT" in str(message.get("content", ""))
+        for message in messages
+    )
+
+
+def _complete_worker_fixture(value):
+    if not isinstance(value, str) or '"needs_info"' in value:
+        return value
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict) and set(parsed) == {
+        "status",
+        "summary",
+        "reason_code",
+        "deliverables",
+        "verifications",
+    }:
+        return value
+    return json.dumps(
+        {
+            "status": "completed",
+            "summary": value,
+            "reason_code": None,
+            "deliverables": [],
+            "verifications": [
+                {
+                    "name": "worker-result",
+                    "status": "passed",
+                    "evidence": "test fixture response",
+                }
+            ],
+        }
+    )
+
+
+def _factory_by_role(
+    leader_responses,
+    worker_responses,
+    *,
+    normalize_worker=True,
+):
     from personal_agent_gateway.teams import TeamAgent
     models = {}
     def factory(agent: TeamAgent):
         if agent.id not in models:
             responses = leader_responses if agent.role == "leader" else worker_responses
-            models[agent.id] = ScriptedModel(list(responses))
+            models[agent.id] = ScriptedModel(
+                list(responses),
+                normalize_worker=normalize_worker if agent.role != "leader" else True,
+            )
         return models[agent.id]
     return factory
 
@@ -162,7 +220,13 @@ async def test_worker_prose_becomes_invalid_task_outcome(tmp_path) -> None:
     )
     leader_agent, worker_agent = teams.list_agents(run.id)
     task = teams.create_task(run.id, "T", "D")
-    runtime = TeamRuntime(teams, lambda _agent: FakeModel("권한이 없어 실패했습니다."))
+    runtime = TeamRuntime(
+        teams,
+        lambda _agent: FakeModel(
+            "권한이 없어 실패했습니다.",
+            normalize_worker=False,
+        ),
+    )
 
     outcome = await runtime._run_task(run, leader_agent, worker_agent, task)
 
@@ -170,6 +234,84 @@ async def test_worker_prose_becomes_invalid_task_outcome(tmp_path) -> None:
     assert outcome.status == "blocked"
     assert outcome.reason_code == "invalid_task_outcome"
     assert outcome.summary == "권한이 없어 실패했습니다."
+
+
+@pytest.mark.asyncio
+async def test_worker_prose_cannot_complete_team_run(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+    )
+    plan = '[{"title":"T","description":"D"}]'
+    runtime = TeamRuntime(
+        teams,
+        _factory_by_role(
+            [plan, "Everything is done."],
+            ["I could not inspect files."],
+            normalize_worker=False,
+        ),
+    )
+
+    result = await runtime.start(run.id)
+
+    assert result.status == "blocked"
+    task = teams.list_tasks(run.id)[0]
+    assert task.status == "blocked"
+    assert task.outcome is not None
+    assert task.outcome["reason_code"] == "invalid_task_outcome"
+    assert task.acceptance_result is not None
+    assert task.acceptance_result["accepted"] is False
+
+
+@pytest.mark.parametrize(
+    ("required_status", "optional_status", "expected"),
+    [
+        ("failed", "completed", "failed"),
+        ("blocked", "completed", "blocked"),
+        ("completed", "failed", "completed_with_failures"),
+        ("completed", "blocked", "completed_with_failures"),
+        ("completed", "completed", "completed"),
+    ],
+)
+def test_terminal_status_respects_required_tasks(
+    tmp_path,
+    required_status,
+    optional_status,
+    expected,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [], "planning_only", 1)
+    required = teams.create_task(
+        run.id,
+        "required",
+        "D",
+        required=True,
+        acceptance=TaskAcceptance((), ("review",)),
+    )
+    optional = teams.create_task(
+        run.id,
+        "optional",
+        "D",
+        required=False,
+        acceptance=TaskAcceptance((), ("review",)),
+    )
+    teams.set_task_status(required.id, required_status)
+    teams.set_task_status(optional.id, optional_status)
+
+    assert _terminal_status(teams.list_tasks(run.id)) == expected
 
 
 def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
@@ -550,7 +692,10 @@ async def test_partial_failure_yields_completed_with_failures(tmp_path):
     member = personas.create_persona("W", "work", "d", [], [])
     run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
 
-    plan = '[{"title":"T1","description":"d1"},{"title":"T2","description":"d2"}]'
+    plan = (
+        '[{"title":"T1","description":"d1"},'
+        '{"title":"T2","description":"d2","required":false}]'
+    )
     # 워커: T1 성공, T2 예외
     runtime = TeamRuntime(
         teams=teams,
@@ -979,7 +1124,10 @@ async def test_runtime_publishes_task_and_agent_assignment_deltas(tmp_path):
         async def complete(self, _messages):
             started.set()
             await asyncio.wait_for(release.wait(), timeout=2)
-            return ModelResponse(content="done", tool_calls=[])
+            return ModelResponse(
+                content=_complete_worker_fixture("done"),
+                tool_calls=[],
+            )
 
     leader_model = ScriptedModel([plan, "summary"])
     bus = EventBus()
@@ -1037,7 +1185,10 @@ async def test_execute_drains_task_added_during_execution(tmp_path):
                 if not state["injected"]:
                     state["injected"] = True
                     teams.create_task(run.id, "T2", "d2")
-                return ModelResponse(content="did it", tool_calls=[])
+                return ModelResponse(
+                    content=_complete_worker_fixture("did it"),
+                    tool_calls=[],
+                )
 
         return WorkerModel()
 

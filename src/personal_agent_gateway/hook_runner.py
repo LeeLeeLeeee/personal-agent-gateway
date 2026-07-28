@@ -275,7 +275,13 @@ class HookRunner:
             self._mail_knowledge is not None
             and self._mail_projector is not None
             and cycle.status
-            in {"completed", "completed_with_failures", "failed", "canceled"}
+            in {
+                "completed",
+                "completed_with_failures",
+                "blocked",
+                "failed",
+                "canceled",
+            }
         ):
             message = self._mail_knowledge.complete_cycle(
                 cycle.id, cycle.summary or cycle.error_message or ""
@@ -299,7 +305,7 @@ class HookRunner:
                 run.id, cycle.error_message or "Team Run Cycle canceled"
             )
             status = "canceled"
-        elif cycle.status == "failed":
+        elif cycle.status in {"blocked", "failed"}:
             self._hook_runs.mark_failed(
                 run.id, cycle.error_message or f"Team Run Cycle {cycle.status}"
             )
@@ -407,7 +413,7 @@ class HookRunner:
                 }
             )
             return
-        if cycle.status in {"failed", "canceled", "interrupted"}:
+        if cycle.status in {"blocked", "failed", "canceled", "interrupted"}:
             self._reopen_knowledge_request(request_id)
 
     def _save_knowledge_request_draft(
@@ -474,7 +480,7 @@ class HookRunner:
                 except (KeyError, RuntimeError, ValueError):
                     self._reopen_knowledge_request(request_id)
                 continue
-            if cycle.status in {"failed", "canceled", "interrupted"}:
+            if cycle.status in {"blocked", "failed", "canceled", "interrupted"}:
                 self._reopen_knowledge_request(request_id)
 
     async def _run_loop(self) -> None:
@@ -593,7 +599,7 @@ class HookRunner:
                     cycle.error_message or "Team Run Cycle canceled",
                 )
             return
-        if cycle.status == "failed":
+        if cycle.status in {"blocked", "failed"}:
             if run.status != "failed":
                 self._hook_runs.mark_failed(
                     run.id,

@@ -1188,6 +1188,28 @@ class TeamRunService:
         )
         return self._get_task(task_id)
 
+    def record_task_outcome(
+        self,
+        task_id: str,
+        outcome: dict[str, object],
+        acceptance_result: dict[str, object],
+    ) -> TeamTask:
+        self._get_task(task_id)
+        self._db.execute(
+            """
+            update team_tasks
+            set outcome_json = ?, acceptance_result_json = ?, updated_at = ?
+            where id = ?
+            """,
+            (
+                json.dumps(outcome, ensure_ascii=False, sort_keys=True),
+                json.dumps(acceptance_result, ensure_ascii=False, sort_keys=True),
+                _now(),
+                task_id,
+            ),
+        )
+        return self._get_task(task_id)
+
     def start_task(self, task_id: str, agent_id: str) -> tuple[TeamTask, TeamAgent]:
         now = _now()
         with self._db.connection() as connection:
@@ -1225,7 +1247,7 @@ class TeamRunService:
         self,
         task_id: str,
         agent_id: str,
-        status: Literal["completed", "failed", "canceled"],
+        status: Literal["completed", "blocked", "failed", "canceled"],
         result: str | None = None,
         error_message: str | None = None,
     ) -> tuple[TeamTask, TeamAgent]:
