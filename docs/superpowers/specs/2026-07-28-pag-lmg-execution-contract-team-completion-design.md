@@ -157,6 +157,13 @@ LMG continues to reject external read-only roots for CLI providers that cannot
 enforce them. PAG resolves that capability mismatch before the request reaches
 LMG.
 
+PAG adds an explicit `read_mode="none"`. New isolated policies default to
+`none`, and existing `home + isolated` policies migrate to `none` because their
+effective CLI read roots were already empty. `home` and `all` are unbounded
+scopes and are never copied into an isolated run. A source-dependent isolated
+execution using either mode stops with `source_scope_requires_selection` until
+the operator chooses a bounded `selected` directory.
+
 For an isolated execution:
 
 ```text
