@@ -18,7 +18,7 @@ const LABELS = {
   waiting_for_user: "INPUT NEEDED",
   queued: "QUEUED",
   in_progress: "IN PROGRESS",
-  blocked: "BLOCKED",
+  blocked: "차단됨",
   enabled: "ENABLED",
   paused: "PAUSED",
   active: "ACTIVE",

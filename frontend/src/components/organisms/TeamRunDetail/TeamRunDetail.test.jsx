@@ -670,6 +670,60 @@ describe("TeamRunDetail", () => {
     expect(screen.queryByRole("button", { name: "Stop run" })).not.toBeInTheDocument();
   });
 
+  it("shows blocked acceptance requirements, evidence, and reason in task details", async () => {
+    render(<TeamRunDetail detail={{
+      run: {
+        id: "r1",
+        goal: "Publish guide",
+        status: "blocked",
+        run_mode: "plan_and_execute"
+      },
+      agents: [],
+      messages: [],
+      tasks: [{
+        id: "t1",
+        title: "Verify guide",
+        status: "blocked",
+        required: true,
+        error_message: "The link checker could not run.",
+        acceptance: {
+          required_outputs: ["outputs/guide.md"],
+          required_verifications: ["link-check"]
+        },
+        outcome: {
+          status: "completed",
+          summary: "Guide written.",
+          reason_code: null,
+          deliverables: [{ path: "outputs/guide.md", kind: "text" }],
+          verifications: [{
+            name: "link-check",
+            status: "failed",
+            evidence: "Executable unavailable"
+          }]
+        },
+        acceptance_result: {
+          accepted: false,
+          status: "failed",
+          reason_code: "required_verification_failed",
+          evidence: {}
+        }
+      }]
+    }} />);
+
+    expect(screen.getByText("차단됨")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Open task Verify guide" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Task details: Verify guide" });
+    expect(within(dialog).getByText("REQUIRED TASK")).toBeInTheDocument();
+    expect(within(dialog).getByText("outputs/guide.md")).toBeInTheDocument();
+    expect(within(dialog).getByText("link-check")).toBeInTheDocument();
+    expect(within(dialog).getByText("FAILED")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Executable unavailable/)).toBeInTheDocument();
+    expect(within(dialog).getByText("required_verification_failed")).toBeInTheDocument();
+    expect(within(dialog).getByText("The link checker could not run.")).toBeInTheDocument();
+  });
+
   it("collects every pending user decision and submits one answer batch", async () => {
     const onAnswerDecision = vi.fn(() => new Promise(() => {}));
     render(<TeamRunDetail

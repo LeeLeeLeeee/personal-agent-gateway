@@ -101,6 +101,7 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
   const handleTeamEvent = useCallback((event) => {
     const requiresRefresh = [
       "team.run.completed",
+      "team.run.blocked",
       "team.run.failed",
       "team.run.input_requested",
       "team.run.input_resolved",

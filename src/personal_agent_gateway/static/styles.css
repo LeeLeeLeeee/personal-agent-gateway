@@ -1302,8 +1302,11 @@ p {
     color: var(--c-warn);
     border-color: var(--c-warn);
 }
+.badge-blocked {
+    color: var(--c-danger);
+    border-color: var(--c-danger);
+}
 .badge-draft,
-.badge-blocked,
 .badge-canceled {
     color: var(--c-grey);
     border-color: var(--c-grey);

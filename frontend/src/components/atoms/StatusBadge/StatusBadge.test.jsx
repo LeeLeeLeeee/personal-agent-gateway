@@ -58,4 +58,11 @@ describe("StatusBadge", () => {
     expect(container.querySelector(".badge-interrupted")).not.toBeNull();
     expect(container.querySelector(".dot")).toBeNull();
   });
+
+  it("renders blocked as a distinct Korean terminal label", () => {
+    const { container } = render(<StatusBadge kind="blocked" />);
+    expect(screen.getByText("차단됨")).toBeInTheDocument();
+    expect(container.querySelector(".badge-blocked")).not.toBeNull();
+    expect(container.querySelector(".badge-completed")).toBeNull();
+  });
 });

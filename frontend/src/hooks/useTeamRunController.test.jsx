@@ -138,6 +138,24 @@ describe("useTeamRunController request ownership", () => {
     expect(api.teamRuns).toHaveBeenCalledTimes(1);
   });
 
+  it("refreshes the run list and detail when a team run becomes blocked", async () => {
+    const { result } = renderController();
+    await selectRun(result, "run-a");
+    api.teamRunDetail.mockImplementation(async (id) => detail(id, {
+      run: { id, status: "blocked" }
+    }));
+
+    act(() => result.current.handleTeamEvent({
+      type: "team.run.blocked",
+      team_run_id: "run-a",
+      run: { id: "run-a", status: "blocked" }
+    }));
+
+    await waitFor(() => expect(api.teamRuns).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.teamRunDetail).toHaveBeenCalledTimes(2));
+    expect(result.current.teamRunDetail.run.status).toBe("blocked");
+  });
+
   it("clears the previous run while detail and documents settle independently", async () => {
     const nextDetail = deferred();
     const nextDocuments = deferred();

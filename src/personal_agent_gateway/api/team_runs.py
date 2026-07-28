@@ -31,7 +31,13 @@ from personal_agent_gateway.teams import (
 router = APIRouter(prefix="/api/team-runs", tags=["team-runs"])
 
 _ACTIVE = {"planning", "running", "summarizing"}
-_TERMINAL = {"completed", "completed_with_failures", "failed", "canceled"}
+_TERMINAL = {
+    "completed",
+    "completed_with_failures",
+    "blocked",
+    "failed",
+    "canceled",
+}
 
 
 class CreateTeamRunRequest(BaseModel):
@@ -1251,6 +1257,15 @@ def _task_payload(task: TeamTask) -> dict[str, object]:
         "description": task.description,
         "owner_agent_id": task.owner_agent_id,
         "status": task.status,
+        "required": task.required,
+        "acceptance": {
+            "required_outputs": list(task.acceptance.required_outputs),
+            "required_verifications": list(
+                task.acceptance.required_verifications
+            ),
+        },
+        "outcome": task.outcome,
+        "acceptance_result": task.acceptance_result,
         "result": task.result,
         "error_message": task.error_message,
         "created_at": task.created_at,

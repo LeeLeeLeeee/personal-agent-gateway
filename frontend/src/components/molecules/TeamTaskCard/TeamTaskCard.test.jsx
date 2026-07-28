@@ -37,4 +37,29 @@ describe("TeamTaskCard", () => {
     expect(screen.getByText("FILES 2")).toBeInTheDocument();
     expect(screen.getByText("REPORTS 1")).toBeInTheDocument();
   });
+
+  it("shows blocked as blocked with a stable reason and safe diagnostic", () => {
+    render(
+      <TeamTaskCard
+        task={{
+          ...task,
+          status: "blocked",
+          error_message: "Input snapshot changed; retry with fresh inputs.",
+          outcome: { reason_code: "input_snapshot_modified" },
+          acceptance_result: {
+            accepted: false,
+            status: "blocked",
+            reason_code: "input_snapshot_modified"
+          }
+        }}
+        owner={null}
+        onOpen={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("차단됨")).toBeInTheDocument();
+    expect(screen.getByText("input_snapshot_modified")).toBeInTheDocument();
+    expect(screen.getByText(/Input snapshot changed/)).toBeInTheDocument();
+    expect(screen.queryByText("COMPLETED")).not.toBeInTheDocument();
+  });
 });

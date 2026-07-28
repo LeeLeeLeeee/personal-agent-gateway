@@ -14,8 +14,15 @@ from personal_agent_gateway.app import create_app
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.team_runtime import TeamRuntime
+from personal_agent_gateway.teams import TaskAcceptance
 
-_TERMINAL_STATUSES = {"completed", "completed_with_failures", "failed", "canceled"}
+_TERMINAL_STATUSES = {
+    "completed",
+    "completed_with_failures",
+    "blocked",
+    "failed",
+    "canceled",
+}
 
 
 def make_config(tmp_path: Path) -> AppConfig:
@@ -654,6 +661,58 @@ def test_auto_actions_and_detail_read_model(tmp_path: Path) -> None:
     assert continued.json()["auto_series"]["status"] == "waiting_interval"
 
 
+def test_team_task_payload_exposes_acceptance_outcome_and_result(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Leader")
+    run = create_standard_run(client.app, leader_id, run_mode="planning_only")
+    service = client.app.state.team_run_service
+    task = service.create_task(
+        run["id"],
+        "Verify guide",
+        "Check the guide.",
+        required=True,
+        acceptance=TaskAcceptance(
+            ("outputs/guide.md",),
+            ("link-check",),
+        ),
+    )
+    service.record_task_outcome(
+        task.id,
+        {
+            "status": "blocked",
+            "summary": "Link checker was unavailable.",
+            "reason_code": "tool_unavailable",
+            "deliverables": [],
+            "verifications": [],
+        },
+        {
+            "accepted": False,
+            "status": "blocked",
+            "reason_code": "required_verification_failed",
+            "evidence": {},
+        },
+    )
+    service.set_task_status(
+        task.id,
+        "blocked",
+        error_message="required_verification_failed",
+    )
+
+    response = client.get(f"/api/team-runs/{run['id']}/tasks")
+
+    assert response.status_code == 200
+    payload = response.json()["tasks"][0]
+    assert payload["required"] is True
+    assert payload["acceptance"] == {
+        "required_outputs": ["outputs/guide.md"],
+        "required_verifications": ["link-check"],
+    }
+    assert payload["outcome"]["reason_code"] == "tool_unavailable"
+    assert payload["acceptance_result"]["reason_code"] == (
+        "required_verification_failed"
+    )
+
+
 def test_restart_completed_auto_series_enqueues_first_cycle(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Leader")
@@ -737,11 +796,43 @@ class GatedModel:
     """
 
     gate: asyncio.Event
-    content: str = '[{"title": "T", "description": "D"}]'
-
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
         await asyncio.wait_for(self.gate.wait(), timeout=5)
-        return ModelResponse(content=self.content, tool_calls=[])
+        prompt = str(messages[-1].get("content", ""))
+        if "CONCRETE ASSIGNMENT" in prompt:
+            content = json.dumps(
+                {
+                    "status": "completed",
+                    "summary": "Done",
+                    "reason_code": None,
+                    "deliverables": [],
+                    "verifications": [
+                        {
+                            "name": "worker-result",
+                            "status": "passed",
+                            "evidence": "test fixture response",
+                        }
+                    ],
+                }
+            )
+        elif "Task results:" in prompt:
+            content = "Completed."
+        else:
+            content = json.dumps(
+                [
+                    {
+                        "title": "T",
+                        "description": "D",
+                        "owner_agent_id": None,
+                        "required": True,
+                        "acceptance": {
+                            "required_outputs": [],
+                            "required_verifications": ["worker-result"],
+                        },
+                    }
+                ]
+            )
+        return ModelResponse(content=content, tool_calls=[])
 
 
 def _inject_gated_team_runtime(app, gate: asyncio.Event) -> None:
@@ -1411,7 +1502,11 @@ def test_double_start_conflicts(tmp_path: Path) -> None:
     assert second.status_code in (200, 409)  # 이미 끝났으면 finished 409, 실행중이면 409
 
 
-def test_cancel_does_not_overwrite_already_terminal_run(tmp_path: Path) -> None:
+@pytest.mark.parametrize("terminal_status", ["completed", "blocked"])
+def test_cancel_does_not_overwrite_already_terminal_run(
+    tmp_path: Path,
+    terminal_status: str,
+) -> None:
     """registry에 없는(이미 끝난) 팀런을 /cancel해도 실제 종료 상태가 덮어써지지 않아야 함."""
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
@@ -1419,13 +1514,13 @@ def test_cancel_does_not_overwrite_already_terminal_run(tmp_path: Path) -> None:
     run_id = created["id"]
 
     service = client.app.state.team_run_service
-    service.set_run_status(run_id, "completed", summary="real result")
+    service.set_run_status(run_id, terminal_status, summary="real result")
 
     cancel_resp = client.post(f"/api/team-runs/{run_id}/cancel")
     assert cancel_resp.status_code == 200
 
     final = client.get(f"/api/team-runs/{run_id}").json()["team_run"]
-    assert final["status"] == "completed"
+    assert final["status"] == terminal_status
     assert final["summary"] == "real result"
 
 

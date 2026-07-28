@@ -73,4 +73,17 @@ describe("TeamRunCard", () => {
     expect(screen.getByText("QT")).toBeInTheDocument();
     expect(screen.getByText("QA Tester")).toBeInTheDocument();
   });
+
+  it("renders a blocked run as blocked rather than completed", () => {
+    render(<TeamRunCard run={{
+      ...run,
+      status: "blocked",
+      display_status: null,
+      latest_cycle: { sequence: 3, status: "blocked" }
+    }} onOpen={vi.fn()} />);
+
+    expect(screen.getByText("차단됨")).toBeInTheDocument();
+    expect(screen.getByText("CYCLE #3 · BLOCKED")).toBeInTheDocument();
+    expect(screen.queryByText("COMPLETED")).not.toBeInTheDocument();
+  });
 });

@@ -8,7 +8,13 @@ import { MarkdownContent } from "../MarkdownContent/index.jsx";
 import { fmtDateTime } from "../../../lib/time.js";
 
 const TEAM_TASK_COLUMNS = ["pending", "in_progress", "blocked", "completed", "failed"];
-const TERMINAL_STATUSES = ["completed", "completed_with_failures", "failed", "canceled"];
+const TERMINAL_STATUSES = [
+  "completed",
+  "completed_with_failures",
+  "blocked",
+  "failed",
+  "canceled"
+];
 
 const DETAIL_TABS = [
   ["overview", "OVERVIEW"],
@@ -22,7 +28,11 @@ const RUN_PHASES = [
   { key: "planning", label: "Planning", statuses: ["planning"] },
   { key: "executing", label: "Executing", statuses: ["running"] },
   { key: "summarizing", label: "Summarizing", statuses: ["summarizing"] },
-  { key: "done", label: "Done", statuses: ["completed", "completed_with_failures", "failed", "canceled"] }
+  {
+    key: "done",
+    label: "Done",
+    statuses: ["completed", "completed_with_failures", "blocked", "failed", "canceled"]
+  }
 ];
 
 function phaseIndex(status) {
@@ -122,6 +132,20 @@ function taskFileCount(reports) {
 
 function TaskDetailDialog({ task, reports, agents, canRetry, retrying, onRetry, onClose }) {
   if (!task) return null;
+  const acceptance = task.acceptance || {};
+  const outcome = task.outcome || {};
+  const acceptanceResult = task.acceptance_result || {};
+  const verifications = Array.isArray(outcome.verifications)
+    ? outcome.verifications
+    : [];
+  const verificationByName = new Map(
+    verifications.map((verification) => [verification.name, verification])
+  );
+  const reasonCode = acceptanceResult.reason_code || outcome.reason_code;
+  const diagnostic = task.result
+    || (task.error_message && task.error_message !== reasonCode
+      ? task.error_message
+      : outcome.summary || task.error_message);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -147,14 +171,53 @@ function TaskDetailDialog({ task, reports, agents, canRetry, retrying, onRetry, 
             ) : null}
           </div>
 
-          {task.result || task.error_message ? (
+          {diagnostic ? (
             <div>
               <div className="mono team-task-dialog-label">RESULT</div>
               <div className="team-task-dialog-copy">
-                <MarkdownContent source={task.result || task.error_message} pathRegistration={false} />
+                <MarkdownContent source={diagnostic} pathRegistration={false} />
               </div>
             </div>
           ) : null}
+
+          <div>
+            <div className="mono team-task-dialog-label">
+              {task.required === false ? "OPTIONAL TASK" : "REQUIRED TASK"}
+            </div>
+            {reasonCode ? (
+              <div className="team-task-dialog-copy">
+                <span className="mono">{reasonCode}</span>
+              </div>
+            ) : null}
+            <div className="team-task-dialog-copy">
+              <div className="mono">REQUIRED OUTPUTS</div>
+              {(acceptance.required_outputs || []).length ? (
+                <ul>
+                  {acceptance.required_outputs.map((path) => (
+                    <li key={path}><span className="mono">{path}</span></li>
+                  ))}
+                </ul>
+              ) : <div>None</div>}
+              <div className="mono">VERIFICATIONS</div>
+              {(acceptance.required_verifications || []).length ? (
+                <ul>
+                  {acceptance.required_verifications.map((name) => {
+                    const verification = verificationByName.get(name);
+                    return (
+                      <li key={name}>
+                        <span className="mono">{name}</span>
+                        {" · "}
+                        <span className="mono">
+                          {String(verification?.status || "missing").toUpperCase()}
+                        </span>
+                        {verification?.evidence ? ` · ${verification.evidence}` : ""}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : <div>None</div>}
+            </div>
+          </div>
 
           <div>
             <div className="mono team-task-dialog-label">SHARED DOCUMENTS · {reports.length}</div>
@@ -682,7 +745,13 @@ export function TeamRunDetail({
   const cycles = [...(detail.cycles || [])].sort((left, right) => right.sequence - left.sequence);
   const currentCycle = cycles[0] || null;
   const previousCycle = cycles.find(
-    (cycle) => ["completed", "completed_with_failures"].includes(cycle.status)
+    (cycle) => [
+      "completed",
+      "completed_with_failures",
+      "blocked",
+      "failed",
+      "canceled"
+    ].includes(cycle.status)
   );
   const policyStatus = detail.policyStatus || "ready";
   const activeAutoSeries = detail.activeAutoSeries;

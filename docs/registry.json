@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 161,
+  "document_count": 162,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -4467,6 +4467,80 @@
       "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `refactor` - Verdict: Team Run의 summary·task description/result·agent report는 Markdown 형태의 구조화된 문자열인데 현재 일반 `<div>`/`<p>`로 출력한..."
     },
     {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-29-0822.md",
+      "title": "TeamRunDetail Blocked Acceptance Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-run-acceptance",
+      "status": "done",
+      "aliases": [
+        "TeamRun blocked acceptance UI",
+        "Team Run 차단 상태 표시"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "acceptance"
+      ],
+      "updated_at": "2026-07-29",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Blocked Acceptance Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "State / Effects와 외부 동작"
+        },
+        {
+          "level": 2,
+          "text": "상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 경계"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: 기존 UI에는 task `blocked` 열과 영문 상태 표시는 있으나, run의 terminal/phase 판단과 SSE refresh 목록에는 `blocked`가 빠져..."
+    },
+    {
       "path": "docs/component-inspector/TeamsView/2026-07-15-1250.md",
       "title": "TeamsView Persona Card Selection Component Analysis",
       "type": "report",
@@ -4567,7 +4641,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [SpacesView Execution Policy Analysis — 2026-07-28 16:36](./SpacesView/2026-07-28-1636.md) - [GatewayApp OTP Login Flow Analysis — 2026-07-27 13:45](./GatewayApp/2026-07-27-1345.md) - [AuthCard OTP Submission Analys..."
+      "excerpt": "- [TeamRunDetail Blocked Acceptance Analysis — 2026-07-29 08:22](./TeamRunDetail/2026-07-29-0822.md) - [SpacesView Execution Policy Analysis — 2026-07-28 16:36](./SpacesView/2026-07-28-1636.md) - [GatewayApp OTP Login..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
