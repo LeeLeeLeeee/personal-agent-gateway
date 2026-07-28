@@ -11,6 +11,9 @@ from personal_agent_gateway.team_outcomes import (
 )
 from personal_agent_gateway.teams import TaskAcceptance, TeamTask
 
+_DEFAULT_DELIVERABLES = (Deliverable("outputs/report.md", "markdown"),)
+_DEFAULT_VERIFICATIONS = (VerificationEvidence("pytest", "passed", "42 passed"),)
+
 
 def _task(*, outputs=("outputs/report.md",), verifications=("pytest",)) -> TeamTask:
     return TeamTask(
@@ -33,8 +36,8 @@ def _task(*, outputs=("outputs/report.md",), verifications=("pytest",)) -> TeamT
 
 def _outcome(
     *,
-    deliverables=(Deliverable("outputs/report.md", "markdown"),),
-    verifications=(VerificationEvidence("pytest", "passed", "42 passed"),),
+    deliverables=_DEFAULT_DELIVERABLES,
+    verifications=_DEFAULT_VERIFICATIONS,
 ) -> TaskOutcome:
     return TaskOutcome(
         status="completed",
