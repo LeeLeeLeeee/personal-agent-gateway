@@ -14,6 +14,7 @@ updated_at: 2026-07-27
 
 # Component Inspector Reports
 
+- [SpacesView Execution Policy Analysis — 2026-07-28 16:36](./SpacesView/2026-07-28-1636.md)
 - [GatewayApp OTP Login Flow Analysis — 2026-07-27 13:45](./GatewayApp/2026-07-27-1345.md)
 - [AuthCard OTP Submission Analysis — 2026-07-27 13:45](./AuthCard/2026-07-27-1345.md)
 - [DashboardView Account Limit Analysis — 2026-07-27 13:05](./DashboardView/2026-07-27-1305.md)

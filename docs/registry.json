@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 137,
+  "document_count": 161,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -1187,6 +1187,132 @@
       "excerpt": "- Root: `frontend/src/components/organisms/AgentPicker/index.jsx` - Modes: `api-state`, `test` - Verdict: 컴포넌트는 이미 `agents[].models`와 `options_schema`를 일반화해 렌더링한다. 로컬 CLI 탐지 결과를 `GET /api/agents`에 연결하면 UI 구조 변경 없이 mod..."
     },
     {
+      "path": "docs/component-inspector/ArchiveView/2026-07-27-1030.md",
+      "title": "ArchiveView Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "archive-artifacts-navigation",
+      "status": "done",
+      "aliases": [
+        "ArchiveView analysis",
+        "ArchiveView 컴포넌트 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "archive",
+        "artifacts"
+      ],
+      "updated_at": "2026-07-27",
+      "headings": [
+        {
+          "level": 1,
+          "text": "ArchiveView Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태 / Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성과 사용자 상호작용"
+        },
+        {
+          "level": 3,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/ArchiveView/index.jsx` - Modes: `understand`, `refactor` - Verdict: ArchiveView가 Archive 내부 탭 전환과 Archive API 요청을 이미 소유하므로, 기존 `ArtifactsView`를 새 탭에 합성하는 것이 최소 변경이다. Artifact..."
+    },
+    {
+      "path": "docs/component-inspector/AuthCard/2026-07-27-1345.md",
+      "title": "AuthCard OTP Submission Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "auth-card-login",
+      "status": "done",
+      "aliases": [],
+      "tags": [
+        "[component, analysis, auth]"
+      ],
+      "updated_at": "2026-07-27",
+      "headings": [
+        {
+          "level": 1,
+          "text": "AuthCard OTP Submission Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "구조와 props"
+        },
+        {
+          "level": 2,
+          "text": "상태와 상호작용"
+        },
+        {
+          "level": 2,
+          "text": "테스트 현황과 회귀 위험"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/molecules/AuthCard/index.jsx` - Modes: `api-state,test` - Verdict: login stage에 `authSubmitting` presentation prop을 더해 input/button을 함께 잠그는 최소 변경이 적절하다."
+    },
+    {
       "path": "docs/component-inspector/ChatView/2026-07-20-1113.md",
       "title": "ChatView Persona Targeting Analysis",
       "type": "report",
@@ -1377,6 +1503,74 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/DashboardView/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: 현재 `DashboardView`는 `/api/dashboard/usage`의 독립적인 loading/error/retry 경계를 소유한다. 1차 확장은 신규 endpoi..."
+    },
+    {
+      "path": "docs/component-inspector/DashboardView/2026-07-27-1305.md",
+      "title": "DashboardView Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "dashboard-view",
+      "status": "done",
+      "aliases": [
+        "DashboardView analysis",
+        "DashboardView 컴포넌트 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis"
+      ],
+      "updated_at": "2026-07-27",
+      "headings": [
+        {
+          "level": 1,
+          "text": "DashboardView 컴포넌트 분석"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 구조"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 추적"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성"
+        },
+        {
+          "level": 2,
+          "text": "테스트 현황과 회귀 위험"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "Skill Handoff"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/DashboardView/index.jsx` - Modes: `api-state,test` - Verdict: 기존 Dashboard organism에 provider 계정 한도 window 렌더링을 추가하는 것이 적절하다. 새 공유 컴포넌트는 필요 없다."
     },
     {
       "path": "docs/component-inspector/GatewayApp/2026-07-14-1526.md",
@@ -2307,6 +2501,54 @@
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `understand`, `refactor` - Verdict: 최초 화면은 `screen`의 초기값과 장기 callback용 `screenRef` 초기값 두 곳에서 `chat`으로 고정되어 있다. 둘을 `dashboard`로 맞추는 것이 최소 변경이며 ..."
     },
     {
+      "path": "docs/component-inspector/GatewayApp/2026-07-27-1345.md",
+      "title": "GatewayApp OTP Login Flow Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "gateway-auth-login",
+      "status": "done",
+      "aliases": [],
+      "tags": [
+        "[component, analysis, auth]"
+      ],
+      "updated_at": "2026-07-27",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp OTP Login Flow Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위와 구조"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 추적"
+        },
+        {
+          "level": 2,
+          "text": "테스트 현황과 회귀 위험"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `api-state,test` - Verdict: hook의 login 결과를 GatewayApp에서 받아 성공할 때만 `screen`을 `dashboard`로 변경하는 것이 기존 ownership에 맞다."
+    },
+    {
       "path": "docs/component-inspector/HooksView/2026-07-20-1037.md",
       "title": "HooksView Create Form Disclosure Analysis",
       "type": "report",
@@ -2612,6 +2854,80 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/HooksView/index.jsx` - Modes: `api-state`, `test` - Verdict: `HookForm`의 파생 target 후보를 backend와 동일한 continuous + plan_and_execute + triggered predicate로 좁히면 된다. create payloa..."
+    },
+    {
+      "path": "docs/component-inspector/HooksView/2026-07-27-0915.md",
+      "title": "HooksView Library Draft Removal Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "hooks-library-draft-removal",
+      "status": "done",
+      "aliases": [
+        "HooksView Library draft removal",
+        "Hook Library 초안 제거 분석"
+      ],
+      "tags": [
+        "component",
+        "hooks",
+        "library",
+        "removal"
+      ],
+      "updated_at": "2026-07-27",
+      "headings": [
+        {
+          "level": 1,
+          "text": "HooksView Library Draft 제거 분석"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props와 상태"
+        },
+        {
+          "level": 2,
+          "text": "상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "제거 판단"
+        },
+        {
+          "level": 3,
+          "text": "코드 수준 검사"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "증거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/HooksView/index.jsx` - Modes: `understand`, `refactor`, `test`, `remove` - Verdict: Email Hook의 Library draft 제어는 `HookForm`과 목록 summary에만 표시되지만,   같은 속성이 API·서비스·runner에도 전파..."
     },
     {
       "path": "docs/component-inspector/JobsView/2026-07-15-1057.md",
@@ -2986,6 +3302,79 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/SchedulesView/index.jsx` (205 lines) - Modes: `understand`, `api-state`, `test` - Verdict: form/list ownership은 적절하다. Schedule detail drawer와 `onLoadDetail`만 추가하고 Job/Schedul..."
+    },
+    {
+      "path": "docs/component-inspector/SpacesView/2026-07-28-1636.md",
+      "title": "SpacesView Component Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "spaces-view",
+      "status": "done",
+      "aliases": [
+        "SpacesView analysis",
+        "SpacesView 컴포넌트 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "space-policy"
+      ],
+      "updated_at": "2026-07-28",
+      "headings": [
+        {
+          "level": 1,
+          "text": "SpacesView Component Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 효과"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/SpacesView/index.jsx` - Modes: `understand`, `refactor` - Verdict: 현재 feature-owned organism 경계는 유지한다. 이번 변경은 `read_mode=\"none\"` 선택지와 payload 정규화에 한정한다."
     },
     {
       "path": "docs/component-inspector/TeamPicker/2026-07-21-0931.md",
@@ -4171,14 +4560,14 @@
         "component",
         "analysis"
       ],
-      "updated_at": "2026-07-22",
+      "updated_at": "2026-07-27",
       "headings": [
         {
           "level": 1,
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [GatewayApp Initial Dashboard Analysis — 2026-07-22 15:31](./GatewayApp/2026-07-22-1531.md) - [TeamRunDetail Structured Content Analysis — 2026-07-22 15:31](./TeamRunDetail/2026-07-22-1531.md) - [DashboardView Opera..."
+      "excerpt": "- [SpacesView Execution Policy Analysis — 2026-07-28 16:36](./SpacesView/2026-07-28-1636.md) - [GatewayApp OTP Login Flow Analysis — 2026-07-27 13:45](./GatewayApp/2026-07-27-1345.md) - [AuthCard OTP Submission Analys..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -7317,6 +7706,626 @@
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
     },
     {
+      "path": "docs/superpowers/plans/2026-07-26-pag-lmg-local-interface-hardening.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PAG-LMG Local Interface Hardening Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "personal-agent-gateway"
+        },
+        {
+          "level": 3,
+          "text": "local-model-gateway"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: PAG 공유 토큰 설정과 공통 헤더"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: 비동기 실행 요청 인증과 소비자 추적값"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: LMG loopback·토큰 설정 검증"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: HTTP 인증·메서드·JSON 경계"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: 실행 경로 canonical 검증"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: 서버 조립·문서·통합 검증"
+        },
+        {
+          "level": 2,
+          "text": "Acceptance Checklist"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-26-pag-lmg-operational-stability.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PAG-LMG Operational Stability Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "local-model-gateway"
+        },
+        {
+          "level": 3,
+          "text": "personal-agent-gateway"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: 제한 설정과 limiter 단위"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: RunsHandler admission 적용"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: 세션 저장 경로를 DB metadata로 전환"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: 기록된 정확한 파일만 삭제"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: live/readiness/capability 상태 분리"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: PAG에서 빈 결과와 LMG 장애 구분"
+        },
+        {
+          "level": 2,
+          "text": "Task 7: Dashboard 상태 표현"
+        },
+        {
+          "level": 2,
+          "text": "Task 8: fake provider 기반 PAG-LMG 교차 저장소 E2E"
+        },
+        {
+          "level": 2,
+          "text": "Task 9: Go CI·문서·전체 회귀"
+        },
+        {
+          "level": 2,
+          "text": "Acceptance Checklist"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-26-pag-lmg-session-lifecycle-consistency.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PAG-LMG Session Lifecycle Consistency Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "personal-agent-gateway"
+        },
+        {
+          "level": 3,
+          "text": "local-model-gateway"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: 전체 실행 컨텍스트 fingerprint"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: `session.updated` 즉시 link 기록"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: Codex resume에 실행 컨텍스트 재적용"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: LMG 세션 소비자 상관관계 저장"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: LMG idempotent DELETE"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: PAG의 전체 삭제 시도와 원자적 Chat 보존"
+        },
+        {
+          "level": 2,
+          "text": "Task 7: Read-only 세션 정합성 리포트"
+        },
+        {
+          "level": 2,
+          "text": "Task 8: 문서와 전체 회귀"
+        },
+        {
+          "level": 2,
+          "text": "Acceptance Checklist"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-26-pag-lmg-terminal-stream-contract.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PAG-LMG Terminal Stream Contract Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "local-model-gateway"
+        },
+        {
+          "level": 3,
+          "text": "personal-agent-gateway"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: Terminal event 스키마와 timeout 분류"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: Provider의 부분 결과와 오류 보존"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: 정확히 하나의 LMG terminal event"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: PAG의 엄격한 SSE terminal parser"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: PAG runtime 종료 상태 노출"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: 문서와 전체 회귀"
+        },
+        {
+          "level": 2,
+          "text": "Acceptance Checklist"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-27-cli-space-contract.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "CLI SPACE Contract Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Define and test CLI read-root normalization"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Preserve LMG validation errors"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Verify affected PAG behavior"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-27-login-account-limits.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Login Account Limits Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: LMG rate-limit snapshot types and Codex collector"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: LMG Claude collector and protected usage route"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: PAG LMG protocol validation and Dashboard report merge"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Dashboard account-limit rendering"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: OTP submission state and explicit Dashboard redirect"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: Full verification, frontend build, and local smoke test"
+        },
+        {
+          "level": 2,
+          "text": "Plan Self-Review"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-28-hide-knowledge-request-marker.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Knowledge Request Chat Marker Hiding Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Normalize the durable backend response"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Normalize raw completed SSE messages"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Verify the integrated local runtime"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-28-lmg-execution-protocol-v2-windows-readiness.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "LMG Execution Protocol 2.0 and Windows Readiness Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Define provider capabilities and request-aware preflight"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Enforce execution capabilities and network modes"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Publish protocol 2.0 capability and readiness data"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Make the child environment platform-aware"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Use the user's Codex home only on Windows"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: Add native Windows Codex sandbox readiness"
+        },
+        {
+          "level": 3,
+          "text": "Task 7: Document and statically verify the LMG boundary"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-28-npm-local-runtime-launcher.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "npm Local Runtime Launcher Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Add the PAG npm lifecycle aliases"
+        },
+        {
+          "level": 1,
+          "text": "Windows: PAG와 LMG를 함께 필요할 때 시작"
+        },
+        {
+          "level": 1,
+          "text": "런처가 기록한 두 프로세스만 안전하게 종료"
+        },
+        {
+          "level": 1,
+          "text": "PowerShell 스크립트를 직접 실행해도 동일합니다."
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-28-pag-execution-contract-source-staging.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PAG Execution Contract and Source Staging Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Parse and require LMG protocol 2.0 capabilities"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Define PAG execution requirements and compiler"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Implement deterministic source staging and integrity checks"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Use one execution factory for Chat and Hook runtimes"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Use the shared execution factory for Team agents"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-28-pag-lmg-v2-cutover-verification.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PAG–LMG Protocol 2.0 Cutover and Verification Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Add shared protocol fixtures and repository contract tests"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Fail the integrated launcher on readiness or protocol mismatch"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Reproduce the `fe8fa463` false-completion scenario"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Add opt-in live integration verification"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Update operational and architecture documentation"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: Execute release gates"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-28-team-outcomes-artifact-acceptance.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Outcomes and Artifact Acceptance Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Add migration 17 and Team outcome fields"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Require acceptance criteria from the planner"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Parse strict worker `TaskOutcome`"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Verify acceptance and publish declared deliverables"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Replace TeamRuntime success transitions"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: Replace full-workspace packaging"
+        },
+        {
+          "level": 3,
+          "text": "Task 7: Expose blocked and acceptance state through API and UI"
+        },
+        {
+          "level": 3,
+          "text": "Task 8: Run complete PAG verification"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
       "path": "docs/superpowers/plans/archived_2026-07-07-live-status-sse-backlog.md",
       "title": "",
       "type": "",
@@ -8878,6 +9887,482 @@
         }
       ],
       "excerpt": "- 작성일: 2026-07-20 - 상태: 설계 승인, 구현 계획 대기 - 관련 도메인: Team Run, Hooks, Scheduler, Operations"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-26-pag-lmg-local-integration-hardening-design.md",
+      "title": "PAG-LMG 로컬 통합 안정화 설계",
+      "type": "adr",
+      "domain": "local-model-integration",
+      "feature": "pag-lmg-hardening",
+      "status": "active",
+      "aliases": [
+        "PAG LMG Local Integration Hardening"
+      ],
+      "tags": [
+        "personal-agent-gateway",
+        "local-model-gateway",
+        "local-service",
+        "session-lifecycle",
+        "streaming"
+      ],
+      "updated_at": "2026-07-26",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PAG-LMG 로컬 통합 안정화 설계"
+        },
+        {
+          "level": 2,
+          "text": "1. 배경"
+        },
+        {
+          "level": 2,
+          "text": "2. 전제와 제외 범위"
+        },
+        {
+          "level": 3,
+          "text": "2.1 전제"
+        },
+        {
+          "level": 3,
+          "text": "2.2 제외 범위"
+        },
+        {
+          "level": 2,
+          "text": "3. 설계 원칙"
+        },
+        {
+          "level": 2,
+          "text": "4. 책임 경계"
+        },
+        {
+          "level": 2,
+          "text": "5. 계획 1: 로컬 인터페이스와 실행 요청 강화"
+        },
+        {
+          "level": 3,
+          "text": "5.1 네트워크 경계"
+        },
+        {
+          "level": 3,
+          "text": "5.2 공유 로컬 토큰"
+        },
+        {
+          "level": 3,
+          "text": "5.3 HTTP 요청 검증"
+        },
+        {
+          "level": 3,
+          "text": "5.4 경로 검증과 Space 경계"
+        },
+        {
+          "level": 3,
+          "text": "5.5 호환 배포"
+        },
+        {
+          "level": 2,
+          "text": "6. 계획 2: 정직한 종료 스트림 계약"
+        },
+        {
+          "level": 3,
+          "text": "6.1 이벤트 상태 머신"
+        },
+        {
+          "level": 3,
+          "text": "6.2 부분 출력"
+        },
+        {
+          "level": 3,
+          "text": "6.3 오류 분류"
+        },
+        {
+          "level": 3,
+          "text": "6.4 호환 배포"
+        },
+        {
+          "level": 2,
+          "text": "7. 계획 3: 세션 수명주기 일관성"
+        },
+        {
+          "level": 3,
+          "text": "7.1 상관관계 ID"
+        },
+        {
+          "level": 3,
+          "text": "7.2 즉시 연결 기록"
+        },
+        {
+          "level": 3,
+          "text": "7.3 실행 컨텍스트 지문"
+        },
+        {
+          "level": 3,
+          "text": "7.4 멱등 삭제"
+        },
+        {
+          "level": 3,
+          "text": "7.5 정합성 점검"
+        },
+        {
+          "level": 2,
+          "text": "8. 계획 4: 운영 안정성과 소유권"
+        },
+        {
+          "level": 3,
+          "text": "8.1 동시성 제어"
+        },
+        {
+          "level": 3,
+          "text": "8.2 세션 메타데이터 저장소"
+        },
+        {
+          "level": 3,
+          "text": "8.3 Claude 공용 홈 소유권"
+        },
+        {
+          "level": 3,
+          "text": "8.4 상태 API"
+        },
+        {
+          "level": 2,
+          "text": "9. HTTP 및 스트림 계약 요약"
+        },
+        {
+          "level": 2,
+          "text": "10. 배포 순서"
+        },
+        {
+          "level": 2,
+          "text": "11. 검증 전략"
+        },
+        {
+          "level": 3,
+          "text": "11.1 PAG"
+        },
+        {
+          "level": 3,
+          "text": "11.2 LMG"
+        },
+        {
+          "level": 3,
+          "text": "11.3 교차 저장소 E2E"
+        },
+        {
+          "level": 2,
+          "text": "12. 완료 조건"
+        },
+        {
+          "level": 2,
+          "text": "13. 구현 계획 문서"
+        }
+      ],
+      "excerpt": "`personal-agent-gateway`(이하 PAG)는 Persona, Team, Space, Chat을 관리하고, `local-model-gateway`(이하 LMG)는 Codex와 Claude CLI를 실행하는 범용 로컬 서비스다."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-27-cli-space-contract-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "CLI SPACE Contract Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Decision"
+        },
+        {
+          "level": 2,
+          "text": "Boundaries"
+        },
+        {
+          "level": 2,
+          "text": "Error handling"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        }
+      ],
+      "excerpt": "Prevent ordinary sessions and Hooks from sending a CLI execution request that LMG must reject because its read path is outside the execution workspace."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-27-login-local-usage-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "로그인 흐름 및 로컬 실행 기록 대시보드 설계"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "범위와 비범위"
+        },
+        {
+          "level": 2,
+          "text": "선택한 접근"
+        },
+        {
+          "level": 2,
+          "text": "데이터 계약"
+        },
+        {
+          "level": 2,
+          "text": "화면 흐름"
+        },
+        {
+          "level": 2,
+          "text": "오류 처리"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        },
+        {
+          "level": 2,
+          "text": "결정 확인"
+        }
+      ],
+      "excerpt": "- OTP 로그인 요청 중에는 진행 상태를 보이고 중복 제출을 막는다. - 인증과 초기 데이터 로드가 모두 성공하면 화면을 Dashboard로 명시적으로 전환한다. - Codex와 Claude CLI가 공식적으로 제공하는 계정 한도·리셋 시각을 수집해 Dashboard에 표시한다. - LMG의 성공 완료 실행 기록은 계정 한도와 별개의 운영 지표로만 유지한다."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-28-hide-knowledge-request-marker-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Knowledge Request Chat Marker Hiding Design"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "결정"
+        },
+        {
+          "level": 2,
+          "text": "데이터 흐름"
+        },
+        {
+          "level": 2,
+          "text": "경계와 예외"
+        },
+        {
+          "level": 2,
+          "text": "검증"
+        }
+      ],
+      "excerpt": "Chat 응답에 포함된 내부 `<knowledge_request>...</knowledge_request>` 블록을 사용자에게 노출하지 않고, 해당 위치를 `Library에 요청되었습니다`로 표시한다. Knowledge Request 생성과 Library의 Requests 목록 저장 동작은 그대로 유지한다."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-28-npm-local-runtime-launcher-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "npm Local Runtime Launcher Design"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Goals"
+        },
+        {
+          "level": 2,
+          "text": "Non-goals"
+        },
+        {
+          "level": 2,
+          "text": "Design"
+        },
+        {
+          "level": 2,
+          "text": "Platform and execution contract"
+        },
+        {
+          "level": 2,
+          "text": "Documentation"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Success criteria"
+        }
+      ],
+      "excerpt": "On Windows, PAG and LMG are operated as one local runtime bundle through `scripts/start_local_runtime.ps1` and `scripts/stop_local_runtime.ps1`. The current PowerShell command is inconvenient to copy and is easy to br..."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-28-pag-lmg-execution-contract-team-completion-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PAG–LMG Execution Contract and Team Completion Design"
+        },
+        {
+          "level": 2,
+          "text": "Status"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Problem statement"
+        },
+        {
+          "level": 2,
+          "text": "Decisions"
+        },
+        {
+          "level": 3,
+          "text": "1. Replace the current CLI SPACE conversion"
+        },
+        {
+          "level": 3,
+          "text": "2. Use one execution contract for Chat, Hook, and Team"
+        },
+        {
+          "level": 3,
+          "text": "3. Make the protocol change fail closed"
+        },
+        {
+          "level": 3,
+          "text": "4. Separate provider outcome from task outcome"
+        },
+        {
+          "level": 3,
+          "text": "5. Verify completion in PAG"
+        },
+        {
+          "level": 3,
+          "text": "6. Stage unsupported external inputs"
+        },
+        {
+          "level": 3,
+          "text": "7. Publish declared artifacts only"
+        },
+        {
+          "level": 3,
+          "text": "8. Make Windows Codex readiness a provider responsibility"
+        },
+        {
+          "level": 3,
+          "text": "9. Expose effective capability and execution metadata"
+        },
+        {
+          "level": 2,
+          "text": "Contracts"
+        },
+        {
+          "level": 3,
+          "text": "PAG execution requirements"
+        },
+        {
+          "level": 3,
+          "text": "LMG execution specification"
+        },
+        {
+          "level": 3,
+          "text": "Team task acceptance"
+        },
+        {
+          "level": 2,
+          "text": "Data and migration"
+        },
+        {
+          "level": 2,
+          "text": "Error handling"
+        },
+        {
+          "level": 2,
+          "text": "Rollout"
+        },
+        {
+          "level": 2,
+          "text": "Verification strategy"
+        },
+        {
+          "level": 3,
+          "text": "PAG unit and service tests"
+        },
+        {
+          "level": 3,
+          "text": "LMG unit and service tests"
+        },
+        {
+          "level": 3,
+          "text": "Cross-repository integration tests"
+        },
+        {
+          "level": 3,
+          "text": "Native Windows smoke test"
+        },
+        {
+          "level": 2,
+          "text": "Release gates"
+        },
+        {
+          "level": 2,
+          "text": "Superseded and extended documents"
+        },
+        {
+          "level": 2,
+          "text": "Non-goals"
+        }
+      ],
+      "excerpt": "- Decision: approved approach B - Change mode: coordinated breaking change across PAG and LMG - Scope: Chat, Hook, and Team share one execution contract; semantic completion   and artifact acceptance apply to Team runs"
     },
     {
       "path": "docs/superpowers/specs/completed_2026-07-06-otp-setup-ui-design.md",
