@@ -9,6 +9,7 @@ from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_outcomes import TaskOutcome
 from personal_agent_gateway.team_runtime import (
     WORKER_PROMPT,
     TeamRuntime,
@@ -17,7 +18,6 @@ from personal_agent_gateway.team_runtime import (
     _task_delta,
     _terminal_status,
 )
-from personal_agent_gateway.team_outcomes import TaskOutcome
 from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
 
 

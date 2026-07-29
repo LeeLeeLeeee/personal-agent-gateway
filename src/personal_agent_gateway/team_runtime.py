@@ -19,12 +19,12 @@ from personal_agent_gateway.team_outcomes import (
     TaskOutcomeError,
     parse_task_outcome,
 )
-from personal_agent_gateway.team_structured_output import normalize_json_envelope
 from personal_agent_gateway.team_results import (
     TeamRunResultPackager,
     workspace_changes,
     workspace_snapshot,
 )
+from personal_agent_gateway.team_structured_output import normalize_json_envelope
 from personal_agent_gateway.teams import (
     TaskAcceptance,
     TeamAgent,
