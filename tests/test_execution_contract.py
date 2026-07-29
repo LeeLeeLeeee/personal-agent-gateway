@@ -74,20 +74,32 @@ def _requirements(
     )
 
 
-@pytest.mark.parametrize("read_mode", ["home", "all"])
-def test_unbounded_isolated_source_requirement_requires_selection(
-    tmp_path: Path,
-    read_mode: str,
-) -> None:
+def test_home_read_with_isolated_write_requires_selection(tmp_path: Path) -> None:
     with pytest.raises(ExecutionContractError) as error:
         compile_execution(
             _requirements(),
-            _policy(read_mode, None),
+            _policy("home", None),
             _capabilities(),
             FakeStaging(tmp_path / "run"),
         )
 
     assert error.value.code == "source_scope_requires_selection"
+
+
+def test_all_read_with_isolated_write_uses_unstaged_workspace(tmp_path: Path) -> None:
+    staging = FakeStaging(tmp_path / "run")
+
+    compiled = compile_execution(
+        _requirements(requires_sources=True),
+        _policy("all", None),
+        _capabilities(),
+        staging,
+    )
+
+    assert compiled.workspace_root == (tmp_path / "run").resolve()
+    assert compiled.read_roots == ()
+    assert compiled.input_manifest_path is None
+    assert staging.calls == []
 
 
 def test_no_source_isolated_execution_uses_empty_workspace(tmp_path: Path) -> None:

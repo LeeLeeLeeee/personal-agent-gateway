@@ -116,7 +116,18 @@ def compile_execution(
             input_manifest_path=None,
             input_manifest_sha256=None,
         )
-    if policy.read_mode in {"home", "all"}:
+    if policy.read_mode == "all":
+        return CompiledExecution(
+            workspace_root=workspace_root,
+            read_roots=(),
+            sandbox=sandbox,
+            permission_mode=permission_mode,
+            approval_policy="never" if sandbox else "",
+            network=requirements.network,
+            input_manifest_path=None,
+            input_manifest_sha256=None,
+        )
+    if policy.read_mode == "home":
         raise ExecutionContractError(
             "source_scope_requires_selection",
             "Select a bounded source directory for isolated execution",
