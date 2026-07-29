@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Literal
 
+from personal_agent_gateway.team_structured_output import normalize_json_envelope
+
 TaskOutcomeStatus = Literal["completed", "blocked", "failed"]
 VerificationStatus = Literal["passed", "failed"]
 
@@ -36,7 +38,7 @@ class TaskOutcomeError(ValueError):
 
 
 def parse_task_outcome(content: str) -> TaskOutcome:
-    stripped = content.strip()
+    stripped = normalize_json_envelope(content)
     if not stripped or stripped.startswith("```"):
         raise TaskOutcomeError()
     try:

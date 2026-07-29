@@ -204,6 +204,65 @@ async def test_worker_final_response_is_parsed_as_task_outcome(tmp_path) -> None
 
 
 @pytest.mark.asyncio
+async def test_fenced_worker_outcome_reaches_normal_acceptance_path(
+    tmp_path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    task = teams.create_task(
+        run.id,
+        "Inspect",
+        "Inspect dashboard",
+        acceptance=TaskAcceptance((), ("pytest",)),
+    )
+    payload = json.dumps(
+        {
+            "status": "completed",
+            "summary": "Done",
+            "reason_code": None,
+            "deliverables": [],
+            "verifications": [
+                {
+                    "name": "pytest",
+                    "status": "passed",
+                    "evidence": "tests passed",
+                }
+            ],
+        }
+    )
+    runtime = TeamRuntime(
+        teams,
+        lambda _agent: FakeModel(
+            f"```json\n{payload}\n```",
+            normalize_worker=False,
+        ),
+    )
+
+    outcome = await runtime._run_task(
+        run,
+        leader_agent,
+        worker_agent,
+        task,
+    )
+
+    assert outcome.status == "completed"
+    assert outcome.reason_code is None
+    assert outcome.verifications[0].name == "pytest"
+
+
+@pytest.mark.asyncio
 async def test_worker_prose_becomes_invalid_task_outcome(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
     db.initialize()

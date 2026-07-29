@@ -51,10 +51,36 @@ def test_parses_exact_task_outcome(status: str) -> None:
     )
 
 
+def test_parses_task_outcome_inside_one_outer_json_fence() -> None:
+    payload = {
+        "status": "completed",
+        "summary": "Verification finished.",
+        "reason_code": None,
+        "deliverables": [{"path": "outputs/report.md", "kind": "markdown"}],
+        "verifications": [
+            {
+                "name": "pytest",
+                "status": "passed",
+                "evidence": "42 tests passed",
+            }
+        ],
+    }
+    outcome = parse_task_outcome(f"```json\n{json.dumps(payload)}\n```")
+
+    assert outcome.status == "completed"
+    assert outcome.summary == "Verification finished."
+    assert outcome.deliverables == (
+        Deliverable("outputs/report.md", "markdown"),
+    )
+
+
 @pytest.mark.parametrize(
     "payload",
     [
-        "```json\n{}\n```",
+        "before\n```json\n{}\n```",
+        "```json\n{}\n```\nafter",
+        "```JSON\n{}\n```",
+        "```json\n{}\n```\n```json\n{}\n```",
         '{"status":"completed"}',
         '{"status":"unknown","summary":"x","reason_code":null,"deliverables":[],"verifications":[]}',
         '["not", "an", "object"]',
