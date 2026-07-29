@@ -126,8 +126,14 @@ npm --prefix frontend run build
 Gateway를 실행합니다.
 
 ```powershell
-# Windows: PAG와 LMG를 함께 필요할 때 시작
+# Frontend production build 후 PAG와 LMG 시작
 npm start
+
+# Frontend build 없이 PAG와 LMG 시작
+npm run start:no-build
+
+# Frontend production build만 실행
+npm run build:frontend
 
 # 런처가 기록한 두 프로세스만 안전하게 종료
 npm stop
@@ -138,6 +144,7 @@ npm stop
 ```
 
 루트 npm 명령은 Windows 전용이며 일반 PowerShell 또는 cmd에서 실행해야 합니다.
+`npm start`에서 Frontend build가 실패하면 PAG와 LMG는 시작되지 않습니다.
 
 ```bash
 # macOS
