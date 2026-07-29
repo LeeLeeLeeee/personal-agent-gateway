@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 162,
+  "document_count": 168,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -1259,6 +1259,80 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/ArchiveView/index.jsx` - Modes: `understand`, `refactor` - Verdict: ArchiveView가 Archive 내부 탭 전환과 Archive API 요청을 이미 소유하므로, 기존 `ArtifactsView`를 새 탭에 합성하는 것이 최소 변경이다. Artifact..."
+    },
+    {
+      "path": "docs/component-inspector/ArchiveView/2026-07-29-1417.md",
+      "title": "ArchiveView Knowledge Lane Map Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "archive-knowledge-lanes",
+      "status": "done",
+      "aliases": [
+        "Archive map lane analysis",
+        "ArchiveView 지식 레인 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "archive",
+        "knowledge-map"
+      ],
+      "updated_at": "2026-07-29",
+      "headings": [
+        {
+          "level": 1,
+          "text": "ArchiveView Knowledge Lane Map Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태 / Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성과 primitive"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/ArchiveView/index.jsx` - Modes: `understand`, `refactor` - Verdict: Archive 데이터와 사용자 액션은 `ArchiveView`가 계속 소유하고, 그래프 해석·viewport 상호작용·SVG 렌더링은 같은 파일의 `ArchiveMap`이 맡는 현재 경계를 ..."
     },
     {
       "path": "docs/component-inspector/AuthCard/2026-07-27-1345.md",
@@ -4634,14 +4708,14 @@
         "component",
         "analysis"
       ],
-      "updated_at": "2026-07-27",
+      "updated_at": "2026-07-29",
       "headings": [
         {
           "level": 1,
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [TeamRunDetail Blocked Acceptance Analysis — 2026-07-29 08:22](./TeamRunDetail/2026-07-29-0822.md) - [SpacesView Execution Policy Analysis — 2026-07-28 16:36](./SpacesView/2026-07-28-1636.md) - [GatewayApp OTP Login..."
+      "excerpt": "- [ArchiveView Knowledge Lane Map Analysis — 2026-07-29 14:17](./ArchiveView/2026-07-29-1417.md) - [TeamRunDetail Blocked Acceptance Analysis — 2026-07-29 08:22](./TeamRunDetail/2026-07-29-0822.md) - [SpacesView Execu..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -8400,6 +8474,120 @@
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
     },
     {
+      "path": "docs/superpowers/plans/2026-07-29-archive-map-knowledge-lanes.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Archive Map Knowledge Lanes Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Define the lane rendering contract"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Build and render knowledge lanes"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Clarify connector semantics"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Verify the complete frontend"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-archive-ux-guidance-map-controls.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Archive UX Guidance and Map Controls Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Archive guidance and independent Artifacts presentation"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Map explanation and viewport controls"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Regression verification"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-npm-start-frontend-build.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "npm Start Frontend Build Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Define and implement the root npm command contract"
+        },
+        {
+          "level": 1,
+          "text": "Frontend production build 후 PAG와 LMG 시작"
+        },
+        {
+          "level": 1,
+          "text": "Frontend build 없이 PAG와 LMG 시작"
+        },
+        {
+          "level": 1,
+          "text": "Frontend production build만 실행"
+        },
+        {
+          "level": 1,
+          "text": "런처가 기록한 두 프로세스만 안전하게 종료"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
       "path": "docs/superpowers/plans/archived_2026-07-07-live-status-sse-backlog.md",
       "title": "",
       "type": "",
@@ -10437,6 +10625,106 @@
         }
       ],
       "excerpt": "- Decision: approved approach B - Change mode: coordinated breaking change across PAG and LMG - Scope: Chat, Hook, and Team share one execution contract; semantic completion   and artifact acceptance apply to Team runs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-archive-map-lanes-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Archive Knowledge Lane Map Design"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Information hierarchy"
+        },
+        {
+          "level": 2,
+          "text": "Lane construction"
+        },
+        {
+          "level": 2,
+          "text": "Connectors"
+        },
+        {
+          "level": 2,
+          "text": "Interaction"
+        },
+        {
+          "level": 2,
+          "text": "Accessibility"
+        },
+        {
+          "level": 2,
+          "text": "Testing"
+        },
+        {
+          "level": 2,
+          "text": "Non-goals"
+        }
+      ],
+      "excerpt": "The Archive map currently lays out every persona in one source column, even when a persona has no relationship to a request, draft, or published entry. Nodes are positioned independently by kind, so related items can ..."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-npm-start-frontend-build-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "npm Start Frontend Build Design"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Command contract"
+        },
+        {
+          "level": 2,
+          "text": "Architecture"
+        },
+        {
+          "level": 2,
+          "text": "Documentation"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Non-goals"
+        }
+      ],
+      "excerpt": "The repository root `npm start` currently delegates directly to `scripts/start_local_runtime.ps1`. Frontend changes must be built separately with `npm --prefix frontend run build`, so starting the runtime can serve an..."
     },
     {
       "path": "docs/superpowers/specs/completed_2026-07-06-otp-setup-ui-design.md",

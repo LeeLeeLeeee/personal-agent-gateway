@@ -9,11 +9,12 @@ aliases:
 tags:
   - component
   - analysis
-updated_at: 2026-07-27
+updated_at: 2026-07-29
 ---
 
 # Component Inspector Reports
 
+- [ArchiveView Knowledge Lane Map Analysis — 2026-07-29 14:17](./ArchiveView/2026-07-29-1417.md)
 - [TeamRunDetail Blocked Acceptance Analysis — 2026-07-29 08:22](./TeamRunDetail/2026-07-29-0822.md)
 - [SpacesView Execution Policy Analysis — 2026-07-28 16:36](./SpacesView/2026-07-28-1636.md)
 - [GatewayApp OTP Login Flow Analysis — 2026-07-27 13:45](./GatewayApp/2026-07-27-1345.md)

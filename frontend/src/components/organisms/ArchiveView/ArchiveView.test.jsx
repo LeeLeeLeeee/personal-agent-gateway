@@ -1,8 +1,15 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../../../api/client.js";
 import { ArchiveView } from "./index.jsx";
+
+const styles = readFileSync(
+  resolve(process.cwd(), "../src/personal_agent_gateway/static/styles.css"),
+  "utf8"
+);
 
 const entry = {
   id: "entry-1",
@@ -132,6 +139,29 @@ function makeClient() {
 }
 
 describe("ArchiveView", () => {
+  it("adds inner spacing around embedded artifact contents", () => {
+    expect(styles).toMatch(
+      /\.archive-artifacts\s*>\s*\.artifacts-view\s*\{[^}]*padding:\s*20px;/
+    );
+  });
+
+  it("keeps artifact metadata on one line so cards stay equal height", () => {
+    expect(styles).toMatch(
+      /\.artifact-card-meta\s*\{[^}]*white-space:\s*nowrap;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;/
+    );
+  });
+
+  it("explains the knowledge lifecycle separately from work artifacts", async () => {
+    render(<ArchiveView client={makeClient()} artifacts={[artifact]} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+
+    expect(screen.getByRole("region", { name: "Knowledge lifecycle" }))
+      .toHaveTextContent(/Requests.*Drafts.*Library/i);
+    expect(screen.getByRole("region", { name: "Work outputs" }))
+      .toHaveTextContent(/Artifacts.*separate/i);
+  });
+
   it("shows managed artifacts and the Library boundary inside Archive", async () => {
     render(<ArchiveView client={makeClient()} artifacts={[artifact]} onArtifactChange={vi.fn()} />);
 
@@ -182,14 +212,163 @@ describe("ArchiveView", () => {
     await userEvent.click(screen.getByRole("tab", { name: /Map/ }));
 
     const graph = screen.getByRole("group", { name: "Archive knowledge map" });
-    expect(within(graph).getByRole("button", { name: "Operator persona node" })).toBeInTheDocument();
+    expect(within(graph).getAllByRole("button", { name: "Operator persona source" }))
+      .not.toHaveLength(0);
     expect(within(graph).getByRole("button", { name: "Rollback checklist request node" })).toBeInTheDocument();
+    expect(within(graph).getByText("DRAFT / LIBRARY")).toBeInTheDocument();
     expect(container.querySelector(".archive-map-edge-needs")).toBeInTheDocument();
 
     await userEvent.click(within(graph).getByRole("button", {
       name: "Rollback checklist request node"
     }));
     expect(screen.getByText(request.reason)).toBeInTheDocument();
+  });
+
+  it("does not count source-only personas as knowledge map items", async () => {
+    const client = makeClient();
+    client.archiveEntries.mockResolvedValue([]);
+    client.knowledgeRequests.mockResolvedValue([]);
+    client.archiveMap.mockResolvedValue({
+      nodes: [
+        { id: "scope:global", kind: "scope", entity_id: "", label: "Shared Library", meta: "All personas" },
+        ...Array.from({ length: 19 }, (_, index) => ({
+          id: `persona:${index}`,
+          kind: "persona",
+          entity_id: String(index),
+          label: `Persona ${index}`,
+          meta: "Agent persona"
+        }))
+      ],
+      edges: []
+    });
+
+    render(<ArchiveView client={client} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    const mapTab = screen.getByRole("tab", { name: "Map" });
+    expect(mapTab).toHaveTextContent("MAP 0");
+
+    await userEvent.click(mapTab);
+    expect(screen.getByText(/Publish a Library entry or wait for a persona knowledge request/i))
+      .toBeInTheDocument();
+  });
+
+  it("renders persona-specific knowledge lanes without unrelated personas", async () => {
+    const client = makeClient();
+    client.archiveMap.mockResolvedValue({
+      nodes: [
+        { id: "persona:connected", kind: "persona", entity_id: "connected", label: "Operator", meta: "Operations" },
+        { id: "persona:unused", kind: "persona", entity_id: "unused", label: "Unused persona", meta: "Unrelated" },
+        { id: "request:request-1", kind: "request", entity_id: request.id, label: request.title, meta: "open" },
+        { id: "team_run:team-1", kind: "team_run", entity_id: documentationTeam.id, label: "Documentation team", meta: "waiting" },
+        { id: "draft:draft-1", kind: "draft", entity_id: draft.id, label: draft.title, meta: draft.kind }
+      ],
+      edges: [
+        { id: "gap", source: "persona:connected", target: "request:request-1", kind: "needs" },
+        { id: "delegated", source: "request:request-1", target: "team_run:team-1", kind: "delegates" },
+        { id: "draft", source: "team_run:team-1", target: "draft:draft-1", kind: "produced" }
+      ]
+    });
+
+    const { container } = render(<ArchiveView client={client} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: "Map" }));
+
+    const graph = screen.getByRole("group", { name: "Archive knowledge map" });
+    const section = within(graph).getByRole("group", {
+      name: "Persona-specific knowledge"
+    });
+    const lane = within(section).getByRole("group", {
+      name: "Rollback checklist knowledge lane"
+    });
+
+    expect(within(lane).getByRole("button", { name: "Operator persona source" }))
+      .toBeInTheDocument();
+    expect(within(graph).queryByText("Unused persona")).not.toBeInTheDocument();
+    expect(within(lane).getByText("GAP")).toBeInTheDocument();
+    expect(within(lane).getByText("DELEGATED")).toBeInTheDocument();
+    expect(within(lane).getByText("DRAFT")).toBeInTheDocument();
+    expect(container.querySelector("[marker-end]")).not.toBeInTheDocument();
+  });
+
+  it("separates shared and automation knowledge lanes", async () => {
+    const client = makeClient();
+    client.archiveMap.mockResolvedValue({
+      nodes: [
+        { id: "scope:global", kind: "scope", entity_id: "", label: "Shared Library", meta: "All personas" },
+        { id: "hook:release", kind: "hook", entity_id: "release", label: "Release hook", meta: "Automation hook" },
+        { id: "entry:shared", kind: "entry", entity_id: "shared", label: "Shared runbook", meta: "procedure" },
+        { id: "draft:release", kind: "draft", entity_id: "release", label: "Release notes", meta: "reference" }
+      ],
+      edges: [
+        { id: "published", source: "scope:global", target: "entry:shared", kind: "uses" },
+        { id: "automated", source: "hook:release", target: "draft:release", kind: "produced" }
+      ]
+    });
+
+    render(<ArchiveView client={client} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: "Map" }));
+
+    const graph = screen.getByRole("group", { name: "Archive knowledge map" });
+    const shared = within(graph).getByRole("group", { name: "Shared knowledge" });
+    const automation = within(graph).getByRole("group", { name: "Automation knowledge" });
+
+    expect(within(shared).getByText("PUBLISHED")).toBeInTheDocument();
+    expect(within(automation).getByText("DRAFT")).toBeInTheDocument();
+    expect(within(graph).queryByRole("group", { name: "Persona-specific knowledge" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("zooms, pans, and fits the knowledge map viewport", async () => {
+    const { container } = render(<ArchiveView client={makeClient()} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: /Map/ }));
+
+    const graph = screen.getByRole("group", { name: "Archive knowledge map" });
+    expect(graph).toHaveAttribute("viewBox", "0 0 1270 680");
+
+    const viewport = container.querySelector(".archive-map-viewport");
+    expect(viewport).toHaveAttribute("transform", "translate(0 0) scale(1)");
+
+    await userEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(viewport).toHaveAttribute("transform", "translate(0 0) scale(1.2)");
+
+    fireEvent.pointerDown(
+      graph,
+      { pointerId: 1, clientX: 100, clientY: 100 }
+    );
+    fireEvent.pointerMove(
+      graph,
+      { pointerId: 1, clientX: 140, clientY: 125 }
+    );
+    fireEvent.pointerUp(
+      graph,
+      { pointerId: 1, clientX: 140, clientY: 125 }
+    );
+    expect(viewport).not.toHaveAttribute("transform", "translate(0 0) scale(1.2)");
+
+    await userEvent.click(screen.getByRole("button", { name: "Fit map" }));
+    expect(viewport).toHaveAttribute("data-fitted", "true");
+  });
+
+  it("zooms the knowledge map with the mouse wheel", async () => {
+    const { container } = render(<ArchiveView client={makeClient()} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: /Map/ }));
+
+    const graph = screen.getByRole("group", { name: "Archive knowledge map" });
+    const viewport = container.querySelector(".archive-map-viewport");
+
+    fireEvent.wheel(graph, { deltaY: -100, clientX: 300, clientY: 200 });
+    expect(viewport).toHaveAttribute("transform", expect.stringContaining("scale(1.2)"));
+
+    fireEvent.wheel(graph, { deltaY: 100, clientX: 300, clientY: 200 });
+    expect(viewport).toHaveAttribute("transform", expect.stringContaining("scale(1)"));
   });
 
   it("keeps team output private until the user reviews and publishes the draft", async () => {
