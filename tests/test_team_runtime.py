@@ -9,6 +9,7 @@ from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_outcomes import TaskOutcome
 from personal_agent_gateway.team_runtime import (
     WORKER_PROMPT,
     TeamRuntime,
@@ -17,7 +18,6 @@ from personal_agent_gateway.team_runtime import (
     _task_delta,
     _terminal_status,
 )
-from personal_agent_gateway.team_outcomes import TaskOutcome
 from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
 
 
@@ -204,6 +204,65 @@ async def test_worker_final_response_is_parsed_as_task_outcome(tmp_path) -> None
 
 
 @pytest.mark.asyncio
+async def test_fenced_worker_outcome_reaches_normal_acceptance_path(
+    tmp_path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    task = teams.create_task(
+        run.id,
+        "Inspect",
+        "Inspect dashboard",
+        acceptance=TaskAcceptance((), ("pytest",)),
+    )
+    payload = json.dumps(
+        {
+            "status": "completed",
+            "summary": "Done",
+            "reason_code": None,
+            "deliverables": [],
+            "verifications": [
+                {
+                    "name": "pytest",
+                    "status": "passed",
+                    "evidence": "tests passed",
+                }
+            ],
+        }
+    )
+    runtime = TeamRuntime(
+        teams,
+        lambda _agent: FakeModel(
+            f"```json\n{payload}\n```",
+            normalize_worker=False,
+        ),
+    )
+
+    outcome = await runtime._run_task(
+        run,
+        leader_agent,
+        worker_agent,
+        task,
+    )
+
+    assert outcome.status == "completed"
+    assert outcome.reason_code is None
+    assert outcome.verifications[0].name == "pytest"
+
+
+@pytest.mark.asyncio
 async def test_worker_prose_becomes_invalid_task_outcome(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
     db.initialize()
@@ -344,6 +403,43 @@ def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
             ),
         }
     ]
+
+
+def test_task_plan_accepts_one_outer_json_fence() -> None:
+    tasks = _parse_task_plan(
+        """```json
+[{
+  "title": "Create D3 guide",
+  "description": "Write the integrated guide.",
+  "owner_agent_id": null,
+  "required": true,
+  "acceptance": {
+    "required_outputs": ["outputs/d3-guide.md"],
+    "required_verifications": ["markdown-link-check"]
+  }
+}]
+```"""
+    )
+
+    assert tasks[0]["title"] == "Create D3 guide"
+    assert tasks[0]["acceptance"] == TaskAcceptance(
+        required_outputs=("outputs/d3-guide.md",),
+        required_verifications=("markdown-link-check",),
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "before\n```json\n[]\n```",
+        "```json\n[]\n```\nafter",
+        "```JSON\n[]\n```",
+        "```json\n[{\n```",
+    ],
+)
+def test_task_plan_rejects_ambiguous_json_envelopes(payload: str) -> None:
+    with pytest.raises((ValueError, json.JSONDecodeError)):
+        _parse_task_plan(payload)
 
 
 @pytest.mark.parametrize(
@@ -1369,6 +1465,54 @@ async def test_add_work_creates_pending_tasks_from_instruction(tmp_path):
         "Extra B": "pending",
     }
     assert any(m.kind == "plan_note" for m in teams.list_messages(run.id))
+
+
+@pytest.mark.asyncio
+async def test_continuous_cycle_with_fenced_plan_creates_tasks_and_resumes(
+    tmp_path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    worker = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run(
+        "mailbox",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-fenced-plan")
+    fenced_plan = """```json
+[{
+  "title": "Process request",
+  "description": "Produce the requested result.",
+  "owner_agent_id": null,
+  "required": true,
+  "acceptance": {
+    "required_outputs": [],
+    "required_verifications": ["worker-result"]
+  }
+}]
+```"""
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=_factory_by_role(
+            [fenced_plan, "cycle summary"],
+            ["worker result"],
+        ),
+    )
+
+    created = await runtime.add_work(run.id, "process request", cycle.id)
+    completed = await runtime.resume(run.id, cycle.id)
+
+    assert [task.title for task in created] == ["Process request"]
+    assert completed.status == "completed"
+    assert teams.get_cycle(cycle.id).status == "completed"
 
 
 @pytest.mark.asyncio

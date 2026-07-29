@@ -24,6 +24,7 @@ from personal_agent_gateway.team_results import (
     workspace_changes,
     workspace_snapshot,
 )
+from personal_agent_gateway.team_structured_output import normalize_json_envelope
 from personal_agent_gateway.teams import (
     TaskAcceptance,
     TeamAgent,
@@ -1090,7 +1091,7 @@ def _agent_delta(agent: TeamAgent) -> dict[str, object]:
 
 
 def _parse_task_plan(content: str) -> list[dict[str, object]]:
-    stripped = content.strip()
+    stripped = normalize_json_envelope(content)
     if stripped.startswith("```"):
         raise ValueError("Planner response must not use code fences")
     raw = json.loads(stripped)
