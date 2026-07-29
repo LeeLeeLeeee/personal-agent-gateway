@@ -30,6 +30,8 @@ def test_normalize_json_envelope_accepts_raw_or_one_outer_json_fence(
         'before\n```json\n{"ok": true}\n```',
         '```json\n{"ok": true}\n```\nafter',
         '```json\n{"ok": true}\n```\n```json\n{"other": true}\n```',
+        '```json\n{"ok": true}\n```python\n```',
+        '```json\n{"ok": true}\n```JSON\n```',
         '```json\n{"ok": true}',
         '```JSON\n{"ok": true}\n```',
         '```\n{"ok": true}\n```',

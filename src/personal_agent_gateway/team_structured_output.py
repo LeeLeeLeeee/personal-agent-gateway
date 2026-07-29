@@ -12,7 +12,7 @@ def normalize_json_envelope(content: str) -> str:
     if (
         not newline
         or closing.rstrip("\r") != "```"
-        or any(line.strip() in {"```", "```json"} for line in body.splitlines())
+        or any(line.strip().startswith("```") for line in body.splitlines())
     ):
         return stripped
     return body.strip()
