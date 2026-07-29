@@ -35,12 +35,19 @@ def _agent(
 
 
 class _TeamRuns:
-    def __init__(self, *, artifact_root: str, space_policy: dict[str, object]):
+    def __init__(
+        self,
+        *,
+        artifact_root: str,
+        space_policy: dict[str, object],
+        cycle_space_policy: dict[str, object] | None = None,
+    ):
         self._run = SimpleNamespace(
             artifact_root=artifact_root,
             space_policy=space_policy,
         )
         self.execution_metadata = None
+        self.cycle_space_policy = cycle_space_policy
 
     def get_team_run(self, team_run_id: str):
         assert team_run_id == "r1"
@@ -52,7 +59,10 @@ class _TeamRuns:
 
     def get_cycle(self, cycle_id: str):
         assert cycle_id == "cycle-1"
-        return SimpleNamespace(execution_metadata=self.execution_metadata)
+        return SimpleNamespace(
+            execution_metadata=self.execution_metadata,
+            space_policy=self.cycle_space_policy,
+        )
 
     def set_cycle_execution_metadata(self, cycle_id: str, metadata):
         assert cycle_id == "cycle-1"
@@ -211,6 +221,28 @@ def test_factory_stages_selected_source_inside_workspace(tmp_path, backend):
     assert inputs == workspace / "_inputs"
     assert (inputs / "01-shared" / "evidence.txt").is_file()
     assert str(artifact_root) not in client._execution["read_roots"]
+
+
+def test_factory_uses_task_cycle_space_before_run_space(tmp_path):
+    workspace = tmp_path / "r1" / "workspace"
+    source = tmp_path / "shared"
+    workspace.mkdir(parents=True)
+    source.mkdir()
+    (source / "evidence.txt").write_text("evidence", encoding="utf-8")
+    team_runs = _TeamRuns(
+        artifact_root=str(tmp_path / "r1" / "artifacts"),
+        space_policy=_space_policy(None, read_mode="none"),
+        cycle_space_policy=_space_policy(str(source), read_mode="selected"),
+    )
+
+    client = _factory(_config(tmp_path), team_runs)(
+        _agent("codex", workspace_path=str(workspace), current_task_id="task-1")
+    )
+
+    inputs = Path(client._execution["read_roots"][0])
+    assert client._execution["workspace_root"] == str(workspace)
+    assert inputs == workspace / "_inputs"
+    assert (inputs / "01-shared" / "evidence.txt").is_file()
 
 
 def test_factory_persists_compiled_cycle_execution_metadata(tmp_path):

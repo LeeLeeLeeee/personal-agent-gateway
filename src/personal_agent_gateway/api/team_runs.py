@@ -1300,6 +1300,7 @@ def _cycle_payload(cycle: TeamRunCycle) -> dict[str, object]:
         "rounds_budget": cycle.rounds_budget,
         "rounds_used": cycle.rounds_used,
         "rules_snapshot": cycle.rules_snapshot,
+        "space_policy": cycle.space_policy,
         "summary": cycle.summary,
         "error_message": cycle.error_message,
         "created_at": cycle.created_at,

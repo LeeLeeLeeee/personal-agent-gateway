@@ -593,9 +593,18 @@ def _team_model_factory(
         )
         workspace_root.mkdir(parents=True, exist_ok=True)
         run = team_runs.get_team_run(agent.team_run_id) if team_runs else None
+        space_snapshot = run.space_policy if run else None
+        task = None
+        cycle = None
+        if team_runs is not None and agent.current_task_id is not None:
+            task = team_runs.get_task(agent.current_task_id)
+            if task.cycle_id is not None:
+                cycle = team_runs.get_cycle(task.cycle_id)
+                if cycle.space_policy is not None:
+                    space_snapshot = cycle.space_policy
         space_policy = (
-            policy_from_snapshot(run.space_policy)
-            if run
+            policy_from_snapshot(space_snapshot)
+            if space_snapshot is not None
             else _default_team_space_policy()
         )
         if space_policy is None:
@@ -616,10 +625,8 @@ def _team_model_factory(
             network=str(options.get("network") or "unspecified"),
         )
         execution = contexts.wire_execution(compiled, agent.backend, options)
-        if team_runs is not None and agent.current_task_id is not None:
-            task = team_runs.get_task(agent.current_task_id)
+        if team_runs is not None and task is not None and cycle is not None:
             if task.cycle_id is not None:
-                cycle = team_runs.get_cycle(task.cycle_id)
                 existing = (
                     cycle.execution_metadata
                     if isinstance(cycle.execution_metadata, dict)

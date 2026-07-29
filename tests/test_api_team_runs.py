@@ -1115,10 +1115,14 @@ def test_team_run_detail_aggregate_includes_documents_summary(tmp_path: Path) ->
     }
 
 
-def test_team_run_detail_includes_complete_cycle_payload(tmp_path: Path) -> None:
+def test_cycle_space_policy_is_included_in_cycle_detail(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Mail Lead")
     team_id = create_team(client, leader_id)
+    assert client.put(
+        f"/api/spaces/teams/{team_id}",
+        json={"read_mode": "all", "write_mode": "isolated"},
+    ).status_code == 200
     run = client.post(
         "/api/team-runs",
         json={
@@ -1136,7 +1140,8 @@ def test_team_run_detail_includes_complete_cycle_payload(tmp_path: Path) -> None
     response = client.get(f"/api/team-runs/{run['id']}/detail")
 
     assert response.status_code == 200
-    assert response.json()["cycles"] == [
+    detail = response.json()
+    assert detail["cycles"] == [
         {
             "id": cycle.id,
             "team_run_id": run["id"],
@@ -1147,6 +1152,7 @@ def test_team_run_detail_includes_complete_cycle_payload(tmp_path: Path) -> None
             "rounds_budget": 3,
             "rounds_used": 1,
             "rules_snapshot": cycle.rules_snapshot,
+            "space_policy": cycle.space_policy,
             "summary": "Mail handled",
             "error_message": None,
             "created_at": cycle.created_at,
@@ -1155,6 +1161,7 @@ def test_team_run_detail_includes_complete_cycle_payload(tmp_path: Path) -> None
             "updated_at": cycle.updated_at,
         }
     ]
+    assert detail["cycles"][0]["space_policy"]["read_mode"] == "all"
 
 
 async def test_answer_decision_request_rejects_stale_and_registers_one_resume(
