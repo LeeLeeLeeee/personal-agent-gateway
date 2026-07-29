@@ -655,6 +655,13 @@ def _migration_17_team_task_acceptance(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migration_18_team_cycle_space_snapshot(connection: sqlite3.Connection) -> None:
+    if "space_policy_snapshot_json" not in _columns(connection, "team_run_cycles"):
+        connection.execute(
+            "alter table team_run_cycles add column space_policy_snapshot_json text"
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -673,6 +680,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (15, "library-team-drafts", _migration_15_library_team_drafts),
     (16, "explicit-no-source-space", _migration_16_explicit_no_source_space),
     (17, "team-task-acceptance", _migration_17_team_task_acceptance),
+    (18, "team-cycle-space-snapshot", _migration_18_team_cycle_space_snapshot),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

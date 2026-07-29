@@ -8,7 +8,22 @@ from personal_agent_gateway.migrations import (
     _migration_11_team_cycle_policies,
     _migration_16_explicit_no_source_space,
     _migration_17_team_task_acceptance,
+    _migration_18_team_cycle_space_snapshot,
 )
+
+
+def test_migration_18_adds_nullable_cycle_space_snapshot() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.execute("create table team_run_cycles (id text primary key)")
+
+    _migration_18_team_cycle_space_snapshot(connection)
+
+    columns = {
+        row["name"]
+        for row in connection.execute("pragma table_info(team_run_cycles)")
+    }
+    assert "space_policy_snapshot_json" in columns
 
 
 def test_migration_16_only_rewrites_home_isolated_policies() -> None:

@@ -107,6 +107,7 @@ class TeamRunCycle:
     request_id: str | None = None
     rules_snapshot: dict | None = None
     execution_metadata: dict[str, object] | None = None
+    space_policy: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -436,13 +437,14 @@ class TeamRunService:
             sequence = int(row["next"])
             cycle_id = uuid4().hex
             now = _now()
+            space_policy_snapshot_json = self._space_policy_snapshot_for_cycle(run)
             connection.execute(
                 """
                 insert into team_run_cycles (
                     id, team_run_id, request_id, sequence, source_type, source_id, status,
-                    rounds_budget, rounds_used, summary, error_message,
-                    created_at, started_at, finished_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, 'queued', ?, 0, null, null, ?, null, null, ?)
+                    rounds_budget, rounds_used, space_policy_snapshot_json, summary,
+                    error_message, created_at, started_at, finished_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, 'queued', ?, 0, ?, null, null, ?, null, null, ?)
                 """,
                 (
                     cycle_id,
@@ -452,6 +454,7 @@ class TeamRunService:
                     normalized_source_type,
                     normalized_source_id,
                     normalized_budget,
+                    space_policy_snapshot_json,
                     now,
                     now,
                 ),
@@ -602,6 +605,15 @@ class TeamRunService:
         )
         # team_agents / team_tasks / team_messages cascade via foreign keys
         self._db.execute("delete from team_runs where id = ?", (team_run_id,))
+
+    def _space_policy_snapshot_for_cycle(self, run: TeamRun) -> str:
+        if run.team_id:
+            return policy_json(
+                self._space_policies.resolve(team_id=run.team_id).policy
+            )
+        if run.space_policy:
+            return json.dumps(run.space_policy, ensure_ascii=False, sort_keys=True)
+        raise RuntimeError("Team run has no SPACE policy")
 
     def list_team_runs(self) -> list[TeamRun]:
         return [
@@ -1066,7 +1078,7 @@ class TeamRunService:
         retry_task_id = uuid4().hex
         with self._db.connection() as connection:
             run = connection.execute(
-                "select status, lifecycle_mode, rounds_budget from team_runs where id = ?",
+                "select * from team_runs where id = ?",
                 (team_run_id,),
             ).fetchone()
             if run is None:
@@ -1096,14 +1108,17 @@ class TeamRunService:
                     (team_run_id,),
                 ).fetchone()
                 retry_cycle_id = uuid4().hex
+                space_policy_snapshot_json = self._space_policy_snapshot_for_cycle(
+                    _team_run_from_row(run)
+                )
                 connection.execute(
                     """
                     insert into team_run_cycles (
                         id, team_run_id, request_id, sequence, source_type, source_id,
                         status, rounds_budget, rounds_used, rules_snapshot_json,
-                        summary, error_message, created_at, started_at, finished_at,
-                        updated_at
-                    ) values (?, ?, null, ?, 'task_retry', ?, 'interrupted', ?, 0, ?,
+                        space_policy_snapshot_json, summary, error_message, created_at,
+                        started_at, finished_at, updated_at
+                    ) values (?, ?, null, ?, 'task_retry', ?, 'interrupted', ?, 0, ?, ?,
                               null, null, ?, null, null, ?)
                     """,
                     (
@@ -1113,6 +1128,7 @@ class TeamRunService:
                         task_id,
                         int(run["rounds_budget"]),
                         rules_snapshot_json,
+                        space_policy_snapshot_json,
                         now,
                         now,
                     ),
@@ -2154,6 +2170,12 @@ def _team_run_cycle_from_row(row: object) -> TeamRunCycle:
             json.loads(row["execution_metadata_json"])
             if "execution_metadata_json" in row.keys()
             and row["execution_metadata_json"]
+            else None
+        ),
+        space_policy=(
+            json.loads(row["space_policy_snapshot_json"])
+            if "space_policy_snapshot_json" in row.keys()
+            and row["space_policy_snapshot_json"]
             else None
         ),
     )

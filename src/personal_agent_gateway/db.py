@@ -144,6 +144,7 @@ create table if not exists team_run_cycles (
     rounds_budget integer not null,
     rounds_used integer not null default 0,
     rules_snapshot_json text,
+    space_policy_snapshot_json text,
     execution_metadata_json text,
     summary text,
     error_message text,

@@ -7,6 +7,7 @@ import pytest
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.rule_sets import RuleSetService
+from personal_agent_gateway.space_policies import SpacePolicyService
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.teams import (
@@ -48,6 +49,35 @@ def make_services(tmp_path):
     personas = PersonaService(db)
     teams = TeamRunService(db, personas, workspace_root=tmp_path / "workspace")
     return personas, teams
+
+
+def make_continuous_team_with_space(tmp_path: Path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    spaces = SpacePolicyService(db)
+    teams = TeamRunService(
+        db,
+        personas,
+        workspace_root=tmp_path / "workspace",
+        space_policies=spaces,
+    )
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    directory = TeamService(db, personas)
+    team = directory.create_team("Cycle Team", "cycles", leader.id, [])
+    rules = RuleSetService(db)
+    rules.seed_defaults()
+    run = teams.create_team_run_from_team(
+        directory,
+        rules,
+        team.id,
+        "goal",
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    return db, teams, spaces, team, run
 
 
 def make_policy_services(tmp_path: Path):
@@ -398,6 +428,45 @@ def test_continuous_team_run_cycles_are_ordered_and_idempotent(tmp_path):
     assert first.rounds_budget == 6
     assert second.rounds_budget == 3
     assert teams.increment_cycle_rounds_used(first.id).rounds_used == 1
+
+
+def test_continuous_cycle_captures_latest_team_space_and_duplicate_keeps_it(tmp_path):
+    db, teams, spaces, team, run = make_continuous_team_with_space(tmp_path)
+    spaces.upsert(
+        "team", team.id,
+        read_mode="all", read_path=None,
+        write_mode="isolated", workspace_path=None,
+    )
+
+    first = teams.create_cycle(run.id, "manual", "source-1")
+    spaces.upsert(
+        "team", team.id,
+        read_mode="none", read_path=None,
+        write_mode="isolated", workspace_path=None,
+    )
+    duplicate = teams.create_cycle(run.id, "manual", "source-1")
+    second = teams.create_cycle(run.id, "manual", "source-2")
+
+    assert first.space_policy["read_mode"] == "all"
+    assert duplicate.space_policy == first.space_policy
+    assert second.space_policy["read_mode"] == "none"
+    assert teams.get_team_run(run.id).space_policy["read_mode"] == "none"
+
+
+def test_retry_cycle_captures_latest_team_space(tmp_path: Path) -> None:
+    db, teams, spaces, team, run = make_continuous_team_with_space(tmp_path)
+    spaces.upsert(
+        "team", team.id,
+        read_mode="all", read_path=None,
+        write_mode="isolated", workspace_path=None,
+    )
+    failed = teams.create_task(run.id, "failed", "retry me")
+    teams.set_task_status(failed.id, "failed", error_message="timed out")
+    teams.set_run_status(run.id, "completed_with_failures", summary="old summary")
+
+    _, _, retry_cycle = teams.retry_failed_task(run.id, failed.id)
+
+    assert retry_cycle.space_policy["read_mode"] == "all"
 
 
 def test_continuous_cycle_is_idempotent_by_request(tmp_path):
