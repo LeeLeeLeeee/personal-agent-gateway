@@ -1077,6 +1077,7 @@ class TeamRunService:
         retry_cycle_id: str | None = None
         retry_task_id = uuid4().hex
         with self._db.connection() as connection:
+            connection.execute("begin immediate")
             run = connection.execute(
                 "select * from team_runs where id = ?",
                 (team_run_id,),

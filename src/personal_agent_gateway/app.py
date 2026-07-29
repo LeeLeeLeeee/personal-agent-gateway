@@ -2,7 +2,6 @@ import json
 import logging
 import re
 import traceback
-from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -95,7 +94,7 @@ from personal_agent_gateway.team_delivery import TeamRunDeliveryService
 from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.team_results import TeamRunResultPackager
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
-from personal_agent_gateway.team_runtime import TeamRuntime
+from personal_agent_gateway.team_runtime import TeamModelFactory, TeamRuntime
 from personal_agent_gateway.teams import TeamAgent, TeamRunService
 from personal_agent_gateway.transcript import TranscriptStore
 
@@ -580,11 +579,14 @@ def _team_model_factory(
     *,
     execution_contexts: ExecutionContextFactory | None = None,
     agent_registry: AgentRegistry | None = None,
-) -> Callable[[TeamAgent], ModelClient]:
+) -> TeamModelFactory:
     contexts = execution_contexts or ExecutionContextFactory()
     agents = agent_registry or AgentRegistry(config)
 
-    def team_model_factory(agent: TeamAgent) -> ModelClient:
+    def team_model_factory(
+        agent: TeamAgent,
+        cycle_id: str | None = None,
+    ) -> ModelClient:
         session = agent.upstream_session_id or None
         workspace_root = (
             Path(agent.workspace_path)
@@ -593,20 +595,39 @@ def _team_model_factory(
         )
         workspace_root.mkdir(parents=True, exist_ok=True)
         run = team_runs.get_team_run(agent.team_run_id) if team_runs else None
-        space_snapshot = run.space_policy if run else None
+        run_space_policy = policy_from_snapshot(run.space_policy) if run else None
+        if run is not None and run_space_policy is None:
+            raise RuntimeError("Team run has no frozen SPACE policy")
+        space_policy = run_space_policy
         task = None
         cycle = None
-        if team_runs is not None and agent.current_task_id is not None:
+        effective_cycle_id = cycle_id
+        if cycle_id is not None:
+            if team_runs is None or run is None:
+                raise RuntimeError("Team cycle requires a Team run service")
+            cycle = team_runs.get_cycle(cycle_id)
+            if cycle.team_run_id != agent.team_run_id:
+                raise ValueError("Cycle belongs to a different team run")
+        elif team_runs is not None and agent.current_task_id is not None:
             task = team_runs.get_task(agent.current_task_id)
             if task.cycle_id is not None:
+                effective_cycle_id = task.cycle_id
                 cycle = team_runs.get_cycle(task.cycle_id)
-                if cycle.space_policy is not None:
-                    space_snapshot = cycle.space_policy
-        space_policy = (
-            policy_from_snapshot(space_snapshot)
-            if run
-            else _default_team_space_policy()
-        )
+        if cycle is not None and cycle.space_policy is not None:
+            cycle_space_policy = policy_from_snapshot(cycle.space_policy)
+            if (
+                run_space_policy is not None
+                and cycle_space_policy is not None
+                and cycle_space_policy.write_mode != run_space_policy.write_mode
+            ):
+                raise ExecutionContractError(
+                    "cycle_space_write_mode_changed",
+                    "The SPACE write mode changed; start a new Team Run "
+                    "to use the new mode",
+                )
+            space_policy = cycle_space_policy
+        if run is None:
+            space_policy = _default_team_space_policy()
         if space_policy is None:
             raise RuntimeError("Team run has no frozen SPACE policy")
         raw_options = agent.persona_snapshot.get("default_options")
@@ -625,34 +646,37 @@ def _team_model_factory(
             network=str(options.get("network") or "unspecified"),
         )
         execution = contexts.wire_execution(compiled, agent.backend, options)
-        if team_runs is not None and task is not None and cycle is not None:
-            if task.cycle_id is not None:
-                existing = (
-                    cycle.execution_metadata
-                    if isinstance(cycle.execution_metadata, dict)
-                    else {}
-                )
-                existing_agents = existing.get("agents")
-                agents_metadata = (
-                    dict(existing_agents)
-                    if isinstance(existing_agents, dict)
-                    else {}
-                )
-                agents_metadata[agent.id] = {
-                    "provider": agent.backend,
-                    "model": agent.model,
-                    **execution,
-                    "input_manifest_path": (
-                        str(compiled.input_manifest_path)
-                        if compiled.input_manifest_path is not None
-                        else None
-                    ),
-                    "input_manifest_sha256": compiled.input_manifest_sha256,
-                }
-                team_runs.set_cycle_execution_metadata(
-                    task.cycle_id,
-                    {**existing, "agents": agents_metadata},
-                )
+        if (
+            team_runs is not None
+            and cycle is not None
+            and effective_cycle_id is not None
+        ):
+            existing = (
+                cycle.execution_metadata
+                if isinstance(cycle.execution_metadata, dict)
+                else {}
+            )
+            existing_agents = existing.get("agents")
+            agents_metadata = (
+                dict(existing_agents)
+                if isinstance(existing_agents, dict)
+                else {}
+            )
+            agents_metadata[agent.id] = {
+                "provider": agent.backend,
+                "model": agent.model,
+                **execution,
+                "input_manifest_path": (
+                    str(compiled.input_manifest_path)
+                    if compiled.input_manifest_path is not None
+                    else None
+                ),
+                "input_manifest_sha256": compiled.input_manifest_sha256,
+            }
+            team_runs.set_cycle_execution_metadata(
+                effective_cycle_id,
+                {**existing, "agents": agents_metadata},
+            )
         return HttpModelClient(
             base_url=config.lmg_base_url,
             provider=agent.backend,

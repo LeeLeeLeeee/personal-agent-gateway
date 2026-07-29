@@ -1,4 +1,5 @@
 import shutil
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -467,6 +468,38 @@ def test_retry_cycle_captures_latest_team_space(tmp_path: Path) -> None:
     _, _, retry_cycle = teams.retry_failed_task(run.id, failed.id)
 
     assert retry_cycle.space_policy["read_mode"] == "all"
+
+
+def test_retry_cycle_resolves_space_after_immediate_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, teams, _, _, run = make_continuous_team_with_space(tmp_path)
+    failed = teams.create_task(run.id, "failed", "retry me")
+    teams.set_task_status(failed.id, "failed", error_message="timed out")
+    teams.set_run_status(run.id, "completed_with_failures", summary="old summary")
+    resolve_snapshot = teams._space_policy_snapshot_for_cycle
+
+    def resolve_after_lock(run_snapshot):
+        observer = db.connect()
+        try:
+            observer.execute("pragma busy_timeout = 0")
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                observer.execute("begin immediate")
+        finally:
+            observer.rollback()
+            observer.close()
+        return resolve_snapshot(run_snapshot)
+
+    monkeypatch.setattr(
+        teams,
+        "_space_policy_snapshot_for_cycle",
+        resolve_after_lock,
+    )
+
+    _, _, retry_cycle = teams.retry_failed_task(run.id, failed.id)
+
+    assert retry_cycle is not None
 
 
 def test_continuous_cycle_is_idempotent_by_request(tmp_path):

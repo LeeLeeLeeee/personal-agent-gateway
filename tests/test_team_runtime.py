@@ -136,7 +136,7 @@ def _factory_by_role(
 ):
     from personal_agent_gateway.teams import TeamAgent
     models = {}
-    def factory(agent: TeamAgent):
+    def factory(agent: TeamAgent, _cycle_id: str | None = None):
         if agent.id not in models:
             responses = leader_responses if agent.role == "leader" else worker_responses
             models[agent.id] = ScriptedModel(
@@ -162,6 +162,105 @@ def test_worker_prompt_presents_a_complete_concrete_assignment() -> None:
     assert '"deliverables"' in prompt
     assert '"verifications"' in prompt
     assert "final response must contain only" in prompt
+
+
+def test_worker_prompt_uses_cycle_space_instead_of_run_space(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    cycle_policy = dict(cycle.space_policy or {})
+    cycle_policy["read_mode"] = "all"
+    db.execute(
+        "update team_run_cycles set space_policy_snapshot_json = ? where id = ?",
+        (json.dumps(cycle_policy), cycle.id),
+    )
+    task = teams.create_task(
+        run.id,
+        "Inspect",
+        "Inspect the source",
+        cycle_id=cycle.id,
+    )
+    worker_agent = next(
+        agent for agent in teams.list_agents(run.id) if agent.role == "member"
+    )
+    runtime = TeamRuntime(teams, lambda _agent: FakeModel("done"))
+
+    prompt = runtime._worker_prompt(run, worker_agent, task)
+
+    assert "SPACE POLICY (frozen at cycle start):" in prompt
+    assert "- Read scope: all" in prompt
+    assert "- Read scope: none" not in prompt
+    assert "- Write mode: isolated" in prompt
+
+
+def test_worker_prompt_without_cycle_keeps_run_space(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+    )
+    task = teams.create_task(run.id, "Inspect", "Inspect the source")
+    worker_agent = next(
+        agent for agent in teams.list_agents(run.id) if agent.role == "member"
+    )
+    runtime = TeamRuntime(teams, lambda _agent: FakeModel("done"))
+
+    prompt = runtime._worker_prompt(run, worker_agent, task)
+
+    assert "SPACE POLICY (frozen at run start):" in prompt
+    assert "- Read scope: none" in prompt
+    assert "- Write mode: isolated" in prompt
+
+
+@pytest.mark.asyncio
+async def test_add_work_passes_cycle_space_to_leader_model_factory(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [],
+        "planning_only",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    seen_cycle_ids: list[str | None] = []
+
+    def model_factory(_agent, cycle_id=None):
+        seen_cycle_ids.append(cycle_id)
+        return FakeModel('[{"title":"Inspect","description":"Inspect the source"}]')
+
+    runtime = TeamRuntime(teams, model_factory)
+
+    await runtime.add_work(run.id, "Inspect the source", cycle.id)
+
+    assert seen_cycle_ids == [cycle.id]
 
 
 @pytest.mark.asyncio
@@ -719,7 +818,7 @@ async def test_add_work_keeps_leader_selected_owner(tmp_path):
         "description": "Implement the React widget",
         "owner_agent_id": frontend_agent.id,
     }])
-    runtime = TeamRuntime(teams, lambda _agent: FakeModel(plan))
+    runtime = TeamRuntime(teams, lambda _agent, _cycle_id=None: FakeModel(plan))
 
     tasks = await runtime.add_work(run.id, "Add a dashboard widget", cycle.id)
 
@@ -1602,7 +1701,7 @@ async def test_previous_cycle_summary_is_only_added_to_leader_instruction(
     worker_model = ScriptedModel(["worker result"])
     runtime = TeamRuntime(
         teams,
-        lambda agent: (
+        lambda agent, _cycle_id=None: (
             leader_model
             if agent.role == "leader"
             else worker_model

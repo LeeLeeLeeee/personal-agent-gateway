@@ -60,6 +60,7 @@ class _TeamRuns:
     def get_cycle(self, cycle_id: str):
         assert cycle_id == "cycle-1"
         return SimpleNamespace(
+            team_run_id="r1",
             execution_metadata=self.execution_metadata,
             space_policy=self.cycle_space_policy,
         )
@@ -245,6 +246,62 @@ def test_factory_uses_task_cycle_space_before_run_space(tmp_path):
     assert (inputs / "01-shared" / "evidence.txt").is_file()
 
 
+def test_factory_uses_explicit_cycle_space_for_leader_without_task(tmp_path):
+    workspace = tmp_path / "r1" / "workspace"
+    source = tmp_path / "shared"
+    workspace.mkdir(parents=True)
+    source.mkdir()
+    (source / "evidence.txt").write_text("evidence", encoding="utf-8")
+    team_runs = _TeamRuns(
+        artifact_root=str(tmp_path / "r1" / "artifacts"),
+        space_policy=_space_policy(None, read_mode="none"),
+        cycle_space_policy=_space_policy(str(source), read_mode="selected"),
+    )
+
+    client = _factory(_config(tmp_path), team_runs)(
+        _agent("codex", workspace_path=str(workspace)),
+        "cycle-1",
+    )
+
+    inputs = Path(client._execution["read_roots"][0])
+    assert inputs == workspace / "_inputs"
+    assert (inputs / "01-shared" / "evidence.txt").is_file()
+
+
+def test_factory_rejects_cycle_write_mode_change_before_compilation(tmp_path):
+    workspace = tmp_path / "project"
+    source = tmp_path / "shared"
+    workspace.mkdir()
+    source.mkdir()
+    team_runs = _TeamRuns(
+        artifact_root=str(tmp_path / "artifacts"),
+        space_policy=_space_policy(
+            str(workspace),
+            read_mode="all",
+            write_mode="full_access",
+            workspace_path=str(workspace),
+        ),
+        cycle_space_policy=_space_policy(
+            str(source),
+            read_mode="selected",
+            write_mode="isolated",
+        ),
+    )
+
+    with pytest.raises(ExecutionContractError) as error:
+        _factory(_config(tmp_path), team_runs)(
+            _agent(
+                "codex",
+                workspace_path=str(workspace),
+                current_task_id="task-1",
+            )
+        )
+
+    assert error.value.code == "cycle_space_write_mode_changed"
+    assert "start a new Team Run" in str(error.value)
+    assert not (workspace / "_inputs").exists()
+
+
 def test_factory_rejects_run_without_frozen_space_snapshot(tmp_path):
     workspace = tmp_path / "r1" / "workspace"
     workspace.mkdir(parents=True)
@@ -264,6 +321,25 @@ def test_factory_rejects_run_without_frozen_space_snapshot(tmp_path):
                 workspace_path=str(workspace),
                 current_task_id="task-1",
             )
+        )
+
+
+def test_factory_rejects_missing_run_space_even_with_cycle_space(tmp_path):
+    workspace = tmp_path / "r1" / "workspace"
+    workspace.mkdir(parents=True)
+    team_runs = _TeamRuns(
+        artifact_root=str(tmp_path / "r1" / "artifacts"),
+        space_policy=None,
+        cycle_space_policy=_space_policy(None, read_mode="none"),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="^Team run has no frozen SPACE policy$",
+    ):
+        _factory(_config(tmp_path), team_runs)(
+            _agent("codex", workspace_path=str(workspace)),
+            "cycle-1",
         )
 
 

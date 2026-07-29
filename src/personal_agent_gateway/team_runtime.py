@@ -3,6 +3,7 @@ import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Protocol
 
 from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.events import EventBus
@@ -156,25 +157,46 @@ def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:
     return "TEAM RULES (frozen at run start):\n" + "\n".join(lines).strip() + "\n\n"
 
 
-def _space_block(run: TeamRun) -> str:
-    policy = run.space_policy or {}
+def _space_block(
+    run: TeamRun,
+    policy: dict | None,
+    cycle_id: str | None = None,
+) -> str:
+    policy = policy or {}
     read_scope = policy.get("read_path") or policy.get("read_mode") or "configured SPACE"
+    write_mode = policy.get("write_mode") or "isolated"
     working_root = run.working_root or run.workspace_root
     artifact_root = run.artifact_root or run.workspace_root
+    frozen_at = "cycle" if cycle_id is not None else "run"
+    write_instruction = (
+        "- Writes outside the working root or artifact root are allowed by "
+        "full_access mode.\n"
+        if write_mode == "full_access"
+        else "- Do not write outside the working root or artifact root.\n"
+    )
     return (
-        "SPACE POLICY (frozen at run start):\n"
+        f"SPACE POLICY (frozen at {frozen_at} start):\n"
         f"- Read scope: {read_scope}\n"
+        f"- Write mode: {write_mode}\n"
         f"- Working root: {working_root}\n"
         f"- Artifact root: {artifact_root}\n"
-        "- Do not write outside the working root or artifact root unless write mode is full_access.\n\n"
+        f"{write_instruction}\n"
     )
+
+
+class TeamModelFactory(Protocol):
+    def __call__(
+        self,
+        agent: TeamAgent,
+        cycle_id: str | None = None,
+    ) -> ModelClient: ...
 
 
 class TeamRuntime:
     def __init__(
         self,
         teams: TeamRunService,
-        model_factory: Callable[[TeamAgent], ModelClient],
+        model_factory: TeamModelFactory,
         event_bus: EventBus | None = None,
         archive_service: ArchiveService | None = None,
         result_packager: TeamRunResultPackager | None = None,
@@ -190,6 +212,27 @@ class TeamRuntime:
         self._acceptance_service = acceptance_service or TeamAcceptanceService()
         self._artifact_publisher = artifact_publisher
         self._staged_inputs_resolver = staged_inputs_resolver
+
+    def _model(
+        self,
+        agent: TeamAgent,
+        cycle_id: str | None,
+    ) -> ModelClient:
+        if cycle_id is None:
+            return self._model_factory(agent)
+        return self._model_factory(agent, cycle_id)
+
+    def _space_policy(
+        self,
+        run: TeamRun,
+        cycle_id: str | None,
+    ) -> dict | None:
+        if cycle_id is None:
+            return run.space_policy
+        cycle = self._teams.get_cycle(cycle_id)
+        if cycle.team_run_id != run.id:
+            raise ValueError("Cycle belongs to a different team run")
+        return cycle.space_policy or run.space_policy
 
     def _goal_context(self, run: TeamRun, cycle_id: str | None) -> str:
         if cycle_id is None:
@@ -301,9 +344,13 @@ class TeamRuntime:
         leader_agent = self._teams.get_agent(leader.id)
         members = _find_workers(self._teams.list_agents(run.id))
         member_ids = {member.id for member in members}
-        model = self._model_factory(leader_agent)
+        model = self._model(leader_agent, cycle_id)
         goal_context = self._goal_context(run, cycle_id)
-        prompt = _space_block(run) + _rules_block(
+        prompt = _space_block(
+            run,
+            self._space_policy(run, cycle_id),
+            cycle_id,
+        ) + _rules_block(
             self._rules_snapshot(run, cycle_id), include_persona_baseline=False
         ) + self._archive_block(
             goal_context,
@@ -499,7 +546,7 @@ class TeamRuntime:
         self, run: TeamRun, leader: TeamAgent, worker: TeamAgent, task: TeamTask
     ) -> TaskOutcome | UserDecisionResolution:
         worker_agent = self._teams.get_agent(worker.id)
-        model = self._model_factory(worker_agent)
+        model = self._model(worker_agent, task.cycle_id)
         response = await model.complete(
             [{"role": "user", "content": self._worker_prompt(run, worker_agent, task)}]
         )
@@ -529,6 +576,7 @@ class TeamRuntime:
                     worker.id,
                     "No more consultation is available. Produce your best-effort final "
                     "result now, without a needs_info block.",
+                    task.cycle_id,
                 )
                 return self._task_outcome(
                     content,
@@ -565,12 +613,18 @@ class TeamRuntime:
                 worker.id,
                 f"Answer to your question: {answer}\n\nContinue and produce your final "
                 "result, or ask again only if essential.",
+                task.cycle_id,
             )
             self._teams.increment_agent_reinvocations(worker.id)
 
-    async def _resume_worker(self, worker_id: str, instruction: str) -> str:
+    async def _resume_worker(
+        self,
+        worker_id: str,
+        instruction: str,
+        cycle_id: str | None = None,
+    ) -> str:
         worker_agent = self._teams.get_agent(worker_id)
-        model = self._model_factory(worker_agent)
+        model = self._model(worker_agent, cycle_id)
         response = await model.complete([{"role": "user", "content": instruction}])
         if response.upstream_session_id:
             self._teams.set_agent_session(worker_agent.id, response.upstream_session_id)
@@ -580,9 +634,13 @@ class TeamRuntime:
         self, run: TeamRun, leader: TeamAgent, task: TeamTask, question: str
     ) -> dict[str, object]:
         leader_agent = self._teams.get_agent(leader.id)
-        model = self._model_factory(leader_agent)
+        model = self._model(leader_agent, task.cycle_id)
         goal_context = self._goal_context(run, task.cycle_id)
-        prompt = _space_block(run) + self._archive_block(
+        prompt = _space_block(
+            run,
+            self._space_policy(run, task.cycle_id),
+            task.cycle_id,
+        ) + self._archive_block(
             f"{goal_context}\n{task.title}\n{question}",
             persona_id=leader_agent.persona_id,
             allow_request=False,
@@ -607,7 +665,11 @@ class TeamRuntime:
 
     def _worker_prompt(self, run: TeamRun, worker: TeamAgent, task: TeamTask) -> str:
         goal_context = self._goal_context(run, task.cycle_id)
-        prompt = _space_block(run) + _rules_block(
+        prompt = _space_block(
+            run,
+            self._space_policy(run, task.cycle_id),
+            task.cycle_id,
+        ) + _rules_block(
             self._rules_snapshot(run, task.cycle_id), include_persona_baseline=True
         ) + self._archive_block(
             f"{goal_context}\n{task.title}\n{task.description}",
@@ -801,7 +863,7 @@ class TeamRuntime:
         leader_agent = self._teams.get_agent(leader.id)
         members = _find_workers(self._teams.list_agents(run.id))
         member_ids = {member.id for member in members}
-        model = self._model_factory(leader_agent)
+        model = self._model(leader_agent, cycle_id)
         existing = (
             ", ".join(
                 task.title for task in self._teams.list_tasks(run.id, cycle_id)
@@ -809,7 +871,11 @@ class TeamRuntime:
             or "(none)"
         )
         goal_context = self._goal_context(run, cycle_id)
-        prompt = _space_block(run) + self._archive_block(
+        prompt = _space_block(
+            run,
+            self._space_policy(run, cycle_id),
+            cycle_id,
+        ) + self._archive_block(
             f"{goal_context}\n{instruction}",
             persona_id=leader_agent.persona_id,
             allow_request=False,
@@ -868,9 +934,13 @@ class TeamRuntime:
             for task in tasks
         )
         leader_agent = self._teams.get_agent(leader.id)
-        model = self._model_factory(leader_agent)
+        model = self._model(leader_agent, cycle_id)
         goal_context = self._goal_context(run, cycle_id)
-        prompt = _space_block(run) + _rules_block(
+        prompt = _space_block(
+            run,
+            self._space_policy(run, cycle_id),
+            cycle_id,
+        ) + _rules_block(
             self._rules_snapshot(run, cycle_id), include_persona_baseline=False
         ) + self._archive_block(
             f"{goal_context}\n{results}",
