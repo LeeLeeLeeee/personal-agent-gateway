@@ -39,7 +39,7 @@ class _TeamRuns:
         self,
         *,
         artifact_root: str,
-        space_policy: dict[str, object],
+        space_policy: dict[str, object] | None,
         cycle_space_policy: dict[str, object] | None = None,
     ):
         self._run = SimpleNamespace(
@@ -243,6 +243,28 @@ def test_factory_uses_task_cycle_space_before_run_space(tmp_path):
     assert client._execution["workspace_root"] == str(workspace)
     assert inputs == workspace / "_inputs"
     assert (inputs / "01-shared" / "evidence.txt").is_file()
+
+
+def test_factory_rejects_run_without_frozen_space_snapshot(tmp_path):
+    workspace = tmp_path / "r1" / "workspace"
+    workspace.mkdir(parents=True)
+    team_runs = _TeamRuns(
+        artifact_root=str(tmp_path / "r1" / "artifacts"),
+        space_policy=None,
+        cycle_space_policy=None,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="^Team run has no frozen SPACE policy$",
+    ):
+        _factory(_config(tmp_path), team_runs)(
+            _agent(
+                "codex",
+                workspace_path=str(workspace),
+                current_task_id="task-1",
+            )
+        )
 
 
 def test_factory_persists_compiled_cycle_execution_metadata(tmp_path):

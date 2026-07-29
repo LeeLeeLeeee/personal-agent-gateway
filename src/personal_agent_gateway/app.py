@@ -604,7 +604,7 @@ def _team_model_factory(
                     space_snapshot = cycle.space_policy
         space_policy = (
             policy_from_snapshot(space_snapshot)
-            if space_snapshot is not None
+            if run
             else _default_team_space_policy()
         )
         if space_policy is None:
