@@ -46,7 +46,22 @@ class _TeamRuns:
             artifact_root=artifact_root,
             space_policy=space_policy,
         )
-        self.execution_metadata = None
+        self.execution_metadata = {
+            "provider_capabilities": {
+                "codex": _frozen_capability(
+                    network_modes=["unspecified", "denied", "required"],
+                    sandbox_modes=[
+                        "read-only",
+                        "workspace-write",
+                        "danger-full-access",
+                    ],
+                ),
+                "claude": _frozen_capability(
+                    network_modes=["unspecified"],
+                    permission_modes=["default", "acceptEdits", "plan"],
+                ),
+            }
+        }
         self.cycle_space_policy = cycle_space_policy
 
     def get_team_run(self, team_run_id: str):
@@ -68,6 +83,27 @@ class _TeamRuns:
     def set_cycle_execution_metadata(self, cycle_id: str, metadata):
         assert cycle_id == "cycle-1"
         self.execution_metadata = metadata
+
+
+def _frozen_capability(
+    *,
+    network_modes: list[str],
+    sandbox_modes: list[str] | None = None,
+    permission_modes: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "ready": True,
+        "readiness_error": None,
+        "snapshot_status": "fresh",
+        "detected_at": "2026-07-30T00:00:00Z",
+        "execution": {
+            "resume": True,
+            "external_read_only_roots": False,
+            "network_modes": network_modes,
+            "sandbox_modes": sandbox_modes or [],
+            "permission_modes": permission_modes or [],
+        },
+    }
 
 
 def _space_policy(
@@ -93,8 +129,6 @@ class _AgentRegistry:
     def get(self, provider: str):
         capabilities = (
             ProviderExecutionCapabilities(
-                ready=True,
-                readiness_error=None,
                 resume=True,
                 external_read_only_roots=False,
                 network_modes=("unspecified", "denied", "required"),
@@ -103,8 +137,6 @@ class _AgentRegistry:
             )
             if provider == "codex"
             else ProviderExecutionCapabilities(
-                ready=True,
-                readiness_error=None,
                 resume=True,
                 external_read_only_roots=False,
                 network_modes=("unspecified",),
@@ -371,6 +403,39 @@ def test_factory_persists_compiled_cycle_execution_metadata(tmp_path):
     assert agent_metadata["model"] == "default"
     assert agent_metadata["sandbox"] == "workspace-write"
     assert agent_metadata["input_manifest_sha256"]
+
+
+def test_team_factory_uses_frozen_cycle_capability_without_registry_lookup(tmp_path):
+    team_runs = _TeamRuns(
+        artifact_root=str(tmp_path / "artifacts"),
+        space_policy=_space_policy(None, read_mode="none"),
+    )
+    team_runs.execution_metadata = {
+        "provider_capabilities": {
+            "codex": {
+                "snapshot_status": "fresh",
+                "detected_at": "2026-07-30T00:00:00Z",
+                "execution": {
+                    "resume": True,
+                    "external_read_only_roots": False,
+                    "network_modes": ["unspecified"],
+                    "sandbox_modes": ["workspace-write"],
+                    "permission_modes": [],
+                },
+            }
+        }
+    }
+    registry = SimpleNamespace(
+        get=lambda _provider: pytest.fail("registry refreshed on cycle hot path")
+    )
+
+    client = _team_model_factory(
+        _config(tmp_path),
+        team_runs,
+        agent_registry=registry,
+    )(_agent("codex", workspace_path=str(tmp_path / "workspace")), "cycle-1")
+
+    assert isinstance(client, HttpModelClient)
 
 
 @pytest.mark.parametrize("backend", ["codex", "claude"])

@@ -92,6 +92,10 @@ from personal_agent_gateway.team_cycle_loop import TeamCycleLoop
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_delivery import TeamRunDeliveryService
 from personal_agent_gateway.team_directory import TeamService
+from personal_agent_gateway.team_provider_recovery import (
+    TeamProviderRecovery,
+    capabilities_for_cycle,
+)
 from personal_agent_gateway.team_results import TeamRunResultPackager
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.team_runtime import TeamModelFactory, TeamRuntime
@@ -223,6 +227,10 @@ def create_app(
         app.state.team_run_service,
         app.state.team_run_orchestrator,
         event_bus,
+        provider_recovery=TeamProviderRecovery(
+            app.state.team_run_service,
+            app.state.agent_registry,
+        ),
     )
     app.state.team_cycle_loop = TeamCycleLoop(
         app.state.team_cycle_service,
@@ -632,13 +640,16 @@ def _team_model_factory(
             raise RuntimeError("Team run has no frozen SPACE policy")
         raw_options = agent.persona_snapshot.get("default_options")
         options = raw_options if isinstance(raw_options, dict) else {}
-        descriptor = agents.get(agent.backend)
-        capabilities = descriptor.execution_capabilities
-        if not descriptor.available or capabilities is None:
-            raise ExecutionContractError(
-                "provider_not_ready",
-                "The selected Team provider has no usable execution capability snapshot",
-            )
+        if cycle is not None:
+            capabilities = capabilities_for_cycle(cycle, agent.backend)
+        else:
+            descriptor = agents.get(agent.backend)
+            capabilities = descriptor.execution_capabilities
+            if not descriptor.available or capabilities is None:
+                raise ExecutionContractError(
+                    "provider_not_ready",
+                    "The selected Team provider has no usable execution capability snapshot",
+                )
         compiled = contexts.for_session(
             space_policy,
             capabilities,

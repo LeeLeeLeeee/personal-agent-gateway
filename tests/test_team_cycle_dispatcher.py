@@ -1,14 +1,20 @@
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from personal_agent_gateway.events import EventBus
+from personal_agent_gateway.lmg_client import ProviderExecutionCapabilities
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.run_state import TeamRunRegistry
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_provider_recovery import (
+    ProviderRecoveryRequired,
+    TeamProviderRecovery,
+)
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamRun, TeamRunService
@@ -38,6 +44,133 @@ def make_dispatcher_services(tmp_path: Path) -> DispatcherServices:
         event_bus,
         dispatcher,
     )
+
+
+def _dispatching_cycle(teams, cycles, run):
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "provider-freeze",
+        "work",
+        previous_cycle_id=None,
+    )
+    claimed = cycles.claim_next(run.id)
+    assert claimed is not None and claimed.id == request.id
+    return teams.create_cycle(
+        run.id,
+        claimed.source_type,
+        claimed.source_id,
+        request_id=claimed.id,
+    )
+
+
+def _execution_capability():
+    return ProviderExecutionCapabilities(
+        resume=True,
+        external_read_only_roots=False,
+        network_modes=("unspecified", "denied", "required"),
+        sandbox_modes=("read-only", "workspace-write"),
+        permission_modes=(),
+    )
+
+
+class _FrozenRegistry:
+    def get(self, provider):
+        return SimpleNamespace(
+            ready=True,
+            readiness_error=None,
+            snapshot_status="fresh",
+            detected_at="2026-07-30T00:00:00Z",
+            execution_capabilities=_execution_capability(),
+        )
+
+
+def test_freeze_cycle_persists_every_roster_provider(tmp_path):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    worker = next(
+        agent for agent in teams.list_agents(run.id)
+        if agent.id != run.leader_agent_id
+    )
+    db.execute(
+        "update team_agents set backend = 'claude' where id = ?",
+        (worker.id,),
+    )
+    cycle = _dispatching_cycle(teams, cycles, run)
+    registry = _FrozenRegistry()
+    recovery = TeamProviderRecovery(teams, registry)
+
+    frozen = recovery.freeze_cycle(cycle.id)
+
+    snapshots = frozen.execution_metadata["provider_capabilities"]
+    assert set(snapshots) == {"codex", "claude"}
+    assert snapshots["codex"]["execution"]["network_modes"] == [
+        "unspecified", "denied", "required"
+    ]
+    assert snapshots["claude"]["snapshot_status"] == "fresh"
+
+
+def test_freeze_cycle_rejects_missing_roster_capability_without_partial_snapshot(
+    tmp_path,
+):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    worker = next(
+        agent for agent in teams.list_agents(run.id)
+        if agent.id != run.leader_agent_id
+    )
+    db.execute(
+        "update team_agents set backend = 'claude' where id = ?",
+        (worker.id,),
+    )
+    cycle = _dispatching_cycle(teams, cycles, run)
+    registry = _FrozenRegistry()
+    registry.get = lambda provider: SimpleNamespace(
+        ready=False,
+        readiness_error="capabilities_unavailable",
+        snapshot_status="unavailable",
+        detected_at="",
+        execution_capabilities=(
+            None if provider == "claude" else _execution_capability()
+        ),
+    )
+    recovery = TeamProviderRecovery(teams, registry)
+
+    with pytest.raises(ProviderRecoveryRequired) as error:
+        recovery.freeze_cycle(cycle.id)
+
+    assert error.value.provider == "claude"
+    assert error.value.reason_code == "capabilities_unavailable"
+    assert teams.get_cycle(cycle.id).execution_metadata is None
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_freezes_capabilities_before_preparer(tmp_path):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    orchestrator = RecordingOrchestrator(teams)
+    recovery = TeamProviderRecovery(teams, _FrozenRegistry())
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=recovery,
+    )
+
+    async def assert_frozen(_request, cycle):
+        snapshots = cycle.execution_metadata["provider_capabilities"]
+        assert set(snapshots) == {"codex"}
+
+    dispatcher.add_preparer(assert_frozen)
+    cycles.enqueue_request(
+        run.id,
+        "manual",
+        "client-1",
+        "work",
+        previous_cycle_id=None,
+    )
+
+    await dispatcher.run_one(run.id)
+
+    assert len(orchestrator.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -220,7 +353,10 @@ async def test_cancellation_during_real_leader_add_work_preserves_cycle(
             await asyncio.Event().wait()
             return ModelResponse(content="[]", tool_calls=[])
 
-    runtime = TeamRuntime(teams, lambda _agent: GatedLeaderModel())
+    runtime = TeamRuntime(
+        teams,
+        lambda _agent, _cycle_id=None: GatedLeaderModel(),
+    )
     orchestrator = TeamRunOrchestrator(TeamRunRegistry(), lambda: runtime)
     dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, EventBus())
     request = cycles.enqueue_request(

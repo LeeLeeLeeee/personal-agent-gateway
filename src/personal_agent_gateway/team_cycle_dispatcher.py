@@ -8,6 +8,7 @@ from personal_agent_gateway.team_cycles import (
     TeamCycleRequest,
     TeamCycleService,
 )
+from personal_agent_gateway.team_provider_recovery import TeamProviderRecovery
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.teams import TeamRun, TeamRunCycle, TeamRunService
 
@@ -37,11 +38,13 @@ class TeamCycleDispatcher:
         teams: TeamRunService,
         orchestrator: TeamRunOrchestrator,
         event_bus: EventBus,
+        provider_recovery: TeamProviderRecovery | None = None,
     ) -> None:
         self._cycles = cycles
         self._teams = teams
         self._orchestrator = orchestrator
         self._event_bus = event_bus
+        self._provider_recovery = provider_recovery
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._preparers: list[CyclePreparer] = []
         self._task: asyncio.Task[None] | None = None
@@ -100,6 +103,8 @@ class TeamCycleDispatcher:
                 request.source_id,
                 request_id=request.id,
             )
+            if self._provider_recovery is not None:
+                cycle = self._provider_recovery.freeze_cycle(cycle.id)
         except Exception:
             self._cycles.requeue_claim(request.id)
             raise
