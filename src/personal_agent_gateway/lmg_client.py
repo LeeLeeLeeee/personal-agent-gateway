@@ -1,8 +1,10 @@
+import logging
 import math
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Generic, Literal, TypeVar
+from typing import Callable, Generic, Literal, TypeVar
 from urllib.parse import quote
 
 import httpx
@@ -18,6 +20,7 @@ LmgStatus = Literal[
 ]
 T = TypeVar("T")
 _LMG_PROTOCOL_MAJOR = "2"
+_LOGGER = logging.getLogger(__name__)
 _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
@@ -51,13 +54,17 @@ class LMGProtocolMismatch(RuntimeError):
 
 @dataclass(frozen=True)
 class ProviderExecutionCapabilities:
-    ready: bool
-    readiness_error: str | None
     resume: bool
     external_read_only_roots: bool
     network_modes: tuple[str, ...]
     sandbox_modes: tuple[str, ...]
     permission_modes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProviderReadiness:
+    ready: bool
+    error_code: str | None
 
 
 _SESSION_REQUIRED_NONEMPTY_STRINGS = ("provider", "upstream_id")
@@ -86,6 +93,24 @@ def fetch_capabilities(
     config,
     *,
     transport: httpx.BaseTransport | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    retry_delays: tuple[float, ...] = (0.5, 1.5),
+) -> LmgQueryResult[dict[str, object]]:
+    for attempt in range(len(retry_delays) + 1):
+        result = _fetch_capabilities_once(config, transport=transport)
+        _LOGGER.info("attempt=%d status=%s", attempt + 1, result.status)
+        if result.status not in {"unreachable", "not_ready"}:
+            return result
+        if attempt == len(retry_delays):
+            return result
+        sleep(retry_delays[attempt])
+    raise AssertionError("unreachable retry state")
+
+
+def _fetch_capabilities_once(
+    config,
+    *,
+    transport: httpx.BaseTransport | None = None,
 ) -> LmgQueryResult[dict[str, object]]:
     url = f"{config.lmg_base_url.rstrip('/')}/v1/models"
     try:
@@ -93,7 +118,7 @@ def fetch_capabilities(
             response = client.get(url, headers=_lmg_headers(config))
     except httpx.HTTPError:
         return _query_failure("unreachable")
-    failure = _http_failure(response.status_code)
+    failure = _capability_http_failure(response.status_code)
     if failure is not None:
         return failure
     try:
@@ -116,8 +141,9 @@ def fetch_execution_capabilities(
     config: AppConfig,
     *,
     transport: httpx.BaseTransport | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, ProviderExecutionCapabilities]:
-    result = fetch_capabilities(config, transport=transport)
+    result = fetch_capabilities(config, transport=transport, sleep=sleep)
     if result.status != "ready" or result.data is None:
         raise LMGProtocolMismatch(result.message or "LMG execution protocol is unavailable")
     providers = result.data["providers"]
@@ -126,8 +152,6 @@ def fetch_execution_capabilities(
     for provider_id, provider in providers.items():
         assert isinstance(provider_id, str)
         capability = parse_provider_execution_capabilities(provider)
-        if not capability.ready:
-            raise LMGProtocolMismatch(f"LMG provider is not ready: {provider_id}")
         parsed[provider_id] = capability
     return parsed
 
@@ -144,6 +168,18 @@ def _valid_capabilities(payload: object) -> bool:
     if type(payload.get("schema_version")) is not int:
         return False
     if payload["schema_version"] != 1:
+        return False
+    detected_at = payload.get("detected_at")
+    if not isinstance(detected_at, str) or not detected_at:
+        return False
+    if payload.get("snapshot_status") not in {"fresh", "stale"}:
+        return False
+    if payload.get("admission_status") not in {"ready", "not_ready"}:
+        return False
+    if payload.get("gateway_status") not in {"ready", "not_ready"}:
+        return False
+    refresh_error_code = payload.get("refresh_error_code")
+    if refresh_error_code is not None and not isinstance(refresh_error_code, str):
         return False
     providers = payload.get("providers")
     if not isinstance(providers, dict):
@@ -163,6 +199,7 @@ def _valid_provider_capabilities(capabilities: object) -> bool:
         return False
     try:
         parse_provider_execution_capabilities(capabilities)
+        parse_provider_readiness(capabilities)
     except LMGProtocolMismatch:
         return False
     for key in ("version", "error"):
@@ -197,13 +234,7 @@ def parse_provider_execution_capabilities(
 ) -> ProviderExecutionCapabilities:
     if not isinstance(provider, dict):
         raise LMGProtocolMismatch("LMG provider capability data is malformed")
-    ready = provider.get("ready")
-    readiness_error = provider.get("readiness_error")
     execution = provider.get("execution")
-    if not isinstance(ready, bool):
-        raise LMGProtocolMismatch("LMG provider readiness is missing")
-    if readiness_error is not None and not isinstance(readiness_error, str):
-        raise LMGProtocolMismatch("LMG provider readiness error is malformed")
     if not isinstance(execution, dict):
         raise LMGProtocolMismatch("LMG provider execution capabilities are missing")
     resume = execution.get("resume")
@@ -222,14 +253,24 @@ def parse_provider_execution_capabilities(
     if not collections["network_modes"]:
         raise LMGProtocolMismatch("LMG provider network modes are missing")
     return ProviderExecutionCapabilities(
-        ready=ready,
-        readiness_error=readiness_error,
         resume=resume,
         external_read_only_roots=external_roots,
         network_modes=collections["network_modes"],
         sandbox_modes=collections["sandbox_modes"],
         permission_modes=collections["permission_modes"],
     )
+
+
+def parse_provider_readiness(provider: object) -> ProviderReadiness:
+    if not isinstance(provider, dict):
+        raise LMGProtocolMismatch("LMG provider readiness data is malformed")
+    ready = provider.get("ready")
+    error_code = provider.get("readiness_error")
+    if not isinstance(ready, bool):
+        raise LMGProtocolMismatch("LMG provider readiness is missing")
+    if error_code is not None and not isinstance(error_code, str):
+        raise LMGProtocolMismatch("LMG provider readiness error is malformed")
+    return ProviderReadiness(ready=ready, error_code=error_code)
 
 
 def fetch_sessions(
@@ -453,6 +494,18 @@ def _http_failure(status_code: int) -> LmgQueryResult | None:
         return _query_failure("not_ready")
     if status_code < 200 or status_code >= 300:
         return _query_failure("unreachable")
+    return None
+
+
+def _capability_http_failure(status_code: int) -> LmgQueryResult | None:
+    if status_code == 401:
+        return _query_failure("unauthorized")
+    if status_code == 503:
+        return _query_failure("not_ready")
+    if status_code in {502, 504}:
+        return _query_failure("unreachable")
+    if status_code < 200 or status_code >= 300:
+        return _query_failure("protocol_error")
     return None
 
 

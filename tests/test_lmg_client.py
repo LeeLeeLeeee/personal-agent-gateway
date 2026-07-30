@@ -1,4 +1,5 @@
 import json
+import logging
 
 import httpx
 import pytest
@@ -10,12 +11,14 @@ from personal_agent_gateway.lmg_client import (
     LMGQueryError,
     LmgQueryResult,
     ProviderExecutionCapabilities,
+    ProviderReadiness,
     delete_session,
     fetch_capabilities,
     fetch_execution_capabilities,
     fetch_sessions,
     fetch_sessions_strict,
     fetch_usage,
+    parse_provider_readiness,
 )
 
 
@@ -23,7 +26,10 @@ def _protocol_2_payload(*, ready: bool = True):
     return {
         "protocol_version": "2.0",
         "schema_version": 1,
-        "gateway_status": "ready" if ready else "not_ready",
+        "detected_at": "2026-07-30T00:00:00Z",
+        "snapshot_status": "fresh",
+        "admission_status": "ready",
+        "gateway_status": "ready",
         "providers": {
             "codex": {
                 "available": True,
@@ -150,8 +156,6 @@ def test_fetch_execution_capabilities_returns_typed_ready_providers():
         _cfg(), transport=httpx.MockTransport(handler)
     ) == {
         "codex": ProviderExecutionCapabilities(
-            ready=True,
-            readiness_error=None,
             resume=True,
             external_read_only_roots=False,
             network_modes=("unspecified", "denied", "required"),
@@ -176,7 +180,6 @@ def test_fetch_execution_capabilities_returns_typed_ready_providers():
                 }
             },
         },
-        _protocol_2_payload(ready=False),
     ],
 )
 def test_fetch_execution_capabilities_rejects_unusable_protocol(payload):
@@ -194,25 +197,117 @@ def test_fetch_capabilities_protocol_error_on_bad_schema():
     ).status == "protocol_error"
 
 
-def test_fetch_capabilities_unreachable_on_http_error():
+def test_fetch_capabilities_rejects_non_transient_http_error():
     def handler(request): return httpx.Response(500)
     assert fetch_capabilities(
-        _cfg(), transport=httpx.MockTransport(handler)
-    ).status == "unreachable"
+        _cfg(),
+        transport=httpx.MockTransport(handler),
+        sleep=lambda _delay: pytest.fail("hard failure slept"),
+    ).status == "protocol_error"
 
 
-def test_fetch_capabilities_retains_catalog_when_gateway_is_not_ready():
+def test_unready_provider_keeps_usable_execution_capability():
     payload = _protocol_2_payload(ready=False)
 
-    def handler(request): return httpx.Response(200, json=payload)
+    def handler(request):
+        return httpx.Response(200, json=payload)
+
+    parsed = fetch_execution_capabilities(
+        _cfg(),
+        transport=httpx.MockTransport(handler),
+        sleep=lambda _delay: None,
+    )
+
+    assert parsed["codex"] == ProviderExecutionCapabilities(
+        resume=True,
+        external_read_only_roots=False,
+        network_modes=("unspecified", "denied", "required"),
+        sandbox_modes=("read-only", "workspace-write"),
+        permission_modes=(),
+    )
+    assert parse_provider_readiness(payload["providers"]["codex"]) == ProviderReadiness(
+        ready=False,
+        error_code="provider_not_ready",
+    )
+
+
+def test_fetch_capabilities_retries_transient_status_twice_then_succeeds(caplog):
+    responses = iter([
+        httpx.Response(503, json={"code": "capabilities_unavailable"}),
+        httpx.Response(502, json={"code": "bad_gateway"}),
+        httpx.Response(200, json=_protocol_2_payload()),
+    ])
+    delays = []
+    caplog.set_level(logging.INFO, logger="personal_agent_gateway.lmg_client")
+
+    result = fetch_capabilities(
+        _cfg(),
+        transport=httpx.MockTransport(lambda _request: next(responses)),
+        sleep=delays.append,
+    )
+
+    assert result.status == "ready"
+    assert delays == [0.5, 1.5]
+    assert caplog.messages == [
+        "attempt=1 status=not_ready",
+        "attempt=2 status=unreachable",
+        "attempt=3 status=ready",
+    ]
+
+
+def test_fetch_capabilities_does_not_retry_hard_failure():
+    calls = 0
+
+    def handler(_request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(401, json={"code": "unauthorized"})
+
+    result = fetch_capabilities(
+        _cfg(),
+        transport=httpx.MockTransport(handler),
+        sleep=lambda _delay: pytest.fail("hard failure slept"),
+    )
+
+    assert result.status == "unauthorized"
+    assert calls == 1
+
+
+def test_fetch_capabilities_retries_gateway_not_ready_three_times():
+    payload = _protocol_2_payload(ready=False)
+    payload["gateway_status"] = "not_ready"
+    delays = []
+
+    result = fetch_capabilities(
+        _cfg(),
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=payload)),
+        sleep=delays.append,
+    )
+
+    assert result.status == "not_ready"
+    assert result.data == payload
+    assert delays == [0.5, 1.5]
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("snapshot_status", "expired"),
+        ("admission_status", "pending"),
+        ("gateway_status", "pending"),
+        ("detected_at", ""),
+        ("refresh_error_code", 1),
+    ],
+)
+def test_fetch_capabilities_rejects_invalid_snapshot_contract(field, value):
+    payload = _protocol_2_payload()
+    payload[field] = value
 
     assert fetch_capabilities(
-        _cfg(), transport=httpx.MockTransport(handler)
-    ) == LmgQueryResult(
-        data=payload,
-        status="not_ready",
-        message="로컬 모델 게이트웨이가 준비되지 않았습니다.",
-    )
+        _cfg(),
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=payload)),
+        sleep=lambda _delay: None,
+    ).status == "protocol_error"
 
 
 @pytest.mark.parametrize(
@@ -436,30 +531,16 @@ def test_lmg_requests_omit_authorization_when_direct_config_has_no_token():
         lmg_local_token=None,
     )
 
+    payload = _protocol_2_payload()
+
     def handler(request):
         assert "authorization" not in request.headers
-        return httpx.Response(
-            200,
-            json={
-                "protocol_version": "2.0",
-                "schema_version": 1,
-                "gateway_status": "ready",
-                "providers": {},
-            },
-        )
+        return httpx.Response(200, json=payload)
 
     assert fetch_capabilities(
         config,
         transport=httpx.MockTransport(handler),
-    ) == LmgQueryResult(
-        data={
-            "protocol_version": "2.0",
-            "schema_version": 1,
-            "gateway_status": "ready",
-            "providers": {},
-        },
-        status="ready",
-    )
+    ) == LmgQueryResult(data=payload, status="ready")
 
 
 def test_delete_session_raises_typed_error_on_http_error():
