@@ -3,7 +3,10 @@ from pathlib import Path
 import pytest
 
 from personal_agent_gateway.source_staging import SourceStager
-from personal_agent_gateway.team_acceptance import TeamAcceptanceService
+from personal_agent_gateway.team_acceptance import (
+    TeamAcceptanceService,
+    is_recoverable_acceptance_failure,
+)
 from personal_agent_gateway.team_outcomes import (
     Deliverable,
     TaskOutcome,
@@ -13,6 +16,31 @@ from personal_agent_gateway.teams import TaskAcceptance, TeamTask
 
 _DEFAULT_DELIVERABLES = (Deliverable("outputs/report.md", "markdown"),)
 _DEFAULT_VERIFICATIONS = (VerificationEvidence("pytest", "passed", "42 passed"),)
+
+
+@pytest.mark.parametrize(
+    "reason_code",
+    [
+        "undeclared_deliverable",
+        "required_output_missing",
+        "unsafe_deliverable",
+        "required_verification_failed",
+        "task_not_completed",
+        "invalid_task_outcome",
+    ],
+)
+def test_recoverable_acceptance_reason_codes(reason_code: str) -> None:
+    assert is_recoverable_acceptance_failure(reason_code)
+
+
+@pytest.mark.parametrize(
+    "reason_code",
+    ["input_snapshot_modified", "artifact_publication_failed", "model_failed"],
+)
+def test_infrastructure_acceptance_failures_are_not_recoverable(
+    reason_code: str,
+) -> None:
+    assert not is_recoverable_acceptance_failure(reason_code)
 
 
 def _task(*, outputs=("outputs/report.md",), verifications=("pytest",)) -> TeamTask:

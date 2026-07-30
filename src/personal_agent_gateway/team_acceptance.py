@@ -12,12 +12,28 @@ from personal_agent_gateway.team_outcomes import TaskOutcome
 from personal_agent_gateway.teams import TeamTask
 
 
+RECOVERABLE_ACCEPTANCE_REASONS = frozenset(
+    {
+        "undeclared_deliverable",
+        "required_output_missing",
+        "unsafe_deliverable",
+        "required_verification_failed",
+        "task_not_completed",
+        "invalid_task_outcome",
+    }
+)
+
+
 @dataclass(frozen=True)
 class AcceptanceResult:
     accepted: bool
     status: Literal["completed", "blocked", "failed"]
     reason_code: str | None
     evidence: dict[str, object]
+
+
+def is_recoverable_acceptance_failure(reason_code: str | None) -> bool:
+    return reason_code in RECOVERABLE_ACCEPTANCE_REASONS
 
 
 class TeamAcceptanceService:

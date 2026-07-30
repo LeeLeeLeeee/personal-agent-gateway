@@ -13,6 +13,7 @@ from personal_agent_gateway.team_outcomes import TaskOutcome
 from personal_agent_gateway.team_runtime import (
     WORKER_PROMPT,
     TeamRuntime,
+    _parse_acceptance_review_resolution,
     _parse_task_plan,
     _rules_block,
     _task_delta,
@@ -502,6 +503,169 @@ def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
             ),
         }
     ]
+
+
+def test_acceptance_review_resolution_parses_worker_retry() -> None:
+    resolution = _parse_acceptance_review_resolution(
+        json.dumps(
+            {
+                "resolution": {
+                    "kind": "retry_worker",
+                    "instruction": "Remove the undeclared deliverable and resubmit.",
+                    "reason": "The contract declares no output.",
+                }
+            }
+        )
+    )
+
+    assert resolution.kind == "retry_worker"
+    assert resolution.reason == "The contract declares no output."
+    assert resolution.instruction == "Remove the undeclared deliverable and resubmit."
+    assert resolution.acceptance is None
+    assert resolution.decision is None
+    assert resolution.reason_code is None
+
+
+def test_acceptance_review_resolution_parses_revised_acceptance() -> None:
+    resolution = _parse_acceptance_review_resolution(
+        json.dumps(
+            {
+                "resolution": {
+                    "kind": "revise_acceptance",
+                    "acceptance": {
+                        "required_outputs": ["docs/knowledge/d3-review.md"],
+                        "required_verifications": ["source-check"],
+                    },
+                    "instruction": "Resubmit the document under the revised contract.",
+                    "reason": "The task goal requires a reusable draft.",
+                }
+            }
+        )
+    )
+
+    assert resolution.kind == "revise_acceptance"
+    assert resolution.reason == "The task goal requires a reusable draft."
+    assert resolution.instruction == "Resubmit the document under the revised contract."
+    assert resolution.acceptance == TaskAcceptance(
+        required_outputs=("docs/knowledge/d3-review.md",),
+        required_verifications=("source-check",),
+    )
+    assert resolution.decision is None
+    assert resolution.reason_code is None
+
+
+def test_acceptance_review_resolution_parses_user_question() -> None:
+    resolution = _parse_acceptance_review_resolution(
+        json.dumps(
+            {
+                "resolution": {
+                    "kind": "ask_user",
+                    "topic": "publication scope",
+                    "question": "Should this be published?",
+                    "why_needed": "The goal is ambiguous.",
+                    "options": [],
+                    "recommended_option_id": None,
+                    "blocking_scope": "task",
+                }
+            }
+        )
+    )
+
+    assert resolution.kind == "ask_user"
+    assert resolution.reason == "The goal is ambiguous."
+    assert resolution.instruction is None
+    assert resolution.acceptance is None
+    assert resolution.decision == {
+        "kind": "ask_user",
+        "topic": "publication scope",
+        "question": "Should this be published?",
+        "why_needed": "The goal is ambiguous.",
+        "options": [],
+        "recommended_option_id": None,
+        "blocking_scope": "task",
+    }
+    assert resolution.reason_code is None
+
+
+def test_acceptance_review_resolution_parses_terminal_failure() -> None:
+    resolution = _parse_acceptance_review_resolution(
+        json.dumps(
+            {
+                "resolution": {
+                    "kind": "fail",
+                    "reason_code": "unrecoverable_contract",
+                    "summary": "The request conflicts with frozen rules.",
+                }
+            }
+        )
+    )
+
+    assert resolution.kind == "fail"
+    assert resolution.reason == "The request conflicts with frozen rules."
+    assert resolution.instruction is None
+    assert resolution.acceptance is None
+    assert resolution.decision is None
+    assert resolution.reason_code == "unrecoverable_contract"
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [
+        {"kind": "retry_worker", "instruction": "Retry.", "reason": ""},
+        {
+            "kind": "revise_acceptance",
+            "instruction": "Retry.",
+            "reason": "Missing contract.",
+            "acceptance": {
+                "required_outputs": [],
+                "required_verifications": [],
+            },
+        },
+        {
+            "kind": "revise_acceptance",
+            "instruction": "Retry.",
+            "reason": "Duplicate output.",
+            "acceptance": {
+                "required_outputs": ["docs/review.md", "docs/review.md"],
+                "required_verifications": [],
+            },
+        },
+        {
+            "kind": "revise_acceptance",
+            "instruction": "Retry.",
+            "reason": "Unsafe output.",
+            "acceptance": {
+                "required_outputs": ["../outside.md"],
+                "required_verifications": [],
+            },
+        },
+        {
+            "kind": "ask_user",
+            "topic": "scope",
+            "question": "Publish it?",
+            "why_needed": "The goal is ambiguous.",
+            "options": [],
+            "recommended_option_id": None,
+            "blocking_scope": "task",
+            "unexpected": "not allowed",
+        },
+        {
+            "kind": "ask_user",
+            "topic": "scope",
+            "question": "Publish it?",
+            "why_needed": "",
+            "options": [],
+            "recommended_option_id": None,
+            "blocking_scope": "task",
+        },
+        {"kind": "approve", "reason": "No rejection remains."},
+    ],
+)
+def test_acceptance_review_resolution_rejects_invalid_lead_decisions(
+    resolution: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="Invalid acceptance review resolution"):
+        _parse_acceptance_review_resolution(json.dumps({"resolution": resolution}))
 
 
 def test_task_plan_accepts_one_outer_json_fence() -> None:

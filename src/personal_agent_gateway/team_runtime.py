@@ -3,7 +3,7 @@ import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Protocol
+from typing import Literal, Protocol
 
 from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.events import EventBus
@@ -27,11 +27,13 @@ from personal_agent_gateway.team_results import (
 )
 from personal_agent_gateway.team_structured_output import normalize_json_envelope
 from personal_agent_gateway.teams import (
+    ACCEPTANCE_RECOVERY_CAP,
     TaskAcceptance,
     TeamAgent,
     TeamRun,
     TeamRunService,
     TeamTask,
+    _validate_task_acceptance,
 )
 
 PLANNING_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
@@ -76,6 +78,21 @@ code fences:
 "reason_code":"stable-code or null","deliverables":[{{"path":"relative/path",
 "kind":"file kind"}}],"verifications":[{{"name":"verification name",
 "status":"passed|failed","evidence":"concrete evidence"}}]}}"""
+
+ACCEPTANCE_REVIEW_PROMPT = f"""You are the leader reviewing a rejected Team Run task outcome.
+Decide only from the goal, Cycle instruction, frozen rules, SPACE, Task contract,
+outcome, failure reason, changed paths, history, and remaining attempts. The recovery
+attempt cap is {ACCEPTANCE_RECOVERY_CAP}.
+
+Prefer Worker correction when the contract is valid. Revise acceptance only when the
+contract itself is wrong. Ask the user only for a consequential choice the Team cannot
+infer. Never approve the current rejected outcome retroactively.
+
+Return ONLY one JSON object in exactly one of these forms:
+{{"resolution":{{"kind":"retry_worker","instruction":"concrete correction", "reason":"why the current outcome was rejected"}}}}
+{{"resolution":{{"kind":"revise_acceptance","acceptance":{{"required_outputs":["relative/path"],"required_verifications":["verification"]}},"instruction":"concrete resubmission instruction", "reason":"why the contract is wrong"}}}}
+{{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the Team cannot infer the answer","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"task"}}}}
+{{"resolution":{{"kind":"fail","reason_code":"stable-code","summary":"why recovery cannot continue"}}}}"""
 
 SYNTHESIS_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
 Goal: {goal}
@@ -126,6 +143,16 @@ AGENT_REINVOCATION_CAP = 3
 @dataclass(frozen=True)
 class UserDecisionResolution:
     decision: dict[str, object]
+
+
+@dataclass(frozen=True)
+class AcceptanceReviewResolution:
+    kind: Literal["retry_worker", "revise_acceptance", "ask_user", "fail"]
+    reason: str
+    instruction: str | None = None
+    acceptance: TaskAcceptance | None = None
+    decision: dict[str, object] | None = None
+    reason_code: str | None = None
 
 
 def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:
@@ -1255,6 +1282,89 @@ def _safe_relative_output(value: str) -> bool:
         and ".." not in posix.parts
         and ".." not in windows.parts
     )
+
+
+def _parse_acceptance_review_resolution(content: str) -> AcceptanceReviewResolution:
+    try:
+        raw = json.loads(normalize_json_envelope(content))
+        resolution = raw["resolution"]
+        if not isinstance(resolution, dict):
+            raise ValueError
+        kind = resolution.get("kind")
+        if kind == "retry_worker":
+            if set(resolution) != {"kind", "instruction", "reason"}:
+                raise ValueError
+            reason = _acceptance_review_text(resolution.get("reason"))
+            instruction = _acceptance_review_text(resolution.get("instruction"))
+            return AcceptanceReviewResolution(
+                kind="retry_worker",
+                reason=reason,
+                instruction=instruction,
+            )
+        if kind == "revise_acceptance":
+            if set(resolution) != {"kind", "acceptance", "instruction", "reason"}:
+                raise ValueError
+            acceptance = _parse_revised_acceptance(resolution.get("acceptance"))
+            return AcceptanceReviewResolution(
+                kind="revise_acceptance",
+                reason=_acceptance_review_text(resolution.get("reason")),
+                instruction=_acceptance_review_text(resolution.get("instruction")),
+                acceptance=acceptance,
+            )
+        if kind == "ask_user":
+            if set(resolution) != {
+                "kind",
+                "topic",
+                "question",
+                "why_needed",
+                "options",
+                "recommended_option_id",
+                "blocking_scope",
+            }:
+                raise ValueError
+            decision = _parse_mediation_resolution(content)
+            if decision.get("kind") != "ask_user":
+                raise ValueError
+            return AcceptanceReviewResolution(
+                kind="ask_user",
+                reason=_acceptance_review_text(decision["why_needed"]),
+                decision=decision,
+            )
+        if kind == "fail":
+            if set(resolution) != {"kind", "reason_code", "summary"}:
+                raise ValueError
+            return AcceptanceReviewResolution(
+                kind="fail",
+                reason=_acceptance_review_text(resolution.get("summary")),
+                reason_code=_acceptance_review_text(resolution.get("reason_code")),
+            )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        pass
+    raise ValueError("Invalid acceptance review resolution")
+
+
+def _parse_revised_acceptance(value: object) -> TaskAcceptance:
+    if not isinstance(value, dict) or set(value) != {
+        "required_outputs",
+        "required_verifications",
+    }:
+        raise ValueError
+    acceptance = TaskAcceptance(
+        required_outputs=tuple(_string_list(value.get("required_outputs"), "required_outputs")),
+        required_verifications=tuple(
+            _string_list(value.get("required_verifications"), "required_verifications")
+        ),
+    )
+    _validate_task_acceptance(acceptance)
+    if any(not _safe_relative_output(path) for path in acceptance.required_outputs):
+        raise ValueError
+    return acceptance
+
+
+def _acceptance_review_text(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError
+    return value.strip()
 
 
 def _parse_mediation_resolution(content: str) -> dict[str, object]:
