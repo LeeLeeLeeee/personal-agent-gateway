@@ -185,6 +185,62 @@ describe("useTeamRunController request ownership", () => {
     expect(api.teamRunDelivery).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps an older acceptance review refresh from replacing newer task detail", async () => {
+    const firstRefresh = deferred();
+    const secondRefresh = deferred();
+    api.teamRunDetail
+      .mockImplementationOnce(async () => detail("r1", {
+        tasks: [{ id: "t1", status: "in_progress", acceptance_recovery_attempts: 0 }]
+      }))
+      .mockImplementationOnce(() => firstRefresh.promise)
+      .mockImplementationOnce(() => secondRefresh.promise);
+    const { result } = renderController();
+    await selectRun(result, "r1");
+
+    act(() => {
+      result.current.handleTeamEvent({
+        type: "team.task.updated",
+        team_run_id: "r1",
+        acceptance_reviewed: true,
+        task: { id: "t1", status: "in_progress", acceptance_recovery_attempts: 1 }
+      });
+      result.current.handleTeamEvent({
+        type: "team.task.updated",
+        team_run_id: "r1",
+        acceptance_reviewed: true,
+        task: { id: "t1", status: "in_progress", acceptance_recovery_attempts: 2 }
+      });
+    });
+    await waitFor(() => expect(api.teamRunDetail).toHaveBeenCalledTimes(3));
+
+    await act(async () => {
+      secondRefresh.resolve(detail("r1", {
+        tasks: [{ id: "t1", status: "in_progress", acceptance_recovery_attempts: 2 }],
+        messages: [
+          { id: "review-1", kind: "acceptance_review", metadata: { task_id: "t1" } },
+          { id: "review-2", kind: "acceptance_review", metadata: { task_id: "t1" } }
+        ]
+      }));
+      await secondRefresh.promise;
+    });
+
+    await act(async () => {
+      firstRefresh.resolve(detail("r1", {
+        tasks: [{ id: "t1", status: "in_progress", acceptance_recovery_attempts: 1 }],
+        messages: [
+          { id: "review-1", kind: "acceptance_review", metadata: { task_id: "t1" } }
+        ]
+      }));
+      await firstRefresh.promise;
+    });
+
+    expect(result.current.teamRunDetail.tasks[0].acceptance_recovery_attempts).toBe(2);
+    expect(result.current.teamRunDetail.messages.map((message) => message.id)).toEqual([
+      "review-1",
+      "review-2"
+    ]);
+  });
+
   it("clears the previous run while detail and documents settle independently", async () => {
     const nextDetail = deferred();
     const nextDocuments = deferred();

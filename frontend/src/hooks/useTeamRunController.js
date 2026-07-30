@@ -34,6 +34,7 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
   const [teamRunDetailLoadErrorId, setTeamRunDetailLoadErrorId] = useState(null);
   const selectedTeamRunIdRef = useRef(null);
   const selectedTeamRunVersionRef = useRef(0);
+  const teamRunDetailRequestVersionRef = useRef(0);
   const manualCycleRequestRef = useRef(null);
 
   useEffect(() => {
@@ -53,6 +54,15 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
       && selectedTeamRunVersionRef.current === requestedRun.version;
   }
 
+  function beginTeamRunDetailRequest() {
+    teamRunDetailRequestVersionRef.current += 1;
+    return teamRunDetailRequestVersionRef.current;
+  }
+
+  function ownsTeamRunDetailRequest(requestVersion) {
+    return teamRunDetailRequestVersionRef.current === requestVersion;
+  }
+
   useEffect(() => {
     if (!selectedTeamRunId) {
       setTeamRunDetail(null);
@@ -70,11 +80,14 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     setTeamRunDetailLoading(true);
     setTeamRunDeliveryLoading(true);
     setTeamRunDetailLoadErrorId(null);
+    const detailRequestVersion = beginTeamRunDetailRequest();
     api.teamRunDetail(selectedTeamRunId).then((detail) => {
       if (!detail?.run) throw new Error("Team run detail is unavailable");
-      if (alive) setTeamRunDetail(detail);
+      if (alive && ownsTeamRunDetailRequest(detailRequestVersion)) {
+        setTeamRunDetail(detail);
+      }
     }).catch((error) => {
-      if (alive) {
+      if (alive && ownsTeamRunDetailRequest(detailRequestVersion)) {
         setTeamRunDetailLoadErrorId(selectedTeamRunId);
         setScreenError(error);
       }
@@ -127,12 +140,23 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     }
     const requiresDetailRefresh = !hasDelta || requiresRefresh || event.acceptance_reviewed;
     if (requiresDetailRefresh) {
+      const detailRequestVersion = beginTeamRunDetailRequest();
       api.teamRunDetail(event.team_run_id)
         .then((detail) => {
-          if (ownsSelectedRun(requestedRun)) setTeamRunDetail(detail);
+          if (
+            ownsSelectedRun(requestedRun)
+            && ownsTeamRunDetailRequest(detailRequestVersion)
+          ) {
+            setTeamRunDetail(detail);
+          }
         })
         .catch((error) => {
-          if (ownsSelectedRun(requestedRun)) setScreenError(error);
+          if (
+            ownsSelectedRun(requestedRun)
+            && ownsTeamRunDetailRequest(detailRequestVersion)
+          ) {
+            setScreenError(error);
+          }
         });
     }
     if (!hasDelta || requiresRefresh) {
