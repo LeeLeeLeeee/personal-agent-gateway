@@ -21,6 +21,7 @@ from personal_agent_gateway.team_runtime import (
     _parse_acceptance_review_resolution,
     _parse_task_plan,
     _rules_block,
+    _safe_relative_output,
     _task_delta,
     _terminal_status,
 )
@@ -1141,6 +1142,55 @@ def test_acceptance_recovery_does_not_follow_outside_symlink(
     monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
 
     assert _bounded_path_exists(working_root, "docs/d3.md") is True
+
+
+def test_safe_relative_output_rejects_windows_drive_relative_path(
+    tmp_path,
+) -> None:
+    working_root = tmp_path / "workspace"
+    working_root.mkdir()
+
+    assert _safe_relative_output("D:foo") is False
+    assert _bounded_path_exists(working_root, "D:foo") is True
+
+
+def test_bounded_path_exists_treats_parent_path_as_unresolved(tmp_path) -> None:
+    working_root = tmp_path / "workspace"
+    working_root.mkdir()
+
+    assert _bounded_path_exists(working_root, "../outside.md") is True
+
+
+def test_bounded_path_exists_treats_resolution_error_as_unresolved(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    working_root = tmp_path / "workspace"
+    working_root.mkdir()
+    candidate = working_root.resolve() / "docs" / "missing.md"
+    original_resolve = Path.resolve
+
+    def failing_candidate_resolve(path, *args, **kwargs):
+        if path == candidate:
+            raise OSError("simulated resolution failure")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", failing_candidate_resolve)
+
+    assert _bounded_path_exists(working_root, "docs/missing.md") is True
+
+
+def test_bounded_path_exists_preserves_definite_relative_path_states(
+    tmp_path,
+) -> None:
+    working_root = tmp_path / "workspace"
+    working_root.mkdir()
+    existing = working_root / "docs" / "existing.md"
+    existing.parent.mkdir()
+    existing.write_text("content", encoding="utf-8")
+
+    assert _bounded_path_exists(working_root, "docs/missing.md") is False
+    assert _bounded_path_exists(working_root, "docs/existing.md") is True
 
 
 @pytest.mark.asyncio

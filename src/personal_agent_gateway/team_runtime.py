@@ -1566,6 +1566,8 @@ def _safe_relative_output(value: str) -> bool:
         value not in {"", "."}
         and not posix.is_absolute()
         and not windows.is_absolute()
+        and not windows.drive
+        and not windows.anchor
         and ".." not in posix.parts
         and ".." not in windows.parts
     )
@@ -1573,21 +1575,37 @@ def _safe_relative_output(value: str) -> bool:
 
 def _bounded_path_exists(working_root: Path, relative_path: str) -> bool:
     if not _safe_relative_output(relative_path):
-        return False
-    root = working_root.resolve()
+        return True
+    try:
+        root = working_root.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return True
     candidate = root / relative_path
+    try:
+        candidate.relative_to(root)
+    except (OSError, ValueError):
+        return True
     current = candidate
     while current != root:
-        is_junction = getattr(current, "is_junction", lambda: False)
-        if current.is_symlink() or is_junction():
+        try:
+            is_junction = getattr(current, "is_junction", lambda: False)
+            if current.is_symlink() or is_junction():
+                return True
+        except (OSError, RuntimeError):
             return True
-        current = current.parent
+        parent = current.parent
+        if parent == current:
+            return True
+        current = parent
     try:
         resolved = candidate.resolve()
         resolved.relative_to(root)
-    except (OSError, ValueError):
-        return False
-    return candidate.exists()
+    except (OSError, RuntimeError, ValueError):
+        return True
+    try:
+        return candidate.exists()
+    except (OSError, RuntimeError):
+        return True
 
 
 def _parse_acceptance_review_resolution(content: str) -> AcceptanceReviewResolution:
