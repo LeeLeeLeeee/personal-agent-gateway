@@ -2,6 +2,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -13,6 +14,7 @@ from personal_agent_gateway.lmg_client import (
     ProviderExecutionCapabilities,
     fetch_capabilities,
     parse_provider_execution_capabilities,
+    parse_provider_readiness,
 )
 
 AgentId = Literal["codex", "claude"]
@@ -48,6 +50,10 @@ class AgentDescriptor(BaseModel):
     version: str = ""
     capability_source: list[str] = []
     execution_capabilities: ProviderExecutionCapabilities | None = None
+    ready: bool = False
+    readiness_error: str | None = None
+    snapshot_status: Literal["fresh", "stale", "unavailable"] = "unavailable"
+    detected_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -109,31 +115,69 @@ class AgentRegistry:
         self._failure_ttl_seconds = failure_ttl_seconds
         self._clock = clock
         self._catalog_expires_at = 0.0
+        self._lock = RLock()
 
     def catalog(self) -> list[AgentDescriptor]:
-        now = self._clock()
-        if self._catalog is None or now >= self._catalog_expires_at:
+        with self._lock:
+            now = self._clock()
+            if self._catalog is not None and now < self._catalog_expires_at:
+                return self._catalog
+
             loaded = self._capability_loader(self._config)
-            detected, readiness = _loaded_capabilities(loaded)
+            detected, gateway_status = _loaded_capabilities(loaded)
+            if (
+                gateway_status in {"unreachable", "not_ready"}
+                and not detected
+                and self._catalog is not None
+            ):
+                self._catalog = [
+                    descriptor.model_copy(
+                        update={
+                            "ready": False,
+                            "readiness_error": f"gateway_{gateway_status}",
+                            "snapshot_status": "stale",
+                        }
+                    )
+                    for descriptor in self._catalog
+                ]
+                self._catalog_expires_at = now + max(
+                    self._failure_ttl_seconds,
+                    0.0,
+                )
+                return self._catalog
+
+            usable_snapshot = bool(detected) and gateway_status in {
+                None,
+                "ready",
+                "not_ready",
+            }
             providers = detected.get("providers")
             provider_map = providers if isinstance(providers, dict) else {}
+            snapshot_status: Literal["fresh", "stale", "unavailable"] = (
+                _snapshot_status(detected) if usable_snapshot else "unavailable"
+            )
+            detected_at = _string(detected.get("detected_at")) if usable_snapshot else ""
             self._catalog = [
                 self._codex(
                     _provider_payload(provider_map, "codex"),
-                    readiness=readiness,
+                    gateway_status=gateway_status,
+                    snapshot_status=snapshot_status,
+                    detected_at=detected_at,
                 ),
                 self._claude(
                     _provider_payload(provider_map, "claude"),
-                    readiness=readiness,
+                    gateway_status=gateway_status,
+                    snapshot_status=snapshot_status,
+                    detected_at=detected_at,
                 ),
             ]
             ttl = (
                 self._cache_ttl_seconds
-                if readiness in {None, "ready"}
+                if gateway_status in {None, "ready"}
                 else self._failure_ttl_seconds
             )
             self._catalog_expires_at = now + max(ttl, 0.0)
-        return self._catalog
+            return self._catalog
 
     def get(self, agent_id: str) -> AgentDescriptor:
         for descriptor in self.catalog():
@@ -181,9 +225,13 @@ class AgentRegistry:
         self,
         capabilities: dict[str, object],
         *,
-        readiness: str | None,
+        gateway_status: str | None,
+        snapshot_status: Literal["fresh", "stale", "unavailable"],
+        detected_at: str,
     ) -> AgentDescriptor:
-        probe = _gateway_probe(readiness) or self._probe(self._config.codex_binary)
+        probe = _gateway_probe(gateway_status, capabilities) or self._probe(
+            self._config.codex_binary
+        )
         fallback_models = _fallback_models(
             ["default", "gpt-5.5", "gpt-5.4"],
             ["low", "medium", "high", "xhigh"],
@@ -205,6 +253,7 @@ class AgentRegistry:
         profile_choices = _string_list(options.get("profile"))
         detected_defaults = _defaults(capabilities)
         available, error = _availability(probe, capabilities)
+        ready, readiness_error = _readiness(probe, capabilities)
         return AgentDescriptor(
             id="codex",
             label="Codex CLI",
@@ -250,15 +299,23 @@ class AgentRegistry:
             version=_string(capabilities.get("version")),
             capability_source=_string_list(capabilities.get("source")) or ["fallback"],
             execution_capabilities=_execution_capabilities(capabilities),
+            ready=ready,
+            readiness_error=readiness_error,
+            snapshot_status=snapshot_status,
+            detected_at=detected_at,
         )
 
     def _claude(
         self,
         capabilities: dict[str, object],
         *,
-        readiness: str | None,
+        gateway_status: str | None,
+        snapshot_status: Literal["fresh", "stale", "unavailable"],
+        detected_at: str,
     ) -> AgentDescriptor:
-        probe = _gateway_probe(readiness) or self._probe(self._config.claude_binary)
+        probe = _gateway_probe(gateway_status, capabilities) or self._probe(
+            self._config.claude_binary
+        )
         fallback_models = _fallback_models(
             ["default", "best", "sonnet", "opus", "haiku", "sonnet[1m]", "opus[1m]", "opusplan"],
             ["low", "medium", "high", "xhigh", "max"],
@@ -278,6 +335,7 @@ class AgentRegistry:
         agent_choices = _string_list(options.get("agent"))
         detected_defaults = _defaults(capabilities)
         available, error = _availability(probe, capabilities)
+        ready, readiness_error = _readiness(probe, capabilities)
         return AgentDescriptor(
             id="claude",
             label="Claude Code",
@@ -317,6 +375,10 @@ class AgentRegistry:
             version=_string(capabilities.get("version")),
             capability_source=_string_list(capabilities.get("source")) or ["fallback"],
             execution_capabilities=_execution_capabilities(capabilities),
+            ready=ready,
+            readiness_error=readiness_error,
+            snapshot_status=snapshot_status,
+            detected_at=detected_at,
         )
 
 
@@ -346,12 +408,34 @@ def _execution_capabilities(
         return None
 
 
-def _gateway_probe(status: str | None) -> CliProbeResult | None:
+def _gateway_probe(
+    status: str | None,
+    capabilities: dict[str, object],
+) -> CliProbeResult | None:
     if status is None:
         return None
-    if status == "ready":
+    if status in {"ready", "not_ready"} and capabilities:
         return CliProbeResult(True, None)
+    if status in {"ready", "not_ready"}:
+        return CliProbeResult(False, "provider_not_detected")
     return CliProbeResult(False, f"gateway_{status}")
+
+
+def _readiness(
+    probe: CliProbeResult,
+    capabilities: dict[str, object],
+) -> tuple[bool, str | None]:
+    try:
+        readiness = parse_provider_readiness(capabilities)
+    except LMGProtocolMismatch:
+        return probe.available, probe.error
+    return readiness.ready, readiness.error_code
+
+
+def _snapshot_status(
+    detected: dict[str, object],
+) -> Literal["fresh", "stale"]:
+    return "stale" if detected.get("snapshot_status") == "stale" else "fresh"
 
 
 def _string(value: object) -> str:
@@ -435,16 +519,12 @@ def _availability(
     capabilities: dict[str, object],
 ) -> tuple[bool, str | None]:
     detected_available = capabilities.get("available")
-    detected_ready = capabilities.get("ready")
     available = (
         probe.available
         and detected_available is not False
-        and detected_ready is not False
         and ("execution" not in capabilities or _execution_capabilities(capabilities) is not None)
     )
     if available:
         return True, None
-    detected_error = _string(capabilities.get("readiness_error")) or _string(
-        capabilities.get("error")
-    )
+    detected_error = _string(capabilities.get("error"))
     return False, probe.error or detected_error or "unavailable"

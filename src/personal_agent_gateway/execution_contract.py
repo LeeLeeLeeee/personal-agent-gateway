@@ -42,11 +42,6 @@ def compile_execution(
     capabilities: ProviderExecutionCapabilities,
     staging,
 ) -> CompiledExecution:
-    if not capabilities.ready:
-        raise ExecutionContractError(
-            "provider_not_ready",
-            "The selected provider is not ready",
-        )
     if requirements.network not in capabilities.network_modes:
         raise ExecutionContractError(
             "unsupported_execution_capability",

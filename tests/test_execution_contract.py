@@ -27,8 +27,6 @@ def _policy(read_mode: str, read_path: Path | None, write_mode: str = "isolated"
 
 def _capabilities(**overrides):
     values = {
-        "ready": True,
-        "readiness_error": None,
         "resume": True,
         "external_read_only_roots": False,
         "network_modes": ("unspecified", "denied", "required"),
@@ -72,6 +70,31 @@ def _requirements(
         workspace_root=workspace_root,
         network=network,
     )
+
+
+def test_compile_execution_ignores_transient_provider_readiness(tmp_path: Path) -> None:
+    capabilities = ProviderExecutionCapabilities(
+        resume=True,
+        external_read_only_roots=False,
+        network_modes=("unspecified",),
+        sandbox_modes=("workspace-write",),
+        permission_modes=(),
+    )
+
+    compiled = compile_execution(
+        ExecutionRequirements(
+            source_roots=(),
+            requires_sources=False,
+            workspace_mode="isolated",
+            workspace_root=tmp_path,
+            network="unspecified",
+        ),
+        _policy("none", None),
+        capabilities,
+        FakeStaging(tmp_path),
+    )
+
+    assert compiled.workspace_root == tmp_path.resolve()
 
 
 def test_home_read_with_isolated_write_requires_selection(tmp_path: Path) -> None:

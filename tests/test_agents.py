@@ -1,5 +1,8 @@
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, Lock
+from time import sleep
 
 import pytest
 
@@ -17,6 +20,33 @@ def make_config(tmp_path: Path) -> AppConfig:
         codex_binary="codex-test",
         claude_binary="claude-test",
     )
+
+
+def _agent_protocol_payload(*, snapshot_status: str = "fresh"):
+    return {
+        "protocol_version": "2.0",
+        "schema_version": 1,
+        "detected_at": "2026-07-30T00:00:00Z",
+        "snapshot_status": snapshot_status,
+        "refresh_error_code": None,
+        "gateway_status": "ready",
+        "admission_status": "ready",
+        "providers": {
+            "codex": {
+                "available": True,
+                "ready": True,
+                "readiness_error": None,
+                "models": [{"id": "default", "label": "Default"}],
+                "execution": {
+                    "resume": True,
+                    "external_read_only_roots": False,
+                    "network_modes": ["unspecified", "denied", "required"],
+                    "sandbox_modes": ["read-only", "workspace-write"],
+                    "permission_modes": [],
+                },
+            }
+        },
+    }
 
 
 def test_registry_lists_codex_and_claude_with_safe_defaults(tmp_path: Path) -> None:
@@ -191,14 +221,14 @@ def test_registry_uses_detected_models_and_model_specific_efforts(tmp_path: Path
     assert codex.version == "codex-cli test"
     assert codex.capability_source == ["cli_help", "models_cache"]
     assert codex.execution_capabilities == ProviderExecutionCapabilities(
-        ready=True,
-        readiness_error=None,
         resume=True,
         external_read_only_roots=False,
         network_modes=("unspecified", "denied", "required"),
         sandbox_modes=("read-only", "workspace-write"),
         permission_modes=(),
     )
+    assert codex.ready is True
+    assert codex.readiness_error is None
     assert next(option for option in codex.options_schema if option.name == "profile").choices == [
         "review"
     ]
@@ -207,27 +237,14 @@ def test_registry_uses_detected_models_and_model_specific_efforts(tmp_path: Path
         registry.validate_config("codex", "gpt-new", {"effort": "high"})
 
 
-def test_registry_keeps_not_ready_provider_visible_but_blocks_execution(tmp_path: Path) -> None:
-    payload = {
-        "protocol_version": "2.0",
-        "schema_version": 1,
-        "gateway_status": "not_ready",
-        "providers": {
-            "codex": {
-                "available": True,
-                "ready": False,
-                "readiness_error": "provider_not_ready",
-                "models": [{"id": "gpt-detected", "label": "GPT Detected"}],
-                "execution": {
-                    "resume": True,
-                    "external_read_only_roots": False,
-                    "network_modes": ["unspecified", "denied", "required"],
-                    "sandbox_modes": ["read-only", "workspace-write"],
-                    "permission_modes": [],
-                },
-            }
-        },
-    }
+def test_registry_keeps_not_ready_provider_capabilities_visible(tmp_path: Path) -> None:
+    payload = _agent_protocol_payload()
+    payload["gateway_status"] = "not_ready"
+    payload["admission_status"] = "not_ready"
+    provider = payload["providers"]["codex"]
+    provider["ready"] = False
+    provider["readiness_error"] = "provider_not_ready"
+    provider["models"] = [{"id": "gpt-detected", "label": "GPT Detected"}]
     registry = AgentRegistry(
         make_config(tmp_path),
         capability_loader=lambda _config: LmgQueryResult(
@@ -239,31 +256,28 @@ def test_registry_keeps_not_ready_provider_visible_but_blocks_execution(tmp_path
     codex = registry.get("codex")
 
     assert codex.models == ["gpt-detected"]
-    assert codex.available is False
+    assert codex.available is True
     assert codex.execution_capabilities is not None
-    assert codex.execution_capabilities.ready is False
-    with pytest.raises(ValueError, match="Agent unavailable"):
-        registry.validate_config("codex", "gpt-detected", {})
+    assert codex.ready is False
+    assert codex.readiness_error == "provider_not_ready"
+    assert codex.snapshot_status == "fresh"
 
 
 @pytest.mark.parametrize(
     "status",
     ["unreachable", "unauthorized", "protocol_error", "not_ready"],
 )
-def test_registry_blocks_gateway_failures_without_probing_local_cli(
+def test_registry_reports_gateway_results_without_probing_local_cli(
     tmp_path: Path,
     status: str,
 ) -> None:
-    payload = {
-        "schema_version": 1,
-        "gateway_status": "not_ready",
-        "providers": {
-            "codex": {
-                "available": True,
-                "models": [{"id": "gpt-detected", "label": "GPT Detected"}],
-            }
-        },
-    }
+    payload = _agent_protocol_payload()
+    payload["gateway_status"] = "not_ready"
+    payload["admission_status"] = "not_ready"
+    provider = payload["providers"]["codex"]
+    provider["ready"] = False
+    provider["readiness_error"] = "provider_not_ready"
+    provider["models"] = [{"id": "gpt-detected", "label": "GPT Detected"}]
 
     def unexpected_probe(_binary: str) -> CliProbeResult:
         raise AssertionError("PAG must not probe a CLI owned by LMG")
@@ -281,29 +295,27 @@ def test_registry_blocks_gateway_failures_without_probing_local_cli(
 
     expected_model = "gpt-detected" if status == "not_ready" else "default"
     assert expected_model in codex.models
-    assert codex.available is False
-    assert codex.availability_error == f"gateway_{status}"
-    with pytest.raises(ValueError, match="Agent unavailable"):
-        registry.validate_config("codex", expected_model, {})
+    if status == "not_ready":
+        assert codex.available is True
+        assert codex.readiness_error == "provider_not_ready"
+        assert codex.snapshot_status == "fresh"
+    else:
+        assert codex.available is False
+        assert codex.readiness_error == f"gateway_{status}"
+        assert codex.snapshot_status == "unavailable"
 
 
 def test_registry_recovers_after_short_negative_cache_ttl(tmp_path: Path) -> None:
     now = [0.0]
     status = ["not_ready"]
-    payload = {
-        "schema_version": 1,
-        "gateway_status": "ready",
-        "providers": {
-            "codex": {
-                "available": True,
-                "models": [{"id": "gpt-detected", "label": "GPT Detected"}],
-            }
-        },
-    }
+    payload = _agent_protocol_payload()
+    payload["providers"]["codex"]["models"] = [
+        {"id": "gpt-detected", "label": "GPT Detected"}
+    ]
     registry = AgentRegistry(
         make_config(tmp_path),
         capability_loader=lambda _config: LmgQueryResult(
-            data=payload,
+            data=payload if status[0] == "ready" else None,
             status=status[0],
         ),
         failure_ttl_seconds=2,
@@ -316,3 +328,100 @@ def test_registry_recovers_after_short_negative_cache_ttl(tmp_path: Path) -> Non
     assert registry.get("codex").available is False
     now[0] = 2
     assert registry.get("codex").available is True
+
+
+def test_registry_keeps_last_good_capability_when_refresh_is_unreachable(
+    tmp_path: Path,
+) -> None:
+    results = iter(
+        [
+            LmgQueryResult(
+                data=_agent_protocol_payload(snapshot_status="fresh"),
+                status="ready",
+            ),
+            LmgQueryResult(data=None, status="unreachable", message="offline"),
+        ]
+    )
+    clock = [0.0]
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        capability_loader=lambda _config: next(results),
+        cache_ttl_seconds=1,
+        failure_ttl_seconds=2,
+        clock=lambda: clock[0],
+    )
+
+    first = registry.get("codex")
+    clock[0] = 2.0
+    stale = registry.get("codex")
+
+    assert first.execution_capabilities == stale.execution_capabilities
+    assert stale.snapshot_status == "stale"
+    assert stale.ready is False
+    assert stale.readiness_error == "gateway_unreachable"
+
+
+def test_registry_hard_protocol_failure_is_not_recoverable(tmp_path: Path) -> None:
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        capability_loader=lambda _config: LmgQueryResult(
+            data=None,
+            status="protocol_error",
+            message="bad protocol",
+        ),
+    )
+
+    descriptor = registry.get("codex")
+
+    assert descriptor.snapshot_status == "unavailable"
+    assert descriptor.readiness_error == "gateway_protocol_error"
+    assert descriptor.execution_capabilities is None
+
+
+def test_concurrent_refresh_keeps_newer_successful_catalog(tmp_path: Path) -> None:
+    clock = [0.0]
+    refresh_started = Event()
+    release_refresh = Event()
+    calls_lock = Lock()
+    calls = 0
+    initial = _agent_protocol_payload()
+    refreshed = _agent_protocol_payload()
+    refreshed["detected_at"] = "2026-07-30T00:01:00Z"
+    refreshed["providers"]["codex"]["models"] = [
+        {"id": "gpt-refreshed", "label": "GPT Refreshed"}
+    ]
+
+    def load(_config):
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+            call = calls
+        if call == 1:
+            return LmgQueryResult(data=initial, status="ready")
+        if call == 2:
+            refresh_started.set()
+            release_refresh.wait(timeout=1)
+            return LmgQueryResult(data=refreshed, status="ready")
+        release_refresh.wait(timeout=1)
+        sleep(0.05)
+        return LmgQueryResult(data=None, status="unreachable", message="offline")
+
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        capability_loader=load,
+        cache_ttl_seconds=1,
+        clock=lambda: clock[0],
+    )
+    registry.catalog()
+    clock[0] = 2.0
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(registry.catalog) for _ in range(2)]
+        assert refresh_started.wait(timeout=1)
+        release_refresh.set()
+        catalogs = [future.result(timeout=1) for future in futures]
+
+    assert calls == 2
+    assert all(catalog[0].models == ["gpt-refreshed"] for catalog in catalogs)
+    assert registry.get("codex").snapshot_status == "fresh"
+    assert registry.get("codex").detected_at == "2026-07-30T00:01:00Z"
