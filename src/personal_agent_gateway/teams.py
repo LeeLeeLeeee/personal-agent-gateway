@@ -50,6 +50,7 @@ CycleStatus = Literal[
 AgentStatus = Literal["pending", "running", "waiting", "completed", "failed", "canceled"]
 TaskStatus = Literal["pending", "in_progress", "blocked", "completed", "failed", "canceled"]
 DecisionRequestStatus = Literal["collecting", "awaiting_user", "resolved", "canceled"]
+ACCEPTANCE_RECOVERY_CAP = 2
 
 _ACTIVE_RUN_STATUSES = {"planning", "running", "summarizing"}
 _TERMINAL_RUN_STATUSES = {
@@ -157,6 +158,7 @@ class TeamTask:
     finished_at: str | None = None
     cycle_id: str | None = None
     retry_of_task_id: str | None = None
+    acceptance_recovery_attempts: int = 0
 
 
 @dataclass(frozen=True)
@@ -1249,6 +1251,101 @@ class TeamRunService:
         )
         return self._get_task(task_id)
 
+    def record_acceptance_review(
+        self,
+        task_id: str,
+        leader_agent_id: str,
+        worker_agent_id: str,
+        *,
+        action: Literal["retry_worker", "revise_acceptance", "ask_user", "fail"],
+        reason_code: str,
+        reason: str,
+        instruction: str | None,
+        acceptance_after: TaskAcceptance | None,
+        rejected_deliverables: tuple[str, ...],
+        rejected_verifications: tuple[str, ...],
+    ) -> TeamTask:
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            task = connection.execute(
+                "select * from team_tasks where id = ?", (task_id,)
+            ).fetchone()
+            leader = connection.execute(
+                "select team_run_id from team_agents where id = ?", (leader_agent_id,)
+            ).fetchone()
+            worker = connection.execute(
+                "select team_run_id from team_agents where id = ?", (worker_agent_id,)
+            ).fetchone()
+            if task is None or leader is None or worker is None:
+                raise KeyError("Team task or agent not found")
+            if (
+                task["team_run_id"] != leader["team_run_id"]
+                or task["team_run_id"] != worker["team_run_id"]
+            ):
+                raise ValueError("Task and agents belong to different team runs")
+            if task["status"] != "in_progress":
+                raise ValueError("Task is not in progress")
+            if action == "revise_acceptance" and acceptance_after is None:
+                raise ValueError("acceptance_after is required for revise_acceptance")
+            if action != "revise_acceptance" and acceptance_after is not None:
+                raise ValueError("acceptance_after is only allowed for revise_acceptance")
+
+            current_attempts = int(task["acceptance_recovery_attempts"])
+            consumes_attempt = action in {"retry_worker", "revise_acceptance"}
+            if consumes_attempt and current_attempts >= ACCEPTANCE_RECOVERY_CAP:
+                raise ValueError("Acceptance recovery limit reached")
+
+            next_attempts = current_attempts + int(consumes_attempt)
+            acceptance_json = (
+                _task_acceptance_json(acceptance_after)
+                if acceptance_after is not None
+                else task["acceptance_json"]
+            )
+            connection.execute(
+                """
+                update team_tasks
+                set acceptance_recovery_attempts = ?, acceptance_json = ?, updated_at = ?
+                where id = ?
+                """,
+                (next_attempts, acceptance_json, now, task_id),
+            )
+            metadata = {
+                "task_id": task_id,
+                "attempt": current_attempts + 1,
+                "reason_code": reason_code,
+                "action": action,
+                "reason": reason,
+                "instruction": instruction,
+                "acceptance_before": json.loads(task["acceptance_json"]),
+                "acceptance_after": (
+                    json.loads(_task_acceptance_json(acceptance_after))
+                    if acceptance_after is not None
+                    else None
+                ),
+                "rejected_deliverables": list(rejected_deliverables),
+                "rejected_verifications": list(rejected_verifications),
+            }
+            connection.execute(
+                """
+                insert into team_messages (
+                    id, team_run_id, cycle_id, sender_agent_id, recipient_agent_id,
+                    kind, content, metadata_json, created_at
+                ) values (?, ?, ?, ?, ?, 'acceptance_review', ?, ?, ?)
+                """,
+                (
+                    uuid4().hex,
+                    task["team_run_id"],
+                    task["cycle_id"],
+                    leader_agent_id,
+                    worker_agent_id,
+                    instruction or reason,
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    now,
+                ),
+            )
+        return self._get_task(task_id)
+
     def start_task(self, task_id: str, agent_id: str) -> tuple[TeamTask, TeamAgent]:
         now = _now()
         with self._db.connection() as connection:
@@ -2244,6 +2341,11 @@ def _team_task_from_row(row: object) -> TeamTask:
         cycle_id=row["cycle_id"] if "cycle_id" in row.keys() else None,
         retry_of_task_id=(
             row["retry_of_task_id"] if "retry_of_task_id" in row.keys() else None
+        ),
+        acceptance_recovery_attempts=(
+            int(row["acceptance_recovery_attempts"])
+            if "acceptance_recovery_attempts" in row.keys()
+            else 0
         ),
     )
 

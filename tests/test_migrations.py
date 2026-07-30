@@ -9,6 +9,7 @@ from personal_agent_gateway.migrations import (
     _migration_16_explicit_no_source_space,
     _migration_17_team_task_acceptance,
     _migration_18_team_cycle_space_snapshot,
+    _migration_19_team_acceptance_recovery,
 )
 
 
@@ -24,6 +25,21 @@ def test_migration_18_adds_nullable_cycle_space_snapshot() -> None:
         for row in connection.execute("pragma table_info(team_run_cycles)")
     }
     assert "space_policy_snapshot_json" in columns
+
+
+def test_migration_19_adds_acceptance_recovery_counter_idempotently() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.execute("create table team_tasks (id text primary key)")
+    connection.execute("insert into team_tasks values ('task-1')")
+
+    _migration_19_team_acceptance_recovery(connection)
+    _migration_19_team_acceptance_recovery(connection)
+
+    row = connection.execute(
+        "select acceptance_recovery_attempts from team_tasks where id = 'task-1'"
+    ).fetchone()
+    assert row["acceptance_recovery_attempts"] == 0
 
 
 def test_migration_16_only_rewrites_home_isolated_policies() -> None:

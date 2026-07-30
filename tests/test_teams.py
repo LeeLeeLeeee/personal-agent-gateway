@@ -725,6 +725,112 @@ def test_task_outcome_and_acceptance_result_are_persisted(tmp_path):
     assert updated.acceptance_result["accepted"] is True
 
 
+def test_acceptance_review_retry_worker_persists_audit_and_counter(tmp_path: Path) -> None:
+    personas, teams = make_services(tmp_path)
+    lead_persona = personas.create_persona("Lead", "lead", "d", [], [])
+    worker_persona = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", lead_persona.id, [worker_persona.id], "plan_and_execute", 1
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    task = teams.create_task(
+        run.id,
+        "Task",
+        "Description",
+        acceptance=TaskAcceptance((), ("source-check",)),
+    )
+    teams.start_task(task.id, worker_agent.id)
+
+    updated = teams.record_acceptance_review(
+        task.id,
+        leader_agent.id,
+        worker_agent.id,
+        action="retry_worker",
+        reason_code="undeclared_deliverable",
+        reason="Deliverable was not declared",
+        instruction="Declare the deliverable",
+        acceptance_after=None,
+        rejected_deliverables=("docs/knowledge/d3-review.md",),
+        rejected_verifications=(),
+    )
+
+    assert updated.status == "in_progress"
+    assert updated.acceptance_recovery_attempts == 1
+    assert updated.acceptance == TaskAcceptance((), ("source-check",))
+    review = teams.list_messages(run.id)[-1]
+    assert review.kind == "acceptance_review"
+    assert review.sender_agent_id == leader_agent.id
+    assert review.recipient_agent_id == worker_agent.id
+    assert review.metadata["task_id"] == task.id
+    assert review.metadata["attempt"] == 1
+    assert review.metadata["action"] == "retry_worker"
+    assert review.metadata["reason_code"] == "undeclared_deliverable"
+
+
+def test_acceptance_review_revises_contract_and_ask_user_preserves_counter(
+    tmp_path: Path,
+) -> None:
+    personas, teams = make_services(tmp_path)
+    lead_persona = personas.create_persona("Lead", "lead", "d", [], [])
+    worker_persona = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", lead_persona.id, [worker_persona.id], "plan_and_execute", 1
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    task = teams.create_task(
+        run.id,
+        "Task",
+        "Description",
+        acceptance=TaskAcceptance((), ("source-check",)),
+    )
+    teams.start_task(task.id, worker_agent.id)
+    acceptance_after = TaskAcceptance(
+        ("docs/knowledge/d3-review.md",),
+        ("source-check",),
+    )
+
+    updated = teams.record_acceptance_review(
+        task.id,
+        leader_agent.id,
+        worker_agent.id,
+        action="revise_acceptance",
+        reason_code="contract_incomplete",
+        reason="Acceptance contract needs an output",
+        instruction=None,
+        acceptance_after=acceptance_after,
+        rejected_deliverables=(),
+        rejected_verifications=(),
+    )
+
+    assert updated.acceptance_recovery_attempts == 1
+    assert updated.acceptance == acceptance_after
+    review = teams.list_messages(run.id)[-1]
+    assert review.metadata["acceptance_before"] == {
+        "required_outputs": [],
+        "required_verifications": ["source-check"],
+    }
+    assert review.metadata["acceptance_after"] == {
+        "required_outputs": ["docs/knowledge/d3-review.md"],
+        "required_verifications": ["source-check"],
+    }
+
+    asked = teams.record_acceptance_review(
+        task.id,
+        leader_agent.id,
+        worker_agent.id,
+        action="ask_user",
+        reason_code="needs_direction",
+        reason="Need user direction",
+        instruction=None,
+        acceptance_after=None,
+        rejected_deliverables=(),
+        rejected_verifications=(),
+    )
+
+    assert asked.acceptance_recovery_attempts == 1
+    assert teams.list_messages(run.id)[-1].metadata["attempt"] == 2
+
+
 def test_persona_snapshot_includes_avatar(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService

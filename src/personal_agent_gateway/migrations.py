@@ -662,6 +662,16 @@ def _migration_18_team_cycle_space_snapshot(connection: sqlite3.Connection) -> N
         )
 
 
+def _migration_19_team_acceptance_recovery(
+    connection: sqlite3.Connection,
+) -> None:
+    if "acceptance_recovery_attempts" not in _columns(connection, "team_tasks"):
+        connection.execute(
+            "alter table team_tasks add column "
+            "acceptance_recovery_attempts integer not null default 0"
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -681,6 +691,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (16, "explicit-no-source-space", _migration_16_explicit_no_source_space),
     (17, "team-task-acceptance", _migration_17_team_task_acceptance),
     (18, "team-cycle-space-snapshot", _migration_18_team_cycle_space_snapshot),
+    (19, "team-acceptance-recovery", _migration_19_team_acceptance_recovery),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
