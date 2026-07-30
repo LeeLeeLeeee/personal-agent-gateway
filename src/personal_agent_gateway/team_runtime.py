@@ -35,6 +35,7 @@ from personal_agent_gateway.teams import (
     ACCEPTANCE_RECOVERY_CAP,
     TaskAcceptance,
     TeamAgent,
+    TeamMessage,
     TeamRun,
     TeamRunService,
     TeamTask,
@@ -714,7 +715,17 @@ class TeamRuntime:
         task_snapshot: WorkspaceSnapshot,
         staged_inputs: StagedInputs | None,
     ) -> tuple[TeamTask, TaskOutcome, AcceptanceResult] | UserDecisionResolution:
-        rejected_paths: set[str] = set()
+        task = self._teams.get_task(task.id)
+        rejected_paths = _persisted_undeclared_paths(
+            task,
+            self._teams.list_messages(run.id),
+        )
+        acceptance = _reject_lingering_undeclared_paths(
+            acceptance,
+            rejected_paths,
+            task.acceptance.required_outputs,
+            working_root,
+        )
         while not acceptance.accepted:
             self._teams.record_task_outcome(
                 task.id,
@@ -841,20 +852,12 @@ class TeamRuntime:
                 working_root,
                 staged_inputs=staged_inputs,
             )
-            if acceptance.accepted:
-                remaining_paths = sorted(
-                    path
-                    for path in rejected_paths
-                    if path not in task.acceptance.required_outputs
-                    and _bounded_path_exists(working_root, path)
-                )
-                if remaining_paths:
-                    acceptance = AcceptanceResult(
-                        accepted=False,
-                        status="failed",
-                        reason_code="undeclared_deliverable",
-                        evidence={"remaining_undeclared_paths": remaining_paths},
-                    )
+            acceptance = _reject_lingering_undeclared_paths(
+                acceptance,
+                rejected_paths,
+                task.acceptance.required_outputs,
+                working_root,
+            )
         return task, outcome, acceptance
 
     async def _run_task(
@@ -1571,6 +1574,75 @@ def _safe_relative_output(value: str) -> bool:
         and not windows.anchor
         and ".." not in posix.parts
         and ".." not in windows.parts
+    )
+
+
+def _persisted_undeclared_paths(
+    task: TeamTask,
+    messages: list[TeamMessage],
+) -> set[str]:
+    paths: set[str] = set()
+    if (
+        task.acceptance_result
+        and task.acceptance_result.get("reason_code") == "undeclared_deliverable"
+        and task.outcome
+    ):
+        deliverables = task.outcome.get("deliverables")
+        if isinstance(deliverables, list):
+            paths.update(
+                path
+                for item in deliverables
+                if isinstance(item, dict)
+                and isinstance((path := item.get("path")), str)
+                and path not in task.acceptance.required_outputs
+            )
+
+    for message in messages:
+        metadata = message.metadata
+        if (
+            message.kind != "acceptance_review"
+            or metadata.get("task_id") != task.id
+            or metadata.get("reason_code") != "undeclared_deliverable"
+        ):
+            continue
+        acceptance_before = metadata.get("acceptance_before")
+        required_outputs = (
+            acceptance_before.get("required_outputs", ())
+            if isinstance(acceptance_before, dict)
+            else ()
+        )
+        rejected = metadata.get("rejected_deliverables")
+        if not isinstance(rejected, list):
+            continue
+        paths.update(
+            path
+            for path in rejected
+            if isinstance(path, str) and path not in required_outputs
+        )
+    return paths
+
+
+def _reject_lingering_undeclared_paths(
+    acceptance: AcceptanceResult,
+    rejected_paths: set[str],
+    required_outputs: tuple[str, ...],
+    working_root: Path,
+) -> AcceptanceResult:
+    if not acceptance.accepted:
+        return acceptance
+    remaining_paths = sorted(
+        path
+        for path in rejected_paths
+        if path not in required_outputs
+        and _bounded_path_exists(working_root, path)
+    )
+    if not remaining_paths:
+        return acceptance
+    return AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="undeclared_deliverable",
+        evidence={"remaining_undeclared_paths": remaining_paths},
     )
 
 

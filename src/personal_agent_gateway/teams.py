@@ -2387,6 +2387,7 @@ def _safe_relative_task_output(value: str) -> bool:
         and not posix.is_absolute()
         and not windows.is_absolute()
         and not windows.drive
+        and not windows.anchor
         and ".." not in posix.parts
         and ".." not in windows.parts
     )

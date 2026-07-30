@@ -241,6 +241,91 @@ describe("useTeamRunController request ownership", () => {
     ]);
   });
 
+  it("keeps completed task state and review history after invalidating a review refresh", async () => {
+    const delayedReviewDetail = deferred();
+    let detailCalls = 0;
+    api.teamRunDetail.mockImplementation(async () => {
+      detailCalls += 1;
+      if (detailCalls === 1) {
+        return detail("r1", {
+          tasks: [{ id: "t1", status: "in_progress" }]
+        });
+      }
+      if (detailCalls === 2) return delayedReviewDetail.promise;
+      return detail("r1", {
+        tasks: [{ id: "t1", status: "completed" }],
+        messages: [
+          { id: "review-1", kind: "acceptance_review", metadata: { task_id: "t1" } }
+        ]
+      });
+    });
+    const { result } = renderController();
+    await selectRun(result, "r1");
+
+    act(() => {
+      result.current.handleTeamEvent({
+        type: "team.task.updated",
+        team_run_id: "r1",
+        acceptance_reviewed: true,
+        task: { id: "t1", status: "in_progress" }
+      });
+      result.current.handleTeamEvent({
+        type: "team.task.updated",
+        team_run_id: "r1",
+        task: { id: "t1", status: "completed" }
+      });
+    });
+    expect(result.current.teamRunDetail.tasks[0].status).toBe("completed");
+
+    await act(async () => {
+      delayedReviewDetail.resolve(detail("r1", {
+        tasks: [{ id: "t1", status: "in_progress" }],
+        messages: [
+          { id: "review-1", kind: "acceptance_review", metadata: { task_id: "t1" } }
+        ]
+      }));
+      await delayedReviewDetail.promise;
+    });
+
+    expect(result.current.teamRunDetail.tasks[0].status).toBe("completed");
+    await waitFor(() => expect(
+      result.current.teamRunDetail.messages.map((message) => message.id)
+    ).toEqual(["review-1"]));
+  });
+
+  it("loads completed detail when a task event arrives before the initial detail", async () => {
+    const initialDetail = deferred();
+    let detailCalls = 0;
+    api.teamRunDetail.mockImplementation(async () => {
+      detailCalls += 1;
+      if (detailCalls === 1) return initialDetail.promise;
+      return detail("r1", {
+        tasks: [{ id: "t1", status: "completed" }]
+      });
+    });
+    const { result } = renderController();
+
+    act(() => result.current.handleSelectTeamRun("r1"));
+    await waitFor(() => expect(api.teamRunDetail).toHaveBeenCalledTimes(1));
+
+    act(() => result.current.handleTeamEvent({
+      type: "team.task.updated",
+      team_run_id: "r1",
+      task: { id: "t1", status: "completed" }
+    }));
+
+    await act(async () => {
+      initialDetail.resolve(detail("r1", {
+        tasks: [{ id: "t1", status: "in_progress" }]
+      }));
+      await initialDetail.promise;
+    });
+
+    await waitFor(() => (
+      expect(result.current.teamRunDetail?.tasks[0]?.status).toBe("completed")
+    ));
+  });
+
   it("clears the previous run while detail and documents settle independently", async () => {
     const nextDetail = deferred();
     const nextDocuments = deferred();

@@ -1118,6 +1118,195 @@ async def test_acceptance_recovery_rejects_undeclared_path_left_on_disk(
     ) == 2
 
 
+@pytest.mark.asyncio
+async def test_acceptance_recovery_resume_preserves_rejection_before_review_audit(
+    tmp_path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    task = teams.create_task(
+        run.id,
+        "T",
+        "D",
+        acceptance=TaskAcceptance((), ("source-check",)),
+    )
+    teams.set_run_status(run.id, "running")
+    teams.set_agent_status(leader_agent.id, "running")
+    task, worker_agent = teams.start_task(task.id, worker_agent.id)
+    working_root = Path(run.working_root)
+    rejected_path = working_root / "docs" / "d3.md"
+    rejected_path.parent.mkdir(parents=True, exist_ok=True)
+    rejected_path.write_text("extra", encoding="utf-8")
+    teams.record_task_outcome(
+        task.id,
+        json.loads(
+            _outcome_json(
+                "rejected before review",
+                deliverables=[{"path": "docs/d3.md", "kind": "markdown"}],
+                verification="source-check",
+            )
+        ),
+        {
+            "accepted": False,
+            "status": "failed",
+            "reason_code": "undeclared_deliverable",
+            "evidence": {},
+        },
+    )
+    teams.interrupt_run(run.id)
+
+    class CleanupWorker:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, _messages):
+            self.calls += 1
+            if self.calls == 2:
+                rejected_path.unlink()
+            return ModelResponse(
+                content=_outcome_json(
+                    f"resumed submission {self.calls}",
+                    verification="source-check",
+                ),
+                tool_calls=[],
+                upstream_session_id=f"worker-{self.calls}",
+            )
+
+    leader_model = ScriptedModel(
+        [_retry_review("Remove docs/d3.md before resubmitting."), "completed"]
+    )
+    worker_model = CleanupWorker()
+    runtime = TeamRuntime(
+        teams,
+        lambda agent: leader_model if agent.role == "leader" else worker_model,
+    )
+
+    completed = await runtime.resume(run.id)
+
+    resumed_task = teams.get_task(task.id)
+    assert completed.status == "completed"
+    assert resumed_task.status == "completed"
+    assert resumed_task.acceptance_recovery_attempts == 1
+    assert worker_model.calls == 2
+    assert not rejected_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_acceptance_recovery_ask_user_resume_preserves_rejected_path(
+    tmp_path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    plan = json.dumps(
+        [
+            {
+                "title": "T",
+                "description": "D",
+                "owner_agent_id": None,
+                "required": True,
+                "acceptance": {
+                    "required_outputs": [],
+                    "required_verifications": ["source-check"],
+                },
+            }
+        ]
+    )
+    ask_user = json.dumps(
+        {
+            "resolution": {
+                "kind": "ask_user",
+                "topic": "scope",
+                "question": "Should the extra draft be retained?",
+                "why_needed": "The requested scope is ambiguous.",
+                "options": [
+                    {
+                        "id": "remove",
+                        "label": "Remove it",
+                        "impact": "Keeps the original contract.",
+                    }
+                ],
+                "recommended_option_id": "remove",
+                "blocking_scope": "task",
+            }
+        }
+    )
+    working_root = Path(run.working_root)
+    rejected_path = working_root / "docs" / "d3.md"
+
+    class CleanupWorker:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, _messages):
+            self.calls += 1
+            if self.calls == 1:
+                rejected_path.parent.mkdir(parents=True, exist_ok=True)
+                rejected_path.write_text("extra", encoding="utf-8")
+                deliverables = [{"path": "docs/d3.md", "kind": "markdown"}]
+            else:
+                deliverables = []
+                if self.calls == 3:
+                    rejected_path.unlink()
+            return ModelResponse(
+                content=_outcome_json(
+                    f"submission {self.calls}",
+                    deliverables=deliverables,
+                    verification="source-check",
+                ),
+                tool_calls=[],
+                upstream_session_id=f"worker-{self.calls}",
+            )
+
+    leader_model = ScriptedModel(
+        [
+            plan,
+            ask_user,
+            _retry_review("Remove docs/d3.md before resubmitting."),
+            "completed",
+        ]
+    )
+    worker_model = CleanupWorker()
+    runtime = TeamRuntime(
+        teams,
+        lambda agent: leader_model if agent.role == "leader" else worker_model,
+    )
+
+    waiting = await runtime.start(run.id)
+    request = teams.get_active_decision_request(run.id)
+    assert waiting.status == "waiting_for_user"
+    assert request is not None
+
+    teams.answer_decision_request(
+        run.id,
+        request.id,
+        request.revision,
+        {request.items[0]["id"]: "remove"},
+    )
+    completed = await runtime.resume(run.id)
+
+    task = teams.list_tasks(run.id)[0]
+    assert completed.status == "completed"
+    assert task.status == "completed"
+    assert task.acceptance_recovery_attempts == 1
+    assert worker_model.calls == 3
+    assert not rejected_path.exists()
+
+
 def test_acceptance_recovery_does_not_follow_outside_symlink(
     tmp_path,
     monkeypatch,

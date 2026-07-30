@@ -34,8 +34,14 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
   const [teamRunDetailLoadErrorId, setTeamRunDetailLoadErrorId] = useState(null);
   const selectedTeamRunIdRef = useRef(null);
   const selectedTeamRunVersionRef = useRef(0);
+  const teamRunDetailRef = useRef(null);
+  const teamRunDetailRequestPendingRef = useRef(false);
   const teamRunDetailRequestVersionRef = useRef(0);
   const manualCycleRequestRef = useRef(null);
+
+  useEffect(() => {
+    teamRunDetailRef.current = teamRunDetail;
+  }, [teamRunDetail]);
 
   useEffect(() => {
     selectedTeamRunIdRef.current = selectedTeamRunId;
@@ -65,6 +71,7 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
 
   useEffect(() => {
     if (!selectedTeamRunId) {
+      teamRunDetailRequestPendingRef.current = false;
       setTeamRunDetail(null);
       setTeamRunDocuments([]);
       setTeamRunDelivery(null);
@@ -81,13 +88,16 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     setTeamRunDeliveryLoading(true);
     setTeamRunDetailLoadErrorId(null);
     const detailRequestVersion = beginTeamRunDetailRequest();
+    teamRunDetailRequestPendingRef.current = true;
     api.teamRunDetail(selectedTeamRunId).then((detail) => {
       if (!detail?.run) throw new Error("Team run detail is unavailable");
       if (alive && ownsTeamRunDetailRequest(detailRequestVersion)) {
+        teamRunDetailRequestPendingRef.current = false;
         setTeamRunDetail(detail);
       }
     }).catch((error) => {
       if (alive && ownsTeamRunDetailRequest(detailRequestVersion)) {
+        teamRunDetailRequestPendingRef.current = false;
         setTeamRunDetailLoadErrorId(selectedTeamRunId);
         setScreenError(error);
       }
@@ -130,6 +140,8 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
         .catch(setScreenError);
     }
     if (event.team_run_id !== selectedTeamRunIdRef.current) return;
+    const invalidatesPendingDetail = teamRunDetailRequestPendingRef.current;
+    const detailEventVersion = beginTeamRunDetailRequest();
     const requestedRun = {
       id: event.team_run_id,
       version: selectedTeamRunVersionRef.current
@@ -138,23 +150,29 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     if (hasDelta) {
       setTeamRunDetail((current) => applyTeamRunDelta(current, event));
     }
-    const requiresDetailRefresh = !hasDelta || requiresRefresh || event.acceptance_reviewed;
+    const requiresDetailRefresh = !hasDelta
+      || requiresRefresh
+      || event.acceptance_reviewed
+      || invalidatesPendingDetail
+      || teamRunDetailRef.current?.run?.id !== event.team_run_id;
     if (requiresDetailRefresh) {
-      const detailRequestVersion = beginTeamRunDetailRequest();
+      teamRunDetailRequestPendingRef.current = true;
       api.teamRunDetail(event.team_run_id)
         .then((detail) => {
           if (
             ownsSelectedRun(requestedRun)
-            && ownsTeamRunDetailRequest(detailRequestVersion)
+            && ownsTeamRunDetailRequest(detailEventVersion)
           ) {
+            teamRunDetailRequestPendingRef.current = false;
             setTeamRunDetail(detail);
           }
         })
         .catch((error) => {
           if (
             ownsSelectedRun(requestedRun)
-            && ownsTeamRunDetailRequest(detailRequestVersion)
+            && ownsTeamRunDetailRequest(detailEventVersion)
           ) {
+            teamRunDetailRequestPendingRef.current = false;
             setScreenError(error);
           }
         });

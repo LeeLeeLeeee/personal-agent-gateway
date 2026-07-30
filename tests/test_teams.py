@@ -867,6 +867,10 @@ def test_acceptance_review_revises_contract_and_ask_user_preserves_counter(
             "Acceptance output path must be relative and bounded",
         ),
         (
+            TaskAcceptance((r"\outside.md",), ("source-check",)),
+            "Acceptance output path must be relative and bounded",
+        ),
+        (
             TaskAcceptance(("C:outside.md",), ("source-check",)),
             "Acceptance output path must be relative and bounded",
         ),
