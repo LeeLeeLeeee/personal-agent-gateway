@@ -8,6 +8,74 @@
 
 **Tech Stack:** Python 3.12, asyncio, dataclasses, SQLite migrations, pytest, FastAPI, React 19, Vitest, Testing Library, Vite.
 
+## Architecture Review
+
+### Current Structural Risks
+
+#### Finding: The audit message has no live transport path to the selected detail
+
+**Evidence**
+- `TeamRuntime._publish` enriches `team.task.updated` with task/agent deltas, while
+  `applyTeamRunDelta` does not merge `messages`.
+- `TeamRunService.record_acceptance_review` persists the audit message immediately before
+  the task event, so the selected detail can remain stale during internal recovery.
+- `TeamRunDetail` currently includes every message in Activity, which conflicts with the
+  global constraint that internal review is visible only in the selected Task detail.
+
+**Principle**
+- Keep persistence, event signaling, controller refresh, and presentation responsibilities
+  at their existing boundaries; do not duplicate server messages in component state.
+
+**Recommendation**
+- Mark only the task event emitted after an acceptance review with
+  `acceptance_reviewed: true`. On that marker, refetch only the selected run detail.
+- Filter `acceptance_review` from the general Activity list and render it from the same
+  detail payload inside the selected Task dialog.
+
+**Plan Impact**
+- Task 4 also touches `team_runtime.py`, `useTeamRunController.js`, and its focused test.
+
+The strongest smaller alternative is to rely on the next unrelated run/cycle refresh. It
+avoids a controller change, but fails the live-history requirement while a Task remains
+`in_progress`. Refetching all documents/delivery or introducing a message store would be
+larger than the explicit event marker and is not justified.
+
+### SOLID Review
+
+The proposed event marker preserves SRP: runtime signals a domain occurrence, controller
+owns remote detail freshness, and the component only derives presentation data.
+
+### Design Pattern Candidates
+
+No new pattern is warranted. A new event bus adapter, store, or repository would add
+structure for one existing SSE path; an explicit event field is sufficient.
+
+### Dependency Direction
+
+```mermaid
+sequenceDiagram
+  participant Service as TeamRunService
+  participant Runtime as TeamRuntime
+  participant Controller as useTeamRunController
+  participant Detail as TeamRunDetail
+  Service->>Service: persist acceptance_review
+  Runtime-->>Controller: team.task.updated + acceptance_reviewed
+  Controller->>Controller: refetch selected run detail
+  Controller-->>Detail: messages including acceptance_review
+  Detail->>Detail: render only in selected Task dialog
+```
+
+### Test Strategy Alignment
+
+Add a focused controller regression for the review marker and keep the exact component,
+API payload, and production build checks. Existing service/runtime recovery tests remain
+the evidence for persistence and loop behavior; no full-suite run is added.
+
+### Plan Changes Applied
+
+- Added the live detail refresh path and Activity filtering to Task 4.
+- Added only their directly related source and test files.
+
 ## Global Constraints
 
 - Recoverable acceptance work gets at most `2` Lead/Worker correction attempts per Task.
@@ -28,10 +96,11 @@
 | --- | --- |
 | `src/personal_agent_gateway/migrations.py` | Schema v19 migration for the task-scoped recovery counter |
 | `src/personal_agent_gateway/teams.py` | Persist the counter, revised acceptance, and `acceptance_review` message atomically |
-| `src/personal_agent_gateway/team_runtime.py` | Lead review protocol, response parser, bounded recovery loop, Worker resubmission |
+| `src/personal_agent_gateway/team_runtime.py` | Lead review protocol, bounded recovery loop, Worker resubmission, review event marker |
 | `src/personal_agent_gateway/team_acceptance.py` | Preserve strict acceptance; expose recoverable reason classification without weakening checks |
 | `src/personal_agent_gateway/api/team_runs.py` | Include `acceptance_recovery_attempts` in task payloads |
 | `frontend/src/components/organisms/TeamRunDetail/index.jsx` | Group and render per-Task internal review history |
+| `frontend/src/hooks/useTeamRunController.js` | Refresh selected detail when an acceptance review is recorded |
 | `src/personal_agent_gateway/static/styles.css` | Minimal styling for internal review entries |
 | `src/personal_agent_gateway/frontend_dist/**` | Production frontend bundle generated from the final source state |
 | `tests/test_migrations.py` | Migration default and idempotence |
@@ -40,6 +109,7 @@
 | `tests/test_team_runtime.py` | Lead decisions, resubmission, limits, state preservation, cleanup |
 | `tests/test_api_team_runs.py` | Task payload exposes the recovery counter |
 | `frontend/src/components/organisms/TeamRunDetail/TeamRunDetail.test.jsx` | Task-only review history and no Overview error |
+| `frontend/src/hooks/useTeamRunController.test.jsx` | Review event refreshes the selected detail messages |
 
 ---
 
@@ -641,19 +711,23 @@ git commit -m "feat(team): acceptance 실패 내부 복구 실행"
 ### Task 4: Expose Recovery Attempts and Render Task-Only Review History
 
 **Files:**
+- Modify: `src/personal_agent_gateway/team_runtime.py:750-778`
 - Modify: `src/personal_agent_gateway/api/team_runs.py:1250-1275`
 - Modify: `frontend/src/components/organisms/TeamRunDetail/index.jsx:110-250`
 - Modify: `frontend/src/components/organisms/TeamRunDetail/index.jsx:742-777`
 - Modify: `frontend/src/components/organisms/TeamRunDetail/index.jsx:1368-1381`
+- Modify: `frontend/src/hooks/useTeamRunController.js:101-151`
 - Modify: `src/personal_agent_gateway/static/styles.css:3384-3428`
 - Modify: `src/personal_agent_gateway/frontend_dist/**` (generated by Vite)
 - Test: `tests/test_api_team_runs.py:664-713`
 - Test: `frontend/src/components/organisms/TeamRunDetail/TeamRunDetail.test.jsx`
+- Test: `frontend/src/hooks/useTeamRunController.test.jsx`
 
 **Interfaces:**
 - Consumes: `TeamTask.acceptance_recovery_attempts`
 - Consumes: existing message payloads where `kind === "acceptance_review"` and
   `metadata.task_id` identifies the Task
+- Produces task event marker: `"acceptance_reviewed": True`
 - Produces task payload field: `"acceptance_recovery_attempts": int`
 - Produces frontend helper:
 
@@ -746,6 +820,22 @@ expect(within(dialog).getByText("Resubmit without the undeclared file.")).toBeIn
 ```
 
 Add a second assertion that a review for a different Task is not rendered in this dialog.
+Open Activity and assert the review instruction and reason code are still absent.
+
+In `useTeamRunController.test.jsx`, select a run whose initial `messages` are empty, publish:
+
+```javascript
+{
+  type: "team.task.updated",
+  team_run_id: "r1",
+  acceptance_reviewed: true,
+  task: { id: "t1", status: "in_progress" }
+}
+```
+
+Make the next `api.teamRunDetail("r1")` return the review message. Assert the selected
+detail is refreshed and includes that message without requiring document or delivery
+refreshes.
 
 - [ ] **Step 5: Run the frontend test and verify it fails**
 
@@ -753,9 +843,11 @@ Run:
 
 ```powershell
 npm --prefix frontend test -- --run src/components/organisms/TeamRunDetail/TeamRunDetail.test.jsx
+npm --prefix frontend test -- --run src/hooks/useTeamRunController.test.jsx
 ```
 
-Expected: FAIL because Task detail does not group or render internal reviews.
+Expected: FAIL because Task detail does not group or render internal reviews, Activity is
+unfiltered, and the review event does not refresh detail.
 
 - [ ] **Step 6: Render internal reviews only inside Task detail**
 
@@ -774,8 +866,13 @@ reason, and instruction. Put `acceptance_before`/`acceptance_after` inside a nat
 `<details>` element so the default view stays compact.
 
 Do not add review messages to Overview error cards, Task status badges, or user decision
-counts. The existing general Activity tab may continue showing the audit message because it
-already shows all messages.
+counts. Exclude `acceptance_review` from the general Activity list so the audit is visible
+only in the selected Task detail.
+
+After `record_acceptance_review`, publish the existing `team.task.updated` event with
+`"acceptance_reviewed": True`. In `handleTeamEvent`, refetch only
+`api.teamRunDetail(event.team_run_id)` for that marker and retain the existing selected-run
+ownership guard. Do not refetch the run list, documents, or delivery for this marker.
 
 - [ ] **Step 7: Add minimal styles**
 
@@ -810,6 +907,7 @@ Run:
 ```powershell
 pytest tests/test_api_team_runs.py::test_team_task_payload_exposes_acceptance_outcome_and_result -q
 npm --prefix frontend test -- --run src/components/organisms/TeamRunDetail/TeamRunDetail.test.jsx
+npm --prefix frontend test -- --run src/hooks/useTeamRunController.test.jsx
 ```
 
 Expected: PASS.
@@ -827,7 +925,7 @@ Expected: Vite build succeeds and refreshes `src/personal_agent_gateway/frontend
 - [ ] **Step 10: Commit Task 4**
 
 ```powershell
-git add src/personal_agent_gateway/api/team_runs.py frontend/src/components/organisms/TeamRunDetail/index.jsx frontend/src/components/organisms/TeamRunDetail/TeamRunDetail.test.jsx src/personal_agent_gateway/static/styles.css src/personal_agent_gateway/frontend_dist tests/test_api_team_runs.py
+git add src/personal_agent_gateway/team_runtime.py src/personal_agent_gateway/api/team_runs.py frontend/src/components/organisms/TeamRunDetail/index.jsx frontend/src/components/organisms/TeamRunDetail/TeamRunDetail.test.jsx frontend/src/hooks/useTeamRunController.js frontend/src/hooks/useTeamRunController.test.jsx src/personal_agent_gateway/static/styles.css src/personal_agent_gateway/frontend_dist tests/test_api_team_runs.py
 git commit -m "feat(team): 내부 acceptance 검토 이력 표시"
 ```
 
