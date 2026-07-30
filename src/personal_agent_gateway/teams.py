@@ -602,21 +602,24 @@ class TeamRunService:
             ).fetchone()
             if run is None:
                 raise ValueError("Team run and cycle are not active for provider wait")
-            active_execution_wait = (
+            active_execution_source = (
                 cycle["status"] == "running"
                 and run["status"] in _PROVIDER_WAIT_SOURCE_RUN_STATUSES
             )
+            active_execution_wait = active_execution_source and agent_id is not None
             preplanning_freeze_wait = (
                 cycle["status"] == "queued"
-                and cycle["started_at"] is None
-                and cycle["finished_at"] is None
                 and run["status"] == "draft"
-                and run["started_at"] is None
-                and run["finished_at"] is None
+                and cycle["request_id"] is not None
                 and task_id is None
                 and agent_id is None
+                and _preplanning_source_is_pristine(run, cycle)
             )
             if not active_execution_wait and not preplanning_freeze_wait:
+                if active_execution_source and agent_id is None:
+                    raise ValueError(
+                        "Provider wait omitted the current task and agent"
+                    )
                 raise ValueError("Team run and cycle are not active for provider wait")
             if cycle["request_id"] is not None:
                 request = connection.execute(
@@ -633,9 +636,32 @@ class TeamRunService:
                     raise ValueError(
                         "Team cycle request is not dispatching for provider wait"
                     )
+            if preplanning_freeze_wait:
+                cycle_task = connection.execute(
+                    """
+                    select id from team_tasks
+                    where team_run_id = ? and cycle_id = ?
+                    limit 1
+                    """,
+                    (cycle["team_run_id"], cycle_id),
+                ).fetchone()
+                agent_rows = connection.execute(
+                    "select * from team_agents where team_run_id = ?",
+                    (cycle["team_run_id"],),
+                ).fetchall()
+                if (
+                    cycle_task is not None
+                    or not _preplanning_agents_are_pristine(
+                        agent_rows,
+                        run["leader_agent_id"],
+                    )
+                ):
+                    raise ValueError(
+                        "Team run and cycle are not pristine for provider wait"
+                    )
             if task_id is not None and agent_id is None:
                 raise ValueError("Provider wait task has no current task agent")
-            if task_id is None:
+            if task_id is None and not preplanning_freeze_wait:
                 current_task = connection.execute(
                     """
                     select id from team_tasks
@@ -648,7 +674,7 @@ class TeamRunService:
                     raise ValueError(
                         "Provider wait omitted the current task and agent"
                     )
-            if agent_id is None:
+            if agent_id is None and not preplanning_freeze_wait:
                 current_agent = connection.execute(
                     """
                     select id from team_agents
@@ -816,11 +842,14 @@ class TeamRunService:
             metadata, task_id, agent_id = _validated_provider_recovery_metadata(
                 stored_metadata
             )
+            preplanning_recovery = task_id is None and agent_id is None
             run = connection.execute(
                 "select * from team_runs where id = ?",
                 (cycle["team_run_id"],),
             ).fetchone()
             if run is None or run["status"] != "waiting_for_provider":
+                raise ValueError("Invalid provider recovery related state")
+            if preplanning_recovery and cycle["request_id"] is None:
                 raise ValueError("Invalid provider recovery related state")
             if cycle["request_id"] is not None:
                 request = connection.execute(
@@ -835,7 +864,29 @@ class TeamRunService:
                     or request["status"] != "dispatching"
                 ):
                     raise ValueError("Invalid provider recovery related state")
-            if task_id is None:
+            if preplanning_recovery:
+                cycle_task = connection.execute(
+                    """
+                    select id from team_tasks
+                    where team_run_id = ? and cycle_id = ?
+                    limit 1
+                    """,
+                    (cycle["team_run_id"], cycle_id),
+                ).fetchone()
+                agent_rows = connection.execute(
+                    "select * from team_agents where team_run_id = ?",
+                    (cycle["team_run_id"],),
+                ).fetchall()
+                if (
+                    not _preplanning_source_is_pristine(run, cycle)
+                    or cycle_task is not None
+                    or not _preplanning_agents_are_pristine(
+                        agent_rows,
+                        run["leader_agent_id"],
+                    )
+                ):
+                    raise ValueError("Invalid provider recovery related state")
+            elif task_id is None:
                 waiting_task = connection.execute(
                     """
                     select id from team_tasks
@@ -847,7 +898,7 @@ class TeamRunService:
                 ).fetchone()
                 if waiting_task is not None:
                     raise ValueError("Invalid provider recovery related state")
-            if agent_id is None:
+            if agent_id is None and not preplanning_recovery:
                 waiting_agent = connection.execute(
                     """
                     select id from team_agents
@@ -2825,6 +2876,44 @@ def _timestamp(value: datetime) -> str:
 def _require_one_updated(cursor: sqlite3.Cursor, message: str) -> None:
     if cursor.rowcount != 1:
         raise RuntimeError(message)
+
+
+def _preplanning_source_is_pristine(
+    run: sqlite3.Row,
+    cycle: sqlite3.Row,
+) -> bool:
+    return (
+        run["rounds_used"] == 0
+        and run["summary"] is None
+        and run["error_message"] is None
+        and run["started_at"] is None
+        and run["finished_at"] is None
+        and cycle["rounds_used"] == 0
+        and cycle["summary"] is None
+        and cycle["error_message"] is None
+        and cycle["started_at"] is None
+        and cycle["finished_at"] is None
+    )
+
+
+def _preplanning_agents_are_pristine(
+    agents: list[sqlite3.Row],
+    leader_agent_id: str | None,
+) -> bool:
+    return (
+        bool(agents)
+        and leader_agent_id is not None
+        and any(agent["id"] == leader_agent_id for agent in agents)
+        and all(
+            agent["status"] == "pending"
+            and agent["current_task_id"] is None
+            and agent["reinvocations"] == 0
+            and agent["upstream_session_id"] is None
+            and agent["started_at"] is None
+            and agent["finished_at"] is None
+            for agent in agents
+        )
+    )
 
 
 def _validated_provider_recovery_metadata(

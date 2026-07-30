@@ -149,6 +149,67 @@ def test_mark_waiting_for_provider_accepts_coherent_preplanning_freeze(tmp_path)
 
 
 @pytest.mark.parametrize(
+    "invalid_state",
+    ["unlinked", "pending_task", "agent_not_pending", "agent_execution_marker"],
+)
+def test_mark_waiting_for_provider_rejects_nonpristine_preplanning_state(
+    tmp_path,
+    invalid_state,
+):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = (
+        teams.create_cycle(run.id, "manual", "unlinked")
+        if invalid_state == "unlinked"
+        else make_queued_cycle(teams, cycles, run)
+    )
+    pending_task_id = None
+    leader = teams.get_agent(run.leader_agent_id)
+    if invalid_state == "pending_task":
+        pending_task = teams.create_task(
+            run.id,
+            "premature",
+            "premature",
+            owner_agent_id=None,
+            cycle_id=cycle.id,
+        )
+        pending_task_id = pending_task.id
+    elif invalid_state == "agent_not_pending":
+        db.execute(
+            "update team_agents set status = 'completed' where id = ?",
+            (leader.id,),
+        )
+    elif invalid_state == "agent_execution_marker":
+        db.execute(
+            """
+            update team_agents
+            set reinvocations = 1, upstream_session_id = 'prior-session',
+                started_at = '2026-07-29T23:59:00+00:00'
+            where id = ?
+            """,
+            (leader.id,),
+        )
+
+    with pytest.raises(ValueError, match="provider wait"):
+        teams.mark_waiting_for_provider(
+            cycle.id,
+            provider="claude",
+            reason_code="capabilities_unavailable",
+            attempts=3,
+            task_id=None,
+            agent_id=None,
+            now=dt("2026-07-30T00:00:00+00:00"),
+        )
+
+    assert teams.get_team_run(run.id).status == "draft"
+    assert teams.get_cycle(cycle.id).status == "queued"
+    assert teams.get_cycle(cycle.id).execution_metadata is None
+    if cycle.request_id is not None:
+        assert cycles.get_request(cycle.request_id).status == "dispatching"
+    if pending_task_id is not None:
+        assert teams.get_task(pending_task_id).status == "pending"
+
+
+@pytest.mark.parametrize(
     "mixed_state",
     ["queued_with_ids", "queued_active_run", "running_draft_run"],
 )

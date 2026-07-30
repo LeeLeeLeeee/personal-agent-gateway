@@ -31,6 +31,25 @@ def make_waiting_provider_state(tmp_path):
     return db, teams, cycles, run, cycle, task, agent
 
 
+def make_preplanning_waiting_state(tmp_path):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    teams.set_cycle_execution_metadata(
+        cycle.id,
+        {"provider_capabilities": {"codex": {"ready": True}}},
+    )
+    teams.mark_waiting_for_provider(
+        cycle.id,
+        provider="codex",
+        reason_code="capabilities_unavailable",
+        attempts=3,
+        task_id=None,
+        agent_id=None,
+        now=dt("2026-07-30T00:00:00+00:00"),
+    )
+    return db, teams, cycles, run, cycle
+
+
 def test_claim_provider_recovery_resumes_same_cycle_once(tmp_path):
     db, teams, cycles, run, cycle, task, agent = make_waiting_provider_state(
         tmp_path
@@ -81,20 +100,8 @@ def test_claim_provider_recovery_resumes_same_cycle_once(tmp_path):
 
 
 def test_claim_provider_recovery_resumes_preplanning_freeze_without_task(tmp_path):
-    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
-    cycle = make_queued_cycle(teams, cycles, run)
-    teams.set_cycle_execution_metadata(
-        cycle.id,
-        {"provider_capabilities": {"codex": {"ready": True}}},
-    )
-    teams.mark_waiting_for_provider(
-        cycle.id,
-        provider="codex",
-        reason_code="capabilities_unavailable",
-        attempts=3,
-        task_id=None,
-        agent_id=None,
-        now=dt("2026-07-30T00:00:00+00:00"),
+    _db, teams, cycles, run, cycle = make_preplanning_waiting_state(
+        tmp_path
     )
 
     first = teams.claim_provider_recovery(
@@ -117,6 +124,56 @@ def test_claim_provider_recovery_resumes_preplanning_freeze_without_task(tmp_pat
     assert cycles.get_request(cycle.request_id).status == "dispatching"
     assert teams.list_tasks(run.id, cycle.id) == []
     assert {agent.status for agent in teams.list_agents(run.id)} == {"pending"}
+
+
+@pytest.mark.parametrize(
+    "invalid_state",
+    ["unlinked", "pending_task", "agent_execution_marker"],
+)
+def test_claim_provider_recovery_rolls_back_nonpristine_preplanning_state(
+    tmp_path,
+    invalid_state,
+):
+    db, teams, cycles, run, cycle = make_preplanning_waiting_state(tmp_path)
+    request_id = cycle.request_id
+    if invalid_state == "unlinked":
+        db.execute(
+            "update team_run_cycles set request_id = null where id = ?",
+            (cycle.id,),
+        )
+    elif invalid_state == "pending_task":
+        teams.create_task(
+            run.id,
+            "premature",
+            "premature",
+            owner_agent_id=None,
+            cycle_id=cycle.id,
+        )
+    else:
+        db.execute(
+            """
+            update team_agents
+            set reinvocations = 1, upstream_session_id = 'prior-session'
+            where id = ?
+            """,
+            (run.leader_agent_id,),
+        )
+    before_cycle = teams.get_cycle(cycle.id)
+    before_run = teams.get_team_run(run.id)
+    before_tasks = teams.list_tasks(run.id, cycle.id)
+    before_agents = teams.list_agents(run.id)
+
+    with pytest.raises(ValueError, match="provider recovery related state"):
+        teams.claim_provider_recovery(
+            cycle.id,
+            now=dt("2026-07-30T00:00:30+00:00"),
+        )
+
+    assert teams.get_cycle(cycle.id) == before_cycle
+    assert teams.get_team_run(run.id) == before_run
+    assert teams.list_tasks(run.id, cycle.id) == before_tasks
+    assert teams.list_agents(run.id) == before_agents
+    assert cycles.get_request(request_id).status == "dispatching"
 
 
 @pytest.mark.parametrize("malformed_state", ["missing", "wrong_type"])
