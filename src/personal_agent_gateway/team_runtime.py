@@ -1287,6 +1287,8 @@ def _safe_relative_output(value: str) -> bool:
 def _parse_acceptance_review_resolution(content: str) -> AcceptanceReviewResolution:
     try:
         raw = json.loads(normalize_json_envelope(content))
+        if not isinstance(raw, dict) or set(raw) != {"resolution"}:
+            raise ValueError
         resolution = raw["resolution"]
         if not isinstance(resolution, dict):
             raise ValueError
@@ -1322,6 +1324,7 @@ def _parse_acceptance_review_resolution(content: str) -> AcceptanceReviewResolut
                 "blocking_scope",
             }:
                 raise ValueError
+            _validate_acceptance_review_user_decision(resolution)
             decision = _parse_mediation_resolution(content)
             if decision.get("kind") != "ask_user":
                 raise ValueError
@@ -1341,6 +1344,30 @@ def _parse_acceptance_review_resolution(content: str) -> AcceptanceReviewResolut
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         pass
     raise ValueError("Invalid acceptance review resolution")
+
+
+def _validate_acceptance_review_user_decision(
+    resolution: dict[str, object],
+) -> None:
+    for field in ("topic", "question", "why_needed"):
+        _acceptance_review_text(resolution.get(field))
+
+    options = resolution.get("options")
+    if not isinstance(options, list):
+        raise ValueError
+    for option in options:
+        if not isinstance(option, dict) or set(option) != {"id", "label", "impact"}:
+            raise ValueError
+        _acceptance_review_text(option.get("id"))
+        _acceptance_review_text(option.get("label"))
+        if not isinstance(option.get("impact"), str):
+            raise ValueError
+
+    recommended = resolution.get("recommended_option_id")
+    if recommended is not None:
+        _acceptance_review_text(recommended)
+    if resolution.get("blocking_scope") not in {"task", "run"}:
+        raise ValueError
 
 
 def _parse_revised_acceptance(value: object) -> TaskAcceptance:

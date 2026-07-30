@@ -608,6 +608,137 @@ def test_acceptance_review_resolution_parses_terminal_failure() -> None:
     assert resolution.reason_code == "unrecoverable_contract"
 
 
+def _ask_user_review_resolution(**updates: object) -> dict[str, object]:
+    resolution: dict[str, object] = {
+        "kind": "ask_user",
+        "topic": "publication scope",
+        "question": "Should this be published?",
+        "why_needed": "The goal is ambiguous.",
+        "options": [
+            {
+                "id": "publish",
+                "label": "Publish",
+                "impact": "Makes the draft public.",
+            }
+        ],
+        "recommended_option_id": "publish",
+        "blocking_scope": "task",
+    }
+    resolution.update(updates)
+    return resolution
+
+
+def test_acceptance_review_resolution_rejects_unknown_outer_fields() -> None:
+    content = json.dumps(
+        {
+            "resolution": _ask_user_review_resolution(),
+            "unexpected": "not allowed",
+        }
+    )
+
+    with pytest.raises(ValueError, match="Invalid acceptance review resolution"):
+        _parse_acceptance_review_resolution(content)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [None, {}, "not-a-list"],
+)
+def test_acceptance_review_resolution_rejects_non_list_user_options(
+    options: object,
+) -> None:
+    content = json.dumps(
+        {"resolution": _ask_user_review_resolution(options=options)}
+    )
+
+    with pytest.raises(ValueError, match="Invalid acceptance review resolution"):
+        _parse_acceptance_review_resolution(content)
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        "not-an-object",
+        {"id": "publish", "label": "Publish"},
+        {
+            "id": "publish",
+            "label": "Publish",
+            "impact": "Public.",
+            "unexpected": "not allowed",
+        },
+        {"id": "", "label": "Publish", "impact": "Public."},
+        {"id": 1, "label": "Publish", "impact": "Public."},
+        {"id": "publish", "label": "", "impact": "Public."},
+        {"id": "publish", "label": None, "impact": "Public."},
+        {"id": "publish", "label": "Publish", "impact": None},
+    ],
+)
+def test_acceptance_review_resolution_rejects_malformed_user_option(
+    option: object,
+) -> None:
+    content = json.dumps(
+        {"resolution": _ask_user_review_resolution(options=[option])}
+    )
+
+    with pytest.raises(ValueError, match="Invalid acceptance review resolution"):
+        _parse_acceptance_review_resolution(content)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("topic", ""),
+        ("topic", None),
+        ("question", "   "),
+        ("question", 1),
+        ("why_needed", ""),
+        ("why_needed", None),
+    ],
+)
+def test_acceptance_review_resolution_rejects_invalid_user_text_fields(
+    field: str,
+    value: object,
+) -> None:
+    content = json.dumps(
+        {"resolution": _ask_user_review_resolution(**{field: value})}
+    )
+
+    with pytest.raises(ValueError, match="Invalid acceptance review resolution"):
+        _parse_acceptance_review_resolution(content)
+
+
+@pytest.mark.parametrize("recommended", ["", "   ", 1, []])
+def test_acceptance_review_resolution_rejects_invalid_recommended_option(
+    recommended: object,
+) -> None:
+    content = json.dumps(
+        {
+            "resolution": _ask_user_review_resolution(
+                recommended_option_id=recommended
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="Invalid acceptance review resolution"):
+        _parse_acceptance_review_resolution(content)
+
+
+@pytest.mark.parametrize("blocking_scope", ["cycle", "", None, 1])
+def test_acceptance_review_resolution_rejects_invalid_blocking_scope(
+    blocking_scope: object,
+) -> None:
+    content = json.dumps(
+        {
+            "resolution": _ask_user_review_resolution(
+                blocking_scope=blocking_scope
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="Invalid acceptance review resolution"):
+        _parse_acceptance_review_resolution(content)
+
+
 @pytest.mark.parametrize(
     "resolution",
     [
