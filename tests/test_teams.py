@@ -48,7 +48,7 @@ def test_team_run_display_status_prioritizes_current_cycle_activity(
 def test_mark_waiting_for_provider_preserves_dispatching_request_and_current_work(
     tmp_path,
 ):
-    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle, task, agent = make_running_task_in_cycle(teams, cycles, run)
     teams.set_cycle_execution_metadata(
         cycle.id,
@@ -57,6 +57,16 @@ def test_mark_waiting_for_provider_preserves_dispatching_request_and_current_wor
             "agents": {agent.id: {"sandbox_mode": "workspace-write"}},
         },
     )
+    for table, row_id in (
+        ("team_runs", run.id),
+        ("team_run_cycles", cycle.id),
+        ("team_tasks", task.id),
+        ("team_agents", agent.id),
+    ):
+        db.execute(
+            f"update {table} set finished_at = ? where id = ?",
+            ("2026-07-29T23:59:00+00:00", row_id),
+        )
 
     waiting = teams.mark_waiting_for_provider(
         cycle.id,
@@ -70,13 +80,16 @@ def test_mark_waiting_for_provider_preserves_dispatching_request_and_current_wor
 
     assert waiting.status == "waiting_for_provider"
     assert waiting.finished_at is None
-    assert teams.get_team_run(run.id).status == "waiting_for_provider"
-    assert teams.get_team_run(run.id).finished_at is None
-    assert teams.get_task(task.id).status == "waiting_for_provider"
-    assert teams.get_task(task.id).finished_at is None
+    waiting_run = teams.get_team_run(run.id)
+    assert waiting_run.status == "waiting_for_provider"
+    assert waiting_run.finished_at is None
+    waiting_task = teams.get_task(task.id)
+    assert waiting_task.status == "waiting_for_provider"
+    assert waiting_task.finished_at is None
     waiting_agent = teams.get_agent(agent.id)
     assert waiting_agent.status == "waiting"
     assert waiting_agent.current_task_id == task.id
+    assert waiting_agent.finished_at is None
     assert cycles.get_request(cycle.request_id).status == "dispatching"
     assert teams.list_waiting_provider_cycles() == [waiting]
     assert waiting.execution_metadata["provider_capabilities"] == {
@@ -95,6 +108,112 @@ def test_mark_waiting_for_provider_preserves_dispatching_request_and_current_wor
         "next_retry_at": "2026-07-30T00:00:30+00:00",
         "warning_visible_at": "2026-07-30T00:02:00+00:00",
     }
+
+
+def test_mark_waiting_for_provider_rolls_back_mismatched_current_agent(tmp_path):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle, task, agent = make_running_task_in_cycle(teams, cycles, run)
+    leader = teams.get_agent(run.leader_agent_id)
+
+    with pytest.raises(ValueError, match="current task"):
+        teams.mark_waiting_for_provider(
+            cycle.id,
+            provider="claude",
+            reason_code="provider_not_ready",
+            attempts=3,
+            task_id=task.id,
+            agent_id=leader.id,
+            now=dt("2026-07-30T00:00:00+00:00"),
+        )
+
+    assert teams.get_cycle(cycle.id).status == "running"
+    assert teams.get_cycle(cycle.id).execution_metadata is None
+    assert teams.get_team_run(run.id).status == "running"
+    assert teams.get_task(task.id).status == "in_progress"
+    assert teams.get_agent(agent.id).status == "running"
+    assert teams.get_agent(agent.id).current_task_id == task.id
+    assert teams.get_agent(leader.id).status == "pending"
+    assert cycles.get_request(cycle.request_id).status == "dispatching"
+
+
+def test_mark_waiting_for_provider_rolls_back_omitted_current_work(tmp_path):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle, task, agent = make_running_task_in_cycle(teams, cycles, run)
+
+    with pytest.raises(ValueError, match="current task"):
+        teams.mark_waiting_for_provider(
+            cycle.id,
+            provider="claude",
+            reason_code="provider_not_ready",
+            attempts=3,
+            task_id=None,
+            agent_id=None,
+            now=dt("2026-07-30T00:00:00+00:00"),
+        )
+
+    assert teams.get_cycle(cycle.id).status == "running"
+    assert teams.get_cycle(cycle.id).execution_metadata is None
+    assert teams.get_team_run(run.id).status == "running"
+    assert teams.get_task(task.id).status == "in_progress"
+    assert teams.get_agent(agent.id).status == "running"
+    assert teams.get_agent(agent.id).current_task_id == task.id
+    assert cycles.get_request(cycle.request_id).status == "dispatching"
+
+
+@pytest.mark.parametrize(
+    "stale_source",
+    ["run", "cycle", "request_status", "request_source"],
+)
+def test_mark_waiting_for_provider_rolls_back_stale_source_state(
+    tmp_path,
+    stale_source,
+):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle, task, agent = make_running_task_in_cycle(teams, cycles, run)
+    if stale_source == "run":
+        db.execute(
+            "update team_runs set status = 'canceled' where id = ?",
+            (run.id,),
+        )
+    elif stale_source == "cycle":
+        db.execute(
+            "update team_run_cycles set status = 'completed' where id = ?",
+            (cycle.id,),
+        )
+    elif stale_source == "request_status":
+        db.execute(
+            "update team_cycle_requests set status = 'queued' where id = ?",
+            (cycle.request_id,),
+        )
+    else:
+        db.execute(
+            "update team_cycle_requests set source_id = 'stale' where id = ?",
+            (cycle.request_id,),
+        )
+
+    with pytest.raises(ValueError, match="provider wait"):
+        teams.mark_waiting_for_provider(
+            cycle.id,
+            provider="claude",
+            reason_code="provider_not_ready",
+            attempts=3,
+            task_id=task.id,
+            agent_id=agent.id,
+            now=dt("2026-07-30T00:00:00+00:00"),
+        )
+
+    expected_run_status = "canceled" if stale_source == "run" else "running"
+    expected_cycle_status = "completed" if stale_source == "cycle" else "running"
+    expected_request_status = (
+        "queued" if stale_source == "request_status" else "dispatching"
+    )
+    assert teams.get_team_run(run.id).status == expected_run_status
+    assert teams.get_cycle(cycle.id).status == expected_cycle_status
+    assert teams.get_cycle(cycle.id).execution_metadata is None
+    assert teams.get_task(task.id).status == "in_progress"
+    assert teams.get_agent(agent.id).status == "running"
+    assert teams.get_agent(agent.id).current_task_id == task.id
+    assert cycles.get_request(cycle.request_id).status == expected_request_status
 
 
 def make_services(tmp_path):

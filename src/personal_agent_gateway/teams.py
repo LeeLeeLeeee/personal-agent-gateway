@@ -63,6 +63,7 @@ DecisionRequestStatus = Literal["collecting", "awaiting_user", "resolved", "canc
 ACCEPTANCE_RECOVERY_CAP = 2
 
 _ACTIVE_RUN_STATUSES = {"planning", "running", "summarizing", "waiting_for_provider"}
+_PROVIDER_WAIT_SOURCE_RUN_STATUSES = {"planning", "running", "summarizing"}
 _TERMINAL_RUN_STATUSES = {
     "completed",
     "completed_with_failures",
@@ -595,6 +596,92 @@ class TeamRunService:
             ).fetchone()
             if cycle is None:
                 raise KeyError(f"Team run cycle not found: {cycle_id}")
+            run = connection.execute(
+                "select * from team_runs where id = ?",
+                (cycle["team_run_id"],),
+            ).fetchone()
+            if (
+                run is None
+                or cycle["status"] != "running"
+                or run["status"] not in _PROVIDER_WAIT_SOURCE_RUN_STATUSES
+            ):
+                raise ValueError("Team run and cycle are not active for provider wait")
+            if cycle["request_id"] is not None:
+                request = connection.execute(
+                    "select * from team_cycle_requests where id = ?",
+                    (cycle["request_id"],),
+                ).fetchone()
+                if (
+                    request is None
+                    or request["team_run_id"] != cycle["team_run_id"]
+                    or request["source_type"] != cycle["source_type"]
+                    or request["source_id"] != cycle["source_id"]
+                    or request["status"] != "dispatching"
+                ):
+                    raise ValueError(
+                        "Team cycle request is not dispatching for provider wait"
+                    )
+            if task_id is not None and agent_id is None:
+                raise ValueError("Provider wait task has no current task agent")
+            if task_id is None:
+                current_task = connection.execute(
+                    """
+                    select id from team_tasks
+                    where team_run_id = ? and cycle_id = ? and status = 'in_progress'
+                    limit 1
+                    """,
+                    (cycle["team_run_id"], cycle_id),
+                ).fetchone()
+                if current_task is not None:
+                    raise ValueError(
+                        "Provider wait omitted the current task and agent"
+                    )
+            if agent_id is None:
+                current_agent = connection.execute(
+                    """
+                    select id from team_agents
+                    where team_run_id = ? and status = 'running'
+                    limit 1
+                    """,
+                    (cycle["team_run_id"],),
+                ).fetchone()
+                if current_agent is not None:
+                    raise ValueError(
+                        "Provider wait omitted the current task and agent"
+                    )
+            task = None
+            if task_id is not None:
+                task = connection.execute(
+                    "select * from team_tasks where id = ?",
+                    (task_id,),
+                ).fetchone()
+                if (
+                    run["status"] != "running"
+                    or task is None
+                    or task["team_run_id"] != cycle["team_run_id"]
+                    or task["cycle_id"] != cycle_id
+                    or task["status"] != "in_progress"
+                    or task["owner_agent_id"] != agent_id
+                ):
+                    raise ValueError(
+                        "Team task is not the current task for provider wait"
+                    )
+            agent = None
+            if agent_id is not None:
+                agent = connection.execute(
+                    "select * from team_agents where id = ?",
+                    (agent_id,),
+                ).fetchone()
+                if (
+                    agent is None
+                    or agent["team_run_id"] != cycle["team_run_id"]
+                    or agent["status"] != "running"
+                    or agent["current_task_id"] != task_id
+                    or (task_id is None and run["leader_agent_id"] != agent_id)
+                ):
+                    raise ValueError(
+                        "Team agent does not own the current task for provider wait"
+                    )
             stored_metadata = (
                 json.loads(cycle["execution_metadata_json"])
                 if cycle["execution_metadata_json"]
@@ -611,12 +698,12 @@ class TeamRunService:
                 "next_retry_at": _timestamp(now + timedelta(seconds=30)),
                 "warning_visible_at": _timestamp(now + timedelta(seconds=120)),
             }
-            connection.execute(
+            cursor = connection.execute(
                 """
                 update team_run_cycles
                 set status = 'waiting_for_provider',
-                    execution_metadata_json = ?, updated_at = ?
-                where id = ?
+                    execution_metadata_json = ?, finished_at = null, updated_at = ?
+                where id = ? and status = 'running'
                 """,
                 (
                     json.dumps(metadata, ensure_ascii=False, sort_keys=True),
@@ -624,32 +711,46 @@ class TeamRunService:
                     cycle_id,
                 ),
             )
-            connection.execute(
+            _require_one_updated(cursor, "Provider wait cycle update was stale")
+            cursor = connection.execute(
                 """
                 update team_runs
-                set status = 'waiting_for_provider', updated_at = ?
-                where id = ?
+                set status = 'waiting_for_provider',
+                    finished_at = null, updated_at = ?
+                where id = ? and status = ?
                 """,
-                (timestamp, cycle["team_run_id"]),
+                (timestamp, cycle["team_run_id"], run["status"]),
             )
+            _require_one_updated(cursor, "Provider wait run update was stale")
             if task_id is not None:
-                connection.execute(
+                cursor = connection.execute(
                     """
                     update team_tasks
-                    set status = 'waiting_for_provider', updated_at = ?
+                    set status = 'waiting_for_provider',
+                        finished_at = null, updated_at = ?
                     where id = ? and team_run_id = ? and cycle_id = ?
+                      and owner_agent_id = ? and status = 'in_progress'
                     """,
-                    (timestamp, task_id, cycle["team_run_id"], cycle_id),
+                    (
+                        timestamp,
+                        task_id,
+                        cycle["team_run_id"],
+                        cycle_id,
+                        agent_id,
+                    ),
                 )
+                _require_one_updated(cursor, "Provider wait task update was stale")
             if agent_id is not None:
-                connection.execute(
+                cursor = connection.execute(
                     """
                     update team_agents
-                    set status = 'waiting', updated_at = ?
-                    where id = ? and team_run_id = ?
+                    set status = 'waiting', finished_at = null, updated_at = ?
+                    where id = ? and team_run_id = ? and status = 'running'
+                      and current_task_id is ?
                     """,
-                    (timestamp, agent_id, cycle["team_run_id"]),
+                    (timestamp, agent_id, cycle["team_run_id"], task_id),
                 )
+                _require_one_updated(cursor, "Provider wait agent update was stale")
             row = connection.execute(
                 "select * from team_run_cycles where id = ?",
                 (cycle_id,),
@@ -691,60 +792,141 @@ class TeamRunService:
                 "select * from team_run_cycles where id = ?",
                 (cycle_id,),
             ).fetchone()
-            stored_metadata = (
-                json.loads(cycle["execution_metadata_json"])
-                if cycle["execution_metadata_json"]
-                else {}
+            try:
+                stored_metadata = (
+                    json.loads(cycle["execution_metadata_json"])
+                    if cycle["execution_metadata_json"]
+                    else {}
+                )
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ValueError("Invalid provider recovery metadata") from exc
+            metadata, task_id, agent_id = _validated_provider_recovery_metadata(
+                stored_metadata
             )
-            metadata = stored_metadata if isinstance(stored_metadata, dict) else {}
-            recovery = metadata.get("provider_recovery")
-            task_value = recovery.get("task_id") if isinstance(recovery, dict) else None
-            agent_value = (
-                recovery.get("agent_id") if isinstance(recovery, dict) else None
-            )
-            task_id = task_value if isinstance(task_value, str) else None
-            agent_id = agent_value if isinstance(agent_value, str) else None
+            run = connection.execute(
+                "select * from team_runs where id = ?",
+                (cycle["team_run_id"],),
+            ).fetchone()
+            if run is None or run["status"] != "waiting_for_provider":
+                raise ValueError("Invalid provider recovery related state")
+            if cycle["request_id"] is not None:
+                request = connection.execute(
+                    "select * from team_cycle_requests where id = ?",
+                    (cycle["request_id"],),
+                ).fetchone()
+                if (
+                    request is None
+                    or request["team_run_id"] != cycle["team_run_id"]
+                    or request["source_type"] != cycle["source_type"]
+                    or request["source_id"] != cycle["source_id"]
+                    or request["status"] != "dispatching"
+                ):
+                    raise ValueError("Invalid provider recovery related state")
+            if task_id is None:
+                waiting_task = connection.execute(
+                    """
+                    select id from team_tasks
+                    where team_run_id = ? and cycle_id = ?
+                      and status = 'waiting_for_provider'
+                    limit 1
+                    """,
+                    (cycle["team_run_id"], cycle_id),
+                ).fetchone()
+                if waiting_task is not None:
+                    raise ValueError("Invalid provider recovery related state")
+            if agent_id is None:
+                waiting_agent = connection.execute(
+                    """
+                    select id from team_agents
+                    where team_run_id = ? and status = 'waiting'
+                    limit 1
+                    """,
+                    (cycle["team_run_id"],),
+                ).fetchone()
+                if waiting_agent is not None:
+                    raise ValueError("Invalid provider recovery related state")
+            task = None
             if task_id is not None:
-                connection.execute(
+                task = connection.execute(
+                    "select * from team_tasks where id = ?",
+                    (task_id,),
+                ).fetchone()
+                if (
+                    agent_id is None
+                    or task is None
+                    or task["team_run_id"] != cycle["team_run_id"]
+                    or task["cycle_id"] != cycle_id
+                    or task["owner_agent_id"] != agent_id
+                    or task["status"] != "waiting_for_provider"
+                ):
+                    raise ValueError("Invalid provider recovery related state")
+            agent = None
+            if agent_id is not None:
+                agent = connection.execute(
+                    "select * from team_agents where id = ?",
+                    (agent_id,),
+                ).fetchone()
+                if (
+                    agent is None
+                    or agent["team_run_id"] != cycle["team_run_id"]
+                    or agent["status"] != "waiting"
+                    or agent["current_task_id"] != task_id
+                    or (task_id is None and run["leader_agent_id"] != agent_id)
+                ):
+                    raise ValueError("Invalid provider recovery related state")
+            if task_id is not None:
+                cursor = connection.execute(
                     """
                     update team_tasks
                     set status = 'pending', result = null, error_message = null,
                         started_at = null, finished_at = null, updated_at = ?
                     where id = ? and team_run_id = ? and cycle_id = ?
+                      and owner_agent_id = ? and status = 'waiting_for_provider'
                     """,
-                    (timestamp, task_id, cycle["team_run_id"], cycle_id),
+                    (
+                        timestamp,
+                        task_id,
+                        cycle["team_run_id"],
+                        cycle_id,
+                        agent_id,
+                    ),
                 )
+                _require_one_updated(cursor, "Provider recovery task update was stale")
             if agent_id is not None:
-                connection.execute(
+                cursor = connection.execute(
                     """
                     update team_agents
                     set status = 'pending', current_task_id = null,
                         finished_at = null, updated_at = ?
-                    where id = ? and team_run_id = ?
+                    where id = ? and team_run_id = ? and status = 'waiting'
+                      and current_task_id is ?
                     """,
-                    (timestamp, agent_id, cycle["team_run_id"]),
+                    (timestamp, agent_id, cycle["team_run_id"], task_id),
                 )
-            connection.execute(
+                _require_one_updated(cursor, "Provider recovery agent update was stale")
+            cursor = connection.execute(
                 """
                 update team_runs
                 set status = 'running', error_message = null,
                     finished_at = null, updated_at = ?
-                where id = ?
+                where id = ? and status = 'waiting_for_provider'
                 """,
                 (timestamp, cycle["team_run_id"]),
             )
+            _require_one_updated(cursor, "Provider recovery run update was stale")
             metadata.pop("provider_recovery", None)
-            connection.execute(
+            cursor = connection.execute(
                 """
                 update team_run_cycles
                 set execution_metadata_json = ?
-                where id = ?
+                where id = ? and status = 'running'
                 """,
                 (
                     json.dumps(metadata, ensure_ascii=False, sort_keys=True),
                     cycle_id,
                 ),
             )
+            _require_one_updated(cursor, "Provider recovery metadata update was stale")
             return ProviderRecoveryClaim(
                 cycle["team_run_id"],
                 cycle_id,
@@ -2625,6 +2807,59 @@ def _timestamp(value: datetime) -> str:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("Team recovery timestamps must be timezone-aware")
     return value.astimezone(timezone.utc).isoformat()
+
+
+def _require_one_updated(cursor: sqlite3.Cursor, message: str) -> None:
+    if cursor.rowcount != 1:
+        raise RuntimeError(message)
+
+
+def _validated_provider_recovery_metadata(
+    stored_metadata: object,
+) -> tuple[dict[str, object], str | None, str | None]:
+    if not isinstance(stored_metadata, dict):
+        raise ValueError("Invalid provider recovery metadata")
+    recovery = stored_metadata.get("provider_recovery")
+    required_fields = {
+        "provider",
+        "task_id",
+        "agent_id",
+        "reason_code",
+        "attempts",
+        "first_failed_at",
+        "next_retry_at",
+        "warning_visible_at",
+    }
+    if not isinstance(recovery, dict) or not required_fields.issubset(recovery):
+        raise ValueError("Invalid provider recovery metadata")
+    if (
+        not isinstance(recovery["provider"], str)
+        or not recovery["provider"].strip()
+        or not isinstance(recovery["reason_code"], str)
+        or not recovery["reason_code"].strip()
+        or type(recovery["attempts"]) is not int
+        or recovery["attempts"] < 1
+    ):
+        raise ValueError("Invalid provider recovery metadata")
+    task_id = recovery["task_id"]
+    agent_id = recovery["agent_id"]
+    if (
+        (task_id is not None and (not isinstance(task_id, str) or not task_id))
+        or (agent_id is not None and (not isinstance(agent_id, str) or not agent_id))
+        or (task_id is not None and agent_id is None)
+    ):
+        raise ValueError("Invalid provider recovery metadata")
+    for field in ("first_failed_at", "next_retry_at", "warning_visible_at"):
+        value = recovery[field]
+        if not isinstance(value, str):
+            raise ValueError("Invalid provider recovery metadata")
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("Invalid provider recovery metadata") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("Invalid provider recovery metadata")
+    return stored_metadata, task_id, agent_id
 
 
 def _initials(name: str) -> str:

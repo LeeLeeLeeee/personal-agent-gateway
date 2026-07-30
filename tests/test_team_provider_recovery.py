@@ -1,8 +1,10 @@
+import pytest
+
 from personal_agent_gateway.teams import ProviderRecoveryClaim
 from team_cycle_helpers import dt, make_cycle_services, make_running_task_in_cycle
 
 
-def test_claim_provider_recovery_resumes_same_cycle_once(tmp_path):
+def make_waiting_provider_state(tmp_path):
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle, task, agent = make_running_task_in_cycle(teams, cycles, run)
     teams.set_cycle_execution_metadata(
@@ -20,6 +22,13 @@ def test_claim_provider_recovery_resumes_same_cycle_once(tmp_path):
         task_id=task.id,
         agent_id=agent.id,
         now=dt("2026-07-30T00:00:00+00:00"),
+    )
+    return db, teams, cycles, run, cycle, task, agent
+
+
+def test_claim_provider_recovery_resumes_same_cycle_once(tmp_path):
+    db, teams, cycles, run, cycle, task, agent = make_waiting_provider_state(
+        tmp_path
     )
     db.execute(
         """
@@ -64,3 +73,94 @@ def test_claim_provider_recovery_resumes_same_cycle_once(tmp_path):
         "provider_capabilities": {"codex": {"ready": True}},
         "agents": {agent.id: {"permission_mode": "default"}},
     }
+
+
+@pytest.mark.parametrize("malformed_state", ["missing", "wrong_type"])
+def test_claim_provider_recovery_rolls_back_malformed_metadata(
+    tmp_path,
+    malformed_state,
+):
+    _db, teams, cycles, run, cycle, task, agent = make_waiting_provider_state(
+        tmp_path
+    )
+    metadata = {
+        "provider_capabilities": {"codex": {"ready": True}},
+        "agents": {agent.id: {"permission_mode": "default"}},
+    }
+    if malformed_state == "wrong_type":
+        metadata["provider_recovery"] = "invalid"
+    teams.set_cycle_execution_metadata(cycle.id, metadata)
+    before_cycle = teams.get_cycle(cycle.id)
+    before_run = teams.get_team_run(run.id)
+    before_task = teams.get_task(task.id)
+    before_agent = teams.get_agent(agent.id)
+
+    with pytest.raises(ValueError, match="provider recovery metadata"):
+        teams.claim_provider_recovery(
+            cycle.id,
+            now=dt("2026-07-30T00:00:30+00:00"),
+        )
+
+    assert teams.get_cycle(cycle.id) == before_cycle
+    assert teams.get_team_run(run.id) == before_run
+    assert teams.get_task(task.id) == before_task
+    assert teams.get_agent(agent.id) == before_agent
+    assert cycles.get_request(cycle.request_id).status == "dispatching"
+
+
+@pytest.mark.parametrize("missing_row", ["task", "agent"])
+def test_claim_provider_recovery_rolls_back_missing_related_state(
+    tmp_path,
+    missing_row,
+):
+    db, teams, cycles, run, cycle, task, agent = make_waiting_provider_state(
+        tmp_path
+    )
+    if missing_row == "task":
+        db.execute("delete from team_tasks where id = ?", (task.id,))
+    else:
+        db.execute("delete from team_agents where id = ?", (agent.id,))
+    before_cycle = teams.get_cycle(cycle.id)
+    before_run = teams.get_team_run(run.id)
+
+    with pytest.raises(ValueError, match="provider recovery related state"):
+        teams.claim_provider_recovery(
+            cycle.id,
+            now=dt("2026-07-30T00:00:30+00:00"),
+        )
+
+    assert teams.get_cycle(cycle.id) == before_cycle
+    assert teams.get_team_run(run.id) == before_run
+    if missing_row == "task":
+        assert teams.get_agent(agent.id).status == "waiting"
+        assert teams.get_agent(agent.id).current_task_id == task.id
+    else:
+        assert teams.get_task(task.id).status == "waiting_for_provider"
+        assert teams.get_task(task.id).owner_agent_id is None
+    assert cycles.get_request(cycle.request_id).status == "dispatching"
+
+
+def test_claim_provider_recovery_rolls_back_omitted_related_ids(tmp_path):
+    _db, teams, cycles, run, cycle, task, agent = make_waiting_provider_state(
+        tmp_path
+    )
+    metadata = teams.get_cycle(cycle.id).execution_metadata
+    metadata["provider_recovery"]["task_id"] = None
+    metadata["provider_recovery"]["agent_id"] = None
+    teams.set_cycle_execution_metadata(cycle.id, metadata)
+    before_cycle = teams.get_cycle(cycle.id)
+    before_run = teams.get_team_run(run.id)
+    before_task = teams.get_task(task.id)
+    before_agent = teams.get_agent(agent.id)
+
+    with pytest.raises(ValueError, match="provider recovery related state"):
+        teams.claim_provider_recovery(
+            cycle.id,
+            now=dt("2026-07-30T00:00:30+00:00"),
+        )
+
+    assert teams.get_cycle(cycle.id) == before_cycle
+    assert teams.get_team_run(run.id) == before_run
+    assert teams.get_task(task.id) == before_task
+    assert teams.get_agent(agent.id) == before_agent
+    assert cycles.get_request(cycle.request_id).status == "dispatching"
