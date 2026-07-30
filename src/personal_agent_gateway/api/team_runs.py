@@ -1266,6 +1266,7 @@ def _task_payload(task: TeamTask) -> dict[str, object]:
         },
         "outcome": task.outcome,
         "acceptance_result": task.acceptance_result,
+        "acceptance_recovery_attempts": task.acceptance_recovery_attempts,
         "result": task.result,
         "error_message": task.error_message,
         "created_at": task.created_at,

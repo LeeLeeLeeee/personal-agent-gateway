@@ -775,6 +775,7 @@ class TeamRuntime:
                     "team_run_id": run.id,
                     "task_id": task.id,
                     "agent_id": worker.id,
+                    "acceptance_reviewed": True,
                 }
             )
 

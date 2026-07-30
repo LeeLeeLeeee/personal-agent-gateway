@@ -724,6 +724,62 @@ describe("TeamRunDetail", () => {
     expect(within(dialog).getByText("The link checker could not run.")).toBeInTheDocument();
   });
 
+  it("shows acceptance reviews only in the selected task details", async () => {
+    render(<TeamRunDetail detail={{
+      run: { id: "r1", goal: "Publish guide", status: "running", run_mode: "plan_and_execute" },
+      agents: [],
+      tasks: [{ id: "t1", title: "Verify guide", status: "in_progress" }],
+      messages: [
+        {
+          id: "review-1",
+          kind: "acceptance_review",
+          sender_agent_id: "lead",
+          recipient_agent_id: "worker",
+          content: "Resubmit without the undeclared file.",
+          metadata: {
+            task_id: "t1",
+            attempt: 1,
+            reason_code: "undeclared_deliverable",
+            action: "retry_worker",
+            reason: "The contract declares no output.",
+            instruction: "Resubmit without the undeclared file.",
+            acceptance_before: {
+              required_outputs: [],
+              required_verifications: ["source-check"]
+            },
+            acceptance_after: null
+          },
+          created_at: "2026-07-30T00:00:00Z"
+        },
+        {
+          id: "review-2",
+          kind: "acceptance_review",
+          content: "This must remain private to another task.",
+          metadata: { task_id: "t2", reason_code: "other_task" },
+          created_at: "2026-07-30T00:01:00Z"
+        }
+      ]
+    }} />);
+
+    expect(screen.queryByText("undeclared_deliverable")).not.toBeInTheDocument();
+    expect(screen.queryByText("INTERNAL REVIEW")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Open task Verify guide" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Task details: Verify guide" });
+    expect(within(dialog).getByText("INTERNAL REVIEW · 1")).toBeInTheDocument();
+    expect(within(dialog).getByText("undeclared_deliverable")).toBeInTheDocument();
+    expect(within(dialog).getByText("RETRY WORKER")).toBeInTheDocument();
+    expect(within(dialog).getByText("Resubmit without the undeclared file.")).toBeInTheDocument();
+    expect(within(dialog).queryByText("This must remain private to another task.")).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Close task details" }));
+    await userEvent.click(screen.getByRole("tab", { name: "ACTIVITY" }));
+    expect(screen.queryByText("Resubmit without the undeclared file.")).not.toBeInTheDocument();
+    expect(screen.queryByText("undeclared_deliverable")).not.toBeInTheDocument();
+  });
+
   it("collects every pending user decision and submits one answer batch", async () => {
     const onAnswerDecision = vi.fn(() => new Promise(() => {}));
     render(<TeamRunDetail

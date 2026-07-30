@@ -125,7 +125,8 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     if (hasDelta) {
       setTeamRunDetail((current) => applyTeamRunDelta(current, event));
     }
-    if (!hasDelta || requiresRefresh) {
+    const requiresDetailRefresh = !hasDelta || requiresRefresh || event.acceptance_reviewed;
+    if (requiresDetailRefresh) {
       api.teamRunDetail(event.team_run_id)
         .then((detail) => {
           if (ownsSelectedRun(requestedRun)) setTeamRunDetail(detail);
@@ -133,6 +134,8 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
         .catch((error) => {
           if (ownsSelectedRun(requestedRun)) setScreenError(error);
         });
+    }
+    if (!hasDelta || requiresRefresh) {
       api.teamDocuments(event.team_run_id)
         .then((documents) => {
           if (ownsSelectedRun(requestedRun)) setTeamRunDocuments(documents);

@@ -156,6 +156,35 @@ describe("useTeamRunController request ownership", () => {
     expect(result.current.teamRunDetail.run.status).toBe("blocked");
   });
 
+  it("refreshes only the selected detail after an acceptance review event", async () => {
+    api.teamRunDetail
+      .mockImplementationOnce(async () => detail("r1"))
+      .mockImplementationOnce(async () => detail("r1", {
+        messages: [{
+          id: "review-1",
+          kind: "acceptance_review",
+          metadata: { task_id: "t1" }
+        }]
+      }));
+    const { result } = renderController();
+    await selectRun(result, "r1");
+
+    act(() => result.current.handleTeamEvent({
+      type: "team.task.updated",
+      team_run_id: "r1",
+      acceptance_reviewed: true,
+      task: { id: "t1", status: "in_progress" }
+    }));
+
+    await waitFor(() => expect(result.current.teamRunDetail.messages).toEqual([
+      expect.objectContaining({ id: "review-1", kind: "acceptance_review" })
+    ]));
+    expect(api.teamRunDetail).toHaveBeenCalledTimes(2);
+    expect(api.teamRuns).not.toHaveBeenCalled();
+    expect(api.teamDocuments).toHaveBeenCalledTimes(1);
+    expect(api.teamRunDelivery).toHaveBeenCalledTimes(1);
+  });
+
   it("clears the previous run while detail and documents settle independently", async () => {
     const nextDetail = deferred();
     const nextDocuments = deferred();

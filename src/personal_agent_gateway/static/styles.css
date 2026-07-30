@@ -3409,6 +3409,23 @@ p {
     line-height: 1.6;
     white-space: pre-wrap;
 }
+.team-acceptance-review-list {
+    display: grid;
+    gap: 8px;
+}
+.team-acceptance-review {
+    border: var(--bd-sm);
+    padding: 10px;
+}
+.team-acceptance-review-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+.team-acceptance-review-contract pre {
+    overflow: auto;
+    white-space: pre-wrap;
+}
 .team-final-summary-body > .md,
 .team-cycle-summary > .md,
 .team-previous-cycle > div > .md,

@@ -664,7 +664,13 @@ def test_auto_actions_and_detail_read_model(tmp_path: Path) -> None:
 def test_team_task_payload_exposes_acceptance_outcome_and_result(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Leader")
-    run = create_standard_run(client.app, leader_id, run_mode="planning_only")
+    worker_id = create_persona(client, "Worker")
+    run = create_standard_run(
+        client.app,
+        leader_id,
+        [worker_id],
+        run_mode="planning_only",
+    )
     service = client.app.state.team_run_service
     task = service.create_task(
         run["id"],
@@ -711,6 +717,27 @@ def test_team_task_payload_exposes_acceptance_outcome_and_result(tmp_path: Path)
     assert payload["acceptance_result"]["reason_code"] == (
         "required_verification_failed"
     )
+    assert payload["acceptance_recovery_attempts"] == 0
+
+    leader, worker = service.list_agents(run["id"])
+    service.start_task(task.id, worker.id)
+    service.record_acceptance_review(
+        task.id,
+        leader.id,
+        worker.id,
+        action="retry_worker",
+        reason_code="undeclared_deliverable",
+        reason="The contract declares no output.",
+        instruction="Resubmit without the undeclared file.",
+        acceptance_after=None,
+        rejected_deliverables=("outputs/guide.md",),
+        rejected_verifications=(),
+    )
+
+    refreshed = client.get(f"/api/team-runs/{run['id']}/tasks")
+
+    assert refreshed.status_code == 200
+    assert refreshed.json()["tasks"][0]["acceptance_recovery_attempts"] == 1
 
 
 def test_restart_completed_auto_series_enqueues_first_cycle(tmp_path: Path) -> None:

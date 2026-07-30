@@ -118,6 +118,17 @@ function groupReportsByTask(messages) {
   return grouped;
 }
 
+function groupAcceptanceReviewsByTask(messages) {
+  const grouped = new Map();
+  for (const message of messages) {
+    if (message.kind !== "acceptance_review" || !message.metadata?.task_id) continue;
+    const reviews = grouped.get(message.metadata.task_id) || [];
+    reviews.push(message);
+    grouped.set(message.metadata.task_id, reviews);
+  }
+  return grouped;
+}
+
 function taskFileCount(reports) {
   const files = new Set();
   for (const report of reports) {
@@ -130,7 +141,7 @@ function taskFileCount(reports) {
   return files.size;
 }
 
-function TaskDetailDialog({ task, reports, agents, canRetry, retrying, onRetry, onClose }) {
+function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, onRetry, onClose }) {
   if (!task) return null;
   const acceptance = task.acceptance || {};
   const outcome = task.outcome || {};
@@ -246,6 +257,35 @@ function TaskDetailDialog({ task, reports, agents, canRetry, retrying, onRetry, 
               }) : <div className="team-task-empty mono">No shared documents for this task.</div>}
             </div>
           </div>
+
+          {reviews.length ? (
+            <div>
+              <div className="mono team-task-dialog-label">INTERNAL REVIEW · {reviews.length}</div>
+              <div className="team-acceptance-review-list">
+                {reviews.map((review) => {
+                  const metadata = review.metadata || {};
+                  return (
+                    <article className="team-acceptance-review" key={review.id}>
+                      <div className="team-acceptance-review-head mono">
+                        <span>ATTEMPT {metadata.attempt || "-"}</span>
+                        <span>{String(metadata.action || "").replaceAll("_", " ").toUpperCase()}</span>
+                      </div>
+                      {metadata.reason_code ? <div className="mono">{metadata.reason_code}</div> : null}
+                      {metadata.reason ? <div className="team-task-dialog-copy">{metadata.reason}</div> : null}
+                      {metadata.instruction ? <div className="team-task-dialog-copy">{metadata.instruction}</div> : null}
+                      <details className="team-acceptance-review-contract">
+                        <summary className="mono">ACCEPTANCE CONTRACT</summary>
+                        <pre>{JSON.stringify({
+                          acceptance_before: metadata.acceptance_before,
+                          acceptance_after: metadata.acceptance_after
+                        }, null, 2)}</pre>
+                      </details>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </div>
         {canRetry ? (
           <div className="team-add-work-dialog-actions">
@@ -760,9 +800,10 @@ export function TeamRunDetail({
     : null;
   const leader = findAgent(agents, run.leader_agent_id);
   const reports = newestFirst(messages.filter((message) => message.kind === "agent_output"));
-  const activity = newestFirst(messages);
+  const activity = newestFirst(messages.filter((message) => message.kind !== "acceptance_review"));
   const handoffs = buildHandoffs(messages);
   const reportsByTask = groupReportsByTask(messages);
+  const acceptanceReviewsByTask = groupAcceptanceReviewsByTask(messages);
   const tasksHaveCycleIds = tasks.some((task) => task.cycle_id);
   const currentCycleTasks = currentCycle && tasksHaveCycleIds
     ? tasks.filter((task) => task.cycle_id === currentCycle.id)
@@ -770,6 +811,9 @@ export function TeamRunDetail({
   const visibleTasks = showAllTasks ? tasks : currentCycleTasks;
   const selectedTask = selectedTaskId ? findTask(tasks, selectedTaskId) : null;
   const selectedTaskReports = selectedTask ? (reportsByTask.get(selectedTask.id) || []) : [];
+  const selectedTaskReviews = selectedTask
+    ? newestFirst(acceptanceReviewsByTask.get(selectedTask.id) || [])
+    : [];
   const canRetrySelectedTask = Boolean(
     onRetryTask
       && selectedTask?.status === "failed"
@@ -1368,6 +1412,7 @@ export function TeamRunDetail({
       <TaskDetailDialog
         task={selectedTask}
         reports={selectedTaskReports}
+        reviews={selectedTaskReviews}
         agents={agents}
         canRetry={canRetrySelectedTask}
         retrying={retryingTaskId === selectedTask?.id}
