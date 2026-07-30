@@ -48,7 +48,7 @@ def make_cycle_services(
     return db, teams, cycles, run
 
 
-def make_running_task_in_cycle(teams, cycles, run):
+def make_queued_cycle(teams, cycles, run):
     request = cycles.enqueue_request(
         run.id,
         "manual",
@@ -64,6 +64,11 @@ def make_running_task_in_cycle(teams, cycles, run):
         claimed.source_id,
         request_id=claimed.id,
     )
+    return cycle
+
+
+def make_running_task_in_cycle(teams, cycles, run):
+    cycle = make_queued_cycle(teams, cycles, run)
     teams.set_cycle_status(cycle.id, "running")
     teams.set_run_status(run.id, "running")
     agent = next(

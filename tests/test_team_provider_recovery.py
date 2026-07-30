@@ -1,7 +1,12 @@
 import pytest
 
 from personal_agent_gateway.teams import ProviderRecoveryClaim
-from team_cycle_helpers import dt, make_cycle_services, make_running_task_in_cycle
+from team_cycle_helpers import (
+    dt,
+    make_cycle_services,
+    make_queued_cycle,
+    make_running_task_in_cycle,
+)
 
 
 def make_waiting_provider_state(tmp_path):
@@ -73,6 +78,45 @@ def test_claim_provider_recovery_resumes_same_cycle_once(tmp_path):
         "provider_capabilities": {"codex": {"ready": True}},
         "agents": {agent.id: {"permission_mode": "default"}},
     }
+
+
+def test_claim_provider_recovery_resumes_preplanning_freeze_without_task(tmp_path):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    teams.set_cycle_execution_metadata(
+        cycle.id,
+        {"provider_capabilities": {"codex": {"ready": True}}},
+    )
+    teams.mark_waiting_for_provider(
+        cycle.id,
+        provider="codex",
+        reason_code="capabilities_unavailable",
+        attempts=3,
+        task_id=None,
+        agent_id=None,
+        now=dt("2026-07-30T00:00:00+00:00"),
+    )
+
+    first = teams.claim_provider_recovery(
+        cycle.id,
+        now=dt("2026-07-30T00:00:30+00:00"),
+    )
+    second = teams.claim_provider_recovery(
+        cycle.id,
+        now=dt("2026-07-30T00:00:31+00:00"),
+    )
+
+    assert first == ProviderRecoveryClaim(run.id, cycle.id, None)
+    assert second is None
+    recovered_cycle = teams.get_cycle(cycle.id)
+    assert recovered_cycle.status == "running"
+    assert recovered_cycle.execution_metadata == {
+        "provider_capabilities": {"codex": {"ready": True}}
+    }
+    assert teams.get_team_run(run.id).status == "running"
+    assert cycles.get_request(cycle.request_id).status == "dispatching"
+    assert teams.list_tasks(run.id, cycle.id) == []
+    assert {agent.status for agent in teams.list_agents(run.id)} == {"pending"}
 
 
 @pytest.mark.parametrize("malformed_state", ["missing", "wrong_type"])

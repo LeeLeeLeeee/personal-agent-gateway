@@ -16,7 +16,12 @@ from personal_agent_gateway.teams import (
     TeamRunService,
     _team_run_display_status,
 )
-from team_cycle_helpers import dt, make_cycle_services, make_running_task_in_cycle
+from team_cycle_helpers import (
+    dt,
+    make_cycle_services,
+    make_queued_cycle,
+    make_running_task_in_cycle,
+)
 
 
 @pytest.mark.parametrize(
@@ -108,6 +113,95 @@ def test_mark_waiting_for_provider_preserves_dispatching_request_and_current_wor
         "next_retry_at": "2026-07-30T00:00:30+00:00",
         "warning_visible_at": "2026-07-30T00:02:00+00:00",
     }
+
+
+def test_mark_waiting_for_provider_accepts_coherent_preplanning_freeze(tmp_path):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    teams.set_cycle_execution_metadata(
+        cycle.id,
+        {"provider_capabilities": {"claude": {"ready": False}}},
+    )
+
+    waiting = teams.mark_waiting_for_provider(
+        cycle.id,
+        provider="claude",
+        reason_code="capabilities_unavailable",
+        attempts=3,
+        task_id=None,
+        agent_id=None,
+        now=dt("2026-07-30T00:00:00+00:00"),
+    )
+
+    assert waiting.status == "waiting_for_provider"
+    assert waiting.finished_at is None
+    waiting_run = teams.get_team_run(run.id)
+    assert waiting_run.status == "waiting_for_provider"
+    assert waiting_run.finished_at is None
+    assert cycles.get_request(cycle.request_id).status == "dispatching"
+    assert teams.list_tasks(run.id, cycle.id) == []
+    assert {agent.status for agent in teams.list_agents(run.id)} == {"pending"}
+    assert waiting.execution_metadata["provider_capabilities"] == {
+        "claude": {"ready": False}
+    }
+    assert waiting.execution_metadata["provider_recovery"]["task_id"] is None
+    assert waiting.execution_metadata["provider_recovery"]["agent_id"] is None
+
+
+@pytest.mark.parametrize(
+    "mixed_state",
+    ["queued_with_ids", "queued_active_run", "running_draft_run"],
+)
+def test_mark_waiting_for_provider_rejects_mixed_preplanning_state(
+    tmp_path,
+    mixed_state,
+):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    worker = next(
+        agent
+        for agent in teams.list_agents(run.id)
+        if agent.id != run.leader_agent_id
+    )
+    task_id = None
+    agent_id = None
+    if mixed_state == "queued_with_ids":
+        task = teams.create_task(
+            run.id,
+            "not-started",
+            "not-started",
+            owner_agent_id=worker.id,
+            cycle_id=cycle.id,
+        )
+        task_id = task.id
+        agent_id = worker.id
+    elif mixed_state == "queued_active_run":
+        teams.set_run_status(run.id, "running")
+    else:
+        teams.set_cycle_status(cycle.id, "running")
+
+    with pytest.raises(ValueError, match="provider wait"):
+        teams.mark_waiting_for_provider(
+            cycle.id,
+            provider="claude",
+            reason_code="capabilities_unavailable",
+            attempts=3,
+            task_id=task_id,
+            agent_id=agent_id,
+            now=dt("2026-07-30T00:00:00+00:00"),
+        )
+
+    expected_run_status = "running" if mixed_state == "queued_active_run" else "draft"
+    expected_cycle_status = (
+        "running" if mixed_state == "running_draft_run" else "queued"
+    )
+    assert teams.get_team_run(run.id).status == expected_run_status
+    assert teams.get_cycle(cycle.id).status == expected_cycle_status
+    assert teams.get_cycle(cycle.id).execution_metadata is None
+    assert cycles.get_request(cycle.request_id).status == "dispatching"
+    assert teams.get_agent(worker.id).status == "pending"
+    if task_id is not None:
+        assert teams.get_task(task_id).status == "pending"
 
 
 def test_mark_waiting_for_provider_rolls_back_mismatched_current_agent(tmp_path):

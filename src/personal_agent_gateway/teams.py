@@ -600,11 +600,23 @@ class TeamRunService:
                 "select * from team_runs where id = ?",
                 (cycle["team_run_id"],),
             ).fetchone()
-            if (
-                run is None
-                or cycle["status"] != "running"
-                or run["status"] not in _PROVIDER_WAIT_SOURCE_RUN_STATUSES
-            ):
+            if run is None:
+                raise ValueError("Team run and cycle are not active for provider wait")
+            active_execution_wait = (
+                cycle["status"] == "running"
+                and run["status"] in _PROVIDER_WAIT_SOURCE_RUN_STATUSES
+            )
+            preplanning_freeze_wait = (
+                cycle["status"] == "queued"
+                and cycle["started_at"] is None
+                and cycle["finished_at"] is None
+                and run["status"] == "draft"
+                and run["started_at"] is None
+                and run["finished_at"] is None
+                and task_id is None
+                and agent_id is None
+            )
+            if not active_execution_wait and not preplanning_freeze_wait:
                 raise ValueError("Team run and cycle are not active for provider wait")
             if cycle["request_id"] is not None:
                 request = connection.execute(
@@ -703,12 +715,13 @@ class TeamRunService:
                 update team_run_cycles
                 set status = 'waiting_for_provider',
                     execution_metadata_json = ?, finished_at = null, updated_at = ?
-                where id = ? and status = 'running'
+                where id = ? and status = ?
                 """,
                 (
                     json.dumps(metadata, ensure_ascii=False, sort_keys=True),
                     timestamp,
                     cycle_id,
+                    cycle["status"],
                 ),
             )
             _require_one_updated(cursor, "Provider wait cycle update was stale")
