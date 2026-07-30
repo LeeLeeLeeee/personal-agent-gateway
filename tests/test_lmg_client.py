@@ -197,6 +197,17 @@ def test_fetch_capabilities_protocol_error_on_bad_schema():
     ).status == "protocol_error"
 
 
+def test_fetch_capabilities_rejects_unsupported_major_two_version():
+    payload = {**_protocol_2_payload(), "protocol_version": "2.999"}
+
+    assert fetch_capabilities(
+        _cfg(),
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json=payload)
+        ),
+    ).status == "protocol_error"
+
+
 def test_fetch_capabilities_rejects_non_transient_http_error():
     def handler(request): return httpx.Response(500)
     assert fetch_capabilities(

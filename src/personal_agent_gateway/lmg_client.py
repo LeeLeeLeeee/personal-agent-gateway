@@ -19,7 +19,7 @@ LmgStatus = Literal[
     "protocol_error",
 ]
 T = TypeVar("T")
-_LMG_PROTOCOL_MAJOR = "2"
+_LMG_PROTOCOL_VERSION = "2.0"
 _LOGGER = logging.getLogger(__name__)
 _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
@@ -162,7 +162,7 @@ def _valid_capabilities(payload: object) -> bool:
     protocol_version = payload.get("protocol_version")
     if (
         not isinstance(protocol_version, str)
-        or protocol_version.split(".", 1)[0] != _LMG_PROTOCOL_MAJOR
+        or protocol_version != _LMG_PROTOCOL_VERSION
     ):
         return False
     if type(payload.get("schema_version")) is not int:
