@@ -1360,8 +1360,7 @@ def _validate_acceptance_review_user_decision(
             raise ValueError
         _acceptance_review_text(option.get("id"))
         _acceptance_review_text(option.get("label"))
-        if not isinstance(option.get("impact"), str):
-            raise ValueError
+        _acceptance_review_text(option.get("impact"))
 
     recommended = resolution.get("recommended_option_id")
     if recommended is not None:

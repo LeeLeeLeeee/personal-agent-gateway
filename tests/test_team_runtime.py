@@ -684,6 +684,28 @@ def test_acceptance_review_resolution_rejects_malformed_user_option(
         _parse_acceptance_review_resolution(content)
 
 
+@pytest.mark.parametrize("impact", ["", "   "])
+def test_acceptance_review_resolution_rejects_blank_user_option_impact(
+    impact: str,
+) -> None:
+    content = json.dumps(
+        {
+            "resolution": _ask_user_review_resolution(
+                options=[
+                    {
+                        "id": "publish",
+                        "label": "Publish",
+                        "impact": impact,
+                    }
+                ]
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="Invalid acceptance review resolution"):
+        _parse_acceptance_review_resolution(content)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
