@@ -14,6 +14,7 @@ updated_at: 2026-07-29
 
 # Component Inspector Reports
 
+- [ChatView Working Indicator Layout Analysis — 2026-07-30 14:06](./ChatView/2026-07-30-1406.md)
 - [TeamRunDetail Internal Acceptance Review Analysis — 2026-07-30 10:14](./TeamRunDetail/2026-07-30-1014.md)
 - [ArchiveView Knowledge Lane Map Analysis — 2026-07-29 14:17](./ArchiveView/2026-07-29-1417.md)
 - [TeamRunDetail Blocked Acceptance Analysis — 2026-07-29 08:22](./TeamRunDetail/2026-07-29-0822.md)

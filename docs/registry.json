@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 168,
+  "document_count": 179,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -1475,6 +1475,68 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/ChatView/index.jsx` - Modes: `understand`, `api-state`, `test`, `refactor` - Verdict: 단일 Chat의 상위 선택 단위를 runtime `Agent`에서 `Persona`로 바꾸되,   기존 session config의 backend/model/..."
+    },
+    {
+      "path": "docs/component-inspector/ChatView/2026-07-30-1406.md",
+      "title": "ChatView Working Indicator Layout Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "chat-working-indicator",
+      "status": "done",
+      "aliases": [
+        "ChatView working indicator analysis",
+        "Chat Working 상태 디자인 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "chat",
+        "status"
+      ],
+      "updated_at": "2026-07-30",
+      "headings": [
+        {
+          "level": 1,
+          "text": "ChatView Working Indicator Layout Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "레이아웃 관계"
+        },
+        {
+          "level": 2,
+          "text": "스타일과 레이아웃"
+        },
+        {
+          "level": 3,
+          "text": "대안 비교"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "증거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/ChatView/index.jsx` - Modes: `style` - Verdict: 사용자 결정에 따라 `WorkingIndicator`를 `Timeline`의 `.stream`   마지막 항목으로 이동한다. border와 background를 제거하고 dot, label,   interrupt hint는 유..."
     },
     {
       "path": "docs/component-inspector/DashboardView/2026-07-22-1321.md",
@@ -4615,6 +4677,88 @@
       "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `api-state`, `test` - Verdict: 기존 UI에는 task `blocked` 열과 영문 상태 표시는 있으나, run의 terminal/phase 판단과 SSE refresh 목록에는 `blocked`가 빠져..."
     },
     {
+      "path": "docs/component-inspector/TeamRunDetail/2026-07-30-1014.md",
+      "title": "TeamRunDetail Internal Acceptance Review Analysis",
+      "type": "report",
+      "domain": "component",
+      "feature": "team-acceptance-internal-recovery",
+      "status": "done",
+      "aliases": [
+        "TeamRun internal acceptance review UI",
+        "Team Run 내부 검토 이력"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "team-run",
+        "acceptance"
+      ],
+      "updated_at": "2026-07-30",
+      "headings": [
+        {
+          "level": 1,
+          "text": "TeamRunDetail Internal Acceptance Review Analysis"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "State / Effects"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성"
+        },
+        {
+          "level": 2,
+          "text": "주입 callbacks / hooks"
+        },
+        {
+          "level": 2,
+          "text": "상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "Style / Layout"
+        },
+        {
+          "level": 2,
+          "text": "Tests / Stories"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/TeamRunDetail/index.jsx` - Modes: `understand`, `test`, `style` - Verdict: `acceptance_review` 메시지는 Team Run 상세 payload의 `messages`로 전달된다. 별도 endpoint나 화면 state 없이 `metadata...."
+    },
+    {
       "path": "docs/component-inspector/TeamsView/2026-07-15-1250.md",
       "title": "TeamsView Persona Card Selection Component Analysis",
       "type": "report",
@@ -4715,7 +4859,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [ArchiveView Knowledge Lane Map Analysis — 2026-07-29 14:17](./ArchiveView/2026-07-29-1417.md) - [TeamRunDetail Blocked Acceptance Analysis — 2026-07-29 08:22](./TeamRunDetail/2026-07-29-0822.md) - [SpacesView Execu..."
+      "excerpt": "- [ChatView Working Indicator Layout Analysis — 2026-07-30 14:06](./ChatView/2026-07-30-1406.md) - [TeamRunDetail Internal Acceptance Review Analysis — 2026-07-30 10:14](./TeamRunDetail/2026-07-30-1014.md) - [ArchiveV..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -8588,6 +8732,198 @@
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
     },
     {
+      "path": "docs/superpowers/plans/2026-07-29-team-cycle-space-snapshot.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Cycle SPACE Snapshot Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Map"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Persist the current Team SPACE on every new cycle"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Execute and report the cycle SPACE snapshot"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Allow all-read with isolated writes"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Focused regression verification"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-team-structured-json-fence-recovery.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Structured JSON Fence Recovery Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Exact JSON Envelope Normalizer"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Task-Plan Parser and Continuous-Cycle Recovery"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Worker TaskOutcome Recovery"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Scope and Regression Verification"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-30-isolated-workspace-preparation.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Isolated Workspace Preparation Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Prepare isolated execution workspaces"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-30-team-acceptance-internal-recovery.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run Acceptance Internal Recovery Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Architecture Review"
+        },
+        {
+          "level": 3,
+          "text": "Current Structural Risks"
+        },
+        {
+          "level": 4,
+          "text": "Finding: The audit message has no live transport path to the selected detail"
+        },
+        {
+          "level": 3,
+          "text": "SOLID Review"
+        },
+        {
+          "level": 3,
+          "text": "Design Pattern Candidates"
+        },
+        {
+          "level": 3,
+          "text": "Dependency Direction"
+        },
+        {
+          "level": 3,
+          "text": "Test Strategy Alignment"
+        },
+        {
+          "level": 3,
+          "text": "Plan Changes Applied"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Map"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Persist Task-Scoped Recovery State and Audit Records"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Define and Validate the Lead Review Protocol"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Execute Bounded Lead Review and Worker Resubmission"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Expose Recovery Attempts and Render Task-Only Review History"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Focused End-to-End Regression Check"
+        },
+        {
+          "level": 2,
+          "text": "Completion Evidence"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
       "path": "docs/superpowers/plans/archived_2026-07-07-live-status-sse-backlog.md",
       "title": "",
       "type": "",
@@ -10725,6 +11061,308 @@
         }
       ],
       "excerpt": "The repository root `npm start` currently delegates directly to `scripts/start_local_runtime.ps1`. Frontend changes must be built separately with `npm --prefix frontend run build`, so starting the runtime can serve an..."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-team-cycle-space-snapshot-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Cycle SPACE Snapshot Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Decisions"
+        },
+        {
+          "level": 3,
+          "text": "Store SPACE on each cycle"
+        },
+        {
+          "level": 3,
+          "text": "Resolve execution policy by task cycle"
+        },
+        {
+          "level": 3,
+          "text": "Preserve idempotency"
+        },
+        {
+          "level": 3,
+          "text": "Honor `all + isolated`"
+        },
+        {
+          "level": 2,
+          "text": "Data Flow"
+        },
+        {
+          "level": 2,
+          "text": "Compatibility"
+        },
+        {
+          "level": 2,
+          "text": "Focused Verification"
+        }
+      ],
+      "excerpt": "Continuous Team Runs must resolve the Team's current SPACE policy when each cycle is created. A cycle then keeps that policy for its entire lifetime so a later SPACE edit cannot change an active or historical cycle."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-team-structured-json-fence-recovery-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Structured JSON Fence Recovery Design"
+        },
+        {
+          "level": 2,
+          "text": "Status"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Accepted input"
+        },
+        {
+          "level": 2,
+          "text": "Rejected input"
+        },
+        {
+          "level": 2,
+          "text": "Architecture"
+        },
+        {
+          "level": 2,
+          "text": "Data flow"
+        },
+        {
+          "level": 2,
+          "text": "Error handling"
+        },
+        {
+          "level": 2,
+          "text": "Testing"
+        },
+        {
+          "level": 3,
+          "text": "Envelope tests"
+        },
+        {
+          "level": 3,
+          "text": "Task-plan tests"
+        },
+        {
+          "level": 3,
+          "text": "Worker-outcome tests"
+        },
+        {
+          "level": 3,
+          "text": "Runtime regression"
+        },
+        {
+          "level": 2,
+          "text": "Non-goals"
+        }
+      ],
+      "excerpt": "- Decision: approved bounded normalization - Scope: Team task plans and worker `TaskOutcome` responses - Compatibility: no API, database, or provider protocol change"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-30-chat-working-indicator-stream-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Chat Working Indicator Stream Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Ownership"
+        },
+        {
+          "level": 2,
+          "text": "Component Contract"
+        },
+        {
+          "level": 2,
+          "text": "Layout"
+        },
+        {
+          "level": 2,
+          "text": "Behavior"
+        },
+        {
+          "level": 2,
+          "text": "Focused Verification"
+        }
+      ],
+      "excerpt": "Display the active Chat `WORKING` state as part of the centered transcript stream instead of as a full-width bordered status panel."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-30-isolated-workspace-preparation-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Isolated Workspace Preparation Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Responsibility"
+        },
+        {
+          "level": 2,
+          "text": "Behavior"
+        },
+        {
+          "level": 2,
+          "text": "Data Flow"
+        },
+        {
+          "level": 2,
+          "text": "Focused Verification"
+        }
+      ],
+      "excerpt": "Every isolated execution must hand LMG an existing session workspace directory, including executions whose read policy does not require source staging."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-30-team-acceptance-internal-recovery-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Run acceptance 내부 복구 설계"
+        },
+        {
+          "level": 2,
+          "text": "배경"
+        },
+        {
+          "level": 2,
+          "text": "결정"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "비목표"
+        },
+        {
+          "level": 2,
+          "text": "내부 복구 대상"
+        },
+        {
+          "level": 2,
+          "text": "실행 흐름"
+        },
+        {
+          "level": 2,
+          "text": "Lead 검토 계약"
+        },
+        {
+          "level": 2,
+          "text": "Acceptance 변경 제약"
+        },
+        {
+          "level": 2,
+          "text": "시도 횟수와 상태"
+        },
+        {
+          "level": 2,
+          "text": "감사 기록"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 변경"
+        },
+        {
+          "level": 2,
+          "text": "UI"
+        },
+        {
+          "level": 2,
+          "text": "오류 처리"
+        },
+        {
+          "level": 2,
+          "text": "관련 테스트만 수행하는 검증 전략"
+        },
+        {
+          "level": 3,
+          "text": "Runtime"
+        },
+        {
+          "level": 3,
+          "text": "Service와 migration"
+        },
+        {
+          "level": 3,
+          "text": "Workspace"
+        },
+        {
+          "level": 3,
+          "text": "Frontend"
+        },
+        {
+          "level": 2,
+          "text": "성공 조건"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-30"
     },
     {
       "path": "docs/superpowers/specs/completed_2026-07-06-otp-setup-ui-design.md",
