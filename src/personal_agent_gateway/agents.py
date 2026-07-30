@@ -111,6 +111,7 @@ class AgentRegistry:
             else lambda _config: None
         )
         self._catalog: list[AgentDescriptor] | None = None
+        self._last_known_good_catalog: list[AgentDescriptor] | None = None
         self._cache_ttl_seconds = cache_ttl_seconds
         self._failure_ttl_seconds = failure_ttl_seconds
         self._clock = clock
@@ -125,10 +126,11 @@ class AgentRegistry:
 
             loaded = self._capability_loader(self._config)
             detected, gateway_status = _loaded_capabilities(loaded)
+            completed_at = self._clock()
             if (
                 gateway_status in {"unreachable", "not_ready"}
                 and not detected
-                and self._catalog is not None
+                and self._last_known_good_catalog is not None
             ):
                 self._catalog = [
                     descriptor.model_copy(
@@ -138,9 +140,9 @@ class AgentRegistry:
                             "snapshot_status": "stale",
                         }
                     )
-                    for descriptor in self._catalog
+                    for descriptor in self._last_known_good_catalog
                 ]
-                self._catalog_expires_at = now + max(
+                self._catalog_expires_at = completed_at + max(
                     self._failure_ttl_seconds,
                     0.0,
                 )
@@ -171,12 +173,19 @@ class AgentRegistry:
                     detected_at=detected_at,
                 ),
             ]
+            if usable_snapshot and any(
+                descriptor.execution_capabilities is not None
+                for descriptor in self._catalog
+            ):
+                self._last_known_good_catalog = [
+                    descriptor.model_copy(deep=True) for descriptor in self._catalog
+                ]
             ttl = (
                 self._cache_ttl_seconds
                 if gateway_status in {None, "ready"}
                 else self._failure_ttl_seconds
             )
-            self._catalog_expires_at = now + max(ttl, 0.0)
+            self._catalog_expires_at = completed_at + max(ttl, 0.0)
             return self._catalog
 
     def get(self, agent_id: str) -> AgentDescriptor:
@@ -519,10 +528,12 @@ def _availability(
     capabilities: dict[str, object],
 ) -> tuple[bool, str | None]:
     detected_available = capabilities.get("available")
+    execution_capabilities = _execution_capabilities(capabilities)
     available = (
         probe.available
+        and bool(capabilities)
         and detected_available is not False
-        and ("execution" not in capabilities or _execution_capabilities(capabilities) is not None)
+        and execution_capabilities is not None
     )
     if available:
         return True, None

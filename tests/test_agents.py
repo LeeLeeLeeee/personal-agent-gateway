@@ -64,7 +64,9 @@ def test_registry_lists_codex_and_claude_with_safe_defaults(tmp_path: Path) -> N
     assert [agent.id for agent in catalog] == ["codex", "claude"]
     codex = catalog[0]
     claude = catalog[1]
-    assert codex.available is True
+    assert codex.available is False
+    assert codex.availability_error == "unavailable"
+    assert codex.execution_capabilities is None
     assert codex.binary == "codex-test"
     assert codex.default_model == "default"
     assert codex.defaults["sandbox"] == "workspace-write"
@@ -84,14 +86,20 @@ def test_registry_accepts_curated_model_presets_only(tmp_path: Path) -> None:
         probe=lambda _binary: CliProbeResult(True, None),
     )
 
-    assert registry.validate_config("codex", "gpt-5.5", {})["model"] == "gpt-5.5"
-    assert registry.validate_config("claude", "opusplan", {})["model"] == "opusplan"
+    assert registry.validate_config(
+        "codex", "gpt-5.5", {}, require_available=False
+    )["model"] == "gpt-5.5"
+    assert registry.validate_config(
+        "claude", "opusplan", {}, require_available=False
+    )["model"] == "opusplan"
 
     with pytest.raises(ValueError, match="Unsupported model"):
-        registry.validate_config("codex", "codex-5.5", {})
+        registry.validate_config(
+            "codex", "codex-5.5", {}, require_available=False
+        )
 
     with pytest.raises(ValueError, match="Unsupported model"):
-        registry.validate_config("claude", "fable", {})
+        registry.validate_config("claude", "fable", {}, require_available=False)
 
 
 def test_registry_rejects_unknown_agent_model_and_option(tmp_path: Path) -> None:
@@ -104,10 +112,15 @@ def test_registry_rejects_unknown_agent_model_and_option(tmp_path: Path) -> None
         registry.validate_config("missing", "default", {})
 
     with pytest.raises(ValueError, match="Unsupported model"):
-        registry.validate_config("codex", "not-listed", {})
+        registry.validate_config("codex", "not-listed", {}, require_available=False)
 
     with pytest.raises(ValueError, match="Unsupported option"):
-        registry.validate_config("codex", "default", {"not_allowed": True})
+        registry.validate_config(
+            "codex",
+            "default",
+            {"not_allowed": True},
+            require_available=False,
+        )
 
 
 def test_registry_accepts_supported_provider_options(tmp_path: Path) -> None:
@@ -120,6 +133,7 @@ def test_registry_accepts_supported_provider_options(tmp_path: Path) -> None:
         "claude",
         "sonnet",
         {"effort": "high", "permission_mode": "manual"},
+        require_available=False,
     ) == {
         "agent_id": "claude",
         "model": "sonnet",
@@ -145,7 +159,12 @@ def test_registry_rejects_invalid_option_choice(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="Unsupported option value"):
-        registry.validate_config("codex", "default", {"sandbox": "invalid-choice"})
+        registry.validate_config(
+            "codex",
+            "default",
+            {"sandbox": "invalid-choice"},
+            require_available=False,
+        )
 
 
 def test_registry_rejects_unavailable_agent_for_new_config(tmp_path: Path) -> None:
@@ -376,6 +395,97 @@ def test_registry_hard_protocol_failure_is_not_recoverable(tmp_path: Path) -> No
     assert descriptor.snapshot_status == "unavailable"
     assert descriptor.readiness_error == "gateway_protocol_error"
     assert descriptor.execution_capabilities is None
+
+
+def test_registry_without_last_good_snapshot_keeps_retryable_failure_unavailable(
+    tmp_path: Path,
+) -> None:
+    results = iter(
+        [
+            LmgQueryResult(data=None, status="protocol_error", message="bad protocol"),
+            LmgQueryResult(data=None, status="unreachable", message="offline"),
+        ]
+    )
+    clock = [0.0]
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        capability_loader=lambda _config: next(results),
+        failure_ttl_seconds=1,
+        clock=lambda: clock[0],
+    )
+
+    hard_failure = registry.get("codex")
+    clock[0] = 2.0
+    retryable_failure = registry.get("codex")
+
+    assert hard_failure.snapshot_status == "unavailable"
+    assert retryable_failure.snapshot_status == "unavailable"
+    assert retryable_failure.readiness_error == "gateway_unreachable"
+    assert retryable_failure.execution_capabilities is None
+
+
+def test_registry_preserves_last_good_snapshot_across_hard_failure(
+    tmp_path: Path,
+) -> None:
+    results = iter(
+        [
+            LmgQueryResult(data=_agent_protocol_payload(), status="ready"),
+            LmgQueryResult(data=None, status="protocol_error", message="bad protocol"),
+            LmgQueryResult(data=None, status="unreachable", message="offline"),
+        ]
+    )
+    clock = [0.0]
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        capability_loader=lambda _config: next(results),
+        cache_ttl_seconds=1,
+        failure_ttl_seconds=1,
+        clock=lambda: clock[0],
+    )
+
+    good = registry.get("codex")
+    clock[0] = 2.0
+    hard_failure = registry.get("codex")
+    clock[0] = 4.0
+    recovered_stale = registry.get("codex")
+
+    assert good.execution_capabilities is not None
+    assert hard_failure.snapshot_status == "unavailable"
+    assert hard_failure.execution_capabilities is None
+    assert recovered_stale.snapshot_status == "stale"
+    assert recovered_stale.readiness_error == "gateway_unreachable"
+    assert recovered_stale.execution_capabilities == good.execution_capabilities
+
+
+@pytest.mark.parametrize("status", ["ready", "unreachable"])
+def test_registry_ttl_starts_after_slow_loader_completes(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    clock = [0.0]
+    calls = 0
+
+    def load(_config):
+        nonlocal calls
+        calls += 1
+        clock[0] = 10.0
+        return LmgQueryResult(
+            data=_agent_protocol_payload() if status == "ready" else None,
+            status=status,
+        )
+
+    registry = AgentRegistry(
+        make_config(tmp_path),
+        capability_loader=load,
+        cache_ttl_seconds=5,
+        failure_ttl_seconds=5,
+        clock=lambda: clock[0],
+    )
+
+    registry.catalog()
+    registry.catalog()
+
+    assert calls == 1
 
 
 def test_concurrent_refresh_keeps_newer_successful_catalog(tmp_path: Path) -> None:
