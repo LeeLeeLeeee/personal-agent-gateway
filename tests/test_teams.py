@@ -16,6 +16,7 @@ from personal_agent_gateway.teams import (
     TeamRunService,
     _team_run_display_status,
 )
+from team_cycle_helpers import dt, make_cycle_services, make_running_task_in_cycle
 
 
 @pytest.mark.parametrize(
@@ -42,6 +43,58 @@ def test_team_run_display_status_prioritizes_current_cycle_activity(
     assert _team_run_display_status(
         SimpleNamespace(status=run_status), request, cycle, series
     ) == expected
+
+
+def test_mark_waiting_for_provider_preserves_dispatching_request_and_current_work(
+    tmp_path,
+):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle, task, agent = make_running_task_in_cycle(teams, cycles, run)
+    teams.set_cycle_execution_metadata(
+        cycle.id,
+        {
+            "provider_capabilities": {"claude": {"ready": False}},
+            "agents": {agent.id: {"sandbox_mode": "workspace-write"}},
+        },
+    )
+
+    waiting = teams.mark_waiting_for_provider(
+        cycle.id,
+        provider="claude",
+        reason_code="provider_not_ready",
+        attempts=3,
+        task_id=task.id,
+        agent_id=agent.id,
+        now=dt("2026-07-30T00:00:00+00:00"),
+    )
+
+    assert waiting.status == "waiting_for_provider"
+    assert waiting.finished_at is None
+    assert teams.get_team_run(run.id).status == "waiting_for_provider"
+    assert teams.get_team_run(run.id).finished_at is None
+    assert teams.get_task(task.id).status == "waiting_for_provider"
+    assert teams.get_task(task.id).finished_at is None
+    waiting_agent = teams.get_agent(agent.id)
+    assert waiting_agent.status == "waiting"
+    assert waiting_agent.current_task_id == task.id
+    assert cycles.get_request(cycle.request_id).status == "dispatching"
+    assert teams.list_waiting_provider_cycles() == [waiting]
+    assert waiting.execution_metadata["provider_capabilities"] == {
+        "claude": {"ready": False}
+    }
+    assert waiting.execution_metadata["agents"] == {
+        agent.id: {"sandbox_mode": "workspace-write"}
+    }
+    assert waiting.execution_metadata["provider_recovery"] == {
+        "provider": "claude",
+        "task_id": task.id,
+        "agent_id": agent.id,
+        "reason_code": "provider_not_ready",
+        "attempts": 3,
+        "first_failed_at": "2026-07-30T00:00:00+00:00",
+        "next_retry_at": "2026-07-30T00:00:30+00:00",
+        "warning_visible_at": "2026-07-30T00:02:00+00:00",
+    }
 
 
 def make_services(tmp_path):

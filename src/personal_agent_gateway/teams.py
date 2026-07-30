@@ -2,7 +2,7 @@ import json
 import shutil
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
@@ -33,12 +33,14 @@ TeamRunStatus = Literal[
     "canceled",
     "interrupted",
     "waiting_for_user",
+    "waiting_for_provider",
 ]
 RunMode = Literal["planning_only", "plan_and_execute", "review_only"]
 LifecycleMode = Literal["standard", "continuous"]
 CycleStatus = Literal[
     "queued",
     "running",
+    "waiting_for_provider",
     "waiting_for_user",
     "interrupted",
     "completed",
@@ -48,11 +50,19 @@ CycleStatus = Literal[
     "canceled",
 ]
 AgentStatus = Literal["pending", "running", "waiting", "completed", "failed", "canceled"]
-TaskStatus = Literal["pending", "in_progress", "blocked", "completed", "failed", "canceled"]
+TaskStatus = Literal[
+    "pending",
+    "in_progress",
+    "waiting_for_provider",
+    "blocked",
+    "completed",
+    "failed",
+    "canceled",
+]
 DecisionRequestStatus = Literal["collecting", "awaiting_user", "resolved", "canceled"]
 ACCEPTANCE_RECOVERY_CAP = 2
 
-_ACTIVE_RUN_STATUSES = {"planning", "running", "summarizing"}
+_ACTIVE_RUN_STATUSES = {"planning", "running", "summarizing", "waiting_for_provider"}
 _TERMINAL_RUN_STATUSES = {
     "completed",
     "completed_with_failures",
@@ -109,6 +119,13 @@ class TeamRunCycle:
     rules_snapshot: dict | None = None
     execution_metadata: dict[str, object] | None = None
     space_policy: dict | None = None
+
+
+@dataclass(frozen=True)
+class ProviderRecoveryClaim:
+    team_run_id: str
+    cycle_id: str
+    task_id: str | None
 
 
 @dataclass(frozen=True)
@@ -557,6 +574,182 @@ class TeamRunService:
             ),
         )
         return self.get_cycle(cycle_id)
+
+    def mark_waiting_for_provider(
+        self,
+        cycle_id: str,
+        *,
+        provider: str,
+        reason_code: str,
+        attempts: int,
+        task_id: str | None,
+        agent_id: str | None,
+        now: datetime,
+    ) -> TeamRunCycle:
+        timestamp = _timestamp(now)
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            cycle = connection.execute(
+                "select * from team_run_cycles where id = ?",
+                (cycle_id,),
+            ).fetchone()
+            if cycle is None:
+                raise KeyError(f"Team run cycle not found: {cycle_id}")
+            stored_metadata = (
+                json.loads(cycle["execution_metadata_json"])
+                if cycle["execution_metadata_json"]
+                else {}
+            )
+            metadata = stored_metadata if isinstance(stored_metadata, dict) else {}
+            metadata["provider_recovery"] = {
+                "provider": provider,
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "reason_code": reason_code,
+                "attempts": attempts,
+                "first_failed_at": timestamp,
+                "next_retry_at": _timestamp(now + timedelta(seconds=30)),
+                "warning_visible_at": _timestamp(now + timedelta(seconds=120)),
+            }
+            connection.execute(
+                """
+                update team_run_cycles
+                set status = 'waiting_for_provider',
+                    execution_metadata_json = ?, updated_at = ?
+                where id = ?
+                """,
+                (
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    timestamp,
+                    cycle_id,
+                ),
+            )
+            connection.execute(
+                """
+                update team_runs
+                set status = 'waiting_for_provider', updated_at = ?
+                where id = ?
+                """,
+                (timestamp, cycle["team_run_id"]),
+            )
+            if task_id is not None:
+                connection.execute(
+                    """
+                    update team_tasks
+                    set status = 'waiting_for_provider', updated_at = ?
+                    where id = ? and team_run_id = ? and cycle_id = ?
+                    """,
+                    (timestamp, task_id, cycle["team_run_id"], cycle_id),
+                )
+            if agent_id is not None:
+                connection.execute(
+                    """
+                    update team_agents
+                    set status = 'waiting', updated_at = ?
+                    where id = ? and team_run_id = ?
+                    """,
+                    (timestamp, agent_id, cycle["team_run_id"]),
+                )
+            row = connection.execute(
+                "select * from team_run_cycles where id = ?",
+                (cycle_id,),
+            ).fetchone()
+            return _team_run_cycle_from_row(row)
+
+    def list_waiting_provider_cycles(self) -> list[TeamRunCycle]:
+        return [
+            _team_run_cycle_from_row(row)
+            for row in self._db.fetchall(
+                """
+                select * from team_run_cycles
+                where status = 'waiting_for_provider'
+                order by created_at asc, id asc
+                """
+            )
+        ]
+
+    def claim_provider_recovery(
+        self,
+        cycle_id: str,
+        now: datetime,
+    ) -> ProviderRecoveryClaim | None:
+        timestamp = _timestamp(now)
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            cursor = connection.execute(
+                """
+                update team_run_cycles
+                set status = 'running', updated_at = ?
+                where id = ? and status = 'waiting_for_provider'
+                """,
+                (timestamp, cycle_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+
+            cycle = connection.execute(
+                "select * from team_run_cycles where id = ?",
+                (cycle_id,),
+            ).fetchone()
+            stored_metadata = (
+                json.loads(cycle["execution_metadata_json"])
+                if cycle["execution_metadata_json"]
+                else {}
+            )
+            metadata = stored_metadata if isinstance(stored_metadata, dict) else {}
+            recovery = metadata.get("provider_recovery")
+            task_value = recovery.get("task_id") if isinstance(recovery, dict) else None
+            agent_value = (
+                recovery.get("agent_id") if isinstance(recovery, dict) else None
+            )
+            task_id = task_value if isinstance(task_value, str) else None
+            agent_id = agent_value if isinstance(agent_value, str) else None
+            if task_id is not None:
+                connection.execute(
+                    """
+                    update team_tasks
+                    set status = 'pending', result = null, error_message = null,
+                        started_at = null, finished_at = null, updated_at = ?
+                    where id = ? and team_run_id = ? and cycle_id = ?
+                    """,
+                    (timestamp, task_id, cycle["team_run_id"], cycle_id),
+                )
+            if agent_id is not None:
+                connection.execute(
+                    """
+                    update team_agents
+                    set status = 'pending', current_task_id = null,
+                        finished_at = null, updated_at = ?
+                    where id = ? and team_run_id = ?
+                    """,
+                    (timestamp, agent_id, cycle["team_run_id"]),
+                )
+            connection.execute(
+                """
+                update team_runs
+                set status = 'running', error_message = null,
+                    finished_at = null, updated_at = ?
+                where id = ?
+                """,
+                (timestamp, cycle["team_run_id"]),
+            )
+            metadata.pop("provider_recovery", None)
+            connection.execute(
+                """
+                update team_run_cycles
+                set execution_metadata_json = ?
+                where id = ?
+                """,
+                (
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    cycle_id,
+                ),
+            )
+            return ProviderRecoveryClaim(
+                cycle["team_run_id"],
+                cycle_id,
+                task_id,
+            )
 
     def set_cycle_status(
         self,
@@ -2426,6 +2619,12 @@ def _team_decision_request_from_row(row: object) -> TeamDecisionRequest:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _timestamp(value: datetime) -> str:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("Team recovery timestamps must be timezone-aware")
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def _initials(name: str) -> str:

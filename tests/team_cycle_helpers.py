@@ -48,6 +48,40 @@ def make_cycle_services(
     return db, teams, cycles, run
 
 
+def make_running_task_in_cycle(teams, cycles, run):
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "provider-recovery",
+        "work",
+        previous_cycle_id=None,
+    )
+    claimed = cycles.claim_next(run.id)
+    assert claimed is not None and claimed.id == request.id
+    cycle = teams.create_cycle(
+        run.id,
+        claimed.source_type,
+        claimed.source_id,
+        request_id=claimed.id,
+    )
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(run.id, "running")
+    agent = next(
+        candidate
+        for candidate in teams.list_agents(run.id)
+        if candidate.id != run.leader_agent_id
+    )
+    task = teams.create_task(
+        run.id,
+        "current",
+        "provider work",
+        owner_agent_id=agent.id,
+        cycle_id=cycle.id,
+    )
+    task, agent = teams.start_task(task.id, agent.id)
+    return cycle, task, agent
+
+
 def make_triggered_run(tmp_path: Path):
     return make_cycle_services(tmp_path, "triggered")
 
