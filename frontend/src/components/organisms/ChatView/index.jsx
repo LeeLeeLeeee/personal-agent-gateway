@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { deriveLive } from "../../../lib/timeline.js";
-import { fmtDateTime, fmtElapsed } from "../../../lib/time.js";
+import { fmtDateTime } from "../../../lib/time.js";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 import { Composer } from "../../molecules/Composer/index.jsx";
@@ -101,17 +101,6 @@ function Proposal({ approval, onResolve }) {
   );
 }
 
-function WorkingIndicator({ turnStart }) {
-  const elapsed = turnStart ? fmtElapsed((Date.now() - turnStart) / 1000) : "0s";
-  return (
-    <div className="working-indicator" role="status" aria-live="polite">
-      <span className="working-dot" />
-      <span className="working-label mono">WORKING · {elapsed}</span>
-      <span className="working-hint mono">esc to interrupt</span>
-    </div>
-  );
-}
-
 export function ChatView({
   agents,
   personas = [],
@@ -199,8 +188,7 @@ export function ChatView({
           </>
         )}
         <div className="transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
-          <Timeline entries={entries} busy={busy} sessionId={activeSessionId} registeredByPath={registeredByPath} onRegistered={onArtifactChange} />
-          {busy ? <WorkingIndicator turnStart={turnStart} /> : null}
+          <Timeline entries={entries} busy={busy} turnStart={turnStart} sessionId={activeSessionId} registeredByPath={registeredByPath} onRegistered={onArtifactChange} />
           <Proposal approval={pendingApproval} onResolve={onResolveApproval} />
         </div>
         <Composer busy={busy} onSend={onSend} />

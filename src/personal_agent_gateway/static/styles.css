@@ -4200,9 +4200,9 @@ p {
 
 .working-indicator {
   display: flex; align-items: center; gap: 10px;
-  margin: 10px 0 4px; padding: 8px 12px;
-  border: 1px solid var(--c-warn); border-radius: 4px;
-  background: rgba(255, 165, 0, 0.06);
+  margin: 0; padding: 8px 0;
+  border: none;
+  background: transparent;
 }
 .working-dot {
   width: 8px; height: 8px; border-radius: 50%; background: var(--c-warn); flex: none;

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { MarkdownContent } from "../MarkdownContent/index.jsx";
 import { compareEntries } from "../../../lib/timeline.js";
+import { fmtElapsed } from "../../../lib/time.js";
 
 function UserMessage({ entry }) {
   return (
@@ -78,6 +79,17 @@ function ReasoningBlock({ steps }) {
   );
 }
 
+function WorkingIndicator({ turnStart }) {
+  const elapsed = turnStart ? fmtElapsed((Date.now() - turnStart) / 1000) : "0s";
+  return (
+    <div className="working-indicator" role="status" aria-live="polite">
+      <span className="working-dot" />
+      <span className="working-label mono">WORKING · {elapsed}</span>
+      <span className="working-hint mono">esc to interrupt</span>
+    </div>
+  );
+}
+
 function EventRow({ entry }) {
   return (
     <div className="tl-row">
@@ -133,7 +145,7 @@ function orderedEntries(entries) {
   return [...entries].sort(compareEntries);
 }
 
-export function Timeline({ entries, busy, sessionId = null, registeredByPath = null, onRegistered = null }) {
+export function Timeline({ entries, busy, turnStart = null, sessionId = null, registeredByPath = null, onRegistered = null }) {
   if (!entries.length && !busy) return <div className="stream"><IdleEmpty /></div>;
 
   const nodes = [];
@@ -179,5 +191,10 @@ export function Timeline({ entries, busy, sessionId = null, registeredByPath = n
   }
   flushReasoning();
   flushCluster();
-  return <div className="stream">{nodes}</div>;
+  return (
+    <div className="stream">
+      {nodes}
+      {busy ? <WorkingIndicator turnStart={turnStart} /> : null}
+    </div>
+  );
 }

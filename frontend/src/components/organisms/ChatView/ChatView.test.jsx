@@ -132,10 +132,11 @@ describe("ChatView transcript follow behavior", () => {
 });
 
 describe("ChatView working indicator", () => {
-  it("shows a live working indicator with elapsed time while busy", () => {
+  it("shows a live working indicator inside the timeline stream while busy", () => {
     render(<ChatView {...props([])} busy turnStart={Date.now() - 5000} turnStreamed />);
     const indicator = document.querySelector(".working-indicator");
     expect(indicator).toBeTruthy();
+    expect(indicator.closest(".stream")).not.toBeNull();
     expect(indicator.textContent).toContain("WORKING");
     expect(indicator.textContent).toContain("esc to interrupt");
   });
