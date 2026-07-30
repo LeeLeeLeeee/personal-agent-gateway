@@ -831,6 +831,131 @@ def test_acceptance_review_revises_contract_and_ask_user_preserves_counter(
     assert teams.list_messages(run.id)[-1].metadata["attempt"] == 2
 
 
+@pytest.mark.parametrize(
+    ("acceptance_after", "message"),
+    [
+        (
+            TaskAcceptance((), ()),
+            "Acceptance requires an output or verification",
+        ),
+        (
+            TaskAcceptance(("report.md", "report.md"), ("source-check",)),
+            "Acceptance has duplicate required outputs",
+        ),
+        (
+            TaskAcceptance(("report.md",), ("source-check", "source-check")),
+            "Acceptance has duplicate required verifications",
+        ),
+        (
+            TaskAcceptance((" ",), ("source-check",)),
+            "Acceptance items must not be blank",
+        ),
+        (
+            TaskAcceptance(("report.md",), (" ",)),
+            "Acceptance items must not be blank",
+        ),
+        (
+            TaskAcceptance(("../outside.md",), ("source-check",)),
+            "Acceptance output path must be relative and bounded",
+        ),
+        (
+            TaskAcceptance(("/absolute.md",), ("source-check",)),
+            "Acceptance output path must be relative and bounded",
+        ),
+        (
+            TaskAcceptance((r"C:\absolute.md",), ("source-check",)),
+            "Acceptance output path must be relative and bounded",
+        ),
+    ],
+)
+def test_acceptance_review_rejects_invalid_revised_contract(
+    tmp_path: Path,
+    acceptance_after: TaskAcceptance,
+    message: str,
+) -> None:
+    personas, teams = make_services(tmp_path)
+    lead_persona = personas.create_persona("Lead", "lead", "d", [], [])
+    worker_persona = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", lead_persona.id, [worker_persona.id], "plan_and_execute", 1
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    original_acceptance = TaskAcceptance((), ("source-check",))
+    task = teams.create_task(
+        run.id,
+        "Task",
+        "Description",
+        acceptance=original_acceptance,
+    )
+    teams.start_task(task.id, worker_agent.id)
+
+    with pytest.raises(ValueError, match=message):
+        teams.record_acceptance_review(
+            task.id,
+            leader_agent.id,
+            worker_agent.id,
+            action="revise_acceptance",
+            reason_code="contract_incomplete",
+            reason="Acceptance contract needs revision",
+            instruction=None,
+            acceptance_after=acceptance_after,
+            rejected_deliverables=(),
+            rejected_verifications=(),
+        )
+
+    unchanged = teams.list_tasks(run.id)[0]
+    assert unchanged.acceptance_recovery_attempts == 0
+    assert unchanged.acceptance == original_acceptance
+    assert teams.list_messages(run.id) == []
+
+
+@pytest.mark.parametrize("action", ["ask_user", "fail"])
+def test_acceptance_review_non_consuming_action_does_not_update_task_row(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    personas, teams = make_services(tmp_path)
+    lead_persona = personas.create_persona("Lead", "lead", "d", [], [])
+    worker_persona = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", lead_persona.id, [worker_persona.id], "plan_and_execute", 1
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    task = teams.create_task(
+        run.id,
+        "Task",
+        "Description",
+        acceptance=TaskAcceptance((), ("source-check",)),
+    )
+    teams.start_task(task.id, worker_agent.id)
+    teams._db.execute(
+        "update team_tasks set updated_at = ? where id = ?",
+        ("2000-01-01T00:00:00+00:00", task.id),
+    )
+    before = dict(
+        teams._db.fetchone("select * from team_tasks where id = ?", (task.id,))
+    )
+
+    teams.record_acceptance_review(
+        task.id,
+        leader_agent.id,
+        worker_agent.id,
+        action=action,
+        reason_code="needs_direction",
+        reason="Need user direction",
+        instruction=None,
+        acceptance_after=None,
+        rejected_deliverables=(),
+        rejected_verifications=(),
+    )
+
+    after = dict(
+        teams._db.fetchone("select * from team_tasks where id = ?", (task.id,))
+    )
+    assert after == before
+    assert teams.list_messages(run.id)[-1].metadata["attempt"] == 1
+
+
 def test_persona_snapshot_includes_avatar(tmp_path):
     from personal_agent_gateway.db import Database
     from personal_agent_gateway.personas import PersonaService

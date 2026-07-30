@@ -3,7 +3,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
@@ -1290,6 +1290,8 @@ class TeamRunService:
                 raise ValueError("acceptance_after is required for revise_acceptance")
             if action != "revise_acceptance" and acceptance_after is not None:
                 raise ValueError("acceptance_after is only allowed for revise_acceptance")
+            if acceptance_after is not None:
+                _validate_task_acceptance(acceptance_after)
 
             current_attempts = int(task["acceptance_recovery_attempts"])
             consumes_attempt = action in {"retry_worker", "revise_acceptance"}
@@ -1302,14 +1304,15 @@ class TeamRunService:
                 if acceptance_after is not None
                 else task["acceptance_json"]
             )
-            connection.execute(
-                """
-                update team_tasks
-                set acceptance_recovery_attempts = ?, acceptance_json = ?, updated_at = ?
-                where id = ?
-                """,
-                (next_attempts, acceptance_json, now, task_id),
-            )
+            if consumes_attempt:
+                connection.execute(
+                    """
+                    update team_tasks
+                    set acceptance_recovery_attempts = ?, acceptance_json = ?, updated_at = ?
+                    where id = ?
+                    """,
+                    (next_attempts, acceptance_json, now, task_id),
+                )
             metadata = {
                 "task_id": task_id,
                 "attempt": current_attempts + 1,
@@ -2358,6 +2361,33 @@ def _task_acceptance_json(acceptance: TaskAcceptance) -> str:
         },
         ensure_ascii=False,
         sort_keys=True,
+    )
+
+
+def _validate_task_acceptance(acceptance: TaskAcceptance) -> None:
+    outputs = acceptance.required_outputs
+    verifications = acceptance.required_verifications
+    if not outputs and not verifications:
+        raise ValueError("Acceptance requires an output or verification")
+    if len(set(outputs)) != len(outputs):
+        raise ValueError("Acceptance has duplicate required outputs")
+    if len(set(verifications)) != len(verifications):
+        raise ValueError("Acceptance has duplicate required verifications")
+    if any(not item.strip() for item in (*outputs, *verifications)):
+        raise ValueError("Acceptance items must not be blank")
+    if any(not _safe_relative_task_output(path) for path in outputs):
+        raise ValueError("Acceptance output path must be relative and bounded")
+
+
+def _safe_relative_task_output(value: str) -> bool:
+    posix = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    return (
+        value not in {"", "."}
+        and not posix.is_absolute()
+        and not windows.is_absolute()
+        and ".." not in posix.parts
+        and ".." not in windows.parts
     )
 
 
