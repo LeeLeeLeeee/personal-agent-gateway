@@ -40,6 +40,14 @@ class ExecutionContextFactory:
         *,
         network: str = "unspecified",
     ) -> CompiledExecution:
+        if policy.write_mode == "isolated":
+            try:
+                consumer_workspace.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise ExecutionContractError(
+                    "invalid_execution_path",
+                    "Failed to prepare isolated workspace",
+                ) from exc
         source_roots = (
             (Path(policy.read_path).resolve(),)
             if policy.read_mode == "selected" and policy.read_path

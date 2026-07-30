@@ -129,6 +129,57 @@ def test_no_source_chat_builds_isolated_empty_context(tmp_path: Path) -> None:
     assert Path(runtime._model._execution["workspace_root"]).is_absolute()
 
 
+@pytest.mark.parametrize("read_mode", ["all", "none"])
+def test_execution_context_prepares_only_isolated_workspace(
+    tmp_path: Path,
+    read_mode: str,
+) -> None:
+    contexts = ExecutionContextFactory()
+    capabilities = _AgentRegistry().get("codex").execution_capabilities
+    isolated = tmp_path / f"{read_mode}-isolated"
+    direct = tmp_path / f"{read_mode}-direct"
+
+    compiled = contexts.for_session(
+        _policy(read_mode=read_mode, read_path=None),
+        capabilities,
+        isolated,
+    )
+    contexts.for_session(
+        _policy(
+            read_mode=read_mode,
+            read_path=None,
+            write_mode="full_access",
+            workspace_path=direct,
+        ),
+        capabilities,
+        tmp_path / "unused-consumer",
+    )
+
+    assert compiled.workspace_root == isolated.resolve()
+    assert isolated.is_dir()
+    assert not direct.exists()
+
+
+def test_isolated_workspace_creation_failure_has_stable_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_mkdir(*_args, **_kwargs) -> None:
+        raise OSError("sensitive filesystem detail")
+
+    monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+
+    with pytest.raises(ExecutionContractError) as error:
+        ExecutionContextFactory().for_session(
+            _policy(read_mode="all", read_path=None),
+            _AgentRegistry().get("codex").execution_capabilities,
+            tmp_path / "isolated",
+        )
+
+    assert error.value.code == "invalid_execution_path"
+    assert str(error.value) == "Failed to prepare isolated workspace"
+
+
 def test_selected_source_hook_receives_staged_inputs(tmp_path: Path) -> None:
     selected = tmp_path / "selected"
     selected.mkdir()
