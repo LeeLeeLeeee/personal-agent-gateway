@@ -35,7 +35,13 @@ def make_dispatcher_services(tmp_path: Path) -> DispatcherServices:
     _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     orchestrator = RecordingOrchestrator(teams)
     event_bus = EventBus()
-    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, event_bus)
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        event_bus,
+        provider_recovery=_provider_recovery(teams),
+    )
     return DispatcherServices(
         run,
         teams,
@@ -82,6 +88,22 @@ class _FrozenRegistry:
             snapshot_status="fresh",
             detected_at="2026-07-30T00:00:00Z",
             execution_capabilities=_execution_capability(),
+        )
+
+
+def _provider_recovery(teams):
+    return TeamProviderRecovery(teams, _FrozenRegistry())
+
+
+def test_dispatcher_requires_provider_recovery(tmp_path):
+    _db, teams, cycles, _run = make_cycle_services(tmp_path, "triggered")
+
+    with pytest.raises(TypeError, match="provider_recovery"):
+        TeamCycleDispatcher(
+            cycles,
+            teams,
+            RecordingOrchestrator(teams),
+            EventBus(),
         )
 
 
@@ -138,6 +160,24 @@ def test_freeze_cycle_rejects_missing_roster_capability_without_partial_snapshot
         recovery.freeze_cycle(cycle.id)
 
     assert error.value.provider == "claude"
+    assert error.value.reason_code == "capabilities_unavailable"
+    assert teams.get_cycle(cycle.id).execution_metadata is None
+
+
+def test_freeze_cycle_normalizes_absent_registry_provider(tmp_path):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = _dispatching_cycle(teams, cycles, run)
+
+    def missing_provider(provider):
+        raise ValueError(f"Unknown agent: {provider}")
+
+    registry = SimpleNamespace(get=missing_provider)
+    recovery = TeamProviderRecovery(teams, registry)
+
+    with pytest.raises(ProviderRecoveryRequired) as error:
+        recovery.freeze_cycle(cycle.id)
+
+    assert error.value.provider == "codex"
     assert error.value.reason_code == "capabilities_unavailable"
     assert teams.get_cycle(cycle.id).execution_metadata is None
 
@@ -358,7 +398,13 @@ async def test_cancellation_during_real_leader_add_work_preserves_cycle(
         lambda _agent, _cycle_id=None: GatedLeaderModel(),
     )
     orchestrator = TeamRunOrchestrator(TeamRunRegistry(), lambda: runtime)
-    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, EventBus())
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=_provider_recovery(teams),
+    )
     request = cycles.enqueue_request(
         run.id,
         "manual",
@@ -401,6 +447,7 @@ def test_reconcile_interrupts_linked_queued_cycle_for_explicit_resume(
         teams,
         RecordingOrchestrator(teams),
         EventBus(),
+        provider_recovery=_provider_recovery(teams),
     )
 
     assert dispatcher.reconcile() == []
@@ -524,6 +571,7 @@ async def test_real_orchestrator_notifies_dispatcher_observer_before_return(
         teams,
         orchestrator,
         event_bus,
+        provider_recovery=_provider_recovery(teams),
     )
     orchestrator.add_observer(dispatcher.on_team_run_settled)
     request = cycles.enqueue_request(
@@ -623,7 +671,13 @@ async def test_later_observer_error_preserves_dispatcher_settlement(
         TeamRunRegistry(),
         CompletingRuntime,
     )
-    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, event_bus)
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        event_bus,
+        provider_recovery=_provider_recovery(teams),
+    )
     orchestrator.add_observer(dispatcher.on_team_run_settled)
 
     async def fail_later_observer(_run, _cycle_id):
@@ -677,7 +731,13 @@ async def test_earlier_observer_error_settles_terminal_dispatching_request(
         TeamRunRegistry(),
         CompletingRuntime,
     )
-    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, event_bus)
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        event_bus,
+        provider_recovery=_provider_recovery(teams),
+    )
     enqueued: list[str] = []
 
     async def record_enqueue(team_run_id: str) -> None:
@@ -792,7 +852,13 @@ async def test_child_run_cancellation_keeps_dispatcher_alive_for_another_run(
             return teams.get_team_run(team_run_id)
 
     orchestrator = TeamRunOrchestrator(registry, Runtime)
-    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, EventBus())
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=_provider_recovery(teams),
+    )
     orchestrator.add_observer(dispatcher.on_team_run_settled)
     cycles.enqueue_request(
         first_run.id, "manual", "first", "work", previous_cycle_id=None
@@ -841,6 +907,7 @@ async def test_auto_settlement_publishes_series_event(
         teams,
         orchestrator,
         event_bus,
+        provider_recovery=_provider_recovery(teams),
     )
 
     await dispatcher.run_one(run.id)

@@ -42,6 +42,14 @@ class FakeRuntime:
         return self._result
 
 
+class PassThroughProviderRecovery:
+    def __init__(self, teams: TeamRunService) -> None:
+        self._teams = teams
+
+    def freeze_cycle(self, cycle_id: str):
+        return self._teams.get_cycle(cycle_id)
+
+
 class FakeFactory:
     def __init__(self, runtime: FakeRuntime) -> None:
         self._runtime = runtime
@@ -259,7 +267,13 @@ def _setup_team_hook(tmp_path: Path, *, library_draft_enabled: bool = False):
     runtime = FakeTeamRuntime(teams)
     orchestrator = TeamRunOrchestrator(TeamRunRegistry(), lambda: runtime)
     cycles = TeamCycleService(db)
-    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, EventBus())
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=PassThroughProviderRecovery(teams),
+    )
     orchestrator.add_observer(dispatcher.on_team_run_settled)
     archive = ArchiveService(db)
     runner = HookRunner(
@@ -630,7 +644,13 @@ async def test_team_hook_queues_next_cycle_while_waiting_then_continues(tmp_path
     fake_team_runtime = FakeTeamRuntime(teams)
     orchestrator = TeamRunOrchestrator(TeamRunRegistry(), lambda: fake_team_runtime)
     cycles = TeamCycleService(db)
-    dispatcher = TeamCycleDispatcher(cycles, teams, orchestrator, EventBus())
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=PassThroughProviderRecovery(teams),
+    )
     orchestrator.add_observer(dispatcher.on_team_run_settled)
     runner = HookRunner(
         hooks,

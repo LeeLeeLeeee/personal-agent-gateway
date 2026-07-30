@@ -38,7 +38,7 @@ class TeamCycleDispatcher:
         teams: TeamRunService,
         orchestrator: TeamRunOrchestrator,
         event_bus: EventBus,
-        provider_recovery: TeamProviderRecovery | None = None,
+        provider_recovery: TeamProviderRecovery,
     ) -> None:
         self._cycles = cycles
         self._teams = teams
@@ -103,8 +103,7 @@ class TeamCycleDispatcher:
                 request.source_id,
                 request_id=request.id,
             )
-            if self._provider_recovery is not None:
-                cycle = self._provider_recovery.freeze_cycle(cycle.id)
+            cycle = self._provider_recovery.freeze_cycle(cycle.id)
         except Exception:
             self._cycles.requeue_claim(request.id)
             raise

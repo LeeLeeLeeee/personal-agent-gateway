@@ -69,7 +69,13 @@ class TeamProviderRecovery:
         )
         snapshots: dict[str, dict[str, object]] = {}
         for provider in providers:
-            descriptor = self._registry.get(provider)
+            try:
+                descriptor = self._registry.get(provider)
+            except ValueError as exc:
+                raise ProviderRecoveryRequired(
+                    provider,
+                    "capabilities_unavailable",
+                ) from exc
             capabilities = descriptor.execution_capabilities
             if capabilities is None:
                 raise ProviderRecoveryRequired(

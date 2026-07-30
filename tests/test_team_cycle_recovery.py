@@ -22,6 +22,14 @@ class ReopenedServices:
     dispatcher: TeamCycleDispatcher
 
 
+class PassThroughProviderRecovery:
+    def __init__(self, teams: TeamRunService) -> None:
+        self._teams = teams
+
+    def freeze_cycle(self, cycle_id: str):
+        return self._teams.get_cycle(cycle_id)
+
+
 def reopen_services(tmp_path: Path) -> ReopenedServices:
     db = Database(tmp_path / "app.db")
     db.initialize()
@@ -38,6 +46,7 @@ def reopen_services(tmp_path: Path) -> ReopenedServices:
         teams,
         RecordingOrchestrator(teams),
         EventBus(),
+        provider_recovery=PassThroughProviderRecovery(teams),
     )
     return ReopenedServices(teams, cycles, dispatcher)
 
