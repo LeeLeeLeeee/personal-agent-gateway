@@ -10,7 +10,11 @@ from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelClient
 from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.source_staging import StagedInputs
-from personal_agent_gateway.team_acceptance import AcceptanceResult, TeamAcceptanceService
+from personal_agent_gateway.team_acceptance import (
+    AcceptanceResult,
+    TeamAcceptanceService,
+    is_recoverable_acceptance_failure,
+)
 from personal_agent_gateway.team_artifact_publisher import (
     ArtifactPublicationError,
     TeamArtifactPublisher,
@@ -22,6 +26,7 @@ from personal_agent_gateway.team_outcomes import (
 )
 from personal_agent_gateway.team_results import (
     TeamRunResultPackager,
+    WorkspaceSnapshot,
     workspace_changes,
     workspace_snapshot,
 )
@@ -517,6 +522,36 @@ class TeamRuntime:
                     working_root,
                     staged_inputs=staged_inputs,
                 )
+                recovered = await self._recover_task_outcome(
+                    run,
+                    leader,
+                    worker,
+                    task,
+                    outcome,
+                    acceptance,
+                    working_root,
+                    before,
+                    staged_inputs,
+                )
+                if isinstance(recovered, UserDecisionResolution):
+                    request = self._teams.defer_task_for_user_decision(
+                        task.id, worker.id, recovered.decision
+                    )
+                    task = self._teams.get_task(task.id)
+                    worker = self._teams.get_agent(worker.id)
+                    await self._publish(
+                        {
+                            "type": "team.task.updated",
+                            "team_run_id": run.id,
+                            "task_id": task.id,
+                            "agent_id": worker.id,
+                            "decision_request_id": request.id,
+                        }
+                    )
+                    if recovered.decision.get("blocking_scope") == "run":
+                        return
+                    continue
+                task, outcome, acceptance = recovered
                 if acceptance.accepted and outcome.deliverables:
                     try:
                         if self._artifact_publisher is None:
@@ -542,10 +577,18 @@ class TeamRuntime:
                     asdict(outcome),
                     asdict(acceptance),
                 )
+                terminal_status = acceptance.status
+                if (
+                    not acceptance.accepted
+                    and is_recoverable_acceptance_failure(acceptance.reason_code)
+                    and task.acceptance_recovery_attempts
+                    >= ACCEPTANCE_RECOVERY_CAP
+                ):
+                    terminal_status = "failed"
                 task, worker = self._teams.finish_task(
                     task.id,
                     worker.id,
-                    acceptance.status,
+                    terminal_status,
                     result=outcome.summary if acceptance.accepted else None,
                     error_message=(
                         None
@@ -568,6 +611,250 @@ class TeamRuntime:
                     "agent_id": worker.id,
                 }
             )
+
+    async def _review_acceptance(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        worker: TeamAgent,
+        task: TeamTask,
+        outcome: TaskOutcome,
+        acceptance: AcceptanceResult,
+        working_root: Path,
+        task_snapshot: WorkspaceSnapshot,
+    ) -> AcceptanceReviewResolution:
+        task = self._teams.get_task(task.id)
+        leader_agent = self._teams.get_agent(leader.id)
+        remaining = ACCEPTANCE_RECOVERY_CAP - task.acceptance_recovery_attempts
+        changes = workspace_changes(
+            task_snapshot,
+            workspace_snapshot(working_root),
+        )
+        history = [
+            {
+                "content": message.content,
+                "metadata": message.metadata,
+            }
+            for message in self._teams.list_messages(run.id)
+            if message.kind == "acceptance_review"
+            and message.metadata.get("task_id") == task.id
+        ]
+        goal_context = self._goal_context(run, task.cycle_id)
+        prompt = (
+            _space_block(
+                run,
+                self._space_policy(run, task.cycle_id),
+                task.cycle_id,
+            )
+            + _rules_block(
+                self._rules_snapshot(run, task.cycle_id),
+                include_persona_baseline=False,
+            )
+            + ACCEPTANCE_REVIEW_PROMPT
+            + "\n\nAuthoritative review context:\n"
+            + json.dumps(
+                {
+                    "goal_and_cycle_instruction": goal_context,
+                    "task": {
+                        "id": task.id,
+                        "title": task.title,
+                        "description": task.description,
+                    },
+                    "worker": {
+                        "id": worker.id,
+                        "persona_snapshot": worker.persona_snapshot,
+                    },
+                    "acceptance": asdict(task.acceptance),
+                    "outcome": asdict(outcome),
+                    "acceptance_result": asdict(acceptance),
+                    "workspace_changes": changes,
+                    "prior_acceptance_reviews": history,
+                    "remaining_attempts": remaining,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        model = self._model(leader_agent, task.cycle_id)
+        response = await model.complete([{"role": "user", "content": prompt}])
+        if response.upstream_session_id:
+            self._teams.set_agent_session(
+                leader_agent.id, response.upstream_session_id
+            )
+        try:
+            return _parse_acceptance_review_resolution(response.content)
+        except ValueError:
+            retry = await model.complete(
+                [
+                    {
+                        "role": "user",
+                        "content": (
+                            prompt
+                            + "\nReturn ONLY one valid acceptance review JSON object. "
+                            "No prose or code fences."
+                        ),
+                    }
+                ]
+            )
+            if retry.upstream_session_id:
+                self._teams.set_agent_session(
+                    leader_agent.id, retry.upstream_session_id
+                )
+            return _parse_acceptance_review_resolution(retry.content)
+
+    async def _recover_task_outcome(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        worker: TeamAgent,
+        task: TeamTask,
+        outcome: TaskOutcome,
+        acceptance: AcceptanceResult,
+        working_root: Path,
+        task_snapshot: WorkspaceSnapshot,
+        staged_inputs: StagedInputs | None,
+    ) -> tuple[TeamTask, TaskOutcome, AcceptanceResult] | UserDecisionResolution:
+        rejected_paths: set[str] = set()
+        while not acceptance.accepted:
+            self._teams.record_task_outcome(
+                task.id,
+                asdict(outcome),
+                asdict(acceptance),
+            )
+            task = self._teams.get_task(task.id)
+            if not is_recoverable_acceptance_failure(acceptance.reason_code):
+                return task, outcome, acceptance
+            if task.acceptance_recovery_attempts >= ACCEPTANCE_RECOVERY_CAP:
+                return task, outcome, acceptance
+            if acceptance.reason_code == "undeclared_deliverable":
+                rejected_paths.update(
+                    item.path
+                    for item in outcome.deliverables
+                    if item.path not in task.acceptance.required_outputs
+                )
+
+            resolution = await self._review_acceptance(
+                run,
+                leader,
+                worker,
+                task,
+                outcome,
+                acceptance,
+                working_root,
+                task_snapshot,
+            )
+            reason_code = acceptance.reason_code or outcome.reason_code or "task_failed"
+            verification_status = {
+                item.name: item.status for item in outcome.verifications
+            }
+            task = self._teams.record_acceptance_review(
+                task.id,
+                leader.id,
+                worker.id,
+                action=resolution.kind,
+                reason_code=(
+                    resolution.reason_code
+                    if resolution.kind == "fail" and resolution.reason_code
+                    else reason_code
+                ),
+                reason=resolution.reason,
+                instruction=resolution.instruction,
+                acceptance_after=resolution.acceptance,
+                rejected_deliverables=tuple(
+                    item.path for item in outcome.deliverables
+                ),
+                rejected_verifications=tuple(
+                    name
+                    for name in task.acceptance.required_verifications
+                    if verification_status.get(name) != "passed"
+                ),
+            )
+            await self._publish(
+                {
+                    "type": "team.task.updated",
+                    "team_run_id": run.id,
+                    "task_id": task.id,
+                    "agent_id": worker.id,
+                }
+            )
+
+            if resolution.kind == "ask_user":
+                assert resolution.decision is not None
+                return UserDecisionResolution(resolution.decision)
+            if resolution.kind == "fail":
+                return (
+                    task,
+                    outcome,
+                    AcceptanceResult(
+                        accepted=False,
+                        status="failed",
+                        reason_code=resolution.reason_code,
+                        evidence={},
+                    ),
+                )
+
+            assert resolution.instruction is not None
+            current_acceptance = {
+                "required_outputs": list(task.acceptance.required_outputs),
+                "required_verifications": list(
+                    task.acceptance.required_verifications
+                ),
+            }
+            content = await self._resume_worker(
+                worker.id,
+                (
+                    f"{resolution.instruction}\n\n"
+                    "Authoritative current acceptance criteria:\n"
+                    f"{json.dumps(current_acceptance, ensure_ascii=False, sort_keys=True)}\n"
+                    "Return only the required TaskOutcome JSON object."
+                ),
+                task.cycle_id,
+            )
+            outcome = self._task_outcome(
+                content,
+                persona_id=worker.persona_id,
+                team_run_id=run.id,
+            )
+            changes = workspace_changes(
+                task_snapshot,
+                workspace_snapshot(working_root),
+            )
+            self._teams.append_message(
+                run.id,
+                worker.id,
+                None,
+                "agent_output",
+                outcome.summary,
+                {
+                    "task_id": task.id,
+                    "outcome_status": outcome.status,
+                    "reason_code": outcome.reason_code,
+                    **changes,
+                },
+                cycle_id=task.cycle_id,
+            )
+            task = self._teams.get_task(task.id)
+            acceptance = self._acceptance_service.evaluate(
+                task,
+                outcome,
+                working_root,
+                staged_inputs=staged_inputs,
+            )
+            if acceptance.accepted:
+                remaining_paths = sorted(
+                    path
+                    for path in rejected_paths
+                    if path not in task.acceptance.required_outputs
+                    and _bounded_path_exists(working_root, path)
+                )
+                if remaining_paths:
+                    acceptance = AcceptanceResult(
+                        accepted=False,
+                        status="failed",
+                        reason_code="undeclared_deliverable",
+                        evidence={"remaining_undeclared_paths": remaining_paths},
+                    )
+        return task, outcome, acceptance
 
     async def _run_task(
         self, run: TeamRun, leader: TeamAgent, worker: TeamAgent, task: TeamTask
@@ -1282,6 +1569,25 @@ def _safe_relative_output(value: str) -> bool:
         and ".." not in posix.parts
         and ".." not in windows.parts
     )
+
+
+def _bounded_path_exists(working_root: Path, relative_path: str) -> bool:
+    if not _safe_relative_output(relative_path):
+        return False
+    root = working_root.resolve()
+    candidate = root / relative_path
+    current = candidate
+    while current != root:
+        is_junction = getattr(current, "is_junction", lambda: False)
+        if current.is_symlink() or is_junction():
+            return True
+        current = current.parent
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return False
+    return candidate.exists()
 
 
 def _parse_acceptance_review_resolution(content: str) -> AcceptanceReviewResolution:

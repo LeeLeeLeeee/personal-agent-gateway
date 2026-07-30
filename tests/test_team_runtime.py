@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -8,11 +9,15 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
+from personal_agent_gateway.team_acceptance import AcceptanceResult
+from personal_agent_gateway.team_artifact_publisher import ArtifactPublicationError
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_outcomes import TaskOutcome
+from personal_agent_gateway.team_results import workspace_snapshot
 from personal_agent_gateway.team_runtime import (
     WORKER_PROMPT,
     TeamRuntime,
+    _bounded_path_exists,
     _parse_acceptance_review_resolution,
     _parse_task_plan,
     _rules_block,
@@ -125,6 +130,41 @@ def _complete_worker_fixture(value):
                     "evidence": "test fixture response",
                 }
             ],
+        }
+    )
+
+
+def _outcome_json(
+    summary: str,
+    *,
+    deliverables: list[dict[str, str]] | None = None,
+    verification: str = "worker-result",
+) -> str:
+    return json.dumps(
+        {
+            "status": "completed",
+            "summary": summary,
+            "reason_code": None,
+            "deliverables": deliverables or [],
+            "verifications": [
+                {
+                    "name": verification,
+                    "status": "passed",
+                    "evidence": "checked",
+                }
+            ],
+        }
+    )
+
+
+def _retry_review(instruction: str = "Return a corrected outcome.") -> str:
+    return json.dumps(
+        {
+            "resolution": {
+                "kind": "retry_worker",
+                "instruction": instruction,
+                "reason": "The current outcome is not acceptable.",
+            }
         }
     )
 
@@ -414,21 +454,744 @@ async def test_worker_prose_cannot_complete_team_run(tmp_path) -> None:
     runtime = TeamRuntime(
         teams,
         _factory_by_role(
-            [plan, "Everything is done."],
-            ["I could not inspect files."],
+            [
+                plan,
+                json.dumps(
+                    {
+                        "resolution": {
+                            "kind": "retry_worker",
+                            "instruction": "Return the required JSON outcome.",
+                            "reason": "The Worker returned prose.",
+                        }
+                    }
+                ),
+                json.dumps(
+                    {
+                        "resolution": {
+                            "kind": "retry_worker",
+                            "instruction": "Return strict JSON only.",
+                            "reason": "The Worker returned prose again.",
+                        }
+                    }
+                ),
+            ],
+            [
+                "I could not inspect files.",
+                "Still not valid JSON.",
+                "The final response is still prose.",
+            ],
             normalize_worker=False,
         ),
     )
 
     result = await runtime.start(run.id)
 
-    assert result.status == "blocked"
+    assert result.status == "failed"
     task = teams.list_tasks(run.id)[0]
-    assert task.status == "blocked"
+    assert task.status == "failed"
+    assert task.acceptance_recovery_attempts == 2
     assert task.outcome is not None
     assert task.outcome["reason_code"] == "invalid_task_outcome"
     assert task.acceptance_result is not None
     assert task.acceptance_result["accepted"] is False
+    reviews = [
+        message
+        for message in teams.list_messages(run.id)
+        if message.kind == "acceptance_review"
+    ]
+    assert reviews[0].metadata["rejected_verifications"] == ["worker-result"]
+
+
+@pytest.mark.asyncio
+async def test_acceptance_recovery_removes_undeclared_deliverable(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+    )
+    plan = json.dumps(
+        [
+            {
+                "title": "T",
+                "description": "D",
+                "owner_agent_id": None,
+                "required": True,
+                "acceptance": {
+                    "required_outputs": [],
+                    "required_verifications": ["source-check"],
+                },
+            }
+        ]
+    )
+    review = json.dumps(
+        {
+            "resolution": {
+                "kind": "retry_worker",
+                "instruction": "Remove docs/d3.md and omit the deliverable.",
+                "reason": "The file is outside the Task contract.",
+            }
+        }
+    )
+    first_outcome = json.dumps(
+        {
+            "status": "completed",
+            "summary": "Created an extra file.",
+            "reason_code": None,
+            "deliverables": [{"path": "docs/d3.md", "kind": "markdown"}],
+            "verifications": [
+                {
+                    "name": "source-check",
+                    "status": "passed",
+                    "evidence": "checked",
+                }
+            ],
+        }
+    )
+    second_outcome = json.dumps(
+        {
+            "status": "completed",
+            "summary": "Removed the extra file.",
+            "reason_code": None,
+            "deliverables": [],
+            "verifications": [
+                {
+                    "name": "source-check",
+                    "status": "passed",
+                    "evidence": "checked",
+                }
+            ],
+        }
+    )
+    working_root = Path(run.working_root)
+
+    class CleanupWorkerModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, _messages):
+            self.calls += 1
+            path = working_root / "docs" / "d3.md"
+            if self.calls == 1:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("extra", encoding="utf-8")
+                content = first_outcome
+            else:
+                path.unlink()
+                content = second_outcome
+            return ModelResponse(
+                content=content,
+                tool_calls=[],
+                upstream_session_id=f"worker-{self.calls}",
+            )
+
+    leader_model = ScriptedModel([plan, review, "All work completed."])
+    worker_model = CleanupWorkerModel()
+    runtime = TeamRuntime(
+        teams,
+        lambda agent: leader_model if agent.role == "leader" else worker_model,
+    )
+
+    completed = await runtime.start(run.id)
+
+    task = teams.list_tasks(run.id)[0]
+    assert completed.status == "completed"
+    assert task.status == "completed"
+    assert task.acceptance_recovery_attempts == 1
+    assert not (Path(run.working_root) / "docs/d3.md").exists()
+    assert [m.kind for m in teams.list_messages(run.id)].count(
+        "acceptance_review"
+    ) == 1
+    assert task.error_message is None
+
+
+@pytest.mark.asyncio
+async def test_acceptance_revision_publishes_only_resubmitted_outcome(
+    tmp_path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+    )
+    plan = json.dumps(
+        [
+            {
+                "title": "T",
+                "description": "D",
+                "owner_agent_id": None,
+                "required": True,
+                "acceptance": {
+                    "required_outputs": [],
+                    "required_verifications": ["source-check"],
+                },
+            }
+        ]
+    )
+    review = json.dumps(
+        {
+            "resolution": {
+                "kind": "revise_acceptance",
+                "acceptance": {
+                    "required_outputs": ["docs/d3.md"],
+                    "required_verifications": ["source-check"],
+                },
+                "instruction": "Resubmit docs/d3.md under the revised contract.",
+                "reason": "The Task contract omitted the requested guide.",
+            }
+        }
+    )
+
+    def outcome(summary: str) -> str:
+        return json.dumps(
+            {
+                "status": "completed",
+                "summary": summary,
+                "reason_code": None,
+                "deliverables": [{"path": "docs/d3.md", "kind": "markdown"}],
+                "verifications": [
+                    {
+                        "name": "source-check",
+                        "status": "passed",
+                        "evidence": "checked",
+                    }
+                ],
+            }
+        )
+
+    working_root = Path(run.working_root)
+
+    class RevisionWorkerModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, _messages):
+            self.calls += 1
+            path = working_root / "docs" / "d3.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"version {self.calls}", encoding="utf-8")
+            return ModelResponse(
+                content=outcome(f"submission {self.calls}"),
+                tool_calls=[],
+                upstream_session_id=f"worker-{self.calls}",
+            )
+
+    class RecordingPublisher:
+        def __init__(self) -> None:
+            self.outcomes = []
+
+        def publish(self, _run_id, _cycle_id, _task, published, _root) -> None:
+            self.outcomes.append(published)
+
+    publisher = RecordingPublisher()
+    leader_model = ScriptedModel([plan, review, "All work completed."])
+    worker_model = RevisionWorkerModel()
+    runtime = TeamRuntime(
+        teams,
+        lambda agent: leader_model if agent.role == "leader" else worker_model,
+        artifact_publisher=publisher,
+    )
+
+    completed = await runtime.start(run.id)
+
+    task = teams.list_tasks(run.id)[0]
+    assert completed.status == "completed"
+    assert task.acceptance.required_outputs == ("docs/d3.md",)
+    assert task.acceptance_result is not None
+    assert task.acceptance_result["accepted"] is True
+    assert [item.summary for item in publisher.outcomes] == ["submission 2"]
+
+
+@pytest.mark.asyncio
+async def test_acceptance_review_keeps_task_run_and_cycle_active(tmp_path) -> None:
+    import asyncio
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    cycles = TeamCycleService(db)
+    teams = TeamRunService(
+        db,
+        personas,
+        tmp_path / "workspace",
+        cycle_service=cycles,
+    )
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    review_started = asyncio.Event()
+    release_review = asyncio.Event()
+    plan = _complete_plan_fixture('[{"title":"T","description":"D"}]')
+
+    class GatedLeaderModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, _messages):
+            self.calls += 1
+            if self.calls == 1:
+                content = plan
+            elif self.calls == 2:
+                review_started.set()
+                await release_review.wait()
+                content = _retry_review()
+            else:
+                content = "completed"
+            return ModelResponse(content=content, tool_calls=[])
+
+    leader_model = GatedLeaderModel()
+    worker_model = ScriptedModel(
+        ["invalid prose", _outcome_json("corrected")],
+        normalize_worker=False,
+    )
+    runtime = TeamRuntime(
+        teams,
+        lambda agent, _cycle_id=None: (
+            leader_model if agent.role == "leader" else worker_model
+        ),
+    )
+    running = asyncio.create_task(runtime.start(run.id, cycle.id))
+    await asyncio.wait_for(review_started.wait(), timeout=2)
+
+    task = teams.list_tasks(run.id, cycle.id)[0]
+    assert task.status == "in_progress"
+    assert teams.get_team_run(run.id).status == "running"
+    assert teams.get_cycle(cycle.id).status == "running"
+
+    release_review.set()
+    completed = await running
+    assert completed.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_acceptance_review_ask_user_defers_without_consuming_attempt(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    plan = '[{"title":"T","description":"D"}]'
+    ask_user = json.dumps(
+        {
+            "resolution": {
+                "kind": "ask_user",
+                "topic": "scope",
+                "question": "Which scope should be used?",
+                "why_needed": "The Team cannot infer the requested scope.",
+                "options": [
+                    {
+                        "id": "small",
+                        "label": "Small",
+                        "impact": "Limits the change.",
+                    }
+                ],
+                "recommended_option_id": "small",
+                "blocking_scope": "task",
+            }
+        }
+    )
+    delegated: list[str] = []
+    original = teams.defer_task_for_user_decision
+
+    def record_delegation(task_id, agent_id, decision):
+        delegated.append(task_id)
+        return original(task_id, agent_id, decision)
+
+    monkeypatch.setattr(
+        teams,
+        "defer_task_for_user_decision",
+        record_delegation,
+    )
+    runtime = TeamRuntime(
+        teams,
+        _factory_by_role(
+            [plan, ask_user],
+            ["invalid prose"],
+            normalize_worker=False,
+        ),
+    )
+
+    waiting = await runtime.start(run.id)
+
+    task = teams.list_tasks(run.id)[0]
+    assert waiting.status == "waiting_for_user"
+    assert delegated == [task.id]
+    assert task.acceptance_recovery_attempts == 0
+    assert task.status == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_acceptance_review_fail_uses_stable_reason_code(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    fail = json.dumps(
+        {
+            "resolution": {
+                "kind": "fail",
+                "reason_code": "frozen_rule_conflict",
+                "summary": "The task conflicts with frozen rules.",
+            }
+        }
+    )
+    runtime = TeamRuntime(
+        teams,
+        _factory_by_role(
+            ['[{"title":"T","description":"D"}]', fail],
+            ["invalid prose"],
+            normalize_worker=False,
+        ),
+    )
+
+    failed = await runtime.start(run.id)
+
+    task = teams.list_tasks(run.id)[0]
+    assert failed.status == "failed"
+    assert task.status == "failed"
+    assert task.error_message == "frozen_rule_conflict"
+    assert task.acceptance_recovery_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_nonrecoverable_acceptance_skips_lead_review(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    task = teams.create_task(run.id, "T", "D")
+    task, worker_agent = teams.start_task(task.id, worker_agent.id)
+    model_calls = 0
+
+    def model_factory(_agent):
+        nonlocal model_calls
+        model_calls += 1
+        return FakeModel("unused")
+
+    runtime = TeamRuntime(teams, model_factory)
+    outcome = TaskOutcome(
+        status="completed",
+        summary="done",
+        reason_code=None,
+        deliverables=(),
+        verifications=(),
+    )
+    acceptance = AcceptanceResult(
+        accepted=False,
+        status="blocked",
+        reason_code="input_snapshot_modified",
+        evidence={},
+    )
+    working_root = Path(run.working_root)
+
+    recovered = await runtime._recover_task_outcome(
+        run,
+        leader_agent,
+        worker_agent,
+        task,
+        outcome,
+        acceptance,
+        working_root,
+        workspace_snapshot(working_root),
+        None,
+    )
+
+    assert recovered == (teams.get_task(task.id), outcome, acceptance)
+    assert model_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_artifact_publication_failure_skips_lead_review(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    plan = json.dumps(
+        [
+            {
+                "title": "T",
+                "description": "D",
+                "owner_agent_id": None,
+                "required": True,
+                "acceptance": {
+                    "required_outputs": ["docs/d3.md"],
+                    "required_verifications": ["source-check"],
+                },
+            }
+        ]
+    )
+    working_root = Path(run.working_root)
+
+    class FileWorkerModel:
+        async def complete(self, _messages):
+            path = working_root / "docs" / "d3.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("content", encoding="utf-8")
+            return ModelResponse(
+                content=_outcome_json(
+                    "done",
+                    deliverables=[{"path": "docs/d3.md", "kind": "markdown"}],
+                    verification="source-check",
+                ),
+                tool_calls=[],
+            )
+
+    class FailingPublisher:
+        def publish(self, *_args) -> None:
+            raise ArtifactPublicationError("artifact_publication_failed")
+
+    leader_model = ScriptedModel([plan])
+    runtime = TeamRuntime(
+        teams,
+        lambda agent: (
+            leader_model if agent.role == "leader" else FileWorkerModel()
+        ),
+        artifact_publisher=FailingPublisher(),
+    )
+
+    failed = await runtime.start(run.id)
+
+    assert failed.status == "failed"
+    assert leader_model._calls == 1
+    assert teams.list_tasks(run.id)[0].error_message == "artifact_publication_failed"
+
+
+@pytest.mark.asyncio
+async def test_malformed_acceptance_review_retries_json_without_consuming_attempt(
+    tmp_path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    leader_model = ScriptedModel(
+        [
+            '[{"title":"T","description":"D"}]',
+            "not valid review JSON",
+            _retry_review(),
+            "completed",
+        ]
+    )
+    worker_model = ScriptedModel(
+        ["invalid prose", _outcome_json("corrected")],
+        normalize_worker=False,
+    )
+    runtime = TeamRuntime(
+        teams,
+        lambda agent: leader_model if agent.role == "leader" else worker_model,
+    )
+
+    completed = await runtime.start(run.id)
+
+    task = teams.list_tasks(run.id)[0]
+    assert completed.status == "completed"
+    assert task.acceptance_recovery_attempts == 1
+    assert (
+        "Return ONLY one valid acceptance review JSON object. "
+        "No prose or code fences."
+        in leader_model.messages[2][0]["content"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_acceptance_recovery_rejects_undeclared_path_left_on_disk(
+    tmp_path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    plan = json.dumps(
+        [
+            {
+                "title": "T",
+                "description": "D",
+                "owner_agent_id": None,
+                "required": True,
+                "acceptance": {
+                    "required_outputs": [],
+                    "required_verifications": ["source-check"],
+                },
+            }
+        ]
+    )
+    working_root = Path(run.working_root)
+
+    class LingeringFileWorker:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, _messages):
+            self.calls += 1
+            path = working_root / "docs" / "d3.md"
+            if self.calls == 1:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("extra", encoding="utf-8")
+                deliverables = [{"path": "docs/d3.md", "kind": "markdown"}]
+            else:
+                deliverables = []
+                if self.calls == 3:
+                    path.unlink()
+            return ModelResponse(
+                content=_outcome_json(
+                    f"submission {self.calls}",
+                    deliverables=deliverables,
+                    verification="source-check",
+                ),
+                tool_calls=[],
+            )
+
+    leader_model = ScriptedModel(
+        [plan, _retry_review(), _retry_review(), "completed"]
+    )
+    worker_model = LingeringFileWorker()
+    runtime = TeamRuntime(
+        teams,
+        lambda agent: leader_model if agent.role == "leader" else worker_model,
+    )
+
+    completed = await runtime.start(run.id)
+
+    task = teams.list_tasks(run.id)[0]
+    assert completed.status == "completed"
+    assert task.acceptance_recovery_attempts == 2
+    assert [m.kind for m in teams.list_messages(run.id)].count(
+        "acceptance_review"
+    ) == 2
+
+
+def test_acceptance_recovery_does_not_follow_outside_symlink(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    working_root = tmp_path / "workspace"
+    working_root.mkdir()
+    link = working_root / "docs" / "d3.md"
+    link.parent.mkdir()
+    link.write_text("link placeholder", encoding="utf-8")
+    original_resolve = Path.resolve
+    original_is_symlink = Path.is_symlink
+
+    def guarded_resolve(path, *args, **kwargs):
+        if path == link:
+            raise AssertionError("outside symlink target was followed")
+        return original_resolve(path, *args, **kwargs)
+
+    def fake_is_symlink(path):
+        return path == link or original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "resolve", guarded_resolve)
+    monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
+
+    assert _bounded_path_exists(working_root, "docs/d3.md") is True
+
+
+@pytest.mark.asyncio
+async def test_canceled_runtime_during_acceptance_review_settles_existing_path(
+    tmp_path,
+) -> None:
+    import asyncio
+
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    review_started = asyncio.Event()
+
+    class HangingReviewLeader:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, _messages):
+            self.calls += 1
+            if self.calls == 1:
+                return ModelResponse(
+                    content=_complete_plan_fixture(
+                        '[{"title":"T","description":"D"}]'
+                    ),
+                    tool_calls=[],
+                )
+            review_started.set()
+            await asyncio.sleep(60)
+
+    leader_model = HangingReviewLeader()
+    worker_model = ScriptedModel(["invalid prose"], normalize_worker=False)
+    runtime = TeamRuntime(
+        teams,
+        lambda agent: leader_model if agent.role == "leader" else worker_model,
+    )
+    running = asyncio.create_task(runtime.start(run.id))
+    await asyncio.wait_for(review_started.wait(), timeout=2)
+    running.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await running
+
+    task = teams.list_tasks(run.id)[0]
+    assert teams.get_team_run(run.id).status == "canceled"
+    assert task.status == "canceled"
 
 
 @pytest.mark.parametrize(
