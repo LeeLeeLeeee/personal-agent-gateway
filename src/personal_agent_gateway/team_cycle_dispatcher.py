@@ -118,6 +118,10 @@ class TeamCycleDispatcher:
                     "\n\nPREVIOUS CYCLE SUMMARY\n"
                     + request.previous_summary_text
                 )
+            self._teams.set_cycle_effective_instruction(
+                cycle.id,
+                instruction,
+            )
             await self._event_bus.publish(
                 {
                     "type": "team.cycle.started",

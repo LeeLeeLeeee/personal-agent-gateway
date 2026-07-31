@@ -60,6 +60,10 @@ def test_cycle_metadata_owned_writers_preserve_each_other_and_recovery(tmp_path)
         leader.id,
         {"sandbox_mode": "read-only"},
     )
+    teams.set_cycle_effective_instruction(
+        cycle.id,
+        "prepared work",
+    )
     updated = teams.set_cycle_provider_capabilities(
         cycle.id,
         {"codex": {"ready": True}},
@@ -72,8 +76,12 @@ def test_cycle_metadata_owned_writers_preserve_each_other_and_recovery(tmp_path)
             worker.id: {"sandbox_mode": "workspace-write"},
             leader.id: {"sandbox_mode": "read-only"},
         },
+        "semantic_source": {
+            "effective_instruction": "prepared work",
+        },
         "unrelated": {"keep": True},
     }
+    assert teams.get_cycle_effective_instruction(cycle.id) == "prepared work"
 
 
 @pytest.mark.parametrize(

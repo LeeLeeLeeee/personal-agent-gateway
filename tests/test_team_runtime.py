@@ -609,13 +609,34 @@ async def test_completed_add_work_repair_is_applied_without_another_model_call(
 
 
 @pytest.mark.asyncio
-async def test_resume_invokes_prepared_add_work_from_cycle_request(tmp_path):
-    instruction = "Research another source."
+@pytest.mark.parametrize(
+    ("request_instruction", "effective_instruction"),
+    [
+        ("Original request.", "Prepared replacement."),
+        (
+            "Next work.",
+            "Next work.\n\nPREVIOUS CYCLE SUMMARY\nPrevious result.",
+        ),
+    ],
+)
+async def test_resume_invokes_prepared_add_work_from_effective_instruction(
+    tmp_path,
+    request_instruction,
+    effective_instruction,
+):
     setup = make_operation_runtime(
         tmp_path,
-        cycle_instruction=instruction,
+        cycle_instruction=request_instruction,
     )
     add_completed_operation_task(setup)
+    setup.teams.set_cycle_execution_metadata(
+        setup.cycle.id,
+        {
+            "semantic_source": {
+                "effective_instruction": effective_instruction,
+            }
+        },
+    )
     setup.lead_client.responses = [
         ModelResponse(
             valid_plan_json(setup.worker.id, "worker-result"),
@@ -638,7 +659,7 @@ async def test_resume_invokes_prepared_add_work_from_cycle_request(tmp_path):
     with pytest.raises(SimulatedProcessCrash):
         await setup.runtime.add_work(
             setup.run.id,
-            instruction,
+            effective_instruction,
             setup.cycle.id,
         )
 
@@ -659,7 +680,7 @@ async def test_resume_invokes_prepared_add_work_from_cycle_request(tmp_path):
     assert completed.status == "completed"
     assert recovered.status == "applied"
     assert recovered.attempts == 1
-    assert setup.teams.get_cycle_objective(setup.cycle.id) == instruction
+    assert setup.teams.get_cycle_objective(setup.cycle.id) == request_instruction
     assert setup.lead_client.calls == 2
 
 

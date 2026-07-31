@@ -22,6 +22,9 @@
 - Only the user-facing Resume route may move an ambiguous operation back to `prepared`; the automatic dispatcher never may.
 - Do not store raw prompts, raw model responses, provider stderr, credentials, or local tokens in operation rows, API payloads, or logs.
 - Do not store runtime continuation, generation, or receipts in cycle execution metadata.
+- The dispatcher may store only the final preparer/previous-summary-adjusted
+  effective instruction under the owned `semantic_source` metadata namespace;
+  this is durable semantic source input, not continuation or a receipt.
 - Do not run the full test suite. Use only tests named by each task and the final focused command.
 
 ---
@@ -875,6 +878,12 @@ uses `cycle_planning_repair:2`, and Worker JSON repair uses
 A repair never reopens the failed operation. Repair messages are reconstructed
 from the source prompt plus one fixed repair instruction; raw invalid model
 content is neither persisted nor inserted into a later prompt.
+
+Before `add_work()` can reserve an operation, the cycle dispatcher must persist
+the final effective instruction after preparer replacement and previous-cycle
+summary augmentation through a narrow TeamRunService metadata merge. Both the
+initial add-work call and normal-resume recovery read this same semantic source.
+The merge must preserve provider capability and per-agent execution metadata.
 
 Before selecting a new semantic stage, Runtime must check:
 

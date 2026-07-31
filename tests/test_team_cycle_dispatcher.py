@@ -183,7 +183,9 @@ def test_freeze_cycle_normalizes_absent_registry_provider(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_freezes_capabilities_before_preparer(tmp_path):
+async def test_dispatcher_persists_preparer_replacement_as_semantic_source(
+    tmp_path,
+):
     _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     orchestrator = RecordingOrchestrator(teams)
     recovery = TeamProviderRecovery(teams, _FrozenRegistry())
@@ -198,6 +200,17 @@ async def test_dispatcher_freezes_capabilities_before_preparer(tmp_path):
     async def assert_frozen(_request, cycle):
         snapshots = cycle.execution_metadata["provider_capabilities"]
         assert set(snapshots) == {"codex"}
+        worker = next(
+            agent
+            for agent in teams.list_agents(run.id)
+            if agent.id != run.leader_agent_id
+        )
+        teams.set_cycle_agent_execution_metadata(
+            cycle.id,
+            worker.id,
+            {"provider": "codex"},
+        )
+        return "prepared work"
 
     dispatcher.add_preparer(assert_frozen)
     cycles.enqueue_request(
@@ -211,6 +224,12 @@ async def test_dispatcher_freezes_capabilities_before_preparer(tmp_path):
     await dispatcher.run_one(run.id)
 
     assert len(orchestrator.calls) == 1
+    cycle = teams.get_cycle_for_source("manual", "client-1")
+    assert cycle is not None
+    assert teams.get_cycle_effective_instruction(cycle.id) == "prepared work"
+    metadata = teams.get_cycle(cycle.id).execution_metadata or {}
+    assert "provider_capabilities" in metadata
+    assert len(metadata["agents"]) == 1
 
 
 @pytest.mark.asyncio
@@ -254,6 +273,9 @@ async def test_dispatcher_runs_fifo_and_passes_previous_summary_to_leader_only(
 
     first_cycle = services.teams.get_cycle_for_request(first.id)
     assert first_cycle is not None
+    assert services.teams.get_cycle_effective_instruction(first_cycle.id) == (
+        "next work\n\nPREVIOUS CYCLE SUMMARY\nprevious result"
+    )
     services.teams.set_cycle_status(
         first_cycle.id,
         "completed",

@@ -576,6 +576,70 @@ class TeamRunService:
         )
         return self.get_cycle(cycle_id)
 
+    def set_cycle_effective_instruction(
+        self,
+        cycle_id: str,
+        instruction: str,
+    ) -> TeamRunCycle:
+        if not isinstance(instruction, str) or not instruction.strip():
+            raise ValueError("Cycle effective instruction is required")
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            row = connection.execute(
+                "select * from team_run_cycles where id = ?",
+                (cycle_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Team run cycle not found: {cycle_id}")
+            metadata = _execution_metadata_object(row["execution_metadata_json"])
+            semantic_source = metadata.get("semantic_source", {})
+            if not isinstance(semantic_source, dict):
+                raise ValueError("Cycle semantic source metadata is invalid")
+            existing = semantic_source.get("effective_instruction")
+            if existing is not None and existing != instruction:
+                raise ValueError("Cycle effective instruction is immutable")
+            metadata["semantic_source"] = {
+                **semantic_source,
+                "effective_instruction": instruction,
+            }
+            cursor = connection.execute(
+                """
+                update team_run_cycles
+                set execution_metadata_json = ?, updated_at = ? where id = ?
+                """,
+                (
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    now,
+                    cycle_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Team run cycle changed before metadata update")
+            updated = connection.execute(
+                "select * from team_run_cycles where id = ?",
+                (cycle_id,),
+            ).fetchone()
+            return _team_run_cycle_from_row(updated)
+
+    def get_cycle_effective_instruction(self, cycle_id: str) -> str | None:
+        row = self._db.fetchone(
+            "select execution_metadata_json from team_run_cycles where id = ?",
+            (cycle_id,),
+        )
+        if row is None:
+            raise KeyError(f"Team run cycle not found: {cycle_id}")
+        metadata = _execution_metadata_object(row["execution_metadata_json"])
+        semantic_source = metadata.get("semantic_source", {})
+        if not isinstance(semantic_source, dict):
+            raise ValueError("Cycle semantic source metadata is invalid")
+        instruction = semantic_source.get("effective_instruction")
+        if instruction is None:
+            return None
+        if not isinstance(instruction, str) or not instruction.strip():
+            raise ValueError("Cycle effective instruction metadata is invalid")
+        return instruction
+
     def set_cycle_provider_capabilities(
         self,
         cycle_id: str,

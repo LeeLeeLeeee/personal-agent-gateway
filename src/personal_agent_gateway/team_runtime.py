@@ -385,7 +385,10 @@ class TeamRuntime:
                         and operation.stage_ordinal == 2
                     )
                 ):
-                    instruction = self._teams.get_cycle_objective(cycle_id)
+                    instruction = (
+                        self._teams.get_cycle_effective_instruction(cycle_id)
+                        or self._teams.get_cycle_objective(cycle_id)
+                    )
                     if instruction is None:
                         raise OperationConflict(
                             "Prepared add-work operation has no persisted instruction"
@@ -1885,6 +1888,11 @@ class TeamRuntime:
     ) -> list[TeamTask]:
         run = self._teams.get_team_run(team_run_id)
         self._validate_cycle(run, cycle_id)
+        if cycle_id is not None:
+            instruction = (
+                self._teams.get_cycle_effective_instruction(cycle_id)
+                or instruction
+            )
         leader = _find_leader(self._teams.list_agents(run.id))
         leader_agent = self._teams.get_agent(leader.id)
         members = _find_workers(self._teams.list_agents(run.id))

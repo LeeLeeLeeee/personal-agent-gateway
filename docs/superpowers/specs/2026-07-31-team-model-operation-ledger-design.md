@@ -181,6 +181,13 @@ operation에만 결합된다.
 - raw stderr
 - 일반 cycle metadata의 runtime continuation, generation, receipt
 
+Cycle dispatcher가 preparer replacement와 previous-cycle summary augmentation을 모두
+적용한 최종 effective instruction은 예외적으로
+`execution_metadata.semantic_source.effective_instruction`에 저장한다. 이는 다음 add-work
+operation의 immutable request를 재구성하는 durable semantic source이며, runtime
+continuation, generation, effect receipt가 아니다. 전용 merge/read API만 이 namespace를
+소유하고 provider capability와 agent metadata를 보존한다.
+
 ## 상태 모델
 
 | 상태 | 의미 | 자동 네트워크 호출 |
@@ -252,6 +259,9 @@ duplicate apply는 `applied` operation의 effect reference를 검증한 뒤 기�
 ### Cycle planning과 add work
 
 - 검증된 task plan과 Task 생성이 같은 apply transaction에 속한다.
+- dispatcher는 preparer replacement와 previous-cycle summary augmentation 이후, 모델
+  operation reserve 이전에 최종 effective instruction을 semantic source metadata로
+  영속화한다. 최초 `add_work()`와 prepared-operation recovery는 이 동일 값을 사용한다.
 - 첫 응답이 invalid JSON이면 해당 operation은 `failed`로 닫고 별도 repair operation을
   만든다.
 - invalid 응답의 upstream session은 operation에만 보관하고 유효한 plan이 적용되기 전까지
