@@ -44,7 +44,11 @@ _PLAN_STAGES = {
 class WorkerEffectResult:
     task: TeamTask
     agent: TeamAgent
-    next_stage: Literal["acceptance_lead", "user_decision"] | None
+    next_stage: Literal[
+        "acceptance_lead",
+        "mediation_lead",
+        "user_decision",
+    ] | None
     message: TeamMessage | None = None
     decision_request: TeamDecisionRequest | None = None
 
@@ -181,6 +185,83 @@ class TeamModelEffectService:
             )
             return result
 
+    def apply_worker_query(self, operation_id: str) -> WorkerEffectResult:
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            operation = self._operations._get(connection, operation_id)
+            task, agent = self._validate_worker_operation(connection, operation)
+            query = _worker_query(operation)
+            if operation.status == "applied":
+                return self._replay_worker_query(
+                    connection,
+                    operation,
+                    task,
+                    agent,
+                    query,
+                )
+            if operation.status != "completed":
+                raise StaleOperation(
+                    f"Expected operation status completed, got {operation.status}"
+                )
+            if task.status != "in_progress":
+                raise OperationConflict("Worker task is not in progress")
+            if agent.status != "running" or agent.current_task_id != task.id:
+                raise OperationConflict("Worker is not running the operation task")
+
+            run = connection.execute(
+                "select leader_agent_id from team_runs where id = ?",
+                (operation.team_run_id,),
+            ).fetchone()
+            if run is None:
+                raise OperationConflict("Worker query run does not exist")
+            message_id = uuid4().hex
+            connection.execute(
+                """
+                insert into team_messages (
+                    id, team_run_id, cycle_id, sender_agent_id, recipient_agent_id,
+                    kind, content, metadata_json, created_at
+                ) values (?, ?, ?, ?, ?, 'query', ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    operation.team_run_id,
+                    operation.cycle_id,
+                    operation.agent_id,
+                    run["leader_agent_id"],
+                    query["question"],
+                    json.dumps(
+                        {
+                            "operation_id": operation.id,
+                            "task_id": task.id,
+                            "topic": query["topic"],
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
+            )
+            _promote_actor_session(connection, operation, now)
+            _mark_applied(
+                connection,
+                operation,
+                effect_type="worker_query",
+                effect_ref={
+                    "task_id": task.id,
+                    "agent_id": agent.id,
+                    "message_id": message_id,
+                    "next_stage": "mediation_lead",
+                },
+                now=now,
+            )
+            return WorkerEffectResult(
+                task=self._teams._task_from_connection(connection, task.id),
+                agent=self._teams._agent_from_connection(connection, agent.id),
+                next_stage="mediation_lead",
+                message=self._teams._message_from_connection(connection, message_id),
+            )
+
     def apply_synthesis(
         self,
         operation_id: str,
@@ -305,6 +386,83 @@ class TeamModelEffectService:
             )
             return stored_summary
 
+    def apply_synthesis_decision(
+        self,
+        operation_id: str,
+    ) -> TeamDecisionRequest:
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            operation = self._operations._get(connection, operation_id)
+            self._validate_synthesis_decision_operation(connection, operation)
+            decision = _user_decision(operation)
+            if operation.status == "applied":
+                return self._replay_synthesis_decision(
+                    connection,
+                    operation,
+                    decision,
+                )
+            if operation.status != "completed":
+                raise StaleOperation(
+                    f"Expected operation status completed, got {operation.status}"
+                )
+            self._validate_synthesis_ready(connection, operation)
+            request_id = self._teams._append_decision_item(
+                connection,
+                operation.team_run_id,
+                operation.cycle_id,
+                decision,
+                now,
+                blocking_task_id=None,
+                stage="synthesis",
+            )
+            request = self._teams._decision_request_from_connection(
+                connection,
+                request_id,
+            )
+            matching_items = [
+                item
+                for item in request.items
+                if _run_decision_item_matches(item, decision)
+            ]
+            if len(matching_items) != 1:
+                raise OperationConflict(
+                    "Synthesis decision does not have one exact request item"
+                )
+            item = matching_items[0]
+            item_id = item.get("id")
+            if not isinstance(item_id, str):
+                raise OperationConflict("Synthesis decision item ID is invalid")
+            _promote_actor_session(connection, operation, now)
+            _mark_applied(
+                connection,
+                operation,
+                effect_type="user_decision",
+                effect_ref={
+                    "run_id": operation.team_run_id,
+                    "cycle_id": operation.cycle_id,
+                    "agent_id": operation.agent_id,
+                    "decision_request_id": request.id,
+                    "decision_item_id": item_id,
+                    "decision_item_digest": _canonical_digest(item),
+                },
+                now=now,
+            )
+            return request
+
+    def _validate_synthesis_decision_operation(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+    ) -> None:
+        if (
+            operation.stage != "cycle_synthesis"
+            or operation.task_id is not None
+            or operation.result_kind != "user_decision"
+        ):
+            raise OperationConflict("Operation is not a synthesis decision stage")
+        self._validate_synthesis_actor(connection, operation)
+
     def _validate_synthesis_operation(
         self,
         connection: sqlite3.Connection,
@@ -316,6 +474,13 @@ class TeamModelEffectService:
             or operation.result_kind != "synthesis"
         ):
             raise OperationConflict("Operation is not a synthesis stage")
+        self._validate_synthesis_actor(connection, operation)
+
+    def _validate_synthesis_actor(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+    ) -> None:
         run = connection.execute(
             "select leader_agent_id from team_runs where id = ?",
             (operation.team_run_id,),
@@ -334,6 +499,101 @@ class TeamModelEffectService:
             raise OperationConflict("Synthesis cycle does not belong to the run")
         if agent.team_run_id != operation.team_run_id:
             raise OperationConflict("Synthesis actor does not belong to the run")
+
+    def _validate_synthesis_ready(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+    ) -> None:
+        run = connection.execute(
+            "select status from team_runs where id = ?",
+            (operation.team_run_id,),
+        ).fetchone()
+        cycle = connection.execute(
+            "select status from team_run_cycles where id = ?",
+            (operation.cycle_id,),
+        ).fetchone()
+        if (
+            run is None
+            or run["status"] != "summarizing"
+            or cycle is None
+            or cycle["status"] != "running"
+        ):
+            raise OperationConflict("Team state is not ready for synthesis")
+        task_rows = connection.execute(
+            """
+            select status, required from team_tasks
+            where team_run_id = ? and cycle_id = ?
+            order by created_at asc, id asc
+            """,
+            (operation.team_run_id, operation.cycle_id),
+        ).fetchall()
+        _terminal_status(task_rows)
+
+    def _replay_synthesis_decision(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        decision: dict[str, object],
+    ) -> TeamDecisionRequest:
+        effect_ref = operation.effect_ref_json
+        if (
+            operation.effect_type != "user_decision"
+            or not isinstance(effect_ref, dict)
+            or set(effect_ref)
+            != {
+                "run_id",
+                "cycle_id",
+                "agent_id",
+                "decision_request_id",
+                "decision_item_id",
+                "decision_item_digest",
+            }
+            or effect_ref["run_id"] != operation.team_run_id
+            or effect_ref["cycle_id"] != operation.cycle_id
+            or effect_ref["agent_id"] != operation.agent_id
+            or not isinstance(effect_ref["decision_request_id"], str)
+            or not isinstance(effect_ref["decision_item_id"], str)
+            or not isinstance(effect_ref["decision_item_digest"], str)
+        ):
+            raise OperationConflict(
+                "Applied synthesis decision reference is invalid"
+            )
+        self._validate_synthesis_ready(connection, operation)
+        request = self._teams._decision_request_from_connection(
+            connection,
+            effect_ref["decision_request_id"],
+        )
+        agent = self._teams._agent_from_connection(
+            connection,
+            operation.agent_id,
+        )
+        item = next(
+            (
+                candidate
+                for candidate in request.items
+                if candidate.get("id") == effect_ref["decision_item_id"]
+            ),
+            None,
+        )
+        if (
+            request.team_run_id != operation.team_run_id
+            or request.cycle_id != operation.cycle_id
+            or request.status != "collecting"
+            or request.answers != {}
+            or request.published_at is not None
+            or request.answered_at is not None
+            or agent.status != "running"
+            or agent.current_task_id is not None
+            or not _operation_session_matches(operation, agent)
+            or item is None
+            or _canonical_digest(item) != effect_ref["decision_item_digest"]
+            or not _run_decision_item_matches(item, decision)
+        ):
+            raise OperationConflict(
+                "Applied synthesis decision rows do not match"
+            )
+        return request
 
     def _replay_synthesis(
         self,
@@ -421,7 +681,11 @@ class TeamModelEffectService:
     ) -> tuple[TeamTask, TeamAgent]:
         if operation.stage != "worker_execution" or operation.task_id is None:
             raise OperationConflict("Operation is not a Worker execution stage")
-        if operation.result_kind not in {"task_outcome", "user_decision"}:
+        if operation.result_kind not in {
+            "task_outcome",
+            "user_decision",
+            "worker_query",
+        }:
             raise OperationConflict("Completed Worker result kind is invalid")
         task = self._teams._task_from_connection(connection, operation.task_id)
         agent = self._teams._agent_from_connection(connection, operation.agent_id)
@@ -448,6 +712,61 @@ class TeamModelEffectService:
         if cycle is None or cycle["team_run_id"] != operation.team_run_id:
             raise OperationConflict("Worker cycle does not belong to the team run")
         return task, agent
+
+    def _replay_worker_query(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        task: TeamTask,
+        agent: TeamAgent,
+        query: dict[str, object],
+    ) -> WorkerEffectResult:
+        effect_ref = operation.effect_ref_json
+        if (
+            operation.effect_type != "worker_query"
+            or not isinstance(effect_ref, dict)
+            or set(effect_ref)
+            != {"task_id", "agent_id", "message_id", "next_stage"}
+            or effect_ref["task_id"] != operation.task_id
+            or effect_ref["agent_id"] != operation.agent_id
+            or effect_ref["next_stage"] != "mediation_lead"
+            or not isinstance(effect_ref["message_id"], str)
+        ):
+            raise OperationConflict("Applied Worker query reference is invalid")
+        message = self._teams._message_from_connection(
+            connection,
+            effect_ref["message_id"],
+        )
+        run = connection.execute(
+            "select leader_agent_id from team_runs where id = ?",
+            (operation.team_run_id,),
+        ).fetchone()
+        if (
+            task.status != "in_progress"
+            or agent.status != "running"
+            or agent.current_task_id != task.id
+            or not _operation_session_matches(operation, agent)
+            or run is None
+            or message.team_run_id != operation.team_run_id
+            or message.cycle_id != operation.cycle_id
+            or message.sender_agent_id != operation.agent_id
+            or message.recipient_agent_id != run["leader_agent_id"]
+            or message.kind != "query"
+            or message.content != query["question"]
+            or message.metadata
+            != {
+                "operation_id": operation.id,
+                "task_id": task.id,
+                "topic": query["topic"],
+            }
+        ):
+            raise OperationConflict("Applied Worker query rows do not match")
+        return WorkerEffectResult(
+            task=task,
+            agent=agent,
+            next_stage="mediation_lead",
+            message=message,
+        )
 
     def _apply_task_outcome(
         self,
@@ -966,6 +1285,13 @@ def _user_decision(operation: TeamModelOperation) -> dict[str, object]:
     return payload
 
 
+def _worker_query(operation: TeamModelOperation) -> dict[str, object]:
+    payload = _result_payload(operation, "worker_query")
+    if not _valid_worker_query(payload):
+        raise OperationConflict("Completed Worker query is invalid")
+    return payload
+
+
 def _synthesis_summary(operation: TeamModelOperation) -> str:
     payload = _result_payload(operation, "synthesis")
     if not _valid_synthesis(payload):
@@ -1245,6 +1571,38 @@ def _decision_item_matches(
     )
 
 
+def _run_decision_item_matches(
+    item: object,
+    decision: dict[str, object],
+) -> bool:
+    return (
+        isinstance(item, dict)
+        and set(item)
+        == {
+            "id",
+            "stage",
+            "topic",
+            "question",
+            "why_needed",
+            "options",
+            "recommended_option_id",
+            "blocking_scope",
+            "blocking_task_ids",
+            "query_message_ids",
+        }
+        and isinstance(item["id"], str)
+        and item["stage"] in {"planning", "synthesis"}
+        and item["topic"] == decision["topic"]
+        and item["question"] == decision["question"]
+        and item["why_needed"] == decision["why_needed"]
+        and item["options"] == decision["options"]
+        and item["recommended_option_id"] == decision["recommended_option_id"]
+        and item["blocking_scope"] == "run"
+        and item["blocking_task_ids"] == []
+        and item["query_message_ids"] == []
+    )
+
+
 def _decision_item_references_are_valid(
     connection: sqlite3.Connection,
     operation: TeamModelOperation,
@@ -1317,6 +1675,7 @@ def team_model_effect_result_validators() -> OperationResultValidatorRegistry:
         "worker_execution": {
             "task_outcome": _valid_task_outcome,
             "user_decision": _valid_user_decision,
+            "worker_query": _valid_worker_query,
         },
         "cycle_synthesis": {
             "synthesis": _valid_synthesis,
@@ -1331,6 +1690,16 @@ def _valid_task_outcome(payload: dict[str, object]) -> bool:
     except (TaskOutcomeError, TypeError, ValueError):
         return False
     return True
+
+
+def _valid_worker_query(payload: dict[str, object]) -> bool:
+    return (
+        set(payload) == {"topic", "question"}
+        and all(
+            isinstance(payload[field], str) and bool(payload[field].strip())
+            for field in ("topic", "question")
+        )
+    )
 
 
 def _valid_user_decision(payload: dict[str, object]) -> bool:

@@ -118,7 +118,13 @@ def user_decision():
     }
 
 
-def make_completed_worker_operation(tmp_path, *, outcome=None, decision=None):
+def make_completed_worker_operation(
+    tmp_path,
+    *,
+    outcome=None,
+    decision=None,
+    query=None,
+):
     db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, _cycles, run)
     teams.set_cycle_status(cycle.id, "running")
@@ -160,6 +166,8 @@ def make_completed_worker_operation(tmp_path, *, outcome=None, decision=None):
     invoking = operations.begin_attempt(reserved.id, "consumer-1")
     if decision is not None:
         result = ValidatedOperationResult("user_decision", decision)
+    elif query is not None:
+        result = ValidatedOperationResult("worker_query", query)
     else:
         result = ValidatedOperationResult("task_outcome", asdict(outcome))
     operation = operations.complete(
@@ -181,7 +189,7 @@ def make_completed_worker_operation(tmp_path, *, outcome=None, decision=None):
     )
 
 
-def make_completed_synthesis_operation(tmp_path):
+def make_completed_synthesis_operation(tmp_path, *, decision=None):
     db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, _cycles, run)
     teams.set_cycle_status(cycle.id, "running")
@@ -221,13 +229,18 @@ def make_completed_synthesis_operation(tmp_path):
         )
     )
     invoking = operations.begin_attempt(reserved.id, "consumer-1")
+    result = (
+        ValidatedOperationResult("user_decision", decision)
+        if decision is not None
+        else ValidatedOperationResult(
+            "synthesis",
+            {"summary": "The draft is complete."},
+        )
+    )
     operation = operations.complete(
         invoking.id,
         invoking.version,
-        ValidatedOperationResult(
-            "synthesis",
-            {"summary": "The draft is complete."},
-        ),
+        result,
         upstream_session_id="lead-session",
     )
     return SimpleNamespace(
@@ -426,6 +439,47 @@ def test_worker_user_decision_is_atomic_and_duplicate_apply_is_idempotent(
     assert services.operations.get(services.operation.id).status == "applied"
 
 
+def test_worker_query_is_atomic_and_duplicate_apply_is_idempotent(tmp_path):
+    query = {
+        "topic": "publication",
+        "question": "Which publication channel should I use?",
+    }
+    services = make_completed_worker_operation(tmp_path, query=query)
+
+    first = services.effects.apply_worker_query(services.operation.id)
+    second = services.effects.apply_worker_query(services.operation.id)
+
+    assert second.message.id == first.message.id
+    assert second.next_stage == "mediation_lead"
+    assert second.message.content == query["question"]
+    assert second.message.metadata == {
+        "operation_id": services.operation.id,
+        "task_id": services.task.id,
+        "topic": query["topic"],
+    }
+    assert services.teams.get_task(services.task.id).status == "in_progress"
+    worker = services.teams.get_agent(services.worker.id)
+    assert worker.status == "running"
+    assert worker.current_task_id == services.task.id
+    assert worker.upstream_session_id == "worker-session"
+    assert services.operations.get(services.operation.id).status == "applied"
+
+
+def test_worker_query_replay_rejects_tampered_message(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        query={"topic": "publication", "question": "Which channel?"},
+    )
+    result = services.effects.apply_worker_query(services.operation.id)
+    services.db.execute(
+        "update team_messages set content = ? where id = ?",
+        ("tampered", result.message.id),
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_worker_query(services.operation.id)
+
+
 def test_duplicate_worker_outcome_does_not_append_another_message(tmp_path):
     services = make_completed_worker_operation(
         tmp_path,
@@ -530,6 +584,42 @@ def test_synthesis_and_operation_are_atomic_and_idempotent(tmp_path):
     operation = services.operations.get(services.operation.id)
     assert operation.status == "applied"
     assert operation.effect_type == "synthesis"
+
+
+def test_synthesis_decision_is_atomic_and_duplicate_apply_is_idempotent(tmp_path):
+    decision = user_decision()
+    services = make_completed_synthesis_operation(tmp_path, decision=decision)
+
+    first = services.effects.apply_synthesis_decision(services.operation.id)
+    second = services.effects.apply_synthesis_decision(services.operation.id)
+
+    assert second.id == first.id
+    assert len(services.teams.list_decision_requests(services.run.id)) == 1
+    assert second.items[0]["stage"] == "synthesis"
+    assert second.items[0]["question"] == decision["question"]
+    assert services.teams.get_team_run(services.run.id).status == "summarizing"
+    assert services.teams.get_cycle(services.cycle.id).status == "running"
+    assert services.teams.get_agent(services.leader.id).upstream_session_id == (
+        "lead-session"
+    )
+    operation = services.operations.get(services.operation.id)
+    assert operation.status == "applied"
+    assert operation.effect_type == "user_decision"
+
+
+def test_synthesis_decision_replay_rejects_removed_item(tmp_path):
+    services = make_completed_synthesis_operation(
+        tmp_path,
+        decision=user_decision(),
+    )
+    request = services.effects.apply_synthesis_decision(services.operation.id)
+    services.db.execute(
+        "update team_decision_requests set items_json = '[]' where id = ?",
+        (request.id,),
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_synthesis_decision(services.operation.id)
 
 
 def test_plan_replay_rejects_unrelated_same_cycle_rows(tmp_path):

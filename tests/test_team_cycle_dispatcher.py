@@ -393,6 +393,9 @@ async def test_cancellation_during_real_leader_add_work_preserves_cycle(
             await asyncio.Event().wait()
             return ModelResponse(content="[]", tool_calls=[])
 
+        async def complete_operation(self, messages, *, consumer_run_id):
+            return await self.complete(messages)
+
     runtime = TeamRuntime(
         teams,
         lambda _agent, _cycle_id=None: GatedLeaderModel(),

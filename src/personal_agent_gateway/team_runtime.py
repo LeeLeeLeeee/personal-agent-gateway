@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
@@ -7,7 +8,7 @@ from typing import Literal, Protocol
 
 from personal_agent_gateway.archive import ArchiveService
 from personal_agent_gateway.events import EventBus
-from personal_agent_gateway.model_client import ModelClient
+from personal_agent_gateway.model_client import ModelClient, ModelResponse
 from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.source_staging import StagedInputs
 from personal_agent_gateway.team_acceptance import (
@@ -23,6 +24,21 @@ from personal_agent_gateway.team_outcomes import (
     TaskOutcome,
     TaskOutcomeError,
     parse_task_outcome,
+)
+from personal_agent_gateway.team_model_effects import (
+    TeamModelEffectService,
+    team_model_effect_result_validators,
+)
+from personal_agent_gateway.team_model_invoker import (
+    InvalidOperationResult,
+    TeamModelInvoker,
+)
+from personal_agent_gateway.team_model_operations import (
+    OperationConflict,
+    OperationSpec,
+    TeamModelOperation,
+    TeamModelOperationService,
+    ValidatedOperationResult,
 )
 from personal_agent_gateway.team_results import (
     TeamRunResultPackager,
@@ -144,6 +160,7 @@ Return "owner_agent_id" using the exact ID from the available team members list.
 Do not assign by list order or previous completion status."""
 
 AGENT_REINVOCATION_CAP = 3
+_SESSION_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -236,6 +253,10 @@ class TeamRuntime:
         acceptance_service: TeamAcceptanceService | None = None,
         artifact_publisher: TeamArtifactPublisher | None = None,
         staged_inputs_resolver: Callable[[Path], StagedInputs | None] | None = None,
+        *,
+        operations: TeamModelOperationService | None = None,
+        model_invoker: TeamModelInvoker | None = None,
+        model_effects: TeamModelEffectService | None = None,
     ) -> None:
         self._teams = teams
         self._model_factory = model_factory
@@ -245,15 +266,68 @@ class TeamRuntime:
         self._acceptance_service = acceptance_service or TeamAcceptanceService()
         self._artifact_publisher = artifact_publisher
         self._staged_inputs_resolver = staged_inputs_resolver
+        self._operations = operations or TeamModelOperationService(
+            teams._db,
+            result_validators=team_model_effect_result_validators(),
+        )
+        self._model_invoker = model_invoker or TeamModelInvoker(self._operations)
+        self._model_effects = model_effects or TeamModelEffectService(
+            teams._db,
+            teams,
+            self._operations,
+        )
 
     def _model(
         self,
         agent: TeamAgent,
         cycle_id: str | None,
+        *,
+        upstream_session_id: str | None | object = _SESSION_UNSET,
     ) -> ModelClient:
+        if upstream_session_id is not _SESSION_UNSET:
+            agent = replace(
+                agent,
+                upstream_session_id=(
+                    upstream_session_id
+                    if isinstance(upstream_session_id, str)
+                    else None
+                ),
+            )
         if cycle_id is None:
             return self._model_factory(agent)
         return self._model_factory(agent, cycle_id)
+
+    async def _invoke_operation(
+        self,
+        spec: OperationSpec,
+        agent: TeamAgent,
+        messages: list[dict[str, object]],
+        parser: Callable[[ModelResponse], ValidatedOperationResult],
+    ) -> TeamModelOperation:
+        open_operation = self._operations.get_open_for_cycle(spec.cycle_id)
+        if (
+            open_operation is not None
+            and open_operation.operation_key != spec.operation_key
+        ):
+            raise OperationConflict("Cycle already has an open model operation")
+        operation = self._operations.reserve(spec)
+        if operation.status in {"completed", "applied"}:
+            return operation
+        if operation.status in {"waiting_for_provider", "ambiguous", "invoking"}:
+            raise OperationConflict(
+                f"Operation status {operation.status} cannot be invoked"
+            )
+        client = self._model(
+            agent,
+            spec.cycle_id,
+            upstream_session_id=operation.upstream_session_id,
+        )
+        return await self._model_invoker.invoke(
+            operation,
+            client,
+            messages,
+            parser,
+        )
 
     def _space_policy(
         self,
@@ -377,7 +451,6 @@ class TeamRuntime:
         leader_agent = self._teams.get_agent(leader.id)
         members = _find_workers(self._teams.list_agents(run.id))
         member_ids = {member.id for member in members}
-        model = self._model(leader_agent, cycle_id)
         goal_context = self._goal_context(run, cycle_id)
         prompt = _space_block(
             run,
@@ -402,7 +475,28 @@ class TeamRuntime:
                 "\n\nResolved user decisions for planning:\n"
                 f"{decision_context}\nDo not ask these resolved questions again."
             )
-        response = await model.complete([{"role": "user", "content": prompt}])
+        messages: list[dict[str, object]] = [{"role": "user", "content": prompt}]
+        if cycle_id is not None:
+            operation = await self._invoke_plan_with_repair(
+                run,
+                cycle_id,
+                leader_agent,
+                "cycle_planning",
+                messages,
+            )
+            created_tasks = self._model_effects.apply_plan(operation.id)
+            for created in created_tasks:
+                await self._publish(
+                    {
+                        "type": "team.task.created",
+                        "team_run_id": run.id,
+                        "task_id": created.id,
+                    }
+                )
+            return _operation_task_specs(operation)
+
+        model = self._model(leader_agent, cycle_id)
+        response = await model.complete(messages)
         if response.upstream_session_id:
             self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
         resolution = _parse_mediation_resolution(response.content)
@@ -440,6 +534,56 @@ class TeamRuntime:
         )
         return tasks
 
+    async def _invoke_plan_with_repair(
+        self,
+        run: TeamRun,
+        cycle_id: str,
+        leader: TeamAgent,
+        stage: Literal["cycle_planning", "cycle_add_work"],
+        messages: list[dict[str, object]],
+    ) -> TeamModelOperation:
+        spec = _operation_spec(
+            run,
+            cycle_id,
+            leader,
+            stage,
+            0,
+            messages,
+        )
+        try:
+            return await self._invoke_operation(
+                spec,
+                leader,
+                messages,
+                _validated_task_plan,
+            )
+        except InvalidOperationResult as exc:
+            failed = self._operations.get(exc.operation_id)
+            repair_messages: list[dict[str, object]] = [
+                {
+                    "role": "user",
+                    "content": (
+                        f"{messages[0]['content']}\n"
+                        "Return ONLY a JSON array. No prose, no code fences."
+                    ),
+                }
+            ]
+            repair_spec = _operation_spec(
+                run,
+                cycle_id,
+                leader,
+                "cycle_planning_repair",
+                1,
+                repair_messages,
+                upstream_session_id=failed.upstream_session_id,
+            )
+            return await self._invoke_operation(
+                repair_spec,
+                leader,
+                repair_messages,
+                _validated_task_plan,
+            )
+
     async def _execute(
         self,
         run: TeamRun,
@@ -449,6 +593,73 @@ class TeamRuntime:
     ) -> None:
         counter = 0
         while True:
+            if cycle_id is not None:
+                open_operation = self._operations.get_open_for_cycle(cycle_id)
+                if (
+                    open_operation is not None
+                    and open_operation.stage == "cycle_synthesis"
+                ):
+                    return
+                if open_operation is not None:
+                    if (
+                        open_operation.stage != "worker_execution"
+                        or open_operation.task_id is None
+                    ):
+                        raise OperationConflict(
+                            "Cycle has an open operation for another stage"
+                        )
+                    if open_operation.status in {
+                        "waiting_for_provider",
+                        "ambiguous",
+                        "invoking",
+                    }:
+                        raise OperationConflict(
+                            f"Operation status {open_operation.status} "
+                            "cannot be invoked"
+                        )
+                    open_task = self._teams.get_task(open_operation.task_id)
+                    open_worker = self._teams.get_agent(
+                        open_operation.agent_id
+                    )
+                    if open_operation.status == "prepared":
+                        resumed = await self._run_task(
+                            run,
+                            leader,
+                            open_worker,
+                            open_task,
+                        )
+                        if not isinstance(resumed, TeamModelOperation):
+                            raise OperationConflict(
+                                "Prepared Worker operation did not complete "
+                                "with an operation result"
+                            )
+                        open_operation = resumed
+                    decision = await self._apply_cycle_worker_operation(
+                        run,
+                        leader,
+                        open_worker,
+                        open_task,
+                        open_operation,
+                        before=None,
+                    )
+                    if decision is not None:
+                        request = self._teams.defer_task_for_user_decision(
+                            open_task.id,
+                            open_worker.id,
+                            decision.decision,
+                        )
+                        await self._publish(
+                            {
+                                "type": "team.task.updated",
+                                "team_run_id": run.id,
+                                "task_id": open_task.id,
+                                "agent_id": open_worker.id,
+                                "decision_request_id": request.id,
+                            }
+                        )
+                        if decision.decision.get("blocking_scope") == "run":
+                            return
+                    continue
             pending = [
                 task
                 for task in self._teams.list_tasks(run.id, cycle_id)
@@ -476,6 +687,43 @@ class TeamRuntime:
                 working_root = Path(run.working_root or run.workspace_root)
                 before = workspace_snapshot(working_root)
                 outcome = await self._run_task(run, leader, worker, task)
+                if isinstance(outcome, TeamModelOperation):
+                    decision = await self._apply_cycle_worker_operation(
+                        run,
+                        leader,
+                        worker,
+                        task,
+                        outcome,
+                        before=before,
+                    )
+                    task = self._teams.get_task(task.id)
+                    worker = self._teams.get_agent(worker.id)
+                    if decision is not None:
+                        request = self._teams.defer_task_for_user_decision(
+                            task.id,
+                            worker.id,
+                            decision.decision,
+                        )
+                        await self._publish(
+                            {
+                                "type": "team.task.updated",
+                                "team_run_id": run.id,
+                                "task_id": task.id,
+                                "agent_id": worker.id,
+                                "decision_request_id": request.id,
+                            }
+                        )
+                        if decision.decision.get("blocking_scope") == "run":
+                            return
+                    await self._publish(
+                        {
+                            "type": "team.task.updated",
+                            "team_run_id": run.id,
+                            "task_id": task.id,
+                            "agent_id": worker.id,
+                        }
+                    )
+                    continue
                 if isinstance(outcome, UserDecisionResolution):
                     request = self._teams.defer_task_for_user_decision(
                         task.id, worker.id, outcome.decision
@@ -612,6 +860,130 @@ class TeamRuntime:
                     "agent_id": worker.id,
                 }
             )
+
+    async def _apply_cycle_worker_operation(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        worker: TeamAgent,
+        task: TeamTask,
+        operation: TeamModelOperation,
+        *,
+        before: WorkspaceSnapshot | None,
+    ) -> UserDecisionResolution | None:
+        if operation.result_kind == "worker_query":
+            applied = self._model_effects.apply_worker_query(operation.id)
+            assert applied.message is not None
+            query = _operation_worker_query(operation)
+            content = _worker_query_content(query)
+            continued = await self._continue_worker_content(
+                run,
+                leader,
+                worker,
+                task,
+                content,
+                query_message=applied.message,
+            )
+            if isinstance(continued, UserDecisionResolution):
+                return continued
+            raise OperationConflict(
+                "Resumed Worker query requires a later mediation operation"
+            )
+        if operation.result_kind != "task_outcome":
+            raise OperationConflict("Completed Worker operation result is invalid")
+        outcome = _operation_task_outcome(operation)
+        working_root = Path(run.working_root or run.workspace_root)
+        changes = (
+            _operation_workspace_changes(
+                workspace_changes(before, workspace_snapshot(working_root))
+            )
+            if before is not None
+            else {"created": [], "modified": [], "deleted": []}
+        )
+        staged_inputs = (
+            self._staged_inputs_resolver(working_root)
+            if self._staged_inputs_resolver is not None
+            else None
+        )
+        acceptance = self._acceptance_service.evaluate(
+            task,
+            outcome,
+            working_root,
+            staged_inputs=staged_inputs,
+        )
+        if acceptance.accepted and outcome.deliverables:
+            try:
+                if self._artifact_publisher is None:
+                    raise ArtifactPublicationError("artifact_publication_failed")
+                self._artifact_publisher.publish(
+                    run.id,
+                    task.cycle_id,
+                    task,
+                    outcome,
+                    working_root,
+                )
+            except ArtifactPublicationError:
+                acceptance = AcceptanceResult(
+                    accepted=False,
+                    status="failed",
+                    reason_code="artifact_publication_failed",
+                    evidence={},
+                )
+        applied = self._model_effects.apply_worker_outcome(
+            operation.id,
+            acceptance,
+            workspace_changes=changes,
+        )
+        if applied.next_stage != "acceptance_lead":
+            return None
+        recovered = await self._recover_task_outcome(
+            run,
+            leader,
+            worker,
+            applied.task,
+            outcome,
+            acceptance,
+            working_root,
+            before or workspace_snapshot(working_root),
+            staged_inputs,
+        )
+        if isinstance(recovered, UserDecisionResolution):
+            return recovered
+        recovered_task, recovered_outcome, recovered_acceptance = recovered
+        self._teams.record_task_outcome(
+            recovered_task.id,
+            asdict(recovered_outcome),
+            asdict(recovered_acceptance),
+        )
+        terminal_status = recovered_acceptance.status
+        if (
+            not recovered_acceptance.accepted
+            and is_recoverable_acceptance_failure(
+                recovered_acceptance.reason_code
+            )
+            and recovered_task.acceptance_recovery_attempts
+            >= ACCEPTANCE_RECOVERY_CAP
+        ):
+            terminal_status = "failed"
+        self._teams.finish_task(
+            recovered_task.id,
+            worker.id,
+            terminal_status,
+            result=(
+                recovered_outcome.summary
+                if recovered_acceptance.accepted
+                else None
+            ),
+            error_message=(
+                None
+                if recovered_acceptance.accepted
+                else (
+                    recovered_acceptance.reason_code
+                    or recovered_outcome.reason_code
+                )
+            ),
+        )
+        return None
 
     async def _review_acceptance(
         self,
@@ -862,8 +1234,80 @@ class TeamRuntime:
 
     async def _run_task(
         self, run: TeamRun, leader: TeamAgent, worker: TeamAgent, task: TeamTask
-    ) -> TaskOutcome | UserDecisionResolution:
+    ) -> TaskOutcome | UserDecisionResolution | TeamModelOperation:
         worker_agent = self._teams.get_agent(worker.id)
+        if task.cycle_id is not None:
+            messages: list[dict[str, object]] = [
+                {
+                    "role": "user",
+                    "content": self._worker_prompt(run, worker_agent, task),
+                }
+            ]
+            spec = _operation_spec(
+                run,
+                task.cycle_id,
+                worker_agent,
+                "worker_execution",
+                0,
+                messages,
+                task_id=task.id,
+            )
+            def parser(response):
+                return self._validated_worker_result(
+                    response,
+                    worker_agent,
+                    run,
+                )
+            try:
+                operation = await self._invoke_operation(
+                    spec,
+                    worker_agent,
+                    messages,
+                    parser,
+                )
+            except InvalidOperationResult as exc:
+                failed = self._operations.get(exc.operation_id)
+                repair_messages: list[dict[str, object]] = [
+                    {
+                        "role": "user",
+                        "content": (
+                            f"{messages[0]['content']}\n\n"
+                            "Return ONLY the required TaskOutcome JSON object or "
+                            "the exact needs_info JSON block."
+                        ),
+                    }
+                ]
+                repair_spec = _operation_spec(
+                    run,
+                    task.cycle_id,
+                    worker_agent,
+                    "worker_execution",
+                    failed.stage_ordinal + 1,
+                    repair_messages,
+                    task_id=task.id,
+                    upstream_session_id=failed.upstream_session_id,
+                )
+                operation = await self._invoke_operation(
+                    repair_spec,
+                    worker_agent,
+                    repair_messages,
+                    parser,
+                )
+            if operation.result_kind != "worker_query":
+                return operation
+            applied = self._model_effects.apply_worker_query(operation.id)
+            assert applied.message is not None
+            query = _operation_worker_query(operation)
+            content = _worker_query_content(query)
+            return await self._continue_worker_content(
+                run,
+                leader,
+                worker,
+                task,
+                content,
+                query_message=applied.message,
+            )
+
         model = self._model(worker_agent, task.cycle_id)
         response = await model.complete(
             [{"role": "user", "content": self._worker_prompt(run, worker_agent, task)}]
@@ -871,7 +1315,25 @@ class TeamRuntime:
         if response.upstream_session_id:
             self._teams.set_agent_session(worker_agent.id, response.upstream_session_id)
         content = response.content
+        return await self._continue_worker_content(
+            run,
+            leader,
+            worker,
+            task,
+            content,
+        )
 
+    async def _continue_worker_content(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        worker: TeamAgent,
+        task: TeamTask,
+        content: str,
+        *,
+        query_message: TeamMessage | None = None,
+    ) -> TaskOutcome | UserDecisionResolution:
+        worker_agent = self._teams.get_agent(worker.id)
         while True:
             req = _parse_needs_info(content)
             if req is None:
@@ -901,11 +1363,12 @@ class TeamRuntime:
                     persona_id=worker_agent.persona_id,
                     team_run_id=run.id,
                 )
-            query_message = self._teams.append_message(
-                run.id, worker.id, leader.id, "query", req["question"],
-                {"task_id": task.id, "topic": req["topic"]},
-                cycle_id=task.cycle_id,
-            )
+            if query_message is None:
+                query_message = self._teams.append_message(
+                    run.id, worker.id, leader.id, "query", req["question"],
+                    {"task_id": task.id, "topic": req["topic"]},
+                    cycle_id=task.cycle_id,
+                )
             resolution = await self._mediate(run, leader, task, req["question"])
             if task.cycle_id is not None:
                 rounds_used = self._teams.increment_cycle_rounds_used(
@@ -934,6 +1397,27 @@ class TeamRuntime:
                 task.cycle_id,
             )
             self._teams.increment_agent_reinvocations(worker.id)
+            query_message = None
+
+    def _validated_worker_result(
+        self,
+        response: ModelResponse,
+        worker: TeamAgent,
+        run: TeamRun,
+    ) -> ValidatedOperationResult:
+        query = _parse_needs_info(response.content)
+        if query is not None:
+            return ValidatedOperationResult("worker_query", query)
+        outcome = parse_task_outcome(response.content)
+        summary = self._finalize_persona_content(
+            outcome.summary,
+            persona_id=worker.persona_id,
+            team_run_id=run.id,
+        )
+        return ValidatedOperationResult(
+            "task_outcome",
+            asdict(replace(outcome, summary=summary)),
+        )
 
     async def _resume_worker(
         self,
@@ -1088,13 +1572,21 @@ class TeamRuntime:
             await self._publish({"type": "team.run.summarizing", "team_run_id": run.id})
             summary = await self._leader_synthesis(run, leader, tasks, cycle_id)
             if isinstance(summary, UserDecisionResolution):
-                self._teams.defer_run_for_user_decision(
-                    run.id,
-                    summary.decision,
-                    stage="synthesis",
-                    cycle_id=cycle_id,
-                )
+                if cycle_id is None:
+                    self._teams.defer_run_for_user_decision(
+                        run.id,
+                        summary.decision,
+                        stage="synthesis",
+                        cycle_id=cycle_id,
+                    )
                 return await self._publish_user_decision_request(run, cycle_id)
+            if cycle_id is not None:
+                run = self._teams.get_team_run(run.id)
+                self._package_results(run, leader, cycle_id)
+                await self._publish(
+                    {"type": "team.run.completed", "team_run_id": run.id}
+                )
+                return run
             if any(
                 task.status == "pending"
                 for task in self._teams.list_tasks(run.id, cycle_id)
@@ -1181,7 +1673,6 @@ class TeamRuntime:
         leader_agent = self._teams.get_agent(leader.id)
         members = _find_workers(self._teams.list_agents(run.id))
         member_ids = {member.id for member in members}
-        model = self._model(leader_agent, cycle_id)
         existing = (
             ", ".join(
                 task.title for task in self._teams.list_tasks(run.id, cycle_id)
@@ -1203,7 +1694,28 @@ class TeamRuntime:
             instruction=instruction,
             team_roster_json=_assignment_roster_json(members),
         )
-        response = await model.complete([{"role": "user", "content": prompt}])
+        messages: list[dict[str, object]] = [{"role": "user", "content": prompt}]
+        if cycle_id is not None:
+            operation = await self._invoke_plan_with_repair(
+                run,
+                cycle_id,
+                leader_agent,
+                "cycle_add_work",
+                messages,
+            )
+            created = self._model_effects.apply_plan(operation.id)
+            for task in created:
+                await self._publish(
+                    {
+                        "type": "team.task.created",
+                        "team_run_id": run.id,
+                        "task_id": task.id,
+                    }
+                )
+            return created
+
+        model = self._model(leader_agent, cycle_id)
+        response = await model.complete(messages)
         if response.upstream_session_id:
             self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
         try:
@@ -1252,7 +1764,6 @@ class TeamRuntime:
             for task in tasks
         )
         leader_agent = self._teams.get_agent(leader.id)
-        model = self._model(leader_agent, cycle_id)
         goal_context = self._goal_context(run, cycle_id)
         prompt = _space_block(
             run,
@@ -1284,9 +1795,39 @@ class TeamRuntime:
                 "\n\nResolved user decisions for final synthesis:\n"
                 f"{decision_context}\nDo not ask these resolved questions again."
             )
-        response = await model.complete(
-            [{"role": "user", "content": prompt}]
-        )
+        messages: list[dict[str, object]] = [{"role": "user", "content": prompt}]
+        if cycle_id is not None:
+            spec = _operation_spec(
+                run,
+                cycle_id,
+                leader_agent,
+                "cycle_synthesis",
+                0,
+                messages,
+            )
+            operation = await self._invoke_operation(
+                spec,
+                leader_agent,
+                messages,
+                lambda response: self._validated_synthesis_result(
+                    response,
+                    leader_agent,
+                    run,
+                ),
+            )
+            if operation.result_kind == "user_decision":
+                self._model_effects.apply_synthesis_decision(operation.id)
+                return UserDecisionResolution(
+                    _operation_user_decision(operation)
+                )
+            summary = _operation_synthesis_summary(operation)
+            return self._model_effects.apply_synthesis(
+                operation.id,
+                summary,
+            )
+
+        model = self._model(leader_agent, cycle_id)
+        response = await model.complete(messages)
         if response.upstream_session_id:
             self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
         resolution = _parse_mediation_resolution(response.content)
@@ -1307,6 +1848,25 @@ class TeamRuntime:
             cycle_id=cycle_id,
         )
         return content
+
+    def _validated_synthesis_result(
+        self,
+        response: ModelResponse,
+        leader: TeamAgent,
+        run: TeamRun,
+    ) -> ValidatedOperationResult:
+        resolution = _parse_mediation_resolution(response.content)
+        if resolution["kind"] == "ask_user":
+            return ValidatedOperationResult("user_decision", resolution)
+        content = self._finalize_persona_content(
+            response.content,
+            persona_id=leader.persona_id,
+            team_run_id=run.id,
+        )
+        return ValidatedOperationResult(
+            "synthesis",
+            {"summary": content},
+        )
 
     async def _publish_user_decision_request(
         self,
@@ -1464,6 +2024,202 @@ def _task_delta(task: TeamTask) -> dict[str, object]:
         "started_at": task.started_at,
         "finished_at": task.finished_at,
     }
+
+
+def _operation_key(
+    cycle_id: str,
+    stage: str,
+    stage_ordinal: int,
+    *,
+    task_id: str | None = None,
+) -> str:
+    if task_id is None:
+        return f"{cycle_id}:{stage}:{stage_ordinal}"
+    return f"{cycle_id}:{task_id}:{stage}:{stage_ordinal}"
+
+
+def _operation_request_digest(
+    stage: str,
+    stage_ordinal: int,
+    actor_id: str,
+    messages: list[dict[str, object]],
+) -> str:
+    serialized = json.dumps(
+        {
+            "stage": stage,
+            "ordinal": stage_ordinal,
+            "actor_id": actor_id,
+            "messages": messages,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _operation_workspace_changes(
+    changes: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    return {
+        "created": changes["files_created"],
+        "modified": changes["files_modified"],
+        "deleted": changes["files_deleted"],
+    }
+
+
+def _operation_spec(
+    run: TeamRun,
+    cycle_id: str,
+    agent: TeamAgent,
+    stage,
+    stage_ordinal: int,
+    messages: list[dict[str, object]],
+    *,
+    task_id: str | None = None,
+    upstream_session_id: str | None | object = _SESSION_UNSET,
+) -> OperationSpec:
+    return OperationSpec(
+        operation_key=_operation_key(
+            cycle_id,
+            stage,
+            stage_ordinal,
+            task_id=task_id,
+        ),
+        team_run_id=run.id,
+        cycle_id=cycle_id,
+        task_id=task_id,
+        agent_id=agent.id,
+        provider=agent.backend,
+        stage=stage,
+        stage_ordinal=stage_ordinal,
+        request_digest=_operation_request_digest(
+            stage,
+            stage_ordinal,
+            agent.id,
+            messages,
+        ),
+        upstream_session_id=(
+            agent.upstream_session_id
+            if upstream_session_id is _SESSION_UNSET
+            else (
+                upstream_session_id
+                if isinstance(upstream_session_id, str)
+                else None
+            )
+        ),
+    )
+
+
+def _validated_task_plan(response: ModelResponse) -> ValidatedOperationResult:
+    tasks = _parse_task_plan(response.content)
+    return ValidatedOperationResult(
+        "task_plan",
+        {
+            "tasks": [
+                {
+                    **task,
+                    "acceptance": {
+                        "required_outputs": list(
+                            task["acceptance"].required_outputs
+                        ),
+                        "required_verifications": list(
+                            task["acceptance"].required_verifications
+                        ),
+                    },
+                }
+                for task in tasks
+            ]
+        },
+    )
+
+
+def _operation_task_specs(
+    operation: TeamModelOperation,
+) -> list[dict[str, object]]:
+    stored = operation.result_json
+    if (
+        not isinstance(stored, dict)
+        or stored.get("kind") != "task_plan"
+        or not isinstance(stored.get("payload"), dict)
+        or not isinstance(stored["payload"].get("tasks"), list)
+    ):
+        raise OperationConflict("Completed planning operation is invalid")
+    return stored["payload"]["tasks"]
+
+
+def _operation_task_outcome(operation: TeamModelOperation) -> TaskOutcome:
+    stored = operation.result_json
+    if (
+        not isinstance(stored, dict)
+        or stored.get("kind") != "task_outcome"
+        or not isinstance(stored.get("payload"), dict)
+    ):
+        raise OperationConflict("Completed Worker outcome is invalid")
+    try:
+        return parse_task_outcome(
+            json.dumps(
+                stored["payload"],
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+    except TaskOutcomeError as exc:
+        raise OperationConflict("Completed Worker outcome is invalid") from exc
+
+
+def _operation_worker_query(
+    operation: TeamModelOperation,
+) -> dict[str, str]:
+    stored = operation.result_json
+    payload = stored.get("payload") if isinstance(stored, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"topic", "question"}
+        or not isinstance(payload["topic"], str)
+        or not isinstance(payload["question"], str)
+        or not payload["question"].strip()
+    ):
+        raise OperationConflict("Completed Worker query is invalid")
+    return {
+        "topic": payload["topic"],
+        "question": payload["question"],
+    }
+
+
+def _worker_query_content(query: dict[str, str]) -> str:
+    return (
+        "```json\n"
+        f"{json.dumps({'needs_info': query}, ensure_ascii=False)}\n"
+        "```"
+    )
+
+
+def _operation_user_decision(
+    operation: TeamModelOperation,
+) -> dict[str, object]:
+    stored = operation.result_json
+    payload = stored.get("payload") if isinstance(stored, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or stored.get("kind") != "user_decision"
+    ):
+        raise OperationConflict("Completed user decision is invalid")
+    return payload
+
+
+def _operation_synthesis_summary(operation: TeamModelOperation) -> str:
+    stored = operation.result_json
+    payload = stored.get("payload") if isinstance(stored, dict) else None
+    summary = payload.get("summary") if isinstance(payload, dict) else None
+    if (
+        not isinstance(stored, dict)
+        or stored.get("kind") != "synthesis"
+        or not isinstance(summary, str)
+        or not summary.strip()
+    ):
+        raise OperationConflict("Completed synthesis result is invalid")
+    return summary
 
 
 def _agent_delta(agent: TeamAgent) -> dict[str, object]:

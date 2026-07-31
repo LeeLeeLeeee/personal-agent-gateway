@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,17 @@ from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.team_acceptance import AcceptanceResult
 from personal_agent_gateway.team_artifact_publisher import ArtifactPublicationError
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_model_effects import (
+    TeamModelEffectService,
+    team_model_effect_result_validators,
+)
+from personal_agent_gateway.team_model_invoker import TeamModelInvoker
+from personal_agent_gateway.team_model_operations import (
+    OperationConflict,
+    OperationSpec,
+    TeamModelOperationService,
+    ValidatedOperationResult,
+)
 from personal_agent_gateway.team_outcomes import TaskOutcome
 from personal_agent_gateway.team_results import workspace_snapshot
 from personal_agent_gateway.team_runtime import (
@@ -39,6 +51,9 @@ class FakeModel:
             content = _complete_worker_fixture(content)
         return ModelResponse(content=content, tool_calls=[])
 
+    async def complete_operation(self, messages, *, consumer_run_id):
+        return await self.complete(messages)
+
 
 @dataclass
 class ScriptedModel:
@@ -50,6 +65,7 @@ class ScriptedModel:
         self._calls = 0
         self._is_worker = False
         self.messages = []
+        self.operation_session_id = None
 
     async def complete(self, messages):
         self.messages.append(messages)
@@ -66,6 +82,16 @@ class ScriptedModel:
             content=content,
             tool_calls=[],
             upstream_session_id=f"sess-{self._calls}",
+        )
+
+    async def complete_operation(self, messages, *, consumer_run_id):
+        response = await self.complete(messages)
+        if self.operation_session_id is None:
+            return response
+        return ModelResponse(
+            content=response.content,
+            tool_calls=response.tool_calls,
+            upstream_session_id=self.operation_session_id,
         )
 
 
@@ -185,8 +211,415 @@ def _factory_by_role(
                 list(responses),
                 normalize_worker=normalize_worker if agent.role != "leader" else True,
             )
+        models[agent.id].operation_session_id = agent.upstream_session_id
         return models[agent.id]
     return factory
+
+
+@dataclass
+class OperationModel:
+    responses: list[ModelResponse | Exception]
+
+    def __post_init__(self):
+        self.calls = 0
+        self.messages = []
+
+    async def complete_operation(self, messages, *, consumer_run_id):
+        self.calls += 1
+        self.messages.append(messages)
+        value = self.responses.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def complete(self, messages):
+        return await self.complete_operation(messages, consumer_run_id="direct")
+
+
+async def _no_sleep(_delay):
+    return None
+
+
+def valid_plan_json(owner_agent_id=None):
+    return json.dumps(
+        [
+            {
+                "title": "Research",
+                "description": "Research the request.",
+                "owner_agent_id": owner_agent_id,
+                "required": True,
+                "acceptance": {
+                    "required_outputs": [],
+                    "required_verifications": ["review"],
+                },
+            }
+        ]
+    )
+
+
+def make_operation_runtime(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    teams.set_cycle_status(cycle.id, "running")
+    worker_agent = next(
+        agent for agent in teams.list_agents(run.id) if agent.role == "member"
+    )
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+    )
+    lead_client = OperationModel([ModelResponse("summary", [])])
+    worker_client = OperationModel(
+        [ModelResponse(_outcome_json("done"), [])]
+    )
+    factory_sessions = []
+
+    def model_factory(agent, _cycle_id=None):
+        factory_sessions.append((agent.id, agent.upstream_session_id))
+        return lead_client if agent.role == "leader" else worker_client
+
+    runtime = TeamRuntime(
+        teams,
+        model_factory,
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(db, teams, operations),
+    )
+    return SimpleNamespace(
+        db=db,
+        teams=teams,
+        run=run,
+        cycle=cycle,
+        worker=worker_agent,
+        operations=operations,
+        lead_client=lead_client,
+        worker_client=worker_client,
+        factory_sessions=factory_sessions,
+        runtime=runtime,
+    )
+
+
+def make_operation_runtime_with_completed_worker(tmp_path):
+    setup = make_operation_runtime(tmp_path)
+    worker = next(
+        agent
+        for agent in setup.teams.list_agents(setup.run.id)
+        if agent.role == "member"
+    )
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Research",
+        "Research the request.",
+        owner_agent_id=worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), ("worker-result",)),
+    )
+    task, worker = setup.teams.start_task(task.id, worker.id)
+    reserved = setup.operations.reserve(
+        OperationSpec(
+            operation_key=(
+                f"{setup.cycle.id}:{task.id}:worker_execution:0"
+            ),
+            team_run_id=setup.run.id,
+            cycle_id=setup.cycle.id,
+            task_id=task.id,
+            agent_id=worker.id,
+            provider=worker.backend,
+            stage="worker_execution",
+            stage_ordinal=0,
+            request_digest="a" * 64,
+        )
+    )
+    invoking = setup.operations.begin_attempt(reserved.id, "consumer-1")
+    outcome = json.loads(_outcome_json("done"))
+    operation = setup.operations.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult("task_outcome", outcome),
+        upstream_session_id="worker-session-1",
+    )
+    setup.teams.set_run_status(setup.run.id, "running")
+    values = vars(setup).copy()
+    values.update(
+        task=task,
+        worker=worker,
+        worker_operation=operation,
+    )
+    return SimpleNamespace(**values)
+
+
+@pytest.mark.asyncio
+async def test_add_work_repair_uses_separate_operation_and_defers_lead_session(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse("not-json", [], upstream_session_id="lead-session-1"),
+        ModelResponse(
+            valid_plan_json(setup.worker.id),
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+    ]
+
+    await setup.runtime.add_work(
+        setup.run.id,
+        "research",
+        setup.cycle.id,
+    )
+
+    operations = setup.operations.list_for_cycle(setup.cycle.id)
+    assert [item.stage for item in operations] == [
+        "cycle_add_work",
+        "cycle_planning_repair",
+    ]
+    assert all(item.status in {"failed", "applied"} for item in operations)
+    assert setup.teams.get_agent(
+        setup.run.leader_agent_id
+    ).upstream_session_id == "lead-session-1"
+    assert setup.factory_sessions == [
+        (setup.run.leader_agent_id, None),
+        (setup.run.leader_agent_id, "lead-session-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_changed_add_work_messages_conflict_before_second_model_call(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(valid_plan_json(setup.worker.id), []),
+        ModelResponse(valid_plan_json(setup.worker.id), []),
+    ]
+    await setup.runtime.add_work(
+        setup.run.id,
+        "research",
+        setup.cycle.id,
+    )
+
+    with pytest.raises(OperationConflict):
+        await setup.runtime.add_work(
+            setup.run.id,
+            "changed instruction",
+            setup.cycle.id,
+        )
+
+    assert setup.lead_client.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_waiting_cycle_operation_is_not_reinvoked(tmp_path):
+    setup = make_operation_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(valid_plan_json(setup.worker.id), []),
+        ModelResponse(valid_plan_json(setup.worker.id), []),
+    ]
+    await setup.runtime.add_work(
+        setup.run.id,
+        "research",
+        setup.cycle.id,
+    )
+    operation = setup.operations.list_for_cycle(setup.cycle.id)[0]
+    setup.db.execute(
+        """
+        update team_model_operations
+        set status = 'waiting_for_provider'
+        where id = ?
+        """,
+        (operation.id,),
+    )
+
+    with pytest.raises(OperationConflict):
+        await setup.runtime.add_work(
+            setup.run.id,
+            "research",
+            setup.cycle.id,
+        )
+
+    assert setup.lead_client.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_completed_worker_operation_applies_without_second_model_call(
+    tmp_path,
+):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+
+    result = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.worker_client.calls == 0
+    assert setup.operations.get(setup.worker_operation.id).status == "applied"
+    assert setup.teams.get_task(setup.task.id).outcome is not None
+    assert result.status in {"running", "completed", "completed_with_failures"}
+
+
+@pytest.mark.asyncio
+async def test_cycle_synthesis_uses_separate_operation_and_atomic_apply(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+
+    result = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    operations = setup.operations.list_for_cycle(setup.cycle.id)
+    assert [item.stage for item in operations] == [
+        "worker_execution",
+        "cycle_synthesis",
+    ]
+    assert all(item.status == "applied" for item in operations)
+    assert result.status == "completed"
+    assert result.summary == "summary"
+    assert setup.teams.get_cycle(setup.cycle.id).summary == "summary"
+    synthesis_messages = [
+        message
+        for message in setup.teams.list_messages(setup.run.id, setup.cycle.id)
+        if message.kind == "synthesis"
+    ]
+    assert len(synthesis_messages) == 1
+    assert synthesis_messages[0].metadata == {
+        "operation_id": operations[-1].id
+    }
+
+
+@pytest.mark.asyncio
+async def test_cycle_synthesis_decision_applies_before_waiting_for_user(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(
+            json.dumps(
+                {
+                    "resolution": {
+                        "kind": "ask_user",
+                        "topic": "format",
+                        "question": "Which final format?",
+                        "why_needed": "The requested format is ambiguous.",
+                        "options": [
+                            {
+                                "id": "short",
+                                "label": "Short",
+                                "impact": "Keeps the result concise.",
+                            }
+                        ],
+                        "recommended_option_id": "short",
+                        "blocking_scope": "run",
+                    }
+                }
+            ),
+            [],
+            upstream_session_id="lead-session-1",
+        )
+    ]
+
+    result = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    synthesis = setup.operations.list_for_cycle(setup.cycle.id)[-1]
+    assert synthesis.stage == "cycle_synthesis"
+    assert synthesis.status == "applied"
+    assert result.status == "waiting_for_user"
+    requests = setup.teams.list_decision_requests(setup.run.id)
+    assert len(requests) == 1
+    assert requests[0].items[0]["stage"] == "synthesis"
+
+
+@pytest.mark.asyncio
+async def test_invalid_worker_output_uses_one_separate_repair_operation(tmp_path):
+    setup = make_operation_runtime(tmp_path)
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Research",
+        "Research the request.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), ("worker-result",)),
+    )
+    setup.worker_client.responses = [
+        ModelResponse("not-json", [], upstream_session_id="worker-session-1"),
+        ModelResponse(
+            _outcome_json("done"),
+            [],
+            upstream_session_id="worker-session-1",
+        ),
+    ]
+    setup.lead_client.responses = [ModelResponse("summary", [])]
+
+    result = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    worker_operations = [
+        operation
+        for operation in setup.operations.list_for_cycle(setup.cycle.id)
+        if operation.stage == "worker_execution"
+    ]
+    assert [operation.stage_ordinal for operation in worker_operations] == [0, 1]
+    assert [operation.status for operation in worker_operations] == [
+        "failed",
+        "applied",
+    ]
+    assert setup.worker_client.calls == 2
+    assert setup.teams.get_task(task.id).status == "completed"
+    assert setup.teams.get_agent(
+        setup.worker.id
+    ).upstream_session_id == "worker-session-1"
+    assert result.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_worker_query_operation_applies_before_current_lead_mediation(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    setup.teams.create_task(
+        setup.run.id,
+        "Research",
+        "Research the request.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), ("worker-result",)),
+    )
+    setup.worker_client.responses = [
+        ModelResponse(
+            '```json\n{"needs_info":{"topic":"scope","question":"Which scope?"}}\n```',
+            [],
+            upstream_session_id="worker-session-1",
+        ),
+        ModelResponse(
+            _outcome_json("done"),
+            [],
+            upstream_session_id="worker-session-1",
+        ),
+    ]
+    setup.lead_client.responses = [
+        ModelResponse(
+            '{"resolution":{"kind":"answer","answer":"Use the current scope."}}',
+            [],
+        ),
+        ModelResponse("summary", []),
+    ]
+
+    result = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    worker_operation = setup.operations.list_for_cycle(setup.cycle.id)[0]
+    assert worker_operation.result_kind == "worker_query"
+    assert worker_operation.status == "applied"
+    query = next(
+        message
+        for message in setup.teams.list_messages(setup.run.id, setup.cycle.id)
+        if message.kind == "query"
+    )
+    assert query.metadata["operation_id"] == worker_operation.id
+    assert result.status == "completed"
 
 
 def test_worker_prompt_presents_a_complete_concrete_assignment() -> None:
@@ -764,9 +1197,15 @@ async def test_acceptance_review_keeps_task_run_and_cycle_active(tmp_path) -> No
                 content = "completed"
             return ModelResponse(content=content, tool_calls=[])
 
+        async def complete_operation(self, messages, *, consumer_run_id):
+            return await self.complete(messages)
+
     leader_model = GatedLeaderModel()
     worker_model = ScriptedModel(
-        ["invalid prose", _outcome_json("corrected")],
+        [
+            _outcome_json("invalid", verification="other"),
+            _outcome_json("corrected"),
+        ],
         normalize_worker=False,
     )
     runtime = TeamRuntime(
