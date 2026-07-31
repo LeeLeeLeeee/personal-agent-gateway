@@ -869,9 +869,12 @@ exact outbound messages. Persist only the SHA-256 digest. Re-reserving the same
 operation key with changed messages must fail before a model call.
 
 Every structured-output repair is a new semantic operation after the invalid
-operation is closed: planning/add-work uses `cycle_planning_repair:1`; Worker
-JSON repair uses `worker_execution:<next ordinal>` with the failed operation's
-session seed. A repair never reopens the failed operation.
+operation is closed: initial planning uses `cycle_planning_repair:1`, add-work
+uses `cycle_planning_repair:2`, and Worker JSON repair uses
+`worker_execution:<next ordinal>` with the failed operation's session seed.
+A repair never reopens the failed operation. Repair messages are reconstructed
+from the source prompt plus one fixed repair instruction; raw invalid model
+content is neither persisted nor inserted into a later prompt.
 
 Before selecting a new semantic stage, Runtime must check:
 
@@ -883,7 +886,10 @@ It must:
 
 - apply `completed` locally;
 - invoke `prepared`;
-- refuse to invoke `waiting_for_provider` or `ambiguous`;
+- route planning/add-work, Worker, and synthesis recovery through one
+  stage-aware dispatcher before selecting a new semantic stage;
+- invoke the exact persisted prepared key/ordinal/session;
+- refuse to invoke `invoking`, `waiting_for_provider`, or `ambiguous`;
 - never create a new operation while another is open.
 
 Task 6 adds the atomic Team-state transition and persisted-state markers for
@@ -902,7 +908,22 @@ No third planning call is allowed.
 
 - [ ] **Step 5: Route synthesis through a separate operation**
 
-Reserve `cycle_synthesis:0` only after required tasks are terminal. Apply the summary and operation status atomically. `UserDecisionResolution` from synthesis uses the existing run-decision flow but must mark the synthesis operation applied in the same transaction.
+Reserve the initial `cycle_synthesis:0` only after required tasks are terminal.
+Apply the summary and operation status atomically. `UserDecisionResolution` from
+synthesis uses the existing run-decision flow but must mark the synthesis
+operation applied in the same transaction.
+
+When that user-facing synthesis decision is answered, resume must allocate the
+next deterministic ordinal (`cycle_synthesis:1`, then `:2`, ...). Each answered
+decision revision changes the outbound prompt and therefore creates a new
+immutable operation instead of reusing ordinal 0. Add an end-to-end test for
+ask -> publish -> answer -> resume -> next synthesis operation -> atomic final
+summary apply.
+
+Add restart tests that interrupt planning/add-work repair, Worker repair, and
+synthesis in both relevant `prepared` and `completed` states. Prepared recovery
+must invoke the exact persisted operation; completed recovery must apply locally
+without another model call.
 
 - [ ] **Step 6: Run Task 4 focused verification**
 

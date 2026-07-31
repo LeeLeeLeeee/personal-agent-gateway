@@ -161,11 +161,22 @@ Do not assign by list order or previous completion status."""
 
 AGENT_REINVOCATION_CAP = 3
 _SESSION_UNSET = object()
+_PLANNING_REPAIR_INSTRUCTION = "Return ONLY a JSON array. No prose, no code fences."
+_WORKER_REPAIR_INSTRUCTION = (
+    "Return ONLY the required TaskOutcome JSON object or "
+    "the exact needs_info JSON block."
+)
 
 
 @dataclass(frozen=True)
 class UserDecisionResolution:
     decision: dict[str, object]
+
+
+@dataclass(frozen=True)
+class OpenOperationRecovery:
+    operation: TeamModelOperation
+    result: object
 
 
 @dataclass(frozen=True)
@@ -328,6 +339,176 @@ class TeamRuntime:
             messages,
             parser,
         )
+
+    async def _recover_open_operation(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        cycle_id: str,
+        *,
+        planning_stage: Literal["cycle_planning", "cycle_add_work"] | None = None,
+        planning_messages: list[dict[str, object]] | None = None,
+        synthesis_messages: list[dict[str, object]] | None = None,
+        synthesis_parser: Callable[
+            [ModelResponse],
+            ValidatedOperationResult,
+        ]
+        | None = None,
+    ) -> OpenOperationRecovery | None:
+        operation = self._operations.get_open_for_cycle(cycle_id)
+        if operation is None:
+            return None
+        if operation.status in {
+            "invoking",
+            "waiting_for_provider",
+            "ambiguous",
+        }:
+            raise OperationConflict(
+                f"Operation status {operation.status} cannot be invoked"
+            )
+
+        if operation.stage in {
+            "cycle_planning",
+            "cycle_planning_repair",
+            "cycle_add_work",
+        }:
+            if planning_stage is None or planning_messages is None:
+                raise OperationConflict(
+                    "Open planning operation requires its source request"
+                )
+            expected_repair_ordinal = (
+                1 if planning_stage == "cycle_planning" else 2
+            )
+            if operation.stage == planning_stage:
+                messages = planning_messages
+            elif (
+                operation.stage == "cycle_planning_repair"
+                and operation.stage_ordinal == expected_repair_ordinal
+            ):
+                messages = _planning_repair_messages(planning_messages)
+            else:
+                raise OperationConflict(
+                    "Open planning operation does not match this request"
+                )
+            recovered = operation
+            if operation.status == "prepared":
+                recovered = await self._invoke_existing_operation(
+                    operation,
+                    leader,
+                    messages,
+                    _validated_task_plan,
+                )
+            return OpenOperationRecovery(
+                recovered,
+                self._model_effects.apply_plan(recovered.id),
+            )
+
+        if operation.stage == "worker_execution":
+            if operation.task_id is None:
+                raise OperationConflict("Worker operation has no task")
+            task = self._teams.get_task(operation.task_id)
+            worker = self._teams.get_agent(operation.agent_id)
+            base_messages: list[dict[str, object]] = [
+                {
+                    "role": "user",
+                    "content": self._worker_prompt(run, worker, task),
+                }
+            ]
+            if operation.stage_ordinal == 0:
+                messages = base_messages
+            elif operation.stage_ordinal == 1:
+                messages = _worker_repair_messages(base_messages)
+            else:
+                raise OperationConflict("Worker repair ordinal is invalid")
+            before = (
+                workspace_snapshot(Path(run.working_root or run.workspace_root))
+                if operation.status == "prepared"
+                else None
+            )
+            recovered = operation
+            if operation.status == "prepared":
+                recovered = await self._invoke_existing_operation(
+                    operation,
+                    worker,
+                    messages,
+                    lambda response: self._validated_worker_result(
+                        response,
+                        worker,
+                        run,
+                    ),
+                )
+            result = await self._apply_cycle_worker_operation(
+                run,
+                leader,
+                worker,
+                task,
+                recovered,
+                before=before,
+            )
+            return OpenOperationRecovery(recovered, result)
+
+        if operation.stage == "cycle_synthesis":
+            if synthesis_messages is None or synthesis_parser is None:
+                return OpenOperationRecovery(operation, None)
+            recovered = operation
+            if operation.status == "prepared":
+                recovered = await self._invoke_existing_operation(
+                    operation,
+                    leader,
+                    synthesis_messages,
+                    synthesis_parser,
+                )
+            return OpenOperationRecovery(
+                recovered,
+                self._apply_cycle_synthesis_operation(recovered),
+            )
+
+        raise OperationConflict(
+            f"Open operation stage {operation.stage} is not recoverable here"
+        )
+
+    async def _invoke_existing_operation(
+        self,
+        operation: TeamModelOperation,
+        agent: TeamAgent,
+        messages: list[dict[str, object]],
+        parser: Callable[[ModelResponse], ValidatedOperationResult],
+    ) -> TeamModelOperation:
+        spec = OperationSpec(
+            operation_key=operation.operation_key,
+            team_run_id=operation.team_run_id,
+            cycle_id=operation.cycle_id,
+            task_id=operation.task_id,
+            agent_id=operation.agent_id,
+            provider=operation.provider,
+            stage=operation.stage,
+            stage_ordinal=operation.stage_ordinal,
+            request_digest=_operation_request_digest(
+                operation.stage,
+                operation.stage_ordinal,
+                operation.agent_id,
+                messages,
+            ),
+            upstream_session_id=operation.upstream_session_id,
+        )
+        return await self._invoke_operation(
+            spec,
+            agent,
+            messages,
+            parser,
+        )
+
+    def _apply_cycle_synthesis_operation(
+        self,
+        operation: TeamModelOperation,
+    ) -> str | UserDecisionResolution:
+        if operation.result_kind == "user_decision":
+            self._model_effects.apply_synthesis_decision(operation.id)
+            return UserDecisionResolution(_operation_user_decision(operation))
+        if operation.result_kind != "synthesis":
+            raise OperationConflict("Completed synthesis operation is invalid")
+        summary = _operation_synthesis_summary(operation)
+        return self._model_effects.apply_synthesis(operation.id, summary)
 
     def _space_policy(
         self,
@@ -542,6 +723,15 @@ class TeamRuntime:
         stage: Literal["cycle_planning", "cycle_add_work"],
         messages: list[dict[str, object]],
     ) -> TeamModelOperation:
+        recovery = await self._recover_open_operation(
+            run,
+            leader,
+            cycle_id,
+            planning_stage=stage,
+            planning_messages=messages,
+        )
+        if recovery is not None:
+            return recovery.operation
         spec = _operation_spec(
             run,
             cycle_id,
@@ -559,21 +749,13 @@ class TeamRuntime:
             )
         except InvalidOperationResult as exc:
             failed = self._operations.get(exc.operation_id)
-            repair_messages: list[dict[str, object]] = [
-                {
-                    "role": "user",
-                    "content": (
-                        f"{messages[0]['content']}\n"
-                        "Return ONLY a JSON array. No prose, no code fences."
-                    ),
-                }
-            ]
+            repair_messages = _planning_repair_messages(messages)
             repair_spec = _operation_spec(
                 run,
                 cycle_id,
                 leader,
                 "cycle_planning_repair",
-                1,
+                1 if stage == "cycle_planning" else 2,
                 repair_messages,
                 upstream_session_id=failed.upstream_session_id,
             )
@@ -594,13 +776,15 @@ class TeamRuntime:
         counter = 0
         while True:
             if cycle_id is not None:
-                open_operation = self._operations.get_open_for_cycle(cycle_id)
-                if (
-                    open_operation is not None
-                    and open_operation.stage == "cycle_synthesis"
-                ):
-                    return
-                if open_operation is not None:
+                recovery = await self._recover_open_operation(
+                    run,
+                    leader,
+                    cycle_id,
+                )
+                if recovery is not None:
+                    open_operation = recovery.operation
+                    if open_operation.stage == "cycle_synthesis":
+                        return
                     if (
                         open_operation.stage != "worker_execution"
                         or open_operation.task_id is None
@@ -608,40 +792,18 @@ class TeamRuntime:
                         raise OperationConflict(
                             "Cycle has an open operation for another stage"
                         )
-                    if open_operation.status in {
-                        "waiting_for_provider",
-                        "ambiguous",
-                        "invoking",
-                    }:
-                        raise OperationConflict(
-                            f"Operation status {open_operation.status} "
-                            "cannot be invoked"
-                        )
                     open_task = self._teams.get_task(open_operation.task_id)
                     open_worker = self._teams.get_agent(
                         open_operation.agent_id
                     )
-                    if open_operation.status == "prepared":
-                        resumed = await self._run_task(
-                            run,
-                            leader,
-                            open_worker,
-                            open_task,
+                    decision = recovery.result
+                    if (
+                        decision is not None
+                        and not isinstance(decision, UserDecisionResolution)
+                    ):
+                        raise OperationConflict(
+                            "Worker recovery result is invalid"
                         )
-                        if not isinstance(resumed, TeamModelOperation):
-                            raise OperationConflict(
-                                "Prepared Worker operation did not complete "
-                                "with an operation result"
-                            )
-                        open_operation = resumed
-                    decision = await self._apply_cycle_worker_operation(
-                        run,
-                        leader,
-                        open_worker,
-                        open_task,
-                        open_operation,
-                        before=None,
-                    )
                     if decision is not None:
                         request = self._teams.defer_task_for_user_decision(
                             open_task.id,
@@ -1267,16 +1429,7 @@ class TeamRuntime:
                 )
             except InvalidOperationResult as exc:
                 failed = self._operations.get(exc.operation_id)
-                repair_messages: list[dict[str, object]] = [
-                    {
-                        "role": "user",
-                        "content": (
-                            f"{messages[0]['content']}\n\n"
-                            "Return ONLY the required TaskOutcome JSON object or "
-                            "the exact needs_info JSON block."
-                        ),
-                    }
-                ]
+                repair_messages = _worker_repair_messages(messages)
                 repair_spec = _operation_spec(
                     run,
                     task.cycle_id,
@@ -1797,34 +1950,58 @@ class TeamRuntime:
             )
         messages: list[dict[str, object]] = [{"role": "user", "content": prompt}]
         if cycle_id is not None:
+            def synthesis_parser(response):
+                return self._validated_synthesis_result(
+                    response,
+                    leader_agent,
+                    run,
+                )
+
+            recovery = await self._recover_open_operation(
+                run,
+                leader_agent,
+                cycle_id,
+                synthesis_messages=messages,
+                synthesis_parser=synthesis_parser,
+            )
+            if recovery is not None:
+                if not isinstance(
+                    recovery.result,
+                    (str, UserDecisionResolution),
+                ):
+                    raise OperationConflict(
+                        "Synthesis recovery result is invalid"
+                    )
+                return recovery.result
+            resolved_request_ids = {
+                request.id
+                for request in self._teams.list_decision_requests(run.id)
+                if request.cycle_id == cycle_id and request.status == "resolved"
+            }
+            synthesis_ordinal = sum(
+                operation.stage == "cycle_synthesis"
+                and operation.status == "applied"
+                and operation.result_kind == "user_decision"
+                and isinstance(operation.effect_ref_json, dict)
+                and operation.effect_ref_json.get("decision_request_id")
+                in resolved_request_ids
+                for operation in self._operations.list_for_cycle(cycle_id)
+            )
             spec = _operation_spec(
                 run,
                 cycle_id,
                 leader_agent,
                 "cycle_synthesis",
-                0,
+                synthesis_ordinal,
                 messages,
             )
             operation = await self._invoke_operation(
                 spec,
                 leader_agent,
                 messages,
-                lambda response: self._validated_synthesis_result(
-                    response,
-                    leader_agent,
-                    run,
-                ),
+                synthesis_parser,
             )
-            if operation.result_kind == "user_decision":
-                self._model_effects.apply_synthesis_decision(operation.id)
-                return UserDecisionResolution(
-                    _operation_user_decision(operation)
-                )
-            summary = _operation_synthesis_summary(operation)
-            return self._model_effects.apply_synthesis(
-                operation.id,
-                summary,
-            )
+            return self._apply_cycle_synthesis_operation(operation)
 
         model = self._model(leader_agent, cycle_id)
         response = await model.complete(messages)
@@ -2056,6 +2233,28 @@ def _operation_request_digest(
         separators=(",", ":"),
     )
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _planning_repair_messages(
+    messages: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "role": "user",
+            "content": f"{messages[0]['content']}\n{_PLANNING_REPAIR_INSTRUCTION}",
+        }
+    ]
+
+
+def _worker_repair_messages(
+    messages: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "role": "user",
+            "content": f"{messages[0]['content']}\n\n{_WORKER_REPAIR_INSTRUCTION}",
+        }
+    ]
 
 
 def _operation_workspace_changes(

@@ -236,11 +236,46 @@ class OperationModel:
         return await self.complete_operation(messages, consumer_run_id="direct")
 
 
+class SimulatedProcessCrash(BaseException):
+    pass
+
+
+class CrashAfterOperationStage:
+    def __init__(self, delegate, stage, ordinal, status):
+        self._delegate = delegate
+        self._stage = stage
+        self._ordinal = ordinal
+        self._status = status
+        self._crashed = False
+
+    async def invoke(self, operation, client, messages, parser):
+        if (
+            not self._crashed
+            and operation.stage == self._stage
+            and operation.stage_ordinal == self._ordinal
+        ):
+            self._crashed = True
+            if self._status == "completed":
+                await self._delegate.invoke(
+                    operation,
+                    client,
+                    messages,
+                    parser,
+                )
+            raise SimulatedProcessCrash
+        return await self._delegate.invoke(
+            operation,
+            client,
+            messages,
+            parser,
+        )
+
+
 async def _no_sleep(_delay):
     return None
 
 
-def valid_plan_json(owner_agent_id=None):
+def valid_plan_json(owner_agent_id=None, verification="review"):
     return json.dumps(
         [
             {
@@ -250,7 +285,7 @@ def valid_plan_json(owner_agent_id=None):
                 "required": True,
                 "acceptance": {
                     "required_outputs": [],
-                    "required_verifications": ["review"],
+                    "required_verifications": [verification],
                 },
             }
         ]
@@ -309,7 +344,22 @@ def make_operation_runtime(tmp_path):
         lead_client=lead_client,
         worker_client=worker_client,
         factory_sessions=factory_sessions,
+        model_factory=model_factory,
         runtime=runtime,
+    )
+
+
+def restart_operation_runtime(setup):
+    return TeamRuntime(
+        setup.teams,
+        setup.model_factory,
+        operations=setup.operations,
+        model_invoker=TeamModelInvoker(setup.operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(
+            setup.db,
+            setup.teams,
+            setup.operations,
+        ),
     )
 
 
@@ -395,6 +445,128 @@ async def test_add_work_repair_uses_separate_operation_and_defers_lead_session(
         (setup.run.leader_agent_id, None),
         (setup.run.leader_agent_id, "lead-session-1"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_planning_and_later_add_work_repairs_have_distinct_identity(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse("invalid planning", []),
+        ModelResponse(valid_plan_json(setup.worker.id, "worker-result"), []),
+        ModelResponse("Initial summary.", []),
+        ModelResponse("invalid add work", []),
+        ModelResponse(valid_plan_json(setup.worker.id), []),
+    ]
+
+    completed = await setup.runtime.start(setup.run.id, setup.cycle.id)
+    created = await setup.runtime.add_work(
+        setup.run.id,
+        "Research another source.",
+        setup.cycle.id,
+    )
+
+    repairs = [
+        operation
+        for operation in setup.operations.list_for_cycle(setup.cycle.id)
+        if operation.stage == "cycle_planning_repair"
+    ]
+    assert completed.status == "completed", completed.error_message
+    assert len(created) == 1
+    assert [operation.stage_ordinal for operation in repairs] == [1, 2]
+    assert all(operation.status == "applied" for operation in repairs)
+
+
+@pytest.mark.asyncio
+async def test_prepared_planning_repair_is_recovered_with_exact_operation(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse("invalid planning", [], upstream_session_id="lead-session-1"),
+        ModelResponse(
+            valid_plan_json(setup.worker.id, "worker-result"),
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+        ModelResponse("summary", [], upstream_session_id="lead-session-1"),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_planning_repair",
+        1,
+        "prepared",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    repair = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert repair is not None
+    assert (repair.stage, repair.stage_ordinal, repair.status) == (
+        "cycle_planning_repair",
+        1,
+        "prepared",
+    )
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    recovered = setup.operations.get(repair.id)
+    assert completed.status == "completed"
+    assert recovered.status == "applied"
+    assert recovered.operation_key == repair.operation_key
+    assert setup.lead_client.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_completed_add_work_repair_is_applied_without_another_model_call(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse("invalid add work", [], upstream_session_id="lead-session-1"),
+        ModelResponse(
+            valid_plan_json(setup.worker.id),
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_planning_repair",
+        2,
+        "completed",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.add_work(
+            setup.run.id,
+            "Research another source.",
+            setup.cycle.id,
+        )
+
+    repair = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert repair is not None
+    assert (repair.stage, repair.stage_ordinal, repair.status) == (
+        "cycle_planning_repair",
+        2,
+        "completed",
+    )
+    calls_before_restart = setup.lead_client.calls
+
+    created = await restart_operation_runtime(setup).add_work(
+        setup.run.id,
+        "Research another source.",
+        setup.cycle.id,
+    )
+
+    assert len(created) == 1
+    assert setup.operations.get(repair.id).status == "applied"
+    assert setup.lead_client.calls == calls_before_restart
 
 
 @pytest.mark.asyncio
@@ -535,6 +707,112 @@ async def test_cycle_synthesis_decision_applies_before_waiting_for_user(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_answered_cycle_synthesis_uses_next_immutable_operation(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(
+            json.dumps(
+                {
+                    "resolution": {
+                        "kind": "ask_user",
+                        "topic": "format",
+                        "question": "Which final format?",
+                        "why_needed": "The requested format is ambiguous.",
+                        "options": [
+                            {
+                                "id": "short",
+                                "label": "Short",
+                                "impact": "Keeps the result concise.",
+                            }
+                        ],
+                        "recommended_option_id": "short",
+                        "blocking_scope": "run",
+                    }
+                }
+            ),
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+        ModelResponse(
+            "Final concise summary.",
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+    ]
+
+    waiting = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+    request = setup.teams.get_active_decision_request(
+        setup.run.id,
+        setup.cycle.id,
+    )
+    assert request is not None
+    setup.teams.answer_decision_request(
+        setup.run.id,
+        request.id,
+        request.revision,
+        {"Q-001": "short"},
+    )
+
+    completed = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    synthesis_operations = [
+        operation
+        for operation in setup.operations.list_for_cycle(setup.cycle.id)
+        if operation.stage == "cycle_synthesis"
+    ]
+    assert waiting.status == "waiting_for_user"
+    assert completed.status == "completed"
+    assert completed.summary == "Final concise summary."
+    assert [operation.stage_ordinal for operation in synthesis_operations] == [0, 1]
+    assert [operation.result_kind for operation in synthesis_operations] == [
+        "user_decision",
+        "synthesis",
+    ]
+    assert all(operation.status == "applied" for operation in synthesis_operations)
+    assert setup.lead_client.calls == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crash_status", ["prepared", "completed"])
+async def test_synthesis_restart_recovers_exact_open_operation(
+    tmp_path,
+    crash_status,
+):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    setup.lead_client.responses = [ModelResponse("summary", [])]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_synthesis",
+        0,
+        crash_status,
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    synthesis = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert synthesis is not None
+    assert (synthesis.stage, synthesis.stage_ordinal, synthesis.status) == (
+        "cycle_synthesis",
+        0,
+        crash_status,
+    )
+    calls_before_restart = setup.lead_client.calls
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert completed.summary == "summary"
+    assert setup.operations.get(synthesis.id).status == "applied"
+    assert setup.lead_client.calls == calls_before_restart + (
+        1 if crash_status == "prepared" else 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_invalid_worker_output_uses_one_separate_repair_operation(tmp_path):
     setup = make_operation_runtime(tmp_path)
     task = setup.teams.create_task(
@@ -573,6 +851,62 @@ async def test_invalid_worker_output_uses_one_separate_repair_operation(tmp_path
         setup.worker.id
     ).upstream_session_id == "worker-session-1"
     assert result.status == "completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crash_status", ["prepared", "completed"])
+async def test_worker_repair_restart_recovers_exact_open_operation(
+    tmp_path,
+    crash_status,
+):
+    setup = make_operation_runtime(tmp_path)
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Research",
+        "Research the request.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), ("worker-result",)),
+    )
+    setup.worker_client.responses = [
+        ModelResponse("not-json", [], upstream_session_id="worker-session-1"),
+        ModelResponse(
+            _outcome_json("done"),
+            [],
+            upstream_session_id="worker-session-1",
+        ),
+    ]
+    setup.lead_client.responses = [ModelResponse("summary", [])]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "worker_execution",
+        1,
+        crash_status,
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    repair = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert repair is not None
+    assert (repair.stage, repair.stage_ordinal, repair.status) == (
+        "worker_execution",
+        1,
+        crash_status,
+    )
+    calls_before_restart = setup.worker_client.calls
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.operations.get(repair.id).status == "applied"
+    assert setup.teams.get_task(task.id).status == "completed"
+    assert setup.worker_client.calls == calls_before_restart + (
+        1 if crash_status == "prepared" else 0
+    )
 
 
 @pytest.mark.asyncio

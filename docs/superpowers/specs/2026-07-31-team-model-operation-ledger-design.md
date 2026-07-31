@@ -141,19 +141,24 @@ team_model_operations
 
 ```text
 <cycle_id>:cycle_planning:0
-<cycle_id>:cycle_planning_repair:1
+<cycle_id>:cycle_planning_repair:1  # initial planning source
 <cycle_id>:cycle_add_work:0
+<cycle_id>:cycle_planning_repair:2  # add-work source
 <cycle_id>:<task_id>:worker_execution:<attempt>
 <cycle_id>:<task_id>:mediation_lead:<round>
 <cycle_id>:<task_id>:mediation_worker:<round>
 <cycle_id>:<task_id>:acceptance_lead:<attempt>
 <cycle_id>:<task_id>:acceptance_worker:<attempt>
-<cycle_id>:cycle_synthesis:0
+<cycle_id>:cycle_synthesis:<answered-decision-revision>
 ```
 
 `stage_ordinal`은 `rounds_used`, `acceptance_recovery_attempts`처럼 이미 영속화된 도메인
 카운터에서 계산한다. 같은 key를 다시 reserve하면 새 row를 만들지 않고 기존 operation을
-반환한다.
+반환한다. planning repair와 add-work repair는 같은 stage를 사용하므로 각각 stable ordinal
+1과 2를 사용해 한 cycle 안에서 충돌하지 않는다. synthesis는 최초 호출에 ordinal 0을
+사용하고, 적용된 synthesis decision에 사용자 답변이 확정될 때마다 ordinal을 1씩 증가시킨다.
+따라서 답변이 반영된 user-facing prompt는 이전 operation을 다시 열지 않고 새 immutable
+operation에만 결합된다.
 
 ### Cycle 단일 미완료 제약
 
@@ -281,6 +286,9 @@ duplicate apply는 `applied` operation의 effect reference를 검증한 뒤 기�
 ### Synthesis
 
 - synthesis operation은 모든 required task가 terminal인 경우에만 reserve할 수 있다.
+- 최초 synthesis는 ordinal 0을 사용한다. synthesis decision이 답변된 뒤 재개하면 답변된
+  decision revision 수에 따라 ordinal 1, 2, ...의 새 immutable operation을 사용한다.
+- 아직 답변되지 않은 decision은 ordinal을 전진시키지 않는다.
 - summary 저장, run/cycle 완료, result packaging 진입을 operation apply 이후에 수행한다.
 - artifact/result packaging 실패는 기존 별도 인프라 오류 기록을 유지한다.
 
@@ -362,7 +370,12 @@ claim은 task를 일반 pending queue로 되돌리지 않는다. Runtime은 먼�
 | `ambiguous` | interrupted 보존, 자동 실행 금지 |
 | `applied` | 다음 semantic stage 선택 가능 |
 
-`completed` local apply와 `prepared` invoke는 기존 cycle loop에서 한 번만 schedule한다. DB의
+Runtime은 정상 semantic stage를 고르기 전에 하나의 stage-aware dispatcher로 미완료
+operation을 먼저 처리한다. `completed`는 request를 재구성하거나 모델 client를 만들지 않고
+local apply하고, `prepared`는 persisted key/ordinal/session에 맞는 deterministic message를
+재구성해 같은 operation을 호출한다. planning/add-work와 Worker structured repair는 raw
+invalid response를 재삽입하지 않고 각각 기존 source prompt와 고정 repair instruction만
+사용한다. `invoking`, `waiting_for_provider`, `ambiguous`는 자동 호출을 거부한다. DB의
 operation CAS가 duplicate scheduling의 최종 방어선이다.
 
 ## 취소
