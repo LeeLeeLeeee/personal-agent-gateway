@@ -46,7 +46,7 @@ TeamRuntime
   -> TeamModelOperationService.reserve()
   -> TeamModelInvoker.invoke()
   -> TeamModelOperationService.complete()
-  -> TeamModelOperationService.apply()
+  -> TeamModelEffectService.apply()
   -> TeamRunService domain mutations
 ```
 
@@ -65,11 +65,11 @@ operation에만 기록할 수 있다. result 적용과 operation의 `applied` �
 
 ### TeamModelOperationService
 
-- operation reserve, begin, complete, wait, ambiguous, fail, cancel, apply를 소유한다.
+- operation reserve, begin, complete, wait, ambiguous, fail, cancel과 transaction-local
+  apply CAS를 소유한다.
 - operation key의 중복과 cycle의 동시 미완료 operation을 차단한다.
 - stage별 source state와 actor ownership을 검증한다.
-- stage result와 domain effect를 같은 transaction에서 적용한다.
-- duplicate apply 시 기존 `applied` operation을 반환하고 effect를 반복하지 않는다.
+- duplicate lifecycle 전이는 version과 result digest로 차단한다.
 
 ### TeamModelInvoker
 
@@ -78,6 +78,13 @@ operation에만 기록할 수 있다. result 적용과 operation의 `applied` �
 - safe pre-stream admission 오류만 같은 operation에서 제한적으로 재시도한다.
 - 응답을 stage별 구조화 결과로 검증한 뒤 `complete()`에 넘긴다.
 - raw prompt, raw response, provider stderr, credential을 원장에 저장하지 않는다.
+
+### TeamModelEffectService
+
+- stage별 validated result를 Team domain mutation으로 변환한다.
+- operation service의 transaction-local apply CAS와 TeamRunService의 좁은 mutation을
+  하나의 SQLite transaction에서 조정한다.
+- duplicate apply 시 기존 `effect_ref_json`을 검증해 effect를 반복하지 않는다.
 
 ### TeamRunService
 
@@ -134,8 +141,9 @@ team_model_operations
 
 ```text
 <cycle_id>:cycle_planning:0
+<cycle_id>:cycle_planning_repair:1
 <cycle_id>:cycle_add_work:0
-<cycle_id>:<task_id>:worker_execution:0
+<cycle_id>:<task_id>:worker_execution:<attempt>
 <cycle_id>:<task_id>:mediation_lead:<round>
 <cycle_id>:<task_id>:mediation_worker:<round>
 <cycle_id>:<task_id>:acceptance_lead:<attempt>
@@ -191,6 +199,7 @@ invoking -> ambiguous
 invoking -> failed
 completed -> applied
 waiting_for_provider -> prepared
+ambiguous -> prepared  # explicit Resume + exact existing session only
 prepared/invoking/completed/waiting_for_provider/ambiguous -> canceled
 ```
 
@@ -207,7 +216,7 @@ prepared/invoking/completed/waiting_for_provider/ambiguous -> canceled
    확인한다.
 3. 같은 key의 operation이 있으면 기존 상태를 반환한다.
 4. 다른 미완료 operation이 있으면 새 호출을 거부한다.
-5. `begin_invocation()`이 `consumer_run_id`, attempt, version을 호출 전에 기록한다.
+5. `begin_attempt()`가 `consumer_run_id`, attempt, version을 호출 전에 기록한다.
 
 모델 결과는 이때 확보한 operation ID와 version을 계속 사용한다. 응답 후 현재 cycle 상태를
 다시 읽어 operation을 재결합하지 않는다.
@@ -216,8 +225,9 @@ prepared/invoking/completed/waiting_for_provider/ambiguous -> canceled
 
 1. stage parser가 raw response를 기존 strict schema로 검증한다.
 2. 검증된 값만 `result_json`에 저장한다.
-3. `complete()`는 정확히 해당 `invoking` operation만 `completed`로 전환한다.
-4. process가 이 사이에 취소·중단 상태로 바꾼 operation에는 결과를 기록하지 않는다.
+3. 응답에서 확인된 upstream session은 agent가 아니라 operation에 먼저 저장한다.
+4. `complete()`는 정확히 해당 `invoking` operation만 `completed`로 전환한다.
+5. process가 이 사이에 취소·중단 상태로 바꾼 operation에는 결과를 기록하지 않는다.
 
 ### 적용
 
@@ -226,7 +236,8 @@ prepared/invoking/completed/waiting_for_provider/ambiguous -> canceled
 1. operation이 `completed`이고 actor/stage/task가 일치하는지 확인한다.
 2. stage별 domain effect를 적용한다.
 3. 생성된 task/message/decision 또는 변경된 task ID를 `effect_ref_json`에 기록한다.
-4. operation을 `applied`로 전환한다.
+4. operation의 확인된 upstream session을 실제 actor agent에 반영한다.
+5. operation을 `applied`로 전환한다.
 
 duplicate apply는 `applied` operation의 effect reference를 검증한 뒤 기존 결과를 반환한다.
 일반 message 검색이나 mutable metadata를 replay 증거로 사용하지 않는다.
@@ -328,11 +339,12 @@ claim은 task를 일반 pending queue로 되돌리지 않는다. Runtime은 먼�
 
 명시적 Resume:
 
-1. operation의 `upstream_session_id`가 있으면 해당 session만 사용한다.
+1. operation의 `upstream_session_id`가 있으면 해당 session의 identity를 strict 검증한다.
 2. 없으면 provider, team run, `consumer_run_id`가 모두 일치하는 LMG session을 strict 조회한다.
-3. 정확히 하나일 때만 operation에 upstream session을 저장한다.
-4. 세션이 없거나 여러 개거나 조회가 실패하면 계속 `ambiguous`/`interrupted`로 유지한다.
-5. Resume은 원래 prompt를 새 session에 자동 재생하지 않는다.
+3. 정확히 하나일 때만 operation에 upstream session을 저장하고 `prepared`로 되돌린다.
+4. Runtime은 새 session이 아니라 그 operation에 저장된 session으로만 같은 semantic stage를 재개한다.
+5. 세션이 없거나 여러 개거나 조회가 실패하면 계속 `ambiguous`/`interrupted`로 유지한다.
+6. 이 전이는 사용자 Resume 요청에서만 허용하며 자동 dispatcher는 수행하지 않는다.
 
 이 설계는 외부 도구 부작용의 exactly-once를 약속하지 않는다. 대신 결과가 불명확한 모델 호출을
 자동으로 새 실행하지 않는 것을 보장한다.
@@ -455,6 +467,8 @@ operation result는 기존 strict parser를 통과한 구조화 값만 저장한
 - concurrent claim이 같은 operation을 한 번만 반환한다.
 - Lead-stage claim이 Worker task를 pending으로 되돌리지 않는다.
 - restart가 waiting cycle을 failed/interrupted로 변환하지 않는다.
+- 사용자 Resume의 strict session match만 ambiguous operation을 prepared로 되돌린다.
+- 자동 dispatcher와 내부 resume은 ambiguous operation을 claim하지 않는다.
 
 ### App factory
 
@@ -470,5 +484,4 @@ operation result는 기존 strict parser를 통과한 구조화 값만 저장한
 - process restart가 invoking을 ambiguous로, completed를 local apply로 구분한다.
 - domain effect와 operation applied 전환이 원자적이다.
 - cycle metadata에는 runtime continuation, generation, receipt가 없다.
-- 관련 backend 테스트와 독립 코드 리뷰가 통과한 뒤에만 후속 Task 6으로 진행한다.
-
+- 관련 backend 테스트와 독립 코드 리뷰가 통과한 뒤에만 polling/manual-resume/UI 후속 작업으로 진행한다.
