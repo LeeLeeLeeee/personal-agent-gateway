@@ -330,3 +330,48 @@ def test_domain_registry_can_enable_nonplanning_stage_without_service_changes(
 
     assert completed.status == "completed"
     assert completed.result_kind == "task_outcome"
+
+
+def test_mark_failed_persists_response_session_in_the_same_cas_transition(tmp_path):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    agent = teams.get_agent(run.leader_agent_id)
+    service = TeamModelOperationService(db)
+    reserved = service.reserve(operation_spec(run, cycle, agent))
+    invoking = service.begin_attempt(reserved.id, "consumer-1")
+
+    failed = service.mark_failed(
+        invoking.id,
+        invoking.version,
+        "invalid_structured_output",
+        upstream_session_id="response-session",
+    )
+
+    assert failed.status == "failed"
+    assert failed.upstream_session_id == "response-session"
+
+
+def test_record_invoking_reason_preserves_open_operation_with_cas(tmp_path):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    agent = teams.get_agent(run.leader_agent_id)
+    service = TeamModelOperationService(db)
+    reserved = service.reserve(operation_spec(run, cycle, agent))
+    invoking = service.begin_attempt(reserved.id, "consumer-1")
+
+    recorded = service.record_invoking_reason(
+        invoking.id,
+        invoking.version,
+        "provider_not_ready",
+    )
+
+    assert recorded.status == "invoking"
+    assert recorded.version == invoking.version + 1
+    assert recorded.attempts == 1
+    assert recorded.reason_code == "provider_not_ready"
+    with pytest.raises(StaleOperation):
+        service.record_invoking_reason(
+            invoking.id,
+            invoking.version,
+            "provider_not_ready",
+        )

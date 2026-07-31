@@ -293,12 +293,28 @@ class TeamModelOperationService:
         reason_code: str,
         *,
         expected_status: OperationStatus = "invoking",
+        upstream_session_id: str | None = None,
     ) -> TeamModelOperation:
         return self._transition(
             operation_id,
             expected_version,
             source_status=expected_status,
             target_status="failed",
+            reason_code=reason_code,
+            upstream_session_id=upstream_session_id,
+        )
+
+    def record_invoking_reason(
+        self,
+        operation_id: str,
+        expected_version: int,
+        reason_code: str,
+    ) -> TeamModelOperation:
+        return self._transition(
+            operation_id,
+            expected_version,
+            source_status="invoking",
+            target_status="invoking",
             reason_code=reason_code,
         )
 
@@ -361,21 +377,30 @@ class TeamModelOperationService:
         source_status: OperationStatus,
         target_status: OperationStatus,
         reason_code: str | None,
+        upstream_session_id: str | None = None,
     ) -> TeamModelOperation:
         timestamp = _now()
         with self._db.connection() as connection:
             connection.execute("begin immediate")
             operation = self._get(connection, operation_id)
             self._require_status_and_version(operation, source_status, expected_version)
+            if (
+                operation.upstream_session_id is not None
+                and upstream_session_id is not None
+                and operation.upstream_session_id != upstream_session_id
+            ):
+                raise OperationConflict("upstream session does not match the operation")
             cursor = connection.execute(
                 """
                 update team_model_operations
-                set status = ?, version = version + 1, reason_code = ?, updated_at = ?
+                set status = ?, version = version + 1, reason_code = ?,
+                    upstream_session_id = coalesce(upstream_session_id, ?), updated_at = ?
                 where id = ? and status = ? and version = ?
                 """,
                 (
                     target_status,
                     reason_code,
+                    upstream_session_id,
                     timestamp,
                     operation_id,
                     source_status,

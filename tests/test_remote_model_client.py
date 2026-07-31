@@ -8,6 +8,7 @@ import pytest
 from personal_agent_gateway.remote_model_client import (
     HttpModelClient,
     RemoteRunAbortedError,
+    RemoteRunError,
     RemoteRunFailedError,
     RemoteRunProtocolError,
 )
@@ -686,3 +687,148 @@ async def test_codex_provider_omits_tools_and_does_not_wire_map():
     await client.complete([{"role": "user", "content": "hi"}])
     assert "tools" not in cap["body"]
     assert cap["body"]["messages"] == [{"role": "user", "content": "hi"}]
+
+
+@pytest.mark.asyncio
+async def test_complete_operation_uses_supplied_consumer_run_id():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            content=_sse({"kind": "message.completed", "text": "done"}, {"kind": "run.completed", "content": "done"}),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = HttpModelClient(
+        "http://lmg",
+        "claude",
+        "sonnet",
+        execution={},
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.complete_operation(
+        [{"role": "user", "content": "work"}],
+        consumer_run_id="operation-attempt-1",
+    )
+
+    assert captured["consumer_run_id"] == "operation-attempt-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("connect"),
+        httpx.WriteError("write"),
+        httpx.PoolTimeout("pool"),
+    ],
+)
+async def test_pre_response_admission_transport_failures_are_safe(error):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error
+
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(RemoteRunFailedError) as raised:
+        await client.complete_operation(
+            [{"role": "user", "content": "work"}],
+            consumer_run_id="operation-attempt-2",
+        )
+
+    assert raised.value.pre_stream is True
+    assert raised.value.consumer_run_id == "operation-attempt-2"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_code,gateway_code",
+    [(429, "capacity_exceeded"), (503, "provider_not_ready")],
+)
+async def test_http_admission_failures_are_safe(status_code, gateway_code):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code,
+            json={"code": gateway_code, "error": "sensitive detail"},
+            request=request,
+        )
+
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(RemoteRunFailedError) as raised:
+        await client.complete_operation(
+            [{"role": "user", "content": "work"}],
+            consumer_run_id="operation-attempt-3",
+        )
+
+    assert raised.value.pre_stream is True
+    assert raised.value.consumer_run_id == "operation-attempt-3"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [httpx.ReadTimeout("read"), httpx.ReadError("read"), TimeoutError()],
+)
+async def test_read_and_response_open_timeouts_are_ambiguous(error):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error
+
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(RemoteRunError) as raised:
+        await client.complete_operation(
+            [{"role": "user", "content": "work"}],
+            consumer_run_id="operation-attempt-read",
+        )
+
+    assert raised.value.pre_stream is False
+    assert raised.value.consumer_run_id == "operation-attempt-read"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        _sse(
+            {
+                "kind": "run.failed",
+                "error": "failed",
+                "error_code": "provider_process_failed",
+            }
+        ),
+        _sse({"kind": "message.completed", "text": "partial"}),
+    ],
+)
+async def test_terminal_and_incomplete_stream_failures_are_ambiguous(body):
+    client = HttpModelClient("http://lmg", "codex", "default", {}, transport=_transport(body))
+
+    with pytest.raises(RemoteRunError) as raised:
+        await client.complete_operation(
+            [{"role": "user", "content": "work"}],
+            consumer_run_id="operation-attempt-4",
+        )
+
+    assert raised.value.pre_stream is False
+    assert raised.value.consumer_run_id == "operation-attempt-4"

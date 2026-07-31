@@ -50,12 +50,16 @@ class RemoteRunError(RuntimeError):
         code: str,
         diagnostic: str,
         *,
+        pre_stream: bool = False,
+        consumer_run_id: str | None = None,
         partial_content: str = "",
         upstream_session_id: str | None = None,
     ) -> None:
         super().__init__(diagnostic)
         self.code = code
         self.diagnostic = diagnostic
+        self.pre_stream = pre_stream
+        self.consumer_run_id = consumer_run_id
         self.partial_content = partial_content
         self.upstream_session_id = upstream_session_id
 
@@ -107,6 +111,17 @@ class HttpModelClient:
         self._transport = transport
 
     async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
+        return await self.complete_operation(
+            messages,
+            consumer_run_id=str(uuid.uuid4()),
+        )
+
+    async def complete_operation(
+        self,
+        messages: list[dict[str, object]],
+        *,
+        consumer_run_id: str,
+    ) -> ModelResponse:
         outgoing = messages
         body_extra = {}
         if self._provider == "openai":
@@ -121,7 +136,7 @@ class HttpModelClient:
             "timeout_ms": int(self._timeout_seconds * 1000),
             "idle_timeout_ms": int(self._idle_timeout_seconds * 1000),
             "consumer": self._consumer,
-            "consumer_run_id": str(uuid.uuid4()),
+            "consumer_run_id": consumer_run_id,
             **body_extra,
         }
         if self._consumer_session_id is not None:
@@ -139,7 +154,6 @@ class HttpModelClient:
         run_id: str | None = None
         frame_event: str | None = None
         frame_data: list[str] = []
-        response_opened = False
         partial_content = ""
         event_count = 0
         started_seen = False
@@ -158,6 +172,7 @@ class HttpModelClient:
                     exc,
                     partial_content,
                     upstream_session_id,
+                    consumer_run_id,
                 ) from exc
             frame_event = None
             frame_data = []
@@ -209,6 +224,7 @@ class HttpModelClient:
             return RemoteRunProtocolError(
                 code,
                 diagnostic,
+                consumer_run_id=consumer_run_id,
                 partial_content=partial_content,
                 upstream_session_id=upstream_session_id,
             )
@@ -235,10 +251,9 @@ class HttpModelClient:
                         headers=headers,
                     ) as response,
                 ):
-                    response_opened = True
                     if not response.is_success:
                         await response.aread()
-                        raise _http_run_error(response)
+                        raise _http_run_error(response, consumer_run_id)
 
                     async for line in response.aiter_lines():
                         if line == "":
@@ -263,6 +278,7 @@ class HttpModelClient:
                 exc,
                 partial_content,
                 upstream_session_id,
+                consumer_run_id,
             ) from exc
         except RemoteRunError:
             raise
@@ -270,28 +286,34 @@ class HttpModelClient:
             raise RemoteRunAbortedError(
                 "run_timeout",
                 "remote_run_timeout",
+                consumer_run_id=consumer_run_id,
                 partial_content=partial_content,
                 upstream_session_id=upstream_session_id,
             ) from exc
         except httpx.TimeoutException as exc:
-            if response_opened:
-                raise RemoteRunAbortedError(
-                    "run_timeout",
-                    "remote_run_timeout",
-                    partial_content=partial_content,
-                    upstream_session_id=upstream_session_id,
+            if _is_safe_admission_error(exc):
+                raise RemoteRunFailedError(
+                    "provider_unavailable",
+                    "remote_gateway_unavailable",
+                    pre_stream=True,
+                    consumer_run_id=consumer_run_id,
                 ) from exc
-            raise RemoteRunFailedError(
-                "provider_unavailable",
-                "remote_gateway_unavailable",
+            raise RemoteRunAbortedError(
+                "run_timeout",
+                "remote_run_timeout",
+                consumer_run_id=consumer_run_id,
+                partial_content=partial_content,
+                upstream_session_id=upstream_session_id,
             ) from exc
         except httpx.RequestError as exc:
-            if response_opened:
-                raise contextual_protocol_error("stream_read_error") from exc
-            raise RemoteRunFailedError(
-                "provider_unavailable",
-                "remote_gateway_unavailable",
-            ) from exc
+            if _is_safe_admission_error(exc):
+                raise RemoteRunFailedError(
+                    "provider_unavailable",
+                    "remote_gateway_unavailable",
+                    pre_stream=True,
+                    consumer_run_id=consumer_run_id,
+                ) from exc
+            raise contextual_protocol_error("stream_read_error") from exc
 
         if not started_seen:
             raise contextual_protocol_error("missing_run_started")
@@ -301,12 +323,13 @@ class HttpModelClient:
                 code="upstream_stream_incomplete",
             )
         try:
-            return _terminal_result(terminal, upstream_session_id)
+            return _terminal_result(terminal, upstream_session_id, consumer_run_id)
         except RemoteRunProtocolError as exc:
             raise _with_protocol_context(
                 exc,
                 partial_content,
                 upstream_session_id,
+                consumer_run_id,
             ) from exc
 
 
@@ -339,6 +362,7 @@ def _decode_event(event_name: str, raw_data: str) -> dict[str, object]:
 def _terminal_result(
     terminal: dict[str, object],
     upstream_session_id: str | None,
+    consumer_run_id: str | None = None,
 ) -> ModelResponse:
     kind = terminal["kind"]
     terminal_session_id = terminal.get("upstream_session_id")
@@ -367,6 +391,7 @@ def _terminal_result(
         raise RemoteRunFailedError(
             code,
             error or "remote_run_failed",
+            consumer_run_id=consumer_run_id,
             partial_content=partial_content,
             upstream_session_id=upstream_session_id,
         )
@@ -375,12 +400,16 @@ def _terminal_result(
     raise RemoteRunAbortedError(
         code,
         error or "remote_run_aborted",
+        consumer_run_id=consumer_run_id,
         partial_content=partial_content,
         upstream_session_id=upstream_session_id,
     )
 
 
-def _http_run_error(response: httpx.Response) -> RemoteRunFailedError:
+def _http_run_error(
+    response: httpx.Response,
+    consumer_run_id: str | None = None,
+) -> RemoteRunFailedError:
     code = ""
     try:
         payload = response.json()
@@ -417,15 +446,23 @@ def _http_run_error(response: httpx.Response) -> RemoteRunFailedError:
     }
     mapped = typed_errors.get((response.status_code, code))
     if mapped is not None:
-        return RemoteRunFailedError(*mapped)
+        return RemoteRunFailedError(
+            *mapped,
+            pre_stream=True,
+            consumer_run_id=consumer_run_id,
+        )
     if response.status_code == 503:
         return RemoteRunFailedError(
             "provider_unavailable",
             "remote_provider_unavailable",
+            pre_stream=True,
+            consumer_run_id=consumer_run_id,
         )
     return RemoteRunFailedError(
         "provider_process_failed",
         f"remote_gateway_http_{response.status_code}",
+        pre_stream=True,
+        consumer_run_id=consumer_run_id,
     )
 
 
@@ -437,12 +474,27 @@ def _with_protocol_context(
     exc: RemoteRunProtocolError,
     partial_content: str,
     upstream_session_id: str | None,
+    consumer_run_id: str | None = None,
 ) -> RemoteRunProtocolError:
     return RemoteRunProtocolError(
         exc.code,
         exc.diagnostic,
+        consumer_run_id=consumer_run_id or exc.consumer_run_id,
         partial_content=partial_content or exc.partial_content,
         upstream_session_id=upstream_session_id or exc.upstream_session_id,
+    )
+
+
+def _is_safe_admission_error(exc: httpx.RequestError) -> bool:
+    return isinstance(
+        exc,
+        (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx.WriteError,
+            httpx.WriteTimeout,
+            httpx.PoolTimeout,
+        ),
     )
 
 
