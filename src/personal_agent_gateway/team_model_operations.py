@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
@@ -33,6 +33,11 @@ OperationStatus = Literal[
     "ambiguous",
     "failed",
     "canceled",
+]
+OperationResultValidator = Callable[[dict[str, object]], bool]
+OperationResultValidatorRegistry = Mapping[
+    OperationStage,
+    Mapping[str, OperationResultValidator],
 ]
 
 _OPEN_STATUSES = {
@@ -104,8 +109,17 @@ class TeamModelOperation:
 
 
 class TeamModelOperationService:
-    def __init__(self, db: Database) -> None:
+    def __init__(
+        self,
+        db: Database,
+        *,
+        result_validators: OperationResultValidatorRegistry | None = None,
+    ) -> None:
         self._db = db
+        self._result_validators = {
+            stage: dict(validators)
+            for stage, validators in (result_validators or {}).items()
+        }
 
     def reserve(self, spec: OperationSpec) -> TeamModelOperation:
         timestamp = _now()
@@ -205,7 +219,11 @@ class TeamModelOperationService:
             if operation.status == "completed":
                 if operation.version != expected_version + 1:
                     raise StaleOperation("Completed operation version does not match")
-                serialized, digest = _result_serialization(operation.stage, result)
+                serialized, digest = _result_serialization(
+                    self._result_validators,
+                    operation.stage,
+                    result,
+                )
                 if (
                     operation.result_digest == digest
                     and _matches_session(operation.upstream_session_id, upstream_session_id)
@@ -213,7 +231,11 @@ class TeamModelOperationService:
                     return operation
                 raise StaleOperation("Completed operation does not match this result")
             self._require_status_and_version(operation, "invoking", expected_version)
-            serialized, digest = _result_serialization(operation.stage, result)
+            serialized, digest = _result_serialization(
+                self._result_validators,
+                operation.stage,
+                result,
+            )
             if (
                 operation.upstream_session_id is not None
                 and upstream_session_id is not None
@@ -462,10 +484,11 @@ class TeamModelOperationService:
 
 
 def _result_serialization(
+    validators: OperationResultValidatorRegistry,
     stage: OperationStage,
     result: ValidatedOperationResult,
 ) -> tuple[str, str]:
-    validator = _RESULT_VALIDATORS.get(stage, {}).get(result.kind)
+    validator = validators.get(stage, {}).get(result.kind)
     if validator is None or not validator(result.payload):
         raise OperationConflict("Operation result is not safe to persist")
     serialized = json.dumps(
@@ -481,68 +504,6 @@ def _result_serialization(
 def _validate_request_digest(value: str) -> None:
     if re.fullmatch(r"[0-9a-f]{64}", value) is None:
         raise OperationConflict("request_digest must be a lowercase SHA-256 digest")
-
-
-def _valid_task_plan(payload: dict[str, object]) -> bool:
-    if set(payload) != {"tasks"}:
-        return False
-    tasks = payload["tasks"]
-    if not isinstance(tasks, list):
-        return False
-    return all(_valid_task_spec(task) for task in tasks)
-
-
-def _valid_task_spec(value: object) -> bool:
-    if not isinstance(value, dict) or set(value) != {
-        "title",
-        "description",
-        "owner_agent_id",
-        "required",
-        "acceptance",
-    }:
-        return False
-    owner_agent_id = value["owner_agent_id"]
-    acceptance = value["acceptance"]
-    return (
-        _nonempty_text(value["title"])
-        and _nonempty_text(value["description"])
-        and (owner_agent_id is None or _nonempty_text(owner_agent_id))
-        and isinstance(value["required"], bool)
-        and _valid_acceptance(acceptance)
-    )
-
-
-def _valid_acceptance(value: object) -> bool:
-    if not isinstance(value, dict) or set(value) != {
-        "required_outputs",
-        "required_verifications",
-    }:
-        return False
-    outputs = value["required_outputs"]
-    verifications = value["required_verifications"]
-    return (
-        _valid_string_list(outputs)
-        and _valid_string_list(verifications)
-        and bool(outputs or verifications)
-    )
-
-
-def _valid_string_list(value: object) -> bool:
-    return isinstance(value, list) and all(_nonempty_text(item) for item in value)
-
-
-def _nonempty_text(value: object) -> bool:
-    return isinstance(value, str) and bool(value.strip())
-
-
-_RESULT_VALIDATORS: dict[
-    OperationStage,
-    dict[str, Callable[[dict[str, object]], bool]],
-] = {
-    "cycle_planning": {"task_plan": _valid_task_plan},
-    "cycle_planning_repair": {"task_plan": _valid_task_plan},
-    "cycle_add_work": {"task_plan": _valid_task_plan},
-}
 
 
 def _matches_session(
