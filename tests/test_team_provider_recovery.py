@@ -5,7 +5,9 @@ import pytest
 
 from personal_agent_gateway.team_model_operations import (
     OperationSpec,
+    StaleOperation,
     TeamModelOperationService,
+    ValidatedOperationResult,
 )
 from personal_agent_gateway.team_provider_recovery import TeamProviderRecovery
 from personal_agent_gateway.teams import ProviderRecoveryClaim
@@ -325,6 +327,81 @@ def test_startup_reconciliation_separates_runnable_and_ambiguous(tmp_path):
     assert invoking.cycle.id in invoking_result.interrupted_cycle_ids
     assert prepared.operations.get(prepared.operation.id).status == "prepared"
     assert prepared.cycle.id in prepared_result.runnable_cycle_ids
+
+
+def test_cancel_waiting_operation_settles_complete_continuous_lineage(tmp_path):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+    setup.recovery.wait_for_operation(
+        setup.operation.id,
+        reason_code="provider_unavailable",
+        now=dt("2026-07-31T00:00:00+00:00"),
+    )
+
+    setup.cycles.cancel_run(
+        setup.run.id,
+        reason="user",
+        now=dt("2026-07-31T00:00:10+00:00"),
+    )
+
+    assert setup.operations.get(setup.operation.id).status == "canceled"
+    assert setup.teams.get_team_run(setup.run.id).status == "canceled"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "canceled"
+    assert setup.cycles.get_request(setup.cycle.request_id).status == "canceled"
+    assert setup.teams.get_task(setup.task.id).status == "canceled"
+    assert setup.teams.get_agent(setup.worker.id).status == "canceled"
+
+
+def test_cancel_invoking_operation_rejects_late_completion_and_startup_replay(
+    tmp_path,
+):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+
+    setup.cycles.cancel_run(
+        setup.run.id,
+        reason="user",
+        now=dt("2026-07-31T00:00:10+00:00"),
+    )
+    result = setup.recovery.reconcile_startup()
+
+    with pytest.raises(StaleOperation, match="Expected operation status invoking"):
+        setup.operations.complete(
+            setup.operation.id,
+            setup.operation.version,
+            ValidatedOperationResult("task_outcome", {"status": "completed"}),
+        )
+    assert result == type(result)((), (), ())
+    assert setup.operations.get(setup.operation.id).status == "canceled"
+    assert setup.teams.get_team_run(setup.run.id).status == "canceled"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "canceled"
+    assert setup.cycles.get_request(setup.cycle.request_id).status == "canceled"
+    assert setup.teams.get_task(setup.task.id).status == "canceled"
+    assert setup.teams.get_agent(setup.worker.id).status == "canceled"
+
+
+def test_startup_reconciliation_cancels_lingering_operation_for_canceled_source(
+    tmp_path,
+):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+    setup.db.execute(
+        "update team_runs set status = 'canceled' where id = ?",
+        (setup.run.id,),
+    )
+    setup.db.execute(
+        "update team_run_cycles set status = 'canceled' where id = ?",
+        (setup.cycle.id,),
+    )
+    setup.db.execute(
+        "update team_cycle_requests set status = 'canceled' where id = ?",
+        (setup.cycle.request_id,),
+    )
+
+    result = setup.recovery.reconcile_startup()
+
+    assert result == type(result)((), (), ())
+    assert setup.operations.get(setup.operation.id).status == "canceled"
+    assert setup.teams.get_team_run(setup.run.id).status == "canceled"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "canceled"
+    assert setup.cycles.get_request(setup.cycle.request_id).status == "canceled"
 
 
 def test_generic_startup_interrupt_skips_operation_backed_run(tmp_path):

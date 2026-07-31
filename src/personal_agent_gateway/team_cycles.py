@@ -908,7 +908,10 @@ class TeamCycleService:
             select cycle.id from team_run_cycles cycle
             join team_cycle_requests request on request.id = cycle.request_id
             where request.team_run_id = ?
-              and cycle.status in ('queued', 'running', 'waiting_for_user', 'interrupted')
+              and cycle.status in (
+                  'queued', 'running', 'waiting_for_user',
+                  'waiting_for_provider', 'interrupted'
+              )
             order by cycle.sequence asc
             """,
             (team_run_id,),
@@ -941,8 +944,31 @@ class TeamCycleService:
             or cycle_ids
             or hook_run_ids
             or active_series
+            or connection.execute(
+                """
+                select 1 from team_model_operations
+                where team_run_id = ? and status in (
+                    'prepared', 'invoking', 'completed',
+                    'waiting_for_provider', 'ambiguous'
+                )
+                limit 1
+                """,
+                (team_run_id,),
+            ).fetchone()
             or run["status"]
             not in {"completed", "completed_with_failures", "failed", "canceled"}
+        )
+        connection.execute(
+            """
+            update team_model_operations
+            set status = 'canceled', version = version + 1,
+                reason_code = ?, updated_at = ?
+            where team_run_id = ? and status in (
+                'prepared', 'invoking', 'completed',
+                'waiting_for_provider', 'ambiguous'
+            )
+            """,
+            (reason, now, team_run_id),
         )
         connection.execute(
             """
@@ -952,7 +978,8 @@ class TeamCycleService:
                 select cycle.id from team_run_cycles cycle
                 join team_cycle_requests request on request.id = cycle.request_id
                 where request.team_run_id = ? and cycle.status in (
-                    'queued', 'running', 'waiting_for_user', 'interrupted'
+                    'queued', 'running', 'waiting_for_user',
+                    'waiting_for_provider', 'interrupted'
                 )
             )
             """,
@@ -999,7 +1026,9 @@ class TeamCycleService:
         connection.execute(
             """
             update team_tasks set status = 'canceled', finished_at = ?, updated_at = ?
-            where team_run_id = ? and status in ('pending', 'in_progress', 'blocked')
+            where team_run_id = ? and status in (
+                'pending', 'in_progress', 'blocked', 'waiting_for_provider'
+            )
             """,
             (now, now, team_run_id),
         )

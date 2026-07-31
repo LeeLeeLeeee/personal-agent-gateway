@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,16 +9,28 @@ import pytest
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.lmg_client import ProviderExecutionCapabilities
 from personal_agent_gateway.model_client import ModelResponse
+from personal_agent_gateway.remote_model_client import RemoteRunFailedError
 from personal_agent_gateway.run_state import TeamRunRegistry
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_model_effects import (
+    TeamModelEffectService,
+    team_model_effect_result_validators,
+)
+from personal_agent_gateway.team_model_invoker import (
+    AmbiguousModelOperation,
+    TeamModelInvoker,
+)
+from personal_agent_gateway.team_model_operations import (
+    OperationSpec,
+    TeamModelOperationService,
+)
 from personal_agent_gateway.team_provider_recovery import (
     OperationReconcileResult,
     ProviderOperationWaiting,
     ProviderRecoveryRequired,
     TeamProviderRecovery,
 )
-from personal_agent_gateway.team_model_invoker import AmbiguousModelOperation
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamRun, TeamRunService
@@ -96,6 +109,10 @@ class _FrozenRegistry:
 
 def _provider_recovery(teams):
     return TeamProviderRecovery(teams, _FrozenRegistry())
+
+
+async def _no_sleep(_delay):
+    return None
 
 
 def test_dispatcher_requires_provider_recovery(tmp_path):
@@ -607,6 +624,79 @@ async def test_operation_markers_preserve_persisted_cycle_state(
 
 
 @pytest.mark.asyncio
+async def test_production_dispatcher_add_work_provider_wait_keeps_lineage_open(
+    tmp_path: Path,
+) -> None:
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+    )
+    recovery = TeamProviderRecovery(
+        teams,
+        _FrozenRegistry(),
+        operations,
+    )
+
+    class WaitingModel:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete_operation(self, _messages, *, consumer_run_id):
+            self.calls += 1
+            raise RemoteRunFailedError(
+                "provider_unavailable",
+                "not ready",
+                pre_stream=True,
+            )
+
+    model = WaitingModel()
+    runtime = TeamRuntime(
+        teams,
+        lambda _agent, _cycle_id=None: model,
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(db, teams, operations),
+        provider_recovery=recovery,
+    )
+    orchestrator = TeamRunOrchestrator(
+        TeamRunRegistry(),
+        lambda: runtime,
+    )
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=recovery,
+    )
+    orchestrator.add_observer(dispatcher.on_team_run_settled)
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "provider-wait",
+        "work",
+        previous_cycle_id=None,
+    )
+
+    await dispatcher.run_one(run.id)
+
+    cycle = teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    operation = operations.get_open_for_cycle(cycle.id)
+    assert operation is not None
+    assert (operation.stage, operation.status, operation.attempts) == (
+        "cycle_add_work",
+        "waiting_for_provider",
+        3,
+    )
+    assert model.calls == 3
+    assert teams.get_team_run(run.id).status == "waiting_for_provider"
+    assert cycle.status == "waiting_for_provider"
+    assert cycles.get_request(request.id).status == "dispatching"
+
+
+@pytest.mark.asyncio
 async def test_waiting_cycle_observer_does_not_settle(tmp_path: Path) -> None:
     services = make_dispatcher_services(tmp_path)
     request = services.cycles.enqueue_request(
@@ -691,6 +781,82 @@ async def test_startup_reconciliation_schedules_only_runnable_operations(
         assert teams.get_cycle(cycle.id).status == "running"
     finally:
         await dispatcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_production_startup_interrupts_invoking_operation_without_replay(
+    tmp_path: Path,
+) -> None:
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = _dispatching_cycle(teams, cycles, run)
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(run.id, "running")
+    worker = next(
+        agent for agent in teams.list_agents(run.id)
+        if agent.id != run.leader_agent_id
+    )
+    task = teams.create_task(
+        run.id,
+        "work",
+        "work",
+        owner_agent_id=worker.id,
+        cycle_id=cycle.id,
+    )
+    teams.start_task(task.id, worker.id)
+    operations = TeamModelOperationService(db)
+    operation = operations.reserve(
+        OperationSpec(
+            operation_key=f"{cycle.id}:{task.id}:worker_execution:0",
+            team_run_id=run.id,
+            cycle_id=cycle.id,
+            task_id=task.id,
+            agent_id=worker.id,
+            provider=worker.backend,
+            stage="worker_execution",
+            stage_ordinal=0,
+            request_digest=hashlib.sha256(b"worker").hexdigest(),
+        )
+    )
+    operation = operations.begin_attempt(operation.id, "consumer-1")
+    recovery = TeamProviderRecovery(
+        teams,
+        _FrozenRegistry(),
+        operations,
+    )
+
+    class ForbiddenRuntime:
+        def __init__(self):
+            self.resume_calls = 0
+
+        async def resume(self, _team_run_id, _cycle_id=None):
+            self.resume_calls += 1
+            raise AssertionError("ambiguous startup operation was replayed")
+
+    runtime = ForbiddenRuntime()
+    orchestrator = TeamRunOrchestrator(
+        TeamRunRegistry(),
+        lambda: runtime,
+    )
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=recovery,
+    )
+
+    dispatcher.reconcile()
+    await dispatcher.start()
+    try:
+        await asyncio.sleep(0)
+    finally:
+        await dispatcher.stop()
+
+    assert runtime.resume_calls == 0
+    assert operations.get(operation.id).status == "ambiguous"
+    assert teams.get_team_run(run.id).status == "interrupted"
+    assert teams.get_cycle(cycle.id).status == "interrupted"
+    assert cycles.get_request(cycle.request_id).status == "dispatching"
 
 
 @pytest.mark.asyncio

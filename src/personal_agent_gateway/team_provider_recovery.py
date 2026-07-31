@@ -418,6 +418,8 @@ class TeamProviderRecovery:
             with self._teams._db.connection() as connection:
                 connection.execute("begin immediate")
                 operation = self._operations._get(connection, row["id"])
+                if _cancel_for_canceled_source(connection, operation):
+                    continue
                 if operation.status == "invoking":
                     _interrupt_ambiguous(
                         connection,
@@ -792,6 +794,46 @@ def _interrupt_ambiguous(
         """,
         (timestamp, operation.cycle_id),
     )
+
+
+def _cancel_for_canceled_source(
+    connection,
+    operation: TeamModelOperation,
+) -> bool:
+    source = connection.execute(
+        """
+        select run.status as run_status, cycle.status as cycle_status,
+               request.status as request_status
+        from team_runs run
+        join team_run_cycles cycle
+          on cycle.id = ? and cycle.team_run_id = run.id
+        left join team_cycle_requests request on request.id = cycle.request_id
+        where run.id = ?
+        """,
+        (operation.cycle_id, operation.team_run_id),
+    ).fetchone()
+    if source is None or "canceled" not in {
+        source["run_status"],
+        source["cycle_status"],
+        source["request_status"],
+    }:
+        return False
+    cursor = connection.execute(
+        """
+        update team_model_operations
+        set status = 'canceled', version = version + 1,
+            reason_code = 'source_canceled', updated_at = ?
+        where id = ? and status = ? and version = ?
+        """,
+        (
+            _timestamp(),
+            operation.id,
+            operation.status,
+            operation.version,
+        ),
+    )
+    _require_one(cursor, "Canceled source operation changed")
+    return True
 
 
 def _single_ambiguous_for_run(operations, teams, team_run_id):

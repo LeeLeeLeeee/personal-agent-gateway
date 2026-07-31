@@ -636,16 +636,23 @@ async def resume_team_run(
         cycle_id = cycle.id
 
     provider_recovery = request.app.state.team_provider_recovery
+    recovery_claim = None
     if provider_recovery.has_ambiguous_operation(team_run_id):
         try:
-            provider_recovery.prepare_explicit_resume(team_run_id)
+            recovery_claim = provider_recovery.prepare_explicit_resume(
+                team_run_id
+            )
         except AmbiguousOperationNotReconcilable as exc:
             raise HTTPException(
                 status_code=409,
                 detail=str(exc),
             ) from exc
         run = service.get_team_run(team_run_id)
-    request.app.state.team_run_orchestrator.resume(team_run_id, cycle_id)
+    dispatcher = request.app.state.team_cycle_dispatcher
+    if recovery_claim is not None:
+        dispatcher.resume_recovered_operation(recovery_claim)
+    else:
+        dispatcher.resume(team_run_id, cycle_id)
     record_domain_audit(
         request,
         principal,
@@ -706,7 +713,7 @@ async def answer_decision_request(
         }
     )
 
-    request.app.state.team_run_orchestrator.resume(
+    request.app.state.team_cycle_dispatcher.resume(
         team_run_id, decision_request.cycle_id
     )
     record_domain_audit(

@@ -14,10 +14,14 @@ from fastapi.testclient import TestClient
 from personal_agent_gateway.app import create_app
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.model_client import ModelResponse
+from personal_agent_gateway.remote_model_client import RemoteRunAbortedError
 from personal_agent_gateway.team_model_operations import (
     OperationSpec,
+    StaleOperation,
     TeamModelOperationService,
+    ValidatedOperationResult,
 )
+from personal_agent_gateway.team_model_invoker import AmbiguousModelOperation
 from personal_agent_gateway.team_provider_recovery import TeamProviderRecovery
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TaskAcceptance
@@ -31,7 +35,15 @@ _TERMINAL_STATUSES = {
 }
 
 
-def _make_ambiguous_api_operation(client, sessions):
+def _make_ambiguous_api_operation(
+    client,
+    sessions,
+    *,
+    stage="worker_execution",
+    stage_ordinal=0,
+    preplanning=False,
+    interrupt=True,
+):
     app = client.app
     teams = app.state.team_run_service
     cycles = app.state.team_cycle_service
@@ -72,33 +84,38 @@ def _make_ambiguous_api_operation(client, sessions):
         request.source_id,
         request_id=request.id,
     )
-    teams.set_cycle_status(cycle.id, "running")
-    teams.set_run_status(run.id, "running")
     worker_agent = next(
         agent
         for agent in teams.list_agents(run.id)
         if agent.id != run.leader_agent_id
     )
-    task = teams.create_task(
-        run.id,
-        "work",
-        "work",
-        owner_agent_id=worker_agent.id,
-        cycle_id=cycle.id,
-    )
-    teams.start_task(task.id, worker_agent.id)
+    if preplanning:
+        task = None
+        actor = teams.get_agent(run.leader_agent_id)
+    else:
+        teams.set_cycle_status(cycle.id, "running")
+        teams.set_run_status(run.id, "running")
+        task = teams.create_task(
+            run.id,
+            "work",
+            "work",
+            owner_agent_id=worker_agent.id,
+            cycle_id=cycle.id,
+        )
+        teams.start_task(task.id, worker_agent.id)
+        actor = worker_agent
     operations = TeamModelOperationService(app.state.database)
     operation = operations.reserve(
         OperationSpec(
-            operation_key=f"{cycle.id}:worker_execution:0",
+            operation_key=f"{cycle.id}:{stage}:{stage_ordinal}",
             team_run_id=run.id,
             cycle_id=cycle.id,
-            task_id=task.id,
-            agent_id=worker_agent.id,
-            provider=worker_agent.backend,
-            stage="worker_execution",
-            stage_ordinal=0,
-            request_digest=hashlib.sha256(b"worker").hexdigest(),
+            task_id=task.id if task is not None else None,
+            agent_id=actor.id,
+            provider=actor.backend,
+            stage=stage,
+            stage_ordinal=stage_ordinal,
+            request_digest=hashlib.sha256(stage.encode()).hexdigest(),
         )
     )
     operation = operations.begin_attempt(operation.id, "consumer-1")
@@ -108,24 +125,30 @@ def _make_ambiguous_api_operation(client, sessions):
         operations,
         session_loader=lambda: sessions(operation, run),
     )
-    asyncio.run(
-        recovery.interrupt_ambiguous_operation(
-            operation.id,
-            consumer_run_id="consumer-1",
-            upstream_session_id=None,
+    if interrupt:
+        asyncio.run(
+            recovery.interrupt_ambiguous_operation(
+                operation.id,
+                consumer_run_id="consumer-1",
+                upstream_session_id=None,
+            )
         )
-    )
     app.state.team_provider_recovery = recovery
 
     class RecordingOrchestrator:
         def __init__(self):
             self.resume_calls = []
+            self.continue_calls = []
 
         def resume(self, team_run_id, cycle_id=None):
             self.resume_calls.append((team_run_id, cycle_id))
 
+        def continue_cycle(self, team_run_id, cycle_id, instruction):
+            self.continue_calls.append((team_run_id, cycle_id, instruction))
+
     orchestrator = RecordingOrchestrator()
     app.state.team_run_orchestrator = orchestrator
+    app.state.team_cycle_dispatcher._orchestrator = orchestrator
     return run, cycle, task, worker_agent, operations, operation, orchestrator
 
 
@@ -191,6 +214,289 @@ def test_ambiguous_resume_requires_strict_reconciliation(
         assert client.app.state.team_run_service.get_team_run(
             run.id
         ).status == "interrupted"
+
+
+@pytest.mark.parametrize(
+    ("stage", "stage_ordinal"),
+    [
+        ("cycle_add_work", 0),
+        ("cycle_planning_repair", 2),
+    ],
+)
+def test_ambiguous_add_work_resume_reuses_exact_operation_path(
+    tmp_path: Path,
+    stage: str,
+    stage_ordinal: int,
+) -> None:
+    client = authenticated_client(tmp_path)
+
+    def sessions(operation, run):
+        return [
+            {
+                "provider": operation.provider,
+                "upstream_id": "strict-add-work-session",
+                "consumer": "personal-agent-gateway",
+                "consumer_session_id": run.id,
+                "consumer_run_id": operation.consumer_run_id,
+            }
+        ]
+
+    run, cycle, _task, _worker, operations, operation, orchestrator = (
+        _make_ambiguous_api_operation(
+            client,
+            sessions,
+            stage=stage,
+            stage_ordinal=stage_ordinal,
+            preplanning=True,
+        )
+    )
+
+    response = client.post(f"/api/team-runs/{run.id}/resume")
+
+    assert response.status_code == 200
+    assert orchestrator.resume_calls == []
+    assert orchestrator.continue_calls == [(run.id, cycle.id, "work")]
+    assert operations.get(operation.id).status == "prepared"
+    rows = client.app.state.database.fetchall(
+        "select id from team_model_operations where cycle_id = ?",
+        (cycle.id,),
+    )
+    assert [row["id"] for row in rows] == [operation.id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial_responses", "expected_stage", "expected_ordinal"),
+    [
+        (
+            [RemoteRunAbortedError("run_timeout", "timed out")],
+            "cycle_add_work",
+            0,
+        ),
+        (
+            [
+                ModelResponse(
+                    "invalid plan",
+                    [],
+                    upstream_session_id="repair-session",
+                ),
+                RemoteRunAbortedError("run_timeout", "timed out"),
+            ],
+            "cycle_planning_repair",
+            2,
+        ),
+    ],
+)
+async def test_explicit_add_work_resume_runs_production_path_without_collision(
+    tmp_path: Path,
+    initial_responses,
+    expected_stage: str,
+    expected_ordinal: int,
+) -> None:
+    config = make_config(tmp_path)
+    app = create_app(
+        config,
+        agent_registry=ready_agent_registry(config),
+    )
+    teams = app.state.team_run_service
+    cycles = app.state.team_cycle_service
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    worker = app.state.persona_service.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        f"explicit-{expected_stage}",
+        "work",
+        previous_cycle_id=None,
+    )
+    cycles.claim_next(run.id)
+    cycle = teams.create_cycle(
+        run.id,
+        request.source_type,
+        request.source_id,
+        request_id=request.id,
+    )
+    teams.set_cycle_effective_instruction(cycle.id, "work")
+    worker_agent = next(
+        agent for agent in teams.list_agents(run.id)
+        if agent.id != run.leader_agent_id
+    )
+
+    class OperationModel:
+        def __init__(self, responses):
+            self.responses = list(responses)
+            self.calls = 0
+
+        async def complete_operation(self, _messages, *, consumer_run_id):
+            self.calls += 1
+            value = self.responses.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+    lead_model = OperationModel(initial_responses)
+    worker_model = OperationModel(
+        [
+            ModelResponse(
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "summary": "done",
+                        "reason_code": None,
+                        "deliverables": [],
+                        "verifications": [
+                            {
+                                "name": "worker-result",
+                                "status": "passed",
+                                "evidence": "checked",
+                            }
+                        ],
+                    }
+                ),
+                [],
+                upstream_session_id="worker-session",
+            )
+        ]
+    )
+    runtime = TeamRuntime(
+        teams,
+        lambda agent, _cycle_id=None: (
+            lead_model if agent.id == run.leader_agent_id else worker_model
+        ),
+        operations=app.state.team_model_operation_service,
+        model_invoker=app.state.team_model_invoker,
+        model_effects=app.state.team_model_effect_service,
+        provider_recovery=app.state.team_provider_recovery,
+    )
+    app.state.team_runtime = runtime
+
+    with pytest.raises(AmbiguousModelOperation):
+        await runtime.add_work(run.id, "work", cycle.id)
+
+    operation = app.state.team_model_operation_service.get_open_for_cycle(
+        cycle.id
+    )
+    assert operation is not None
+    assert (operation.stage, operation.stage_ordinal, operation.status) == (
+        expected_stage,
+        expected_ordinal,
+        "ambiguous",
+    )
+    strict_session = operation.upstream_session_id or "strict-resume-session"
+    recovery = TeamProviderRecovery(
+        teams,
+        app.state.agent_registry,
+        app.state.team_model_operation_service,
+        session_loader=lambda: [
+            {
+                "provider": operation.provider,
+                "upstream_id": strict_session,
+                "consumer": "personal-agent-gateway",
+                "consumer_session_id": run.id,
+                "consumer_run_id": operation.consumer_run_id,
+            }
+        ],
+    )
+    runtime._provider_recovery = recovery
+    app.state.team_provider_recovery = recovery
+    app.state.team_cycle_dispatcher._provider_recovery = recovery
+    lead_model.responses.extend(
+        [
+            ModelResponse(
+                json.dumps(
+                    [
+                        {
+                            "title": "Research",
+                            "description": "Research the request.",
+                            "owner_agent_id": worker_agent.id,
+                            "required": True,
+                            "acceptance": {
+                                "required_outputs": [],
+                                "required_verifications": ["worker-result"],
+                            },
+                        }
+                    ]
+                ),
+                [],
+                upstream_session_id=strict_session,
+            ),
+            ModelResponse(
+                "summary",
+                [],
+                upstream_session_id=strict_session,
+            ),
+        ]
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        client.cookies.set(
+            "agent_session",
+            app.state.auth_session_service.issue().token,
+        )
+        response = await client.post(f"/api/team-runs/{run.id}/resume")
+
+    assert response.status_code == 200
+    await _poll_until(
+        lambda: not app.state.team_run_registry.is_running(run.id)
+    )
+    assert app.state.team_model_operation_service.get(
+        operation.id
+    ).status == "applied"
+    assert teams.get_team_run(run.id).status != "failed"
+    assert teams.get_cycle(cycle.id).status != "failed"
+    assert cycles.get_request(request.id).status == "settled"
+
+
+@pytest.mark.parametrize("operation_state", ["waiting", "invoking"])
+def test_cancel_api_closes_open_operation_and_complete_continuous_lineage(
+    tmp_path: Path,
+    operation_state: str,
+) -> None:
+    client = authenticated_client(tmp_path)
+    run, cycle, task, worker, operations, operation, _orchestrator = (
+        _make_ambiguous_api_operation(
+            client,
+            lambda _operation, _run: [],
+            interrupt=False,
+        )
+    )
+    recovery = client.app.state.team_provider_recovery
+    if operation_state == "waiting":
+        recovery.wait_for_operation(
+            operation.id,
+            reason_code="provider_unavailable",
+        )
+
+    response = client.post(f"/api/team-runs/{run.id}/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["team_run"]["status"] == "canceled"
+    assert operations.get(operation.id).status == "canceled"
+    assert client.app.state.team_run_service.get_cycle(cycle.id).status == "canceled"
+    assert client.app.state.team_cycle_service.get_request(
+        cycle.request_id
+    ).status == "canceled"
+    assert client.app.state.team_run_service.get_task(task.id).status == "canceled"
+    assert client.app.state.team_run_service.get_agent(worker.id).status == "canceled"
+    assert recovery.reconcile_startup().interrupted_cycle_ids == ()
+    with pytest.raises(StaleOperation, match="Expected operation status invoking"):
+        operations.complete(
+            operation.id,
+            operation.version,
+            ValidatedOperationResult("task_outcome", {"status": "completed"}),
+        )
 
 
 def make_config(tmp_path: Path) -> AppConfig:
@@ -1433,6 +1739,106 @@ async def test_answer_decision_request_rejects_stale_and_registers_one_resume(
 
         gate.set()
         await _poll_until(lambda: not app.state.team_run_registry.is_running(run["id"]))
+
+
+@pytest.mark.asyncio
+async def test_auto_decision_answer_observes_ambiguous_marker_and_pauses_series(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path)
+    app = create_app(
+        config,
+        agent_registry=ready_agent_registry(config),
+    )
+    teams = app.state.team_run_service
+    cycles = app.state.team_cycle_service
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    worker = app.state.persona_service.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "auto goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="auto",
+        auto_repeat_count=2,
+        auto_interval_seconds=60,
+    )
+    request = cycles.claim_next(run.id)
+    assert request is not None
+    cycle = teams.create_cycle(
+        run.id,
+        request.source_type,
+        request.source_id,
+        request_id=request.id,
+    )
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(run.id, "running")
+    worker_agent = next(
+        agent for agent in teams.list_agents(run.id)
+        if agent.id != run.leader_agent_id
+    )
+    task = teams.create_task(
+        run.id,
+        "Deploy",
+        "choose target",
+        owner_agent_id=worker_agent.id,
+        cycle_id=cycle.id,
+    )
+    teams.start_task(task.id, worker_agent.id)
+    teams.defer_task_for_user_decision(
+        task.id,
+        worker_agent.id,
+        {
+            "topic": "target",
+            "question": "Where?",
+            "why_needed": "Changes config.",
+            "options": [],
+            "recommended_option_id": None,
+            "blocking_scope": "task",
+        },
+    )
+    decision = teams.publish_decision_request(run.id, cycle.id)
+
+    class AmbiguousRuntime:
+        async def resume(self, team_run_id, cycle_id=None):
+            teams.set_run_status(team_run_id, "interrupted")
+            raise AmbiguousModelOperation(
+                "operation-1",
+                "consumer-1",
+                "run_timeout",
+            )
+
+    app.state.team_runtime = AmbiguousRuntime()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        client.cookies.set(
+            "agent_session",
+            app.state.auth_session_service.issue().token,
+        )
+        response = await client.post(
+            f"/api/team-runs/{run.id}/decision-request/answer",
+            json={
+                "request_id": decision.id,
+                "revision": decision.revision,
+                "answers": {"Q-001": "staging"},
+            },
+        )
+
+    assert response.status_code == 200
+    await _poll_until(
+        lambda: cycles.policy_status(run.id) == "paused_interrupted"
+    )
+    assert cycles.get_request(request.id).status == "dispatching"
+    assert teams.get_cycle(cycle.id).status == "interrupted"
+    assert app.state.team_cycle_dispatcher.last_error is None
+    assert [
+        event["type"] for event in app.state.event_bus.recent()
+    ].count("team.auto_series.paused") == 1
 
 
 def test_waiting_decision_survives_restart_and_cancel_settles_request(tmp_path: Path) -> None:

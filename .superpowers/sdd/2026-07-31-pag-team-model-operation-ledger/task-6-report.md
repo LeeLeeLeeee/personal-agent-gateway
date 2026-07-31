@@ -104,3 +104,83 @@ No full test suite was run.
 - Cycle execution metadata continues to contain semantic source and owned
   provider/agent snapshots only; operation continuation and receipts stay in
   the operation ledger/domain rows.
+
+## Fix Round 1
+
+### Review Findings Addressed
+
+- Made continuous cancellation one atomic boundary for open model operations,
+  cycle requests, cycles, tasks, agents, AUTO series, hooks, decisions, and the
+  Team Run. Provider-waiting cycle/task states are now included, and every open
+  operation transitions to `canceled` before the transaction commits.
+- Added a startup guard that cancels any lingering open operation whose
+  run/cycle/request source is already canceled. Startup reconciliation cannot
+  rewrite canceled source state to `interrupted`.
+- Routed explicit Resume through the dispatcher's shared operation-stage path.
+  Initial add-work and add-work repair ordinal 2 both use
+  `continue_cycle(add_work -> resume)` with the persisted instruction and exact
+  claimed operation; all other stages use `resume`.
+- Routed decision-answer background Resume through dispatcher marker
+  observation. `ProviderOperationWaiting` is consumed without settlement and
+  `AmbiguousModelOperation` applies the existing interrupted-series pause
+  policy instead of becoming an unobserved background exception.
+- Added production-path integration coverage for dispatcher provider wait,
+  invalid-plan repair wait, Worker-applied Lead wait/claim, Worker-applied Lead
+  ambiguity, completed-operation startup local apply, invoking-operation
+  startup interruption, cancellation, and initial/repair explicit add-work
+  Resume.
+
+### RED Evidence
+
+```text
+3 failed, 23 deselected
+  waiting cancellation left the operation waiting_for_provider
+  invoking cancellation was reconciled to interrupted
+  canceled source startup was reconciled to interrupted
+
+2 failed, 6 passed, 46 deselected
+  initial and repair add-work explicit Resume called resume(), not continue_cycle()
+
+1 failed, 54 deselected
+  AUTO decision-answer ambiguity timed out waiting for paused_interrupted
+  Task exception was never retrieved: AmbiguousModelOperation
+```
+
+### Focused Verification
+
+The Task 6 brief test files were split to avoid the Windows command timeout:
+
+```text
+55 passed
+  tests/test_team_provider_recovery.py
+  tests/test_team_cycle_dispatcher.py
+
+59 passed
+  tests/test_api_team_runs.py
+
+156 passed
+  tests/test_team_runtime.py
+
+168 passed
+  tests/test_migrations.py
+  tests/test_team_model_operations.py
+  tests/test_remote_model_client.py
+  tests/test_team_model_invoker.py
+  tests/test_team_model_effects.py
+  tests/test_app_team_factory.py
+```
+
+Total focused evidence: **438 passed**.
+
+```text
+ruff check <Task 6 brief files plus team_cycles.py>
+All checks passed!
+
+rg -n "set_cycle_execution_metadata" src/personal_agent_gateway
+src/personal_agent_gateway\teams.py:561:    def set_cycle_execution_metadata(
+
+git diff --check
+PASS
+```
+
+No full test suite was run.

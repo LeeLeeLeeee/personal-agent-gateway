@@ -1,3 +1,4 @@
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from personal_agent_gateway.remote_model_client import (
 from personal_agent_gateway.team_acceptance import AcceptanceResult
 from personal_agent_gateway.team_artifact_publisher import ArtifactPublicationError
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_model_effects import (
     TeamModelEffectService,
     team_model_effect_result_validators,
@@ -37,6 +39,8 @@ from personal_agent_gateway.team_provider_recovery import (
     ProviderOperationWaiting,
     TeamProviderRecovery,
 )
+from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
+from personal_agent_gateway.run_state import TeamRunRegistry
 from personal_agent_gateway.team_runtime import (
     WORKER_PROMPT,
     TeamRuntime,
@@ -616,6 +620,10 @@ async def test_invalid_add_work_closes_initial_operation_then_waits_on_repair(
     assert setup.teams.get_cycle(
         setup.cycle.id
     ).status == "waiting_for_provider"
+    assert setup.cycle_request is not None
+    assert TeamCycleService(setup.db).get_request(
+        setup.cycle_request.id
+    ).status == "dispatching"
 
 
 @pytest.mark.asyncio
@@ -664,8 +672,15 @@ def restart_operation_runtime(setup):
     )
 
 
-def make_operation_runtime_with_completed_worker(tmp_path):
-    setup = make_operation_runtime(tmp_path)
+def make_operation_runtime_with_completed_worker(
+    tmp_path,
+    *,
+    linked_cycle=False,
+):
+    setup = make_operation_runtime(
+        tmp_path,
+        cycle_instruction="work" if linked_cycle else None,
+    )
     worker = next(
         agent
         for agent in setup.teams.list_agents(setup.run.id)
@@ -713,8 +728,15 @@ def make_operation_runtime_with_completed_worker(tmp_path):
     return SimpleNamespace(**values)
 
 
-def make_recoverable_acceptance_runtime(tmp_path):
-    setup = make_operation_runtime(tmp_path)
+def make_recoverable_acceptance_runtime(
+    tmp_path,
+    *,
+    linked_cycle=False,
+):
+    setup = make_operation_runtime(
+        tmp_path,
+        cycle_instruction="work" if linked_cycle else None,
+    )
     task = setup.teams.create_task(
         setup.run.id,
         "Research",
@@ -804,6 +826,115 @@ async def test_lead_review_session_is_owned_by_lead_and_keeps_worker_applied(
         "worker-session"
     )
     assert setup.worker_client.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_worker_applied_then_lead_wait_claims_and_resumes_without_worker_replay(
+    tmp_path,
+):
+    setup = make_recoverable_acceptance_runtime(
+        tmp_path,
+        linked_cycle=True,
+    )
+    setup.lead_client.responses = [
+        RemoteRunFailedError(
+            "provider_unavailable",
+            "not ready",
+            pre_stream=True,
+        )
+        for _ in range(3)
+    ]
+    recovery = TeamProviderRecovery(
+        setup.teams,
+        SimpleNamespace(),
+        setup.operations,
+    )
+    setup.runtime._provider_recovery = recovery
+
+    with pytest.raises(ProviderOperationWaiting):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    worker_operation = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:worker_execution:0"
+    )
+    lead_operation = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert worker_operation is not None
+    assert worker_operation.status == "applied"
+    assert lead_operation is not None
+    assert (lead_operation.stage, lead_operation.status) == (
+        "acceptance_lead",
+        "waiting_for_provider",
+    )
+    assert setup.worker_client.calls == 1
+
+    claim = recovery.claim_operation(setup.cycle.id)
+    assert claim is not None
+    assert claim.operation_id == lead_operation.id
+    setup.lead_client.responses.extend(
+        [
+            ModelResponse(
+                json.dumps(
+                    {
+                        "resolution": {
+                            "kind": "fail",
+                            "reason_code": "requirements_not_met",
+                            "summary": "The requirements cannot be met.",
+                        }
+                    }
+                ),
+                [],
+            ),
+            ModelResponse("summary", []),
+        ]
+    )
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.worker_client.calls == 1
+    assert setup.operations.get(lead_operation.id).status == "applied"
+
+
+@pytest.mark.asyncio
+async def test_worker_applied_then_lead_ambiguity_interrupts_without_auto_replay(
+    tmp_path,
+):
+    setup = make_recoverable_acceptance_runtime(
+        tmp_path,
+        linked_cycle=True,
+    )
+    setup.lead_client.responses = [
+        RemoteRunAbortedError("run_timeout", "timed out")
+    ]
+    recovery = TeamProviderRecovery(
+        setup.teams,
+        SimpleNamespace(),
+        setup.operations,
+    )
+    setup.runtime._provider_recovery = recovery
+
+    with pytest.raises(AmbiguousModelOperation):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    worker_operation = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:worker_execution:0"
+    )
+    lead_operation = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert worker_operation is not None
+    assert worker_operation.status == "applied"
+    assert lead_operation is not None
+    assert (lead_operation.stage, lead_operation.status) == (
+        "acceptance_lead",
+        "ambiguous",
+    )
+    assert setup.worker_client.calls == 1
+    assert setup.lead_client.calls == 1
+    assert recovery.reconcile_startup().runnable_cycle_ids == ()
+
+    with pytest.raises(AmbiguousModelOperation):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.worker_client.calls == 1
+    assert setup.lead_client.calls == 1
 
 
 @pytest.mark.asyncio
@@ -1807,6 +1938,59 @@ async def test_completed_worker_operation_applies_without_second_model_call(
     assert setup.operations.get(setup.worker_operation.id).status == "applied"
     assert setup.teams.get_task(setup.task.id).outcome is not None
     assert result.status in {"running", "completed", "completed_with_failures"}
+
+
+@pytest.mark.asyncio
+async def test_completed_worker_operation_startup_applies_locally_without_worker_call(
+    tmp_path,
+):
+    setup = make_operation_runtime_with_completed_worker(
+        tmp_path,
+        linked_cycle=True,
+    )
+    recovery = TeamProviderRecovery(
+        setup.teams,
+        SimpleNamespace(),
+        setup.operations,
+    )
+    runtime = TeamRuntime(
+        setup.teams,
+        setup.model_factory,
+        operations=setup.operations,
+        model_invoker=TeamModelInvoker(setup.operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(
+            setup.db,
+            setup.teams,
+            setup.operations,
+        ),
+        provider_recovery=recovery,
+    )
+    registry = TeamRunRegistry()
+    orchestrator = TeamRunOrchestrator(registry, lambda: runtime)
+    dispatcher = TeamCycleDispatcher(
+        TeamCycleService(setup.db),
+        setup.teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=recovery,
+    )
+    orchestrator.add_observer(dispatcher.on_team_run_settled)
+
+    dispatcher.reconcile()
+    await dispatcher.start()
+    try:
+        for _ in range(100):
+            if setup.operations.get(setup.worker_operation.id).status == "applied":
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("startup did not apply completed operation")
+    finally:
+        await dispatcher.stop(interrupt_active=False)
+
+    assert setup.worker_client.calls == 0
+    assert setup.operations.get(setup.worker_operation.id).status == "applied"
+    assert setup.teams.get_task(setup.task.id).outcome is not None
 
 
 @pytest.mark.asyncio

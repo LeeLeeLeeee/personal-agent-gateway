@@ -14,7 +14,12 @@ from personal_agent_gateway.team_provider_recovery import (
     TeamProviderRecovery,
 )
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
-from personal_agent_gateway.teams import TeamRun, TeamRunCycle, TeamRunService
+from personal_agent_gateway.teams import (
+    ProviderRecoveryClaim,
+    TeamRun,
+    TeamRunCycle,
+    TeamRunService,
+)
 
 
 CyclePreparer = Callable[
@@ -74,32 +79,7 @@ class TeamCycleDispatcher:
                 operation = self._provider_recovery.get_open_operation(
                     cycle.id
                 )
-                add_work_operation = (
-                    operation is not None
-                    and (
-                        operation.stage == "cycle_add_work"
-                        or (
-                            operation.stage == "cycle_planning_repair"
-                            and operation.stage_ordinal == 2
-                        )
-                    )
-                )
-                if add_work_operation:
-                    instruction = (
-                        self._teams.get_cycle_effective_instruction(cycle.id)
-                        or self._teams.get_cycle_objective(cycle.id)
-                    )
-                    if instruction is None:
-                        raise RuntimeError(
-                            "Startup add-work operation has no instruction"
-                        )
-                    self._orchestrator.continue_cycle(
-                        cycle.team_run_id,
-                        cycle.id,
-                        instruction,
-                    )
-                else:
-                    self._orchestrator.resume(cycle.team_run_id, cycle.id)
+                self._resume_operation(cycle, operation)
 
     async def stop(self, *, interrupt_active: bool = True) -> None:
         if self._task is None:
@@ -127,6 +107,27 @@ class TeamCycleDispatcher:
 
     async def enqueue_run(self, team_run_id: str) -> None:
         await self._queue.put(team_run_id)
+
+    def resume(
+        self,
+        team_run_id: str,
+        cycle_id: str | None = None,
+    ):
+        return self._observe_scheduled(
+            self._orchestrator.resume(team_run_id, cycle_id),
+            team_run_id,
+            cycle_id,
+        )
+
+    def resume_recovered_operation(
+        self,
+        claim: ProviderRecoveryClaim,
+    ):
+        cycle = self._teams.get_cycle(claim.cycle_id)
+        operation = self._provider_recovery.get_open_operation(cycle.id)
+        if operation is None or operation.id != claim.operation_id:
+            raise RuntimeError("Recovered operation claim no longer matches")
+        return self._resume_operation(cycle, operation)
 
     async def run_one(self, team_run_id: str) -> None:
         if self._teams.get_team_run(team_run_id).status == "canceled":
@@ -307,6 +308,78 @@ class TeamCycleDispatcher:
             self._teams.get_team_run(team_run_id),
             cycle_id,
         )
+
+    def _resume_operation(self, cycle: TeamRunCycle, operation):
+        add_work_operation = (
+            operation is not None
+            and (
+                operation.stage == "cycle_add_work"
+                or (
+                    operation.stage == "cycle_planning_repair"
+                    and operation.stage_ordinal == 2
+                )
+            )
+        )
+        if add_work_operation:
+            instruction = (
+                self._teams.get_cycle_effective_instruction(cycle.id)
+                or self._teams.get_cycle_objective(cycle.id)
+            )
+            if instruction is None:
+                raise RuntimeError(
+                    "Recovered add-work operation has no instruction"
+                )
+            scheduled = self._orchestrator.continue_cycle(
+                cycle.team_run_id,
+                cycle.id,
+                instruction,
+            )
+        else:
+            scheduled = self._orchestrator.resume(
+                cycle.team_run_id,
+                cycle.id,
+            )
+        return self._observe_scheduled(
+            scheduled,
+            cycle.team_run_id,
+            cycle.id,
+        )
+
+    def _observe_scheduled(
+        self,
+        scheduled,
+        team_run_id: str,
+        cycle_id: str | None,
+    ):
+        if isinstance(scheduled, asyncio.Future):
+            asyncio.create_task(
+                self._consume_operation_marker(
+                    scheduled,
+                    team_run_id,
+                    cycle_id,
+                )
+            )
+        return scheduled
+
+    async def _consume_operation_marker(
+        self,
+        scheduled,
+        team_run_id: str,
+        cycle_id: str | None,
+    ) -> None:
+        try:
+            await scheduled
+        except asyncio.CancelledError:
+            return
+        except ProviderOperationWaiting:
+            return
+        except AmbiguousModelOperation:
+            await self.on_team_run_settled(
+                self._teams.get_team_run(team_run_id),
+                cycle_id,
+            )
+        except Exception as exc:
+            self._last_error = redact_text(exc) or type(exc).__name__
 
     async def _run_loop(self) -> None:
         while True:
