@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Mapping
@@ -28,6 +29,7 @@ from personal_agent_gateway.teams import (
     TeamMessage,
     TeamRunService,
     TeamTask,
+    _validate_task_acceptance,
 )
 
 
@@ -123,8 +125,18 @@ class TeamModelEffectService:
             connection.execute("begin immediate")
             operation = self._operations._get(connection, operation_id)
             task, agent = self._validate_worker_operation(connection, operation)
+            normalized_changes = _workspace_changes(workspace_changes)
+            input_digest = _worker_input_digest(
+                operation,
+                acceptance,
+                normalized_changes,
+            )
             if operation.status == "applied":
-                return self._replay_worker(connection, operation)
+                return self._replay_worker(
+                    connection,
+                    operation,
+                    input_digest,
+                )
             if operation.status != "completed":
                 raise StaleOperation(
                     f"Expected operation status completed, got {operation.status}"
@@ -151,7 +163,7 @@ class TeamModelEffectService:
                     task,
                     agent,
                     acceptance,
-                    _workspace_changes(workspace_changes),
+                    normalized_changes,
                     now,
                 )
             _promote_actor_session(connection, operation, now)
@@ -159,7 +171,12 @@ class TeamModelEffectService:
                 connection,
                 operation,
                 effect_type=operation.result_kind or "worker_outcome",
-                effect_ref=_worker_effect_ref(result),
+                effect_ref=_worker_effect_ref(
+                    connection,
+                    operation,
+                    result,
+                    input_digest,
+                ),
                 now=now,
             )
             return result
@@ -347,15 +364,43 @@ class TeamModelEffectService:
             connection,
             effect_ref["message_id"],
         )
+        run = connection.execute(
+            "select status, summary, finished_at from team_runs where id = ?",
+            (operation.team_run_id,),
+        ).fetchone()
+        cycle = connection.execute(
+            """
+            select status, summary, finished_at from team_run_cycles where id = ?
+            """,
+            (operation.cycle_id,),
+        ).fetchone()
+        agent = self._teams._agent_from_connection(
+            connection,
+            operation.agent_id,
+        )
         if (
             message.team_run_id != operation.team_run_id
             or message.cycle_id != operation.cycle_id
             or message.sender_agent_id != operation.agent_id
+            or message.recipient_agent_id is not None
             or message.kind != "synthesis"
             or message.content != summary
+            or message.metadata != {"operation_id": operation.id}
+            or run is None
+            or run["status"] != effect_ref["status"]
+            or run["summary"] != summary
+            or run["finished_at"] is None
+            or cycle is None
+            or cycle["status"] != effect_ref["status"]
+            or cycle["summary"] != summary
+            or cycle["finished_at"] is None
+            or agent.status != "completed"
+            or agent.current_task_id is not None
+            or agent.finished_at is None
+            or agent.upstream_session_id != operation.upstream_session_id
         ):
             raise OperationConflict(
-                "Applied synthesis message does not match the operation"
+                "Applied synthesis rows do not match the operation"
             )
         return summary
 
@@ -542,10 +587,34 @@ class TeamModelEffectService:
         self,
         connection: sqlite3.Connection,
         operation: TeamModelOperation,
+        input_digest: str,
     ) -> WorkerEffectResult:
         effect_ref = operation.effect_ref_json
+        if operation.result_kind == "task_outcome":
+            return self._replay_task_outcome(
+                connection,
+                operation,
+                effect_ref,
+                input_digest,
+            )
+        if operation.result_kind == "user_decision":
+            return self._replay_worker_decision(
+                connection,
+                operation,
+                effect_ref,
+                input_digest,
+            )
+        raise OperationConflict("Applied Worker result kind is invalid")
+
+    def _replay_task_outcome(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        effect_ref: dict[str, object] | None,
+        input_digest: str,
+    ) -> WorkerEffectResult:
         if (
-            operation.effect_type != operation.result_kind
+            operation.effect_type != "task_outcome"
             or not isinstance(effect_ref, dict)
             or set(effect_ref)
             != {
@@ -553,14 +622,15 @@ class TeamModelEffectService:
                 "agent_id",
                 "next_stage",
                 "message_id",
-                "decision_request_id",
+                "input_digest",
             }
             or effect_ref["task_id"] != operation.task_id
             or effect_ref["agent_id"] != operation.agent_id
-            or effect_ref["next_stage"]
-            not in {None, "acceptance_lead", "user_decision"}
+            or effect_ref["next_stage"] not in {None, "acceptance_lead"}
+            or not isinstance(effect_ref["message_id"], str)
+            or effect_ref["input_digest"] != input_digest
         ):
-            raise OperationConflict("Applied Worker effect reference is invalid")
+            raise OperationConflict("Applied task outcome reference is invalid")
         task = self._teams._task_from_connection(
             connection,
             str(effect_ref["task_id"]),
@@ -569,50 +639,140 @@ class TeamModelEffectService:
             connection,
             str(effect_ref["agent_id"]),
         )
-        message_id = effect_ref["message_id"]
-        request_id = effect_ref["decision_request_id"]
-        if message_id is not None and not isinstance(message_id, str):
-            raise OperationConflict("Applied Worker message reference is invalid")
-        if request_id is not None and not isinstance(request_id, str):
-            raise OperationConflict("Applied Worker decision reference is invalid")
-        message = (
-            self._teams._message_from_connection(connection, message_id)
-            if isinstance(message_id, str)
-            else None
+        message = self._teams._message_from_connection(
+            connection,
+            effect_ref["message_id"],
         )
-        request = (
-            self._teams._decision_request_from_connection(connection, request_id)
-            if isinstance(request_id, str)
-            else None
+        outcome = _task_outcome(operation)
+        acceptance = task.acceptance_result
+        expected_next_stage, task_status, agent_status = _expected_worker_state(
+            acceptance
+        )
+        expected_outcome = _json_object(asdict(outcome))
+        expected_message_metadata = {
+            "operation_id": operation.id,
+            "task_id": task.id,
+            "outcome_status": outcome.status,
+            "reason_code": outcome.reason_code,
+        }
+        persisted_input_digest = _persisted_worker_input_digest(
+            acceptance,
+            message.metadata,
         )
         if (
             task.team_run_id != operation.team_run_id
             or task.cycle_id != operation.cycle_id
+            or task.owner_agent_id != operation.agent_id
+            or task.outcome != expected_outcome
+            or task.status != task_status
             or agent.team_run_id != operation.team_run_id
-            or (
-                message is not None
-                and (
-                    message.team_run_id != operation.team_run_id
-                    or message.cycle_id != operation.cycle_id
-                    or message.kind != "agent_output"
-                )
+            or agent.status != agent_status
+            or agent.upstream_session_id != operation.upstream_session_id
+            or effect_ref["next_stage"] != expected_next_stage
+            or not _worker_terminal_fields_match(
+                task,
+                agent,
+                outcome.summary,
+                acceptance,
+                expected_next_stage,
             )
-            or (
-                request is not None
-                and (
-                    request.team_run_id != operation.team_run_id
-                    or request.cycle_id != operation.cycle_id
-                )
+            or message.team_run_id != operation.team_run_id
+            or message.cycle_id != operation.cycle_id
+            or message.sender_agent_id != operation.agent_id
+            or message.recipient_agent_id is not None
+            or message.kind != "agent_output"
+            or message.content != outcome.summary
+            or any(
+                message.metadata.get(key) != value
+                for key, value in expected_message_metadata.items()
             )
+            or persisted_input_digest != effect_ref["input_digest"]
         ):
-            raise OperationConflict("Applied Worker rows do not match the operation")
-        if (message is None) == (request is None):
-            raise OperationConflict("Applied Worker effect row reference is invalid")
+            raise OperationConflict("Applied task outcome rows do not match")
         return WorkerEffectResult(
             task=task,
             agent=agent,
             next_stage=effect_ref["next_stage"],
             message=message,
+        )
+
+    def _replay_worker_decision(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        effect_ref: dict[str, object] | None,
+        input_digest: str,
+    ) -> WorkerEffectResult:
+        if (
+            operation.effect_type != "user_decision"
+            or not isinstance(effect_ref, dict)
+            or set(effect_ref)
+            != {
+                "task_id",
+                "agent_id",
+                "next_stage",
+                "decision_request_id",
+                "decision_item_id",
+                "decision_item_digest",
+                "input_digest",
+            }
+            or effect_ref["task_id"] != operation.task_id
+            or effect_ref["agent_id"] != operation.agent_id
+            or effect_ref["next_stage"] != "user_decision"
+            or not isinstance(effect_ref["decision_request_id"], str)
+            or not isinstance(effect_ref["decision_item_id"], str)
+            or not isinstance(effect_ref["decision_item_digest"], str)
+            or effect_ref["input_digest"] != input_digest
+        ):
+            raise OperationConflict("Applied Worker decision reference is invalid")
+        task = self._teams._task_from_connection(
+            connection,
+            str(effect_ref["task_id"]),
+        )
+        agent = self._teams._agent_from_connection(
+            connection,
+            str(effect_ref["agent_id"]),
+        )
+        request = self._teams._decision_request_from_connection(
+            connection,
+            effect_ref["decision_request_id"],
+        )
+        item = next(
+            (
+                candidate
+                for candidate in request.items
+                if candidate.get("id") == effect_ref["decision_item_id"]
+            ),
+            None,
+        )
+        if (
+            task.team_run_id != operation.team_run_id
+            or task.cycle_id != operation.cycle_id
+            or task.owner_agent_id != operation.agent_id
+            or task.status != "blocked"
+            or agent.team_run_id != operation.team_run_id
+            or agent.status != "waiting"
+            or agent.current_task_id is not None
+            or agent.upstream_session_id != operation.upstream_session_id
+            or request.team_run_id != operation.team_run_id
+            or request.cycle_id != operation.cycle_id
+            or request.status != "collecting"
+            or request.answers != {}
+            or request.published_at is not None
+            or request.answered_at is not None
+            or item is None
+            or _canonical_digest(item) != effect_ref["decision_item_digest"]
+            or not _decision_item_matches(
+                item,
+                _user_decision(operation),
+                task.id,
+            )
+        ):
+            raise OperationConflict("Applied Worker decision rows do not match")
+        return WorkerEffectResult(
+            task=task,
+            agent=agent,
+            next_stage="user_decision",
             decision_request=request,
         )
 
@@ -669,6 +829,7 @@ class TeamModelEffectService:
                 acceptance_payload["required_verifications"]
             ),
         )
+        _validate_task_acceptance(acceptance)
         task_id = uuid4().hex
         connection.execute(
             """
@@ -723,23 +884,34 @@ class TeamModelEffectService:
             self._teams._task_from_connection(connection, task_id)
             for task_id in effect_ref["task_ids"]
         ]
+        specs = _plan_specs(operation)
+        if len(tasks) != len(specs):
+            raise OperationConflict("Applied plan task count does not match")
+        actor = self._teams._agent_from_connection(
+            connection,
+            operation.agent_id,
+        )
         if any(
             task.team_run_id != operation.team_run_id
             or task.cycle_id != operation.cycle_id
-            for task in tasks
+            or not _task_matches_plan_spec(task, spec)
+            for task, spec in zip(tasks, specs, strict=True)
+        ) or (
+            actor.upstream_session_id != operation.upstream_session_id
         ):
             raise OperationConflict("Applied plan tasks do not match the operation")
-        message = connection.execute(
-            """
-            select team_run_id, cycle_id, kind from team_messages where id = ?
-            """,
-            (effect_ref["message_id"],),
-        ).fetchone()
+        message = self._teams._message_from_connection(
+            connection,
+            effect_ref["message_id"],
+        )
         if (
-            message is None
-            or message["team_run_id"] != operation.team_run_id
-            or message["cycle_id"] != operation.cycle_id
-            or message["kind"] != "plan_note"
+            message.team_run_id != operation.team_run_id
+            or message.cycle_id != operation.cycle_id
+            or message.sender_agent_id != operation.agent_id
+            or message.recipient_agent_id is not None
+            or message.kind != "plan_note"
+            or message.content != f"Planning completed with {len(specs)} tasks."
+            or message.metadata != {"operation_id": operation.id}
         ):
             raise OperationConflict("Applied plan message does not match the operation")
         return tasks
@@ -820,22 +992,243 @@ def _workspace_changes(value: Mapping[str, object]) -> dict[str, list[str]]:
             isinstance(item, str) for item in items
         ):
             raise ValueError("Workspace change paths must be strings")
-        changes[field] = list(items)
+        changes[field] = sorted(items)
     return changes
 
 
-def _worker_effect_ref(result: WorkerEffectResult) -> dict[str, object]:
-    return {
-        "task_id": result.task.id,
-        "agent_id": result.agent.id,
-        "next_stage": result.next_stage,
-        "message_id": result.message.id if result.message is not None else None,
-        "decision_request_id": (
-            result.decision_request.id
-            if result.decision_request is not None
-            else None
-        ),
-    }
+def _worker_effect_ref(
+    connection: sqlite3.Connection,
+    operation: TeamModelOperation,
+    result: WorkerEffectResult,
+    input_digest: str,
+) -> dict[str, object]:
+    if operation.result_kind == "task_outcome" and result.message is not None:
+        return {
+            "task_id": result.task.id,
+            "agent_id": result.agent.id,
+            "next_stage": result.next_stage,
+            "message_id": result.message.id,
+            "input_digest": input_digest,
+        }
+    if (
+        operation.result_kind == "user_decision"
+        and result.decision_request is not None
+    ):
+        decision = _user_decision(operation)
+        matching_items = [
+            item
+            for item in result.decision_request.items
+            if _decision_item_matches(item, decision, result.task.id)
+        ]
+        if len(matching_items) != 1:
+            raise OperationConflict(
+                "Worker decision does not have one exact request item"
+            )
+        item = matching_items[0]
+        item_id = item.get("id")
+        if not isinstance(item_id, str):
+            raise OperationConflict("Worker decision item ID is invalid")
+        return {
+            "task_id": result.task.id,
+            "agent_id": result.agent.id,
+            "next_stage": "user_decision",
+            "decision_request_id": result.decision_request.id,
+            "decision_item_id": item_id,
+            "decision_item_digest": _canonical_digest(item),
+            "input_digest": input_digest,
+        }
+    raise OperationConflict("Worker effect does not match its result kind")
+
+
+def _worker_input_digest(
+    operation: TeamModelOperation,
+    acceptance: AcceptanceResult | None,
+    workspace_changes: dict[str, list[str]],
+) -> str:
+    if operation.result_kind == "task_outcome":
+        if acceptance is None:
+            raise ValueError("Acceptance result is required for a task outcome")
+        _validate_acceptance_result(acceptance)
+        acceptance_payload: dict[str, object] | None = _json_object(
+            asdict(acceptance)
+        )
+    elif operation.result_kind == "user_decision":
+        if acceptance is not None:
+            raise ValueError("User decision cannot have an acceptance result")
+        acceptance_payload = None
+    else:
+        raise OperationConflict("Worker result kind is invalid")
+    return _canonical_digest(
+        {
+            "acceptance": acceptance_payload,
+            "workspace_changes": workspace_changes,
+        }
+    )
+
+
+def _persisted_worker_input_digest(
+    acceptance: dict[str, object],
+    message_metadata: dict[str, object],
+) -> str:
+    if set(message_metadata) != {
+        "operation_id",
+        "task_id",
+        "outcome_status",
+        "reason_code",
+        "created",
+        "modified",
+        "deleted",
+    }:
+        raise OperationConflict("Applied Worker message metadata is invalid")
+    try:
+        changes = _workspace_changes(
+            {
+                field: message_metadata[field]
+                for field in ("created", "modified", "deleted")
+            }
+        )
+    except ValueError as exc:
+        raise OperationConflict(
+            "Applied Worker workspace changes are invalid"
+        ) from exc
+    return _canonical_digest(
+        {
+            "acceptance": acceptance,
+            "workspace_changes": changes,
+        }
+    )
+
+
+def _expected_worker_state(
+    acceptance: dict[str, object] | None,
+) -> tuple[
+    Literal["acceptance_lead"] | None,
+    Literal["in_progress", "completed", "failed"],
+    Literal["running", "completed", "failed"],
+]:
+    if (
+        not isinstance(acceptance, dict)
+        or set(acceptance) != {"accepted", "status", "reason_code", "evidence"}
+        or not isinstance(acceptance["accepted"], bool)
+        or not isinstance(acceptance["evidence"], dict)
+    ):
+        raise OperationConflict("Applied acceptance result is invalid")
+    if acceptance["accepted"]:
+        if (
+            acceptance["status"] != "completed"
+            or acceptance["reason_code"] is not None
+        ):
+            raise OperationConflict("Applied accepted result is invalid")
+        return None, "completed", "completed"
+    reason_code = acceptance["reason_code"]
+    if not isinstance(reason_code, str) or not reason_code:
+        raise OperationConflict("Applied rejected result is invalid")
+    if is_recoverable_acceptance_failure(reason_code):
+        return "acceptance_lead", "in_progress", "running"
+    return None, "failed", "failed"
+
+
+def _worker_terminal_fields_match(
+    task: TeamTask,
+    agent: TeamAgent,
+    summary: str,
+    acceptance: dict[str, object],
+    next_stage: Literal["acceptance_lead"] | None,
+) -> bool:
+    if next_stage == "acceptance_lead":
+        return (
+            task.result is None
+            and task.error_message is None
+            and task.finished_at is None
+            and agent.current_task_id == task.id
+            and agent.finished_at is None
+        )
+    if acceptance["accepted"]:
+        return (
+            task.result == summary
+            and task.error_message is None
+            and task.finished_at is not None
+            and agent.current_task_id is None
+            and agent.finished_at is not None
+        )
+    return (
+        task.result is None
+        and task.error_message == acceptance["reason_code"]
+        and task.finished_at is not None
+        and agent.current_task_id is None
+        and agent.finished_at is not None
+    )
+
+
+def _task_matches_plan_spec(
+    task: TeamTask,
+    spec: dict[str, object],
+) -> bool:
+    acceptance = spec.get("acceptance")
+    return (
+        isinstance(acceptance, dict)
+        and task.title == spec.get("title")
+        and task.description == spec.get("description")
+        and task.owner_agent_id == spec.get("owner_agent_id")
+        and task.required is spec.get("required")
+        and list(task.acceptance.required_outputs)
+        == acceptance.get("required_outputs")
+        and list(task.acceptance.required_verifications)
+        == acceptance.get("required_verifications")
+    )
+
+
+def _decision_item_matches(
+    item: object,
+    decision: dict[str, object],
+    task_id: str,
+) -> bool:
+    return (
+        isinstance(item, dict)
+        and set(item)
+        == {
+            "id",
+            "stage",
+            "topic",
+            "question",
+            "why_needed",
+            "options",
+            "recommended_option_id",
+            "blocking_scope",
+            "blocking_task_ids",
+            "query_message_ids",
+        }
+        and isinstance(item["id"], str)
+        and item["stage"] == "task"
+        and item["topic"] == decision["topic"]
+        and item["question"] == decision["question"]
+        and item["why_needed"] == decision["why_needed"]
+        and item["options"] == decision["options"]
+        and item["recommended_option_id"]
+        == decision["recommended_option_id"]
+        and item["blocking_scope"] == decision["blocking_scope"]
+        and item["blocking_task_ids"] == [task_id]
+        and item["query_message_ids"] == []
+    )
+
+
+def _canonical_digest(value: object) -> str:
+    serialized = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _json_object(value: object) -> dict[str, object]:
+    normalized = json.loads(
+        json.dumps(value, ensure_ascii=False, sort_keys=True)
+    )
+    if not isinstance(normalized, dict):
+        raise OperationConflict("Expected a JSON object")
+    return normalized
 
 
 def team_model_effect_result_validators() -> OperationResultValidatorRegistry:

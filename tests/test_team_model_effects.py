@@ -1,4 +1,5 @@
 from dataclasses import asdict
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ from personal_agent_gateway.team_model_effects import (
     team_model_effect_result_validators,
 )
 from personal_agent_gateway.team_model_operations import (
+    OperationConflict,
     OperationResultValidationError,
     OperationSpec,
     TeamModelOperationService,
@@ -527,3 +529,467 @@ def test_synthesis_and_operation_are_atomic_and_idempotent(tmp_path):
     operation = services.operations.get(services.operation.id)
     assert operation.status == "applied"
     assert operation.effect_type == "synthesis"
+
+
+def test_plan_replay_rejects_unrelated_same_cycle_rows(tmp_path):
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult(
+            "task_plan",
+            {"tasks": [valid_task_spec("Research", None)]},
+        ),
+    )
+    services.effects.apply_plan(services.operation.id)
+    unrelated = services.teams.create_task(
+        services.run.id,
+        "Unrelated",
+        "Unrelated description",
+        cycle_id=services.cycle.id,
+        acceptance=TaskAcceptance(("unrelated.md",), ()),
+    )
+    unrelated_note = services.teams.append_message(
+        services.run.id,
+        services.actor.id,
+        None,
+        "plan_note",
+        "Planning completed with 1 tasks.",
+        {},
+        cycle_id=services.cycle.id,
+    )
+    services.db.execute(
+        """
+        update team_model_operations set effect_ref_json = ? where id = ?
+        """,
+        (
+            json.dumps(
+                {
+                    "task_ids": [unrelated.id],
+                    "message_id": unrelated_note.id,
+                },
+                sort_keys=True,
+            ),
+            services.operation.id,
+        ),
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_plan(services.operation.id)
+
+
+def test_plan_replay_rejects_actor_session_that_no_longer_matches(tmp_path):
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult(
+            "task_plan",
+            {"tasks": [valid_task_spec("Research", None)]},
+        ),
+    )
+    services.effects.apply_plan(services.operation.id)
+    services.db.execute(
+        "update team_agents set upstream_session_id = ? where id = ?",
+        ("other-session", services.actor.id),
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_plan(services.operation.id)
+
+
+def test_worker_replay_rejects_unrelated_agent_output(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    acceptance = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="undeclared_deliverable",
+        evidence={},
+    )
+    changes = {"created": ["draft.md"], "modified": [], "deleted": []}
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        acceptance,
+        workspace_changes=changes,
+    )
+    unrelated = services.teams.append_message(
+        services.run.id,
+        services.worker.id,
+        None,
+        "agent_output",
+        "Unrelated output.",
+        {"task_id": services.task.id},
+        cycle_id=services.cycle.id,
+    )
+    effect_ref = services.operations.get(services.operation.id).effect_ref_json
+    effect_ref["message_id"] = unrelated.id
+    services.db.execute(
+        "update team_model_operations set effect_ref_json = ? where id = ?",
+        (
+            json.dumps(effect_ref, sort_keys=True),
+            services.operation.id,
+        ),
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_worker_outcome(
+            services.operation.id,
+            acceptance,
+            workspace_changes=changes,
+        )
+
+
+@pytest.mark.parametrize("tampered_state", ["task", "agent", "session"])
+def test_worker_replay_rejects_tampered_expected_state(
+    tmp_path,
+    tampered_state,
+):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    acceptance = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="undeclared_deliverable",
+        evidence={},
+    )
+    changes = {"created": ["draft.md"], "modified": [], "deleted": []}
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        acceptance,
+        workspace_changes=changes,
+    )
+    if tampered_state == "task":
+        services.db.execute(
+            "update team_tasks set status = 'completed' where id = ?",
+            (services.task.id,),
+        )
+    elif tampered_state == "agent":
+        services.db.execute(
+            "update team_agents set status = 'waiting' where id = ?",
+            (services.worker.id,),
+        )
+    else:
+        services.db.execute(
+            "update team_agents set upstream_session_id = ? where id = ?",
+            ("other-session", services.worker.id),
+        )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_worker_outcome(
+            services.operation.id,
+            acceptance,
+            workspace_changes=changes,
+        )
+
+
+def test_worker_decision_replay_rejects_shared_request_without_its_item(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        decision=user_decision(),
+    )
+    request = services.teams.defer_run_for_user_decision(
+        services.run.id,
+        {
+            **user_decision(),
+            "topic": "unrelated",
+            "question": "An unrelated question?",
+        },
+        stage="planning",
+        cycle_id=services.cycle.id,
+    )
+    changes = {"created": [], "modified": [], "deleted": []}
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        None,
+        workspace_changes=changes,
+    )
+    services.db.execute(
+        """
+        update team_decision_requests set items_json = ? where id = ?
+        """,
+        (
+            json.dumps([request.items[0]], sort_keys=True),
+            request.id,
+        ),
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_worker_outcome(
+            services.operation.id,
+            None,
+            workspace_changes=changes,
+        )
+
+
+def test_worker_decision_replay_rejects_request_outside_applied_state(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        decision=user_decision(),
+    )
+    changes = {"created": [], "modified": [], "deleted": []}
+    result = services.effects.apply_worker_outcome(
+        services.operation.id,
+        None,
+        workspace_changes=changes,
+    )
+    services.db.execute(
+        """
+        update team_decision_requests
+        set status = 'resolved', answers_json = '{"Q-001":"publish"}'
+        where id = ?
+        """,
+        (result.decision_request.id,),
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_worker_outcome(
+            services.operation.id,
+            None,
+            workspace_changes=changes,
+        )
+
+
+@pytest.mark.parametrize("tampered_state", ["run", "cycle", "agent", "session"])
+def test_synthesis_replay_rejects_tampered_expected_state(
+    tmp_path,
+    tampered_state,
+):
+    services = make_completed_synthesis_operation(tmp_path)
+    summary = "The draft is complete."
+    services.effects.apply_synthesis(services.operation.id, summary)
+    if tampered_state == "run":
+        services.db.execute(
+            "update team_runs set summary = ? where id = ?",
+            ("Other summary.", services.run.id),
+        )
+    elif tampered_state == "cycle":
+        services.db.execute(
+            "update team_run_cycles set status = 'running' where id = ?",
+            (services.cycle.id,),
+        )
+    elif tampered_state == "agent":
+        services.db.execute(
+            "update team_agents set status = 'running' where id = ?",
+            (services.leader.id,),
+        )
+    else:
+        services.db.execute(
+            "update team_agents set upstream_session_id = ? where id = ?",
+            ("other-session", services.leader.id),
+        )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_synthesis(services.operation.id, summary)
+
+
+@pytest.mark.parametrize("changed_input", ["acceptance", "workspace_changes"])
+def test_worker_outcome_replay_rejects_changed_apply_inputs(
+    tmp_path,
+    changed_input,
+):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    acceptance = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="undeclared_deliverable",
+        evidence={},
+    )
+    changes = {"created": ["draft.md"], "modified": [], "deleted": []}
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        acceptance,
+        workspace_changes=changes,
+    )
+    duplicate_acceptance = acceptance
+    duplicate_changes = changes
+    if changed_input == "acceptance":
+        duplicate_acceptance = AcceptanceResult(
+            accepted=False,
+            status="failed",
+            reason_code="undeclared_deliverable",
+            evidence={"remaining_undeclared_paths": ["draft.md"]},
+        )
+    else:
+        duplicate_changes = {
+            "created": [],
+            "modified": ["draft.md"],
+            "deleted": [],
+        }
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_worker_outcome(
+            services.operation.id,
+            duplicate_acceptance,
+            workspace_changes=duplicate_changes,
+        )
+
+
+@pytest.mark.parametrize("changed_input", ["acceptance", "workspace_changes"])
+def test_worker_decision_replay_rejects_changed_apply_inputs(
+    tmp_path,
+    changed_input,
+):
+    services = make_completed_worker_operation(
+        tmp_path,
+        decision=user_decision(),
+    )
+    changes = {"created": [], "modified": [], "deleted": []}
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        None,
+        workspace_changes=changes,
+    )
+    duplicate_acceptance = None
+    duplicate_changes = changes
+    if changed_input == "acceptance":
+        duplicate_acceptance = AcceptanceResult(
+            accepted=False,
+            status="failed",
+            reason_code="undeclared_deliverable",
+            evidence={},
+        )
+    else:
+        duplicate_changes = {
+            "created": ["unexpected.md"],
+            "modified": [],
+            "deleted": [],
+        }
+
+    with pytest.raises((OperationConflict, ValueError)):
+        services.effects.apply_worker_outcome(
+            services.operation.id,
+            duplicate_acceptance,
+            workspace_changes=duplicate_changes,
+        )
+
+
+@pytest.mark.parametrize(
+    "acceptance",
+    [
+        {
+            "required_outputs": ["draft.md", "draft.md"],
+            "required_verifications": [],
+        },
+        {
+            "required_outputs": ["draft.md"],
+            "required_verifications": ["review", "review"],
+        },
+    ],
+)
+def test_apply_plan_rolls_back_duplicate_acceptance_requirements(
+    tmp_path,
+    acceptance,
+):
+    spec = valid_task_spec("Research", None)
+    spec["acceptance"] = acceptance
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+
+    with pytest.raises(ValueError, match="duplicate"):
+        services.effects.apply_plan(services.operation.id)
+
+    assert services.teams.list_tasks(services.run.id, services.cycle.id) == []
+    assert services.operations.get(services.operation.id).status == "completed"
+    assert all(
+        message.kind != "plan_note"
+        for message in services.teams.list_messages(services.run.id)
+    )
+    assert services.teams.get_agent(services.actor.id).upstream_session_id is None
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "../outside.md",
+        "C:\\outside.md",
+        "/absolute.md",
+    ],
+)
+def test_apply_plan_rolls_back_unsafe_acceptance_output(
+    tmp_path,
+    unsafe_path,
+):
+    spec = valid_task_spec("Research", None)
+    spec["acceptance"] = {
+        "required_outputs": [unsafe_path],
+        "required_verifications": [],
+    }
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+
+    with pytest.raises(ValueError, match="relative and bounded"):
+        services.effects.apply_plan(services.operation.id)
+
+    assert services.teams.list_tasks(services.run.id, services.cycle.id) == []
+    assert services.operations.get(services.operation.id).status == "completed"
+    assert all(
+        message.kind != "plan_note"
+        for message in services.teams.list_messages(services.run.id)
+    )
+    assert services.teams.get_agent(services.actor.id).upstream_session_id is None
+
+
+@pytest.mark.parametrize("tampered_row", ["acceptance", "workspace_metadata"])
+def test_worker_replay_rejects_rows_that_no_longer_match_input_digest(
+    tmp_path,
+    tampered_row,
+):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    acceptance = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="undeclared_deliverable",
+        evidence={},
+    )
+    changes = {"created": ["draft.md"], "modified": [], "deleted": []}
+    result = services.effects.apply_worker_outcome(
+        services.operation.id,
+        acceptance,
+        workspace_changes=changes,
+    )
+    if tampered_row == "acceptance":
+        services.db.execute(
+            """
+            update team_tasks set acceptance_result_json = ? where id = ?
+            """,
+            (
+                json.dumps(
+                    {
+                        **asdict(acceptance),
+                        "evidence": {"tampered": True},
+                    },
+                    sort_keys=True,
+                ),
+                services.task.id,
+            ),
+        )
+    else:
+        metadata = result.message.metadata
+        metadata["created"] = []
+        metadata["modified"] = ["draft.md"]
+        services.db.execute(
+            "update team_messages set metadata_json = ? where id = ?",
+            (json.dumps(metadata, sort_keys=True), result.message.id),
+        )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_worker_outcome(
+            services.operation.id,
+            acceptance,
+            workspace_changes=changes,
+        )
