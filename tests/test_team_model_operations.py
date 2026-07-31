@@ -32,62 +32,6 @@ def changed_task_plan():
     }
 
 
-def validate_task_plan(payload):
-    if set(payload) != {"tasks"} or not isinstance(payload["tasks"], list):
-        return False
-    return all(validate_task_spec(task) for task in payload["tasks"])
-
-
-def validate_task_spec(value):
-    if not isinstance(value, dict) or set(value) != {
-        "title",
-        "description",
-        "owner_agent_id",
-        "required",
-        "acceptance",
-    }:
-        return False
-    acceptance = value["acceptance"]
-    return (
-        isinstance(value["title"], str)
-        and bool(value["title"].strip())
-        and isinstance(value["description"], str)
-        and bool(value["description"].strip())
-        and (
-            value["owner_agent_id"] is None
-            or isinstance(value["owner_agent_id"], str)
-            and bool(value["owner_agent_id"].strip())
-        )
-        and isinstance(value["required"], bool)
-        and isinstance(acceptance, dict)
-        and set(acceptance) == {"required_outputs", "required_verifications"}
-        and isinstance(acceptance["required_outputs"], list)
-        and isinstance(acceptance["required_verifications"], list)
-        and all(
-            isinstance(item, str) and bool(item.strip())
-            for field in ("required_outputs", "required_verifications")
-            for item in acceptance[field]
-        )
-        and bool(
-            acceptance["required_outputs"] or acceptance["required_verifications"]
-        )
-    )
-
-
-def operation_service(db):
-    return TeamModelOperationService(
-        db,
-        result_validators={
-            stage: {"task_plan": validate_task_plan}
-            for stage in (
-                "cycle_planning",
-                "cycle_planning_repair",
-                "cycle_add_work",
-            )
-        },
-    )
-
-
 def operation_spec(run, cycle, agent, *, key="worker:0", **changes):
     spec = OperationSpec(
         operation_key=f"{cycle.id}:{key}",
@@ -107,7 +51,7 @@ def test_reserve_is_idempotent_and_rejects_second_open_operation(tmp_path):
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     agent = teams.get_agent(run.leader_agent_id)
-    service = operation_service(db)
+    service = TeamModelOperationService(db)
 
     first = service.reserve(operation_spec(run, cycle, agent))
     duplicate = service.reserve(operation_spec(run, cycle, agent))
@@ -133,7 +77,7 @@ def test_reserve_rejects_same_key_with_different_immutable_fields(tmp_path, chan
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     agent = teams.get_agent(run.leader_agent_id)
-    service = operation_service(db)
+    service = TeamModelOperationService(db)
     spec = operation_spec(
         run,
         cycle,
@@ -150,7 +94,7 @@ def test_reserve_allows_null_session_seed_after_session_is_learned(tmp_path):
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     agent = teams.get_agent(run.leader_agent_id)
-    service = operation_service(db)
+    service = TeamModelOperationService(db)
     reserved = service.reserve(operation_spec(run, cycle, agent))
     invoking = service.begin_attempt(reserved.id, "consumer-1")
     completed = service.complete(
@@ -170,7 +114,7 @@ def test_lifecycle_uses_version_cas_and_completed_result_is_immutable(tmp_path):
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     agent = teams.get_agent(run.leader_agent_id)
-    service = operation_service(db)
+    service = TeamModelOperationService(db)
     reserved = service.reserve(operation_spec(run, cycle, agent))
     invoking = service.begin_attempt(reserved.id, "consumer-1")
     result = ValidatedOperationResult("task_plan", {"tasks": []})
@@ -188,11 +132,29 @@ def test_lifecycle_uses_version_cas_and_completed_result_is_immutable(tmp_path):
         )
 
 
+def test_default_constructor_completes_original_task_plan_lifecycle(tmp_path):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    agent = teams.get_agent(run.leader_agent_id)
+    service = TeamModelOperationService(db)
+    reserved = service.reserve(operation_spec(run, cycle, agent))
+    invoking = service.begin_attempt(reserved.id, "consumer-1")
+
+    completed = service.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult("task_plan", {"tasks": []}),
+    )
+
+    assert completed.status == "completed"
+    assert completed.result_kind == "task_plan"
+
+
 def test_stale_completion_rolls_back_without_changing_the_operation(tmp_path):
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     agent = teams.get_agent(run.leader_agent_id)
-    service = operation_service(db)
+    service = TeamModelOperationService(db)
     reserved = service.reserve(operation_spec(run, cycle, agent))
     invoking = service.begin_attempt(reserved.id, "consumer-1")
     completed = service.complete(
@@ -215,7 +177,7 @@ def test_retry_failure_cancellation_and_cycle_queries_use_cas(tmp_path):
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     agent = teams.get_agent(run.leader_agent_id)
-    service = operation_service(db)
+    service = TeamModelOperationService(db)
     reserved = service.reserve(operation_spec(run, cycle, agent))
     invoking = service.begin_attempt(reserved.id, "consumer-1")
 
@@ -245,7 +207,7 @@ def test_reserve_rejects_raw_request_content_without_persisting_it(tmp_path):
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     agent = teams.get_agent(run.leader_agent_id)
-    service = operation_service(db)
+    service = TeamModelOperationService(db)
 
     with pytest.raises(OperationConflict):
         service.reserve(
@@ -276,7 +238,7 @@ def test_complete_rejects_sensitive_result_fields_without_persisting_them(
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     agent = teams.get_agent(run.leader_agent_id)
-    service = operation_service(db)
+    service = TeamModelOperationService(db)
     reserved = service.reserve(operation_spec(run, cycle, agent))
     invoking = service.begin_attempt(reserved.id, "consumer-1")
 
@@ -303,7 +265,7 @@ def test_complete_rejects_unregistered_result_kind_without_persisting_it(tmp_pat
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     agent = teams.get_agent(run.leader_agent_id)
-    service = operation_service(db)
+    service = TeamModelOperationService(db)
     reserved = service.reserve(operation_spec(run, cycle, agent))
     invoking = service.begin_attempt(reserved.id, "consumer-1")
 
@@ -324,7 +286,7 @@ def test_complete_rejects_result_kind_not_allowed_for_operation_stage(tmp_path):
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     agent = teams.get_agent(run.leader_agent_id)
-    service = operation_service(db)
+    service = TeamModelOperationService(db)
     reserved = service.reserve(
         operation_spec(run, cycle, agent, stage="worker_execution")
     )

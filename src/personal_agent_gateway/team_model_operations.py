@@ -116,10 +116,16 @@ class TeamModelOperationService:
         result_validators: OperationResultValidatorRegistry | None = None,
     ) -> None:
         self._db = db
-        self._result_validators = {
-            stage: dict(validators)
-            for stage, validators in (result_validators or {}).items()
-        }
+        self._result_validators = _built_in_result_validators()
+        for stage, validators in (result_validators or {}).items():
+            stage_validators = self._result_validators.setdefault(stage, {})
+            duplicate_kinds = stage_validators.keys() & validators.keys()
+            if duplicate_kinds:
+                raise ValueError(
+                    f"Result validator already registered for {stage}: "
+                    f"{', '.join(sorted(duplicate_kinds))}"
+                )
+            stage_validators.update(validators)
 
     def reserve(self, spec: OperationSpec) -> TeamModelOperation:
         timestamp = _now()
@@ -504,6 +510,66 @@ def _result_serialization(
 def _validate_request_digest(value: str) -> None:
     if re.fullmatch(r"[0-9a-f]{64}", value) is None:
         raise OperationConflict("request_digest must be a lowercase SHA-256 digest")
+
+
+def _built_in_result_validators() -> dict[
+    OperationStage,
+    dict[str, OperationResultValidator],
+]:
+    return {
+        "cycle_planning": {"task_plan": _valid_task_plan},
+        "cycle_planning_repair": {"task_plan": _valid_task_plan},
+        "cycle_add_work": {"task_plan": _valid_task_plan},
+    }
+
+
+def _valid_task_plan(payload: dict[str, object]) -> bool:
+    if set(payload) != {"tasks"}:
+        return False
+    tasks = payload["tasks"]
+    return isinstance(tasks, list) and all(_valid_task_spec(task) for task in tasks)
+
+
+def _valid_task_spec(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {
+        "title",
+        "description",
+        "owner_agent_id",
+        "required",
+        "acceptance",
+    }:
+        return False
+    owner_agent_id = value["owner_agent_id"]
+    return (
+        _nonempty_text(value["title"])
+        and _nonempty_text(value["description"])
+        and (owner_agent_id is None or _nonempty_text(owner_agent_id))
+        and isinstance(value["required"], bool)
+        and _valid_acceptance(value["acceptance"])
+    )
+
+
+def _valid_acceptance(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {
+        "required_outputs",
+        "required_verifications",
+    }:
+        return False
+    outputs = value["required_outputs"]
+    verifications = value["required_verifications"]
+    return (
+        _valid_string_list(outputs)
+        and _valid_string_list(verifications)
+        and bool(outputs or verifications)
+    )
+
+
+def _valid_string_list(value: object) -> bool:
+    return isinstance(value, list) and all(_nonempty_text(item) for item in value)
+
+
+def _nonempty_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _matches_session(
