@@ -2,6 +2,7 @@ import json
 import shutil
 import sqlite3
 from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Literal
@@ -2335,6 +2336,34 @@ class TeamRunService:
             }
             if set(normalized) != required_ids:
                 raise ValueError("Every open decision requires an answer")
+            mediation_rounds = sum(
+                len(
+                    {
+                        query_id
+                        for query_id in item.get("query_message_ids", [])
+                        if isinstance(query_id, str)
+                    }
+                )
+                for item in items
+            )
+            if row["cycle_id"] is not None and mediation_rounds:
+                cursor = connection.execute(
+                    """
+                    update team_run_cycles
+                    set rounds_used = rounds_used + ?, updated_at = ?
+                    where id = ? and rounds_used + ? <= rounds_budget
+                    """,
+                    (
+                        mediation_rounds,
+                        now,
+                        row["cycle_id"],
+                        mediation_rounds,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError(
+                        "Decision answers exceed the mediation round budget"
+                    )
             blocking_task_ids = {
                 task_id
                 for item in items
@@ -2573,6 +2602,129 @@ class TeamRunService:
             ),
         )
         return self._get_message(message_id)
+
+    def record_operation_workspace_baseline(
+        self,
+        operation_id: str,
+        *,
+        team_run_id: str,
+        cycle_id: str,
+        task_id: str,
+        agent_id: str,
+        snapshot: Mapping[str, tuple[int, int]],
+    ) -> None:
+        normalized = {
+            path: [int(value[0]), int(value[1])]
+            for path, value in sorted(snapshot.items())
+            if isinstance(path, str)
+            and isinstance(value, tuple)
+            and len(value) == 2
+        }
+        if len(normalized) != len(snapshot):
+            raise ValueError("Workspace baseline snapshot is invalid")
+        message_id = _operation_workspace_baseline_id(operation_id)
+        metadata = {
+            "operation_id": operation_id,
+            "task_id": task_id,
+            "snapshot": normalized,
+        }
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            operation = connection.execute(
+                """
+                select team_run_id, cycle_id, task_id, agent_id, status
+                from team_model_operations where id = ?
+                """,
+                (operation_id,),
+            ).fetchone()
+            if (
+                operation is None
+                or operation["team_run_id"] != team_run_id
+                or operation["cycle_id"] != cycle_id
+                or operation["task_id"] != task_id
+                or operation["agent_id"] != agent_id
+                or operation["status"] != "prepared"
+            ):
+                raise ValueError(
+                    "Workspace baseline operation ownership is invalid"
+                )
+            existing = connection.execute(
+                "select * from team_messages where id = ?",
+                (message_id,),
+            ).fetchone()
+            if existing is not None:
+                message = _team_message_from_row(existing)
+                if (
+                    message.team_run_id != team_run_id
+                    or message.cycle_id != cycle_id
+                    or message.sender_agent_id != agent_id
+                    or message.recipient_agent_id is not None
+                    or message.kind != "operation_workspace_baseline"
+                    or message.metadata != metadata
+                ):
+                    raise ValueError(
+                        "Workspace baseline receipt does not match"
+                    )
+                return
+            connection.execute(
+                """
+                insert into team_messages (
+                    id, team_run_id, cycle_id, sender_agent_id,
+                    recipient_agent_id, kind, content, metadata_json, created_at
+                ) values (?, ?, ?, ?, null, 'operation_workspace_baseline',
+                          'Workspace baseline recorded.', ?, ?)
+                """,
+                (
+                    message_id,
+                    team_run_id,
+                    cycle_id,
+                    agent_id,
+                    json.dumps(
+                        metadata,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
+            )
+
+    def get_operation_workspace_baseline(
+        self,
+        operation_id: str,
+        *,
+        team_run_id: str,
+        cycle_id: str,
+        task_id: str,
+        agent_id: str,
+    ) -> dict[str, tuple[int, int]]:
+        message = self._get_message(
+            _operation_workspace_baseline_id(operation_id)
+        )
+        metadata = message.metadata
+        snapshot = metadata.get("snapshot")
+        if (
+            message.team_run_id != team_run_id
+            or message.cycle_id != cycle_id
+            or message.sender_agent_id != agent_id
+            or message.recipient_agent_id is not None
+            or message.kind != "operation_workspace_baseline"
+            or metadata.get("operation_id") != operation_id
+            or metadata.get("task_id") != task_id
+            or not isinstance(snapshot, dict)
+        ):
+            raise ValueError("Workspace baseline receipt is invalid")
+        normalized: dict[str, tuple[int, int]] = {}
+        for path, value in snapshot.items():
+            if (
+                not isinstance(path, str)
+                or not isinstance(value, list)
+                or len(value) != 2
+                or any(not isinstance(item, int) for item in value)
+            ):
+                raise ValueError("Workspace baseline snapshot is invalid")
+            normalized[path] = (value[0], value[1])
+        return normalized
 
     def _require_cycle_for_run(self, team_run_id: str, cycle_id: str) -> TeamRunCycle:
         cycle = self.get_cycle(cycle_id)
@@ -3047,6 +3199,10 @@ def _acceptance_review_metadata(
     if operation_id is not None:
         metadata["operation_id"] = operation_id
     return metadata
+
+
+def _operation_workspace_baseline_id(operation_id: str) -> str:
+    return f"operation-workspace-baseline:{operation_id}"
 
 
 def _validate_task_acceptance(acceptance: TaskAcceptance) -> None:

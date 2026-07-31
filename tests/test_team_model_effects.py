@@ -479,6 +479,159 @@ def test_acceptance_lead_user_decision_is_atomic_and_idempotent(tmp_path):
     assert followup.operations.get(followup.operation.id).status == "applied"
 
 
+def test_mediation_decision_replay_rejects_tampered_request_item(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        query={"topic": "scope", "question": "Which scope?"},
+    )
+    services.effects.apply_worker_query(services.operation.id)
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    decision = user_decision()
+    followup = complete_followup_operation(
+        services,
+        stage="mediation_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="mediation_resolution",
+        payload=decision,
+    )
+    applied = followup.effects.apply_mediation_lead(
+        followup.operation.id,
+        decision,
+    )
+    items = applied.decision_request.items
+    items[0]["question"] = "Tampered question"
+    services.db.execute(
+        """
+        update team_decision_requests set items_json = ? where id = ?
+        """,
+        (
+            json.dumps(items, ensure_ascii=False, sort_keys=True),
+            applied.decision_request.id,
+        ),
+    )
+
+    with pytest.raises(OperationConflict):
+        followup.effects.apply_mediation_lead(
+            followup.operation.id,
+            decision,
+        )
+
+
+def test_acceptance_decision_replay_rejects_tampered_request_status(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        AcceptanceResult(
+            accepted=False,
+            status="failed",
+            reason_code="required_verification_failed",
+            evidence={},
+        ),
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    decision = user_decision()
+    resolution = AcceptanceReviewResolution(
+        kind="ask_user",
+        reason="Publication scope is ambiguous.",
+        decision=decision,
+    )
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "ask_user",
+            "reason": resolution.reason,
+            "instruction": None,
+            "reason_code": None,
+            "acceptance": None,
+            "decision": decision,
+        },
+    )
+    applied = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+    services.db.execute(
+        """
+        update team_decision_requests set status = 'canceled' where id = ?
+        """,
+        (applied.decision_request.id,),
+    )
+
+    with pytest.raises(OperationConflict):
+        followup.effects.apply_acceptance_lead(
+            followup.operation.id,
+            resolution,
+        )
+
+
+def test_acceptance_audit_replay_rejects_tampered_complete_semantics(
+    tmp_path,
+):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        AcceptanceResult(
+            accepted=False,
+            status="failed",
+            reason_code="required_verification_failed",
+            evidence={},
+        ),
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="Citation verification is missing.",
+        instruction="Add the citation verification.",
+    )
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "retry_worker",
+            "reason": resolution.reason,
+            "instruction": resolution.instruction,
+            "reason_code": None,
+            "acceptance": None,
+            "decision": None,
+        },
+    )
+    applied = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+    metadata = dict(applied.message.metadata)
+    metadata["reason"] = "tampered"
+    services.db.execute(
+        "update team_messages set metadata_json = ? where id = ?",
+        (
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            applied.message.id,
+        ),
+    )
+
+    with pytest.raises(OperationConflict):
+        followup.effects.apply_acceptance_lead(
+            followup.operation.id,
+            resolution,
+        )
+
+
 def test_apply_plan_and_operation_are_atomic_and_idempotent(tmp_path):
     services = make_completed_operation(
         tmp_path,

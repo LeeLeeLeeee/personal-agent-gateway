@@ -323,6 +323,26 @@ class TeamRuntime:
         ):
             raise OperationConflict("Cycle already has an open model operation")
         operation = self._operations.reserve(spec)
+        if (
+            operation.status == "prepared"
+            and operation.stage
+            in {"worker_execution", "mediation_worker", "acceptance_worker"}
+            and operation.task_id is not None
+        ):
+            current_run = self._teams.get_team_run(operation.team_run_id)
+            self._teams.record_operation_workspace_baseline(
+                operation.id,
+                team_run_id=operation.team_run_id,
+                cycle_id=operation.cycle_id,
+                task_id=operation.task_id,
+                agent_id=operation.agent_id,
+                snapshot=workspace_snapshot(
+                    Path(
+                        current_run.working_root
+                        or current_run.workspace_root
+                    )
+                ),
+            )
         if operation.status in {"completed", "applied"}:
             return operation
         if operation.status in {"waiting_for_provider", "ambiguous", "invoking"}:
@@ -559,18 +579,35 @@ class TeamRuntime:
                     lead_operation is None
                     or lead_operation.status != "applied"
                 ):
-                    raise OperationConflict(
-                        "Mediation Worker has no applied Lead operation"
+                    cycle = self._teams.get_cycle(cycle_id)
+                    if (
+                        cycle.rounds_used < cycle.rounds_budget
+                        and worker.reinvocations
+                        < AGENT_REINVOCATION_CAP
+                    ):
+                        raise OperationConflict(
+                            "Mediation Worker has no applied Lead operation"
+                        )
+                    messages = _mediation_budget_messages()
+
+                    def parser(response):
+                        return _validated_task_outcome_result(
+                            response,
+                            worker,
+                            run,
+                            self._finalize_persona_content,
+                        )
+                else:
+                    messages = _mediation_worker_messages(
+                        _operation_mediation_resolution(lead_operation)
                     )
-                messages = _mediation_worker_messages(
-                    _operation_mediation_resolution(lead_operation)
-                )
-                def parser(response):
-                    return self._validated_worker_result(
-                        response,
-                        worker,
-                        run,
-                    )
+
+                    def parser(response):
+                        return self._validated_worker_result(
+                            response,
+                            worker,
+                            run,
+                        )
             else:
                 lead_operation = self._operations.get_by_key(
                     _operation_key(
@@ -1278,7 +1315,10 @@ class TeamRuntime:
     ) -> tuple[bool, TeamDecisionRequest | None]:
         operations = self._operations.list_for_cycle(cycle_id)
         for task in self._teams.list_tasks(run.id, cycle_id):
-            if task.status != "in_progress" or task.owner_agent_id is None:
+            if (
+                task.status not in {"in_progress", "pending"}
+                or task.owner_agent_id is None
+            ):
                 continue
             operation = next(
                 (
@@ -1292,6 +1332,68 @@ class TeamRuntime:
             if operation is None:
                 continue
             worker = self._teams.get_agent(task.owner_agent_id)
+            if task.status == "pending":
+                answer = self._resolved_lead_decision_answer(
+                    operation,
+                    task,
+                )
+                if answer is None:
+                    continue
+                task, worker = self._teams.start_task(task.id, worker.id)
+                if operation.stage == "mediation_lead":
+                    stage = "mediation_worker"
+                    messages = _mediation_worker_messages(
+                        {"answer": answer}
+                    )
+
+                    def parser(response):
+                        return self._validated_worker_result(
+                            response,
+                            worker,
+                            run,
+                        )
+
+                elif operation.stage == "acceptance_lead":
+                    stage = "acceptance_worker"
+                    messages = _acceptance_user_answer_messages(
+                        task,
+                        answer,
+                    )
+
+                    def parser(response):
+                        return _validated_task_outcome_result(
+                            response,
+                            worker,
+                            run,
+                            self._finalize_persona_content,
+                        )
+
+                else:
+                    raise OperationConflict(
+                        "Resolved Lead decision stage is invalid"
+                    )
+                continuation = await self._invoke_operation(
+                    _operation_spec(
+                        run,
+                        cycle_id,
+                        worker,
+                        stage,
+                        operation.stage_ordinal,
+                        messages,
+                        task_id=task.id,
+                    ),
+                    worker,
+                    messages,
+                    parser,
+                )
+                return True, await self._apply_cycle_worker_operation(
+                    run,
+                    leader,
+                    worker,
+                    task,
+                    continuation,
+                    before=None,
+                )
             if operation.stage == "acceptance_lead":
                 resolution = _operation_acceptance_resolution(operation)
                 effect = self._model_effects.apply_acceptance_lead(
@@ -1346,6 +1448,59 @@ class TeamRuntime:
                 )
         return False, None
 
+    def _resolved_lead_decision_answer(
+        self,
+        operation: TeamModelOperation,
+        task: TeamTask,
+    ) -> str | None:
+        if operation.stage not in {"mediation_lead", "acceptance_lead"}:
+            return None
+        effect_ref = operation.effect_ref_json
+        if (
+            operation.effect_type != operation.stage
+            or not isinstance(effect_ref, dict)
+            or effect_ref.get("next_stage") != "user_decision"
+            or not isinstance(effect_ref.get("decision_request_id"), str)
+            or not isinstance(effect_ref.get("decision_item_id"), str)
+            or not isinstance(effect_ref.get("decision_item_digest"), str)
+        ):
+            return None
+        request = self._teams._get_decision_request(
+            effect_ref["decision_request_id"]
+        )
+        item = next(
+            (
+                candidate
+                for candidate in request.items
+                if candidate.get("id") == effect_ref["decision_item_id"]
+            ),
+            None,
+        )
+        if (
+            request.team_run_id != operation.team_run_id
+            or request.cycle_id != operation.cycle_id
+            or request.status != "resolved"
+            or item is None
+            or _canonical_digest(item)
+            != effect_ref["decision_item_digest"]
+            or task.id not in item.get("blocking_task_ids", [])
+        ):
+            raise OperationConflict(
+                "Resolved Lead decision receipt is invalid"
+            )
+        if (
+            operation.stage == "mediation_lead"
+            and effect_ref.get("query_message_id")
+            not in item.get("query_message_ids", [])
+        ):
+            raise OperationConflict(
+                "Resolved mediation decision query is invalid"
+            )
+        answer = request.answers.get(effect_ref["decision_item_id"])
+        if not isinstance(answer, str) or not answer.strip():
+            raise OperationConflict("Resolved Lead decision has no answer")
+        return answer.strip()
+
     async def _apply_cycle_worker_operation(
         self,
         run: TeamRun,
@@ -1371,12 +1526,21 @@ class TeamRuntime:
             raise OperationConflict("Completed Worker operation result is invalid")
         outcome = _operation_task_outcome(operation)
         working_root = Path(run.working_root or run.workspace_root)
+        try:
+            before = self._teams.get_operation_workspace_baseline(
+                operation.id,
+                team_run_id=operation.team_run_id,
+                cycle_id=operation.cycle_id,
+                task_id=task.id,
+                agent_id=worker.id,
+            )
+        except KeyError:
+            if before is None:
+                before = workspace_snapshot(working_root)
         changes = (
             _operation_workspace_changes(
                 workspace_changes(before, workspace_snapshot(working_root))
             )
-            if before is not None
-            else {"created": [], "modified": [], "deleted": []}
         )
         staged_inputs = (
             self._staged_inputs_resolver(working_root)
@@ -1438,6 +1602,40 @@ class TeamRuntime:
         task: TeamTask,
         query: dict[str, str],
     ) -> TeamDecisionRequest | None:
+        cycle = self._teams.get_cycle(task.cycle_id)
+        worker_agent = self._teams.get_agent(worker.id)
+        if (
+            cycle.rounds_used >= cycle.rounds_budget
+            or worker_agent.reinvocations >= AGENT_REINVOCATION_CAP
+        ):
+            messages = _mediation_budget_messages()
+            operation = await self._invoke_operation(
+                _operation_spec(
+                    run,
+                    task.cycle_id,
+                    worker_agent,
+                    "mediation_worker",
+                    max(cycle.rounds_used, worker_agent.reinvocations) + 1,
+                    messages,
+                    task_id=task.id,
+                ),
+                worker_agent,
+                messages,
+                lambda response: _validated_task_outcome_result(
+                    response,
+                    worker_agent,
+                    run,
+                    self._finalize_persona_content,
+                ),
+            )
+            return await self._apply_cycle_worker_operation(
+                run,
+                leader,
+                worker_agent,
+                task,
+                operation,
+                before=None,
+            )
         leader_agent = self._teams.get_agent(leader.id)
         round_number = (
             self._teams.get_cycle(task.cycle_id).rounds_used + 1
@@ -1512,7 +1710,6 @@ class TeamRuntime:
                 run,
             ),
         )
-        self._teams.increment_agent_reinvocations(worker.id)
         return await self._apply_cycle_worker_operation(
             run,
             leader,
@@ -2797,6 +2994,16 @@ def _operation_request_digest(
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _canonical_digest(value: object) -> str:
+    serialized = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 def _planning_repair_messages(
     messages: list[dict[str, object]],
 ) -> list[dict[str, object]]:
@@ -2839,6 +3046,18 @@ def _mediation_worker_messages(
     ]
 
 
+def _mediation_budget_messages() -> list[dict[str, object]]:
+    return [
+        {
+            "role": "user",
+            "content": (
+                "No more consultation is available. Produce your best-effort "
+                "final result now, without a needs_info block."
+            ),
+        }
+    ]
+
+
 def _acceptance_worker_messages(
     task: TeamTask,
     resolution: AcceptanceReviewResolution,
@@ -2858,6 +3077,30 @@ def _acceptance_worker_messages(
             "role": "user",
             "content": (
                 f"{resolution.instruction}\n\n"
+                "Authoritative current acceptance criteria:\n"
+                f"{json.dumps(current_acceptance, ensure_ascii=False, sort_keys=True)}\n"
+                "Return only the required TaskOutcome JSON object."
+            ),
+        }
+    ]
+
+
+def _acceptance_user_answer_messages(
+    task: TeamTask,
+    answer: str,
+) -> list[dict[str, object]]:
+    current_acceptance = {
+        "required_outputs": list(task.acceptance.required_outputs),
+        "required_verifications": list(
+            task.acceptance.required_verifications
+        ),
+    }
+    return [
+        {
+            "role": "user",
+            "content": (
+                f"User decision: {answer}\n\n"
+                "Continue the rejected task using that decision.\n"
                 "Authoritative current acceptance criteria:\n"
                 f"{json.dumps(current_acceptance, ensure_ascii=False, sort_keys=True)}\n"
                 "Return only the required TaskOutcome JSON object."

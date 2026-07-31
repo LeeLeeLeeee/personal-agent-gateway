@@ -195,6 +195,11 @@ class TeamModelEffectService:
                     normalized_changes,
                     now,
                 )
+            _apply_mediation_reinvocation(
+                connection,
+                operation,
+                now,
+            )
             _promote_actor_session(connection, operation, now)
             _mark_applied(
                 connection,
@@ -266,6 +271,11 @@ class TeamModelEffectService:
                     ),
                     now,
                 ),
+            )
+            _apply_mediation_reinvocation(
+                connection,
+                operation,
+                now,
             )
             _promote_actor_session(connection, operation, now)
             _mark_applied(
@@ -339,6 +349,8 @@ class TeamModelEffectService:
             query_message = self._query_receipt(connection, operation)
             message_id: str | None = None
             request_id: str | None = None
+            decision_item_id: str | None = None
+            decision_item_digest: str | None = None
             if normalized["kind"] == "answer":
                 cursor = connection.execute(
                     """
@@ -414,6 +426,18 @@ class TeamModelEffectService:
                     """,
                     (now, worker.id),
                 )
+                request = self._teams._decision_request_from_connection(
+                    connection,
+                    request_id,
+                )
+                decision_item_id, decision_item_digest = _task_decision_receipt(
+                    connection,
+                    operation,
+                    request,
+                    decision,
+                    task.id,
+                    query_message_id=query_message.id,
+                )
                 next_stage = "user_decision"
 
             _promote_actor_session(connection, operation, now)
@@ -427,6 +451,8 @@ class TeamModelEffectService:
                     "query_message_id": query_message.id,
                     "answer_message_id": message_id,
                     "decision_request_id": request_id,
+                    "decision_item_id": decision_item_id,
+                    "decision_item_digest": decision_item_digest,
                     "next_stage": next_stage,
                     "round": operation.stage_ordinal,
                     "resolution_digest": _canonical_digest(normalized),
@@ -589,6 +615,8 @@ class TeamModelEffectService:
             )
 
             request_id: str | None = None
+            decision_item_id: str | None = None
+            decision_item_digest: str | None = None
             if consumes_attempt:
                 next_stage = "acceptance_worker"
             elif normalized["kind"] == "ask_user":
@@ -619,6 +647,17 @@ class TeamModelEffectService:
                     """,
                     (now, worker.id),
                 )
+                request = self._teams._decision_request_from_connection(
+                    connection,
+                    request_id,
+                )
+                decision_item_id, decision_item_digest = _task_decision_receipt(
+                    connection,
+                    operation,
+                    request,
+                    decision,
+                    task.id,
+                )
                 next_stage = "user_decision"
             else:
                 connection.execute(
@@ -648,7 +687,18 @@ class TeamModelEffectService:
                     "task_id": task.id,
                     "worker_agent_id": worker.id,
                     "message_id": message_id,
+                    "audit_digest": _canonical_digest(
+                        {
+                            "content": (
+                                normalized["instruction"]
+                                or normalized["reason"]
+                            ),
+                            "metadata": message_metadata,
+                        }
+                    ),
                     "decision_request_id": request_id,
+                    "decision_item_id": decision_item_id,
+                    "decision_item_digest": decision_item_digest,
                     "next_stage": next_stage,
                     "attempt": operation.stage_ordinal,
                     "resolution_digest": _canonical_digest(normalized),
@@ -1250,6 +1300,8 @@ class TeamModelEffectService:
             "query_message_id",
             "answer_message_id",
             "decision_request_id",
+            "decision_item_id",
+            "decision_item_digest",
             "next_stage",
             "round",
             "resolution_digest",
@@ -1284,6 +1336,8 @@ class TeamModelEffectService:
             if (
                 not isinstance(answer_id, str)
                 or effect_ref["decision_request_id"] is not None
+                or effect_ref["decision_item_id"] is not None
+                or effect_ref["decision_item_digest"] is not None
             ):
                 raise OperationConflict(
                     "Applied mediation answer receipt is invalid"
@@ -1326,6 +1380,8 @@ class TeamModelEffectService:
             effect_ref["next_stage"] != "user_decision"
             or effect_ref["answer_message_id"] is not None
             or not isinstance(effect_ref["decision_request_id"], str)
+            or not isinstance(effect_ref["decision_item_id"], str)
+            or not isinstance(effect_ref["decision_item_digest"], str)
             or task.status != "blocked"
             or worker.status != "waiting"
             or worker.current_task_id is not None
@@ -1335,6 +1391,36 @@ class TeamModelEffectService:
             connection,
             effect_ref["decision_request_id"],
         )
+        item = next(
+            (
+                candidate
+                for candidate in request.items
+                if candidate.get("id") == effect_ref["decision_item_id"]
+            ),
+            None,
+        )
+        decision = dict(resolution)
+        decision["query_message_id"] = query.id
+        if (
+            request.team_run_id != operation.team_run_id
+            or request.cycle_id != operation.cycle_id
+            or request.status != "collecting"
+            or request.answers != {}
+            or request.published_at is not None
+            or request.answered_at is not None
+            or item is None
+            or _canonical_digest(item) != effect_ref["decision_item_digest"]
+            or not _decision_item_matches(item, decision, task.id)
+            or query.id not in item["query_message_ids"]
+            or not _decision_item_references_are_valid(
+                connection,
+                operation,
+                item,
+            )
+        ):
+            raise OperationConflict(
+                "Applied mediation decision rows do not match"
+            )
         return MediationEffectResult(
             task=task,
             agent=worker,
@@ -1360,7 +1446,10 @@ class TeamModelEffectService:
                 "task_id",
                 "worker_agent_id",
                 "message_id",
+                "audit_digest",
                 "decision_request_id",
+                "decision_item_id",
+                "decision_item_digest",
                 "next_stage",
                 "attempt",
                 "resolution_digest",
@@ -1372,6 +1461,7 @@ class TeamModelEffectService:
             != _canonical_digest(resolution)
             or not _operation_session_matches(operation, leader)
             or not isinstance(effect_ref["message_id"], str)
+            or not isinstance(effect_ref["audit_digest"], str)
         ):
             raise OperationConflict("Applied acceptance receipt is invalid")
         message = self._teams._message_from_connection(
@@ -1388,6 +1478,19 @@ class TeamModelEffectService:
             or message.metadata.get("task_id") != task.id
             or message.metadata.get("attempt") != operation.stage_ordinal
             or message.metadata.get("action") != resolution["kind"]
+            or not _acceptance_audit_matches(
+                message,
+                operation,
+                task,
+                resolution,
+            )
+            or _canonical_digest(
+                {
+                    "content": message.content,
+                    "metadata": message.metadata,
+                }
+            )
+            != effect_ref["audit_digest"]
         ):
             raise OperationConflict("Applied acceptance audit rows do not match")
         next_stage = effect_ref["next_stage"]
@@ -1395,6 +1498,8 @@ class TeamModelEffectService:
         if next_stage == "acceptance_worker":
             if (
                 effect_ref["decision_request_id"] is not None
+                or effect_ref["decision_item_id"] is not None
+                or effect_ref["decision_item_digest"] is not None
                 or task.status != "in_progress"
                 or worker.status != "running"
                 or worker.current_task_id != task.id
@@ -1408,6 +1513,8 @@ class TeamModelEffectService:
             request_id = effect_ref["decision_request_id"]
             if (
                 not isinstance(request_id, str)
+                or not isinstance(effect_ref["decision_item_id"], str)
+                or not isinstance(effect_ref["decision_item_digest"], str)
                 or task.status != "blocked"
                 or worker.status != "waiting"
                 or worker.current_task_id is not None
@@ -1419,9 +1526,42 @@ class TeamModelEffectService:
                 connection,
                 request_id,
             )
+            item = next(
+                (
+                    candidate
+                    for candidate in request.items
+                    if candidate.get("id")
+                    == effect_ref["decision_item_id"]
+                ),
+                None,
+            )
+            decision = resolution["decision"]
+            if (
+                not isinstance(decision, dict)
+                or request.team_run_id != operation.team_run_id
+                or request.cycle_id != operation.cycle_id
+                or request.status != "collecting"
+                or request.answers != {}
+                or request.published_at is not None
+                or request.answered_at is not None
+                or item is None
+                or _canonical_digest(item)
+                != effect_ref["decision_item_digest"]
+                or not _decision_item_matches(item, decision, task.id)
+                or not _decision_item_references_are_valid(
+                    connection,
+                    operation,
+                    item,
+                )
+            ):
+                raise OperationConflict(
+                    "Applied acceptance decision rows do not match"
+                )
         elif next_stage is None:
             if (
                 effect_ref["decision_request_id"] is not None
+                or effect_ref["decision_item_id"] is not None
+                or effect_ref["decision_item_digest"] is not None
                 or task.status != "failed"
                 or worker.status != "failed"
                 or worker.current_task_id is not None
@@ -2433,6 +2573,122 @@ def _decision_item_matches(
     )
 
 
+def _task_decision_receipt(
+    connection: sqlite3.Connection,
+    operation: TeamModelOperation,
+    request: TeamDecisionRequest,
+    decision: dict[str, object],
+    task_id: str,
+    *,
+    query_message_id: str | None = None,
+) -> tuple[str, str]:
+    matching_items = [
+        item
+        for item in request.items
+        if _decision_item_matches(item, decision, task_id)
+        and (
+            query_message_id is None
+            or query_message_id in item["query_message_ids"]
+        )
+    ]
+    if len(matching_items) != 1:
+        raise OperationConflict(
+            "Lead decision does not have one exact request item"
+        )
+    item = matching_items[0]
+    if not _decision_item_references_are_valid(
+        connection,
+        operation,
+        item,
+    ):
+        raise OperationConflict("Lead decision item references are invalid")
+    item_id = item.get("id")
+    if not isinstance(item_id, str):
+        raise OperationConflict("Lead decision item ID is invalid")
+    return item_id, _canonical_digest(item)
+
+
+def _acceptance_audit_matches(
+    message: TeamMessage,
+    operation: TeamModelOperation,
+    task: TeamTask,
+    resolution: dict[str, object],
+) -> bool:
+    acceptance_before = message.metadata.get("acceptance_before")
+    if (
+        not isinstance(acceptance_before, dict)
+        or set(acceptance_before)
+        != {"required_outputs", "required_verifications"}
+        or not isinstance(acceptance_before["required_outputs"], list)
+        or not isinstance(
+            acceptance_before["required_verifications"],
+            list,
+        )
+        or not all(
+            isinstance(item, str)
+            for item in (
+                *acceptance_before["required_outputs"],
+                *acceptance_before["required_verifications"],
+            )
+        )
+    ):
+        return False
+    outcome = _persisted_task_outcome(task)
+    acceptance = _persisted_acceptance_result(task)
+    reason_code = (
+        resolution["reason_code"]
+        if resolution["kind"] == "fail"
+        else acceptance.reason_code
+        or outcome.reason_code
+        or "task_failed"
+    )
+    verification_status = {
+        item.name: item.status for item in outcome.verifications
+    }
+    expected_metadata = _acceptance_review_metadata(
+        operation_id=operation.id,
+        task_id=task.id,
+        attempt=operation.stage_ordinal,
+        reason_code=str(reason_code),
+        action=str(resolution["kind"]),
+        reason=str(resolution["reason"]),
+        instruction=(
+            resolution["instruction"]
+            if isinstance(resolution["instruction"], str)
+            else None
+        ),
+        acceptance_before=acceptance_before,
+        acceptance_after=(
+            resolution["acceptance"]
+            if isinstance(resolution["acceptance"], dict)
+            else None
+        ),
+        rejected_deliverables=[item.path for item in outcome.deliverables],
+        rejected_verifications=[
+            name
+            for name in acceptance_before["required_verifications"]
+            if verification_status.get(name) != "passed"
+        ],
+    )
+    current_acceptance = {
+        "required_outputs": list(task.acceptance.required_outputs),
+        "required_verifications": list(
+            task.acceptance.required_verifications
+        ),
+    }
+    expected_current = (
+        resolution["acceptance"]
+        if resolution["kind"] == "revise_acceptance"
+        else acceptance_before
+    )
+    return (
+        message.content
+        == (resolution["instruction"] or resolution["reason"])
+        and message.metadata == expected_metadata
+        and current_acceptance == expected_current
+    )
+
+
 def _run_decision_item_matches(
     item: object,
     decision: dict[str, object],
@@ -2746,6 +3002,32 @@ def _promote_actor_session(
     )
     if cursor.rowcount != 1:
         raise OperationConflict("Operation actor changed before effect application")
+
+
+def _apply_mediation_reinvocation(
+    connection: sqlite3.Connection,
+    operation: TeamModelOperation,
+    now: str,
+) -> None:
+    if operation.stage != "mediation_worker":
+        return
+    cursor = connection.execute(
+        """
+        update team_agents
+        set reinvocations = max(reinvocations, ?), updated_at = ?
+        where id = ? and team_run_id = ?
+        """,
+        (
+            operation.stage_ordinal,
+            now,
+            operation.agent_id,
+            operation.team_run_id,
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise OperationConflict(
+            "Mediation Worker changed before effect application"
+        )
 
 
 def _operation_session_matches(
