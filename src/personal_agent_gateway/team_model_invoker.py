@@ -7,6 +7,8 @@ from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.remote_model_client import RemoteRunError
 from personal_agent_gateway.team_model_operations import (
     OperationConflict,
+    OperationResultValidationError,
+    OperationSessionConflict,
     TeamModelOperation,
     TeamModelOperationService,
     ValidatedOperationResult,
@@ -136,7 +138,13 @@ class TeamModelInvoker:
                     result,
                     upstream_session_id=response.upstream_session_id,
                 )
-            except OperationConflict as exc:
+            except OperationSessionConflict as exc:
+                raise AmbiguousModelOperation(
+                    invoking.id,
+                    consumer_run_id,
+                    "upstream_session_conflict",
+                ) from exc
+            except OperationResultValidationError as exc:
                 self._operations.mark_failed(
                     invoking.id,
                     invoking.version,

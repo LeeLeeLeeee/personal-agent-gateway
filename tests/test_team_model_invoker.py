@@ -125,6 +125,38 @@ async def test_invoker_never_replays_ambiguous_read_timeout(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_invoker_maps_response_session_conflict_to_ambiguous_identity(tmp_path):
+    service, spec = make_operation_service_and_spec(
+        tmp_path,
+        upstream_session_id="existing-session",
+    )
+    client = RecordingOperationClient(
+        [
+            ModelResponse(
+                content='{"ok":true}',
+                tool_calls=[],
+                upstream_session_id="different-session",
+            )
+        ]
+    )
+    reserved = service.reserve(spec)
+
+    with pytest.raises(AmbiguousModelOperation) as raised:
+        await TeamModelInvoker(service).invoke(
+            reserved,
+            client,
+            [{"role": "user", "content": "work"}],
+            parse_test_result,
+        )
+
+    assert client.calls == 1
+    operation = service.get(raised.value.operation_id)
+    assert operation.status == "invoking"
+    assert operation.consumer_run_id == raised.value.consumer_run_id
+    assert operation.upstream_session_id == "existing-session"
+
+
+@pytest.mark.asyncio
 async def test_invoker_leaves_exhausted_safe_admission_invoking(tmp_path):
     service, spec = make_operation_service_and_spec(tmp_path)
     client = RecordingOperationClient(
@@ -179,6 +211,30 @@ async def test_invoker_marks_parser_failure_without_agent_session_mutation(tmp_p
     )
     assert agent is not None
     assert agent["upstream_session_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_invoker_marks_result_validation_failure_invalid(tmp_path):
+    service, spec = make_operation_service_and_spec(tmp_path)
+    client = RecordingOperationClient(
+        [ModelResponse(content='{"ok":true}', tool_calls=[])]
+    )
+    reserved = service.reserve(spec)
+
+    with pytest.raises(InvalidOperationResult) as raised:
+        await TeamModelInvoker(service).invoke(
+            reserved,
+            client,
+            [{"role": "user", "content": "work"}],
+            lambda response: ValidatedOperationResult(
+                "unregistered",
+                json.loads(response.content),
+            ),
+        )
+
+    operation = service.get(raised.value.operation_id)
+    assert operation.status == "failed"
+    assert operation.reason_code == "invalid_structured_output"
 
 
 @pytest.mark.asyncio

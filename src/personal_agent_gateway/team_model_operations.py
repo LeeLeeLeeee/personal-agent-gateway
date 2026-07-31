@@ -54,6 +54,14 @@ class OperationConflict(RuntimeError):
     pass
 
 
+class OperationResultValidationError(OperationConflict):
+    pass
+
+
+class OperationSessionConflict(OperationConflict):
+    pass
+
+
 class StaleOperation(RuntimeError):
     pass
 
@@ -247,7 +255,9 @@ class TeamModelOperationService:
                 and upstream_session_id is not None
                 and operation.upstream_session_id != upstream_session_id
             ):
-                raise OperationConflict("upstream session does not match the operation")
+                raise OperationSessionConflict(
+                    "upstream session does not match the operation"
+                )
             cursor = connection.execute(
                 """
                 update team_model_operations
@@ -389,7 +399,9 @@ class TeamModelOperationService:
                 and upstream_session_id is not None
                 and operation.upstream_session_id != upstream_session_id
             ):
-                raise OperationConflict("upstream session does not match the operation")
+                raise OperationSessionConflict(
+                    "upstream session does not match the operation"
+                )
             cursor = connection.execute(
                 """
                 update team_model_operations
@@ -521,7 +533,9 @@ def _result_serialization(
 ) -> tuple[str, str]:
     validator = validators.get(stage, {}).get(result.kind)
     if validator is None or not validator(result.payload):
-        raise OperationConflict("Operation result is not safe to persist")
+        raise OperationResultValidationError(
+            "Operation result is not safe to persist"
+        )
     serialized = json.dumps(
         {"kind": result.kind, "payload": result.payload},
         ensure_ascii=False,
