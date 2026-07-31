@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from personal_agent_gateway.db import Database
@@ -23,14 +23,19 @@ from personal_agent_gateway.team_model_operations import (
 )
 from personal_agent_gateway.team_outcomes import TaskOutcomeError, parse_task_outcome
 from personal_agent_gateway.teams import (
+    ACCEPTANCE_RECOVERY_CAP,
     TaskAcceptance,
     TeamAgent,
     TeamDecisionRequest,
     TeamMessage,
     TeamRunService,
     TeamTask,
+    _acceptance_review_metadata,
     _validate_task_acceptance,
 )
+
+if TYPE_CHECKING:
+    from personal_agent_gateway.team_runtime import AcceptanceReviewResolution
 
 
 _PLAN_STAGES = {
@@ -38,6 +43,7 @@ _PLAN_STAGES = {
     "cycle_planning_repair",
     "cycle_add_work",
 }
+MediationResolution = Mapping[str, object]
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,25 @@ class WorkerEffectResult:
         "user_decision",
     ] | None
     message: TeamMessage | None = None
+    decision_request: TeamDecisionRequest | None = None
+
+
+@dataclass(frozen=True)
+class MediationEffectResult:
+    task: TeamTask
+    agent: TeamAgent
+    next_stage: Literal["mediation_worker", "user_decision"]
+    message: TeamMessage | None = None
+    decision_request: TeamDecisionRequest | None = None
+
+
+@dataclass(frozen=True)
+class AcceptanceEffectResult:
+    task: TeamTask
+    agent: TeamAgent
+    next_stage: Literal["acceptance_worker", "user_decision"] | None
+    attempt: int
+    message: TeamMessage
     decision_request: TeamDecisionRequest | None = None
 
 
@@ -260,6 +285,393 @@ class TeamModelEffectService:
                 agent=self._teams._agent_from_connection(connection, agent.id),
                 next_stage="mediation_lead",
                 message=self._teams._message_from_connection(connection, message_id),
+            )
+
+    def apply_mediation_lead(
+        self,
+        operation_id: str,
+        resolution: MediationResolution,
+    ) -> MediationEffectResult:
+        now = _now()
+        normalized = _mediation_resolution_payload(resolution)
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            operation = self._operations._get(connection, operation_id)
+            task, leader, worker = self._validate_lead_operation(
+                connection,
+                operation,
+                "mediation_lead",
+            )
+            stored = _result_payload(operation, "mediation_resolution")
+            if stored != normalized:
+                raise OperationConflict(
+                    "Mediation resolution does not match the completed operation"
+                )
+            if operation.status == "applied":
+                return self._replay_mediation_lead(
+                    connection,
+                    operation,
+                    task,
+                    leader,
+                    worker,
+                    normalized,
+                )
+            if operation.status != "completed":
+                raise StaleOperation(
+                    f"Expected operation status completed, got {operation.status}"
+                )
+            cycle = connection.execute(
+                "select rounds_used from team_run_cycles where id = ?",
+                (operation.cycle_id,),
+            ).fetchone()
+            if (
+                cycle is None
+                or int(cycle["rounds_used"]) + 1 != operation.stage_ordinal
+            ):
+                raise OperationConflict(
+                    "Mediation operation does not match the current round"
+                )
+            if task.status != "in_progress":
+                raise OperationConflict("Mediation task is not in progress")
+            if worker.status != "running" or worker.current_task_id != task.id:
+                raise OperationConflict("Mediation Worker is not running the task")
+
+            query_message = self._query_receipt(connection, operation)
+            message_id: str | None = None
+            request_id: str | None = None
+            if normalized["kind"] == "answer":
+                cursor = connection.execute(
+                    """
+                    update team_run_cycles
+                    set rounds_used = rounds_used + 1, updated_at = ?
+                    where id = ? and rounds_used = ?
+                    """,
+                    (
+                        now,
+                        operation.cycle_id,
+                        operation.stage_ordinal - 1,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise OperationConflict(
+                        "Mediation round changed before effect application"
+                    )
+                message_id = uuid4().hex
+                connection.execute(
+                    """
+                    insert into team_messages (
+                        id, team_run_id, cycle_id, sender_agent_id,
+                        recipient_agent_id, kind, content, metadata_json,
+                        created_at
+                    ) values (?, ?, ?, ?, ?, 'answer', ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        operation.team_run_id,
+                        operation.cycle_id,
+                        leader.id,
+                        worker.id,
+                        normalized["answer"],
+                        json.dumps(
+                            {
+                                "operation_id": operation.id,
+                                "task_id": task.id,
+                                "round": operation.stage_ordinal,
+                                "query_id": query_message.id,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        now,
+                    ),
+                )
+                next_stage = "mediation_worker"
+            else:
+                decision = dict(normalized)
+                decision["query_message_id"] = query_message.id
+                request_id = self._teams._append_decision_item(
+                    connection,
+                    operation.team_run_id,
+                    operation.cycle_id,
+                    decision,
+                    now,
+                    blocking_task_id=task.id,
+                    stage="task",
+                )
+                connection.execute(
+                    """
+                    update team_tasks
+                    set status = 'blocked', result = null, error_message = null,
+                        finished_at = null, updated_at = ? where id = ?
+                    """,
+                    (now, task.id),
+                )
+                connection.execute(
+                    """
+                    update team_agents
+                    set status = 'waiting', current_task_id = null,
+                        finished_at = null, updated_at = ? where id = ?
+                    """,
+                    (now, worker.id),
+                )
+                next_stage = "user_decision"
+
+            _promote_actor_session(connection, operation, now)
+            _mark_applied(
+                connection,
+                operation,
+                effect_type="mediation_lead",
+                effect_ref={
+                    "task_id": task.id,
+                    "worker_agent_id": worker.id,
+                    "query_message_id": query_message.id,
+                    "answer_message_id": message_id,
+                    "decision_request_id": request_id,
+                    "next_stage": next_stage,
+                    "round": operation.stage_ordinal,
+                    "resolution_digest": _canonical_digest(normalized),
+                },
+                now=now,
+            )
+            return MediationEffectResult(
+                task=self._teams._task_from_connection(connection, task.id),
+                agent=self._teams._agent_from_connection(connection, worker.id),
+                next_stage=next_stage,
+                message=(
+                    self._teams._message_from_connection(connection, message_id)
+                    if message_id is not None
+                    else None
+                ),
+                decision_request=(
+                    self._teams._decision_request_from_connection(
+                        connection,
+                        request_id,
+                    )
+                    if request_id is not None
+                    else None
+                ),
+            )
+
+    def apply_acceptance_lead(
+        self,
+        operation_id: str,
+        resolution: AcceptanceReviewResolution,
+    ) -> AcceptanceEffectResult:
+        now = _now()
+        normalized = _acceptance_resolution_payload(resolution)
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            operation = self._operations._get(connection, operation_id)
+            task, leader, worker = self._validate_lead_operation(
+                connection,
+                operation,
+                "acceptance_lead",
+            )
+            stored = _result_payload(operation, "acceptance_review")
+            if stored != normalized:
+                raise OperationConflict(
+                    "Acceptance resolution does not match the completed operation"
+                )
+            if operation.status == "applied":
+                return self._replay_acceptance_lead(
+                    connection,
+                    operation,
+                    task,
+                    leader,
+                    worker,
+                    normalized,
+                )
+            if operation.status != "completed":
+                raise StaleOperation(
+                    f"Expected operation status completed, got {operation.status}"
+                )
+            if (
+                task.status != "in_progress"
+                or worker.status != "running"
+                or worker.current_task_id != task.id
+            ):
+                raise OperationConflict("Acceptance task is not actively owned")
+            if task.acceptance_recovery_attempts + 1 != operation.stage_ordinal:
+                raise OperationConflict(
+                    "Acceptance operation does not match the current attempt"
+                )
+            outcome = _persisted_task_outcome(task)
+            acceptance = _persisted_acceptance_result(task)
+            reason_code = (
+                normalized["reason_code"]
+                if normalized["kind"] == "fail"
+                else acceptance.reason_code
+                or outcome.reason_code
+                or "task_failed"
+            )
+            assert isinstance(reason_code, str)
+            verification_status = {
+                item.name: item.status for item in outcome.verifications
+            }
+            acceptance_before = asdict(task.acceptance)
+            acceptance_after = normalized["acceptance"]
+            consumes_attempt = normalized["kind"] in {
+                "retry_worker",
+                "revise_acceptance",
+            }
+            next_attempt = task.acceptance_recovery_attempts + int(
+                consumes_attempt
+            )
+            if (
+                consumes_attempt
+                and next_attempt > ACCEPTANCE_RECOVERY_CAP
+            ):
+                raise OperationConflict("Acceptance recovery limit reached")
+            acceptance_json = (
+                json.dumps(
+                    acceptance_after,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if normalized["kind"] == "revise_acceptance"
+                else json.dumps(
+                    acceptance_before,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+            if consumes_attempt:
+                connection.execute(
+                    """
+                    update team_tasks
+                    set acceptance_recovery_attempts = ?, acceptance_json = ?,
+                        updated_at = ? where id = ?
+                    """,
+                    (next_attempt, acceptance_json, now, task.id),
+                )
+
+            message_id = uuid4().hex
+            message_metadata = _acceptance_review_metadata(
+                operation_id=operation.id,
+                task_id=task.id,
+                attempt=operation.stage_ordinal,
+                reason_code=reason_code,
+                action=normalized["kind"],
+                reason=normalized["reason"],
+                instruction=normalized["instruction"],
+                acceptance_before=acceptance_before,
+                acceptance_after=acceptance_after,
+                rejected_deliverables=[
+                    item.path for item in outcome.deliverables
+                ],
+                rejected_verifications=[
+                    name
+                    for name in task.acceptance.required_verifications
+                    if verification_status.get(name) != "passed"
+                ],
+            )
+            connection.execute(
+                """
+                insert into team_messages (
+                    id, team_run_id, cycle_id, sender_agent_id,
+                    recipient_agent_id, kind, content, metadata_json, created_at
+                ) values (?, ?, ?, ?, ?, 'acceptance_review', ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    operation.team_run_id,
+                    operation.cycle_id,
+                    leader.id,
+                    worker.id,
+                    normalized["instruction"] or normalized["reason"],
+                    json.dumps(
+                        message_metadata,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
+            )
+
+            request_id: str | None = None
+            if consumes_attempt:
+                next_stage = "acceptance_worker"
+            elif normalized["kind"] == "ask_user":
+                decision = normalized["decision"]
+                assert isinstance(decision, dict)
+                request_id = self._teams._append_decision_item(
+                    connection,
+                    operation.team_run_id,
+                    operation.cycle_id,
+                    decision,
+                    now,
+                    blocking_task_id=task.id,
+                    stage="task",
+                )
+                connection.execute(
+                    """
+                    update team_tasks
+                    set status = 'blocked', result = null, error_message = null,
+                        finished_at = null, updated_at = ? where id = ?
+                    """,
+                    (now, task.id),
+                )
+                connection.execute(
+                    """
+                    update team_agents
+                    set status = 'waiting', current_task_id = null,
+                        finished_at = null, updated_at = ? where id = ?
+                    """,
+                    (now, worker.id),
+                )
+                next_stage = "user_decision"
+            else:
+                connection.execute(
+                    """
+                    update team_tasks
+                    set status = 'failed', result = null, error_message = ?,
+                        finished_at = ?, updated_at = ? where id = ?
+                    """,
+                    (reason_code, now, now, task.id),
+                )
+                connection.execute(
+                    """
+                    update team_agents
+                    set status = 'failed', current_task_id = null,
+                        finished_at = ?, updated_at = ? where id = ?
+                    """,
+                    (now, now, worker.id),
+                )
+                next_stage = None
+
+            _promote_actor_session(connection, operation, now)
+            _mark_applied(
+                connection,
+                operation,
+                effect_type="acceptance_lead",
+                effect_ref={
+                    "task_id": task.id,
+                    "worker_agent_id": worker.id,
+                    "message_id": message_id,
+                    "decision_request_id": request_id,
+                    "next_stage": next_stage,
+                    "attempt": operation.stage_ordinal,
+                    "resolution_digest": _canonical_digest(normalized),
+                },
+                now=now,
+            )
+            return AcceptanceEffectResult(
+                task=self._teams._task_from_connection(connection, task.id),
+                agent=self._teams._agent_from_connection(connection, worker.id),
+                next_stage=next_stage,
+                attempt=operation.stage_ordinal,
+                message=self._teams._message_from_connection(
+                    connection,
+                    message_id,
+                ),
+                decision_request=(
+                    self._teams._decision_request_from_connection(
+                        connection,
+                        request_id,
+                    )
+                    if request_id is not None
+                    else None
+                ),
             )
 
     def apply_synthesis(
@@ -679,13 +1091,20 @@ class TeamModelEffectService:
         connection: sqlite3.Connection,
         operation: TeamModelOperation,
     ) -> tuple[TeamTask, TeamAgent]:
-        if operation.stage != "worker_execution" or operation.task_id is None:
+        if (
+            operation.stage
+            not in {"worker_execution", "mediation_worker", "acceptance_worker"}
+            or operation.task_id is None
+        ):
             raise OperationConflict("Operation is not a Worker execution stage")
-        if operation.result_kind not in {
+        allowed_result_kinds = {
             "task_outcome",
-            "user_decision",
-            "worker_query",
-        }:
+        }
+        if operation.stage in {"worker_execution", "mediation_worker"}:
+            allowed_result_kinds.add("worker_query")
+        if operation.stage == "worker_execution":
+            allowed_result_kinds.add("user_decision")
+        if operation.result_kind not in allowed_result_kinds:
             raise OperationConflict("Completed Worker result kind is invalid")
         task = self._teams._task_from_connection(connection, operation.task_id)
         agent = self._teams._agent_from_connection(connection, operation.agent_id)
@@ -712,6 +1131,314 @@ class TeamModelEffectService:
         if cycle is None or cycle["team_run_id"] != operation.team_run_id:
             raise OperationConflict("Worker cycle does not belong to the team run")
         return task, agent
+
+    def _validate_lead_operation(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        stage: Literal["mediation_lead", "acceptance_lead"],
+    ) -> tuple[TeamTask, TeamAgent, TeamAgent]:
+        if operation.stage != stage or operation.task_id is None:
+            raise OperationConflict(f"Operation is not a {stage} stage")
+        run = connection.execute(
+            "select leader_agent_id from team_runs where id = ?",
+            (operation.team_run_id,),
+        ).fetchone()
+        cycle = connection.execute(
+            "select team_run_id from team_run_cycles where id = ?",
+            (operation.cycle_id,),
+        ).fetchone()
+        if (
+            run is None
+            or run["leader_agent_id"] != operation.agent_id
+            or cycle is None
+            or cycle["team_run_id"] != operation.team_run_id
+        ):
+            raise OperationConflict("Lead operation actor or cycle is invalid")
+        task = self._teams._task_from_connection(
+            connection,
+            operation.task_id,
+        )
+        leader = self._teams._agent_from_connection(
+            connection,
+            operation.agent_id,
+        )
+        if task.owner_agent_id is None:
+            raise OperationConflict("Lead operation task has no Worker owner")
+        worker = self._teams._agent_from_connection(
+            connection,
+            task.owner_agent_id,
+        )
+        if (
+            task.team_run_id != operation.team_run_id
+            or task.cycle_id != operation.cycle_id
+            or leader.team_run_id != operation.team_run_id
+            or worker.team_run_id != operation.team_run_id
+            or worker.id == leader.id
+        ):
+            raise OperationConflict("Lead operation ownership is invalid")
+        return task, leader, worker
+
+    def _query_receipt(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+    ) -> TeamMessage:
+        row = connection.execute(
+            """
+            select id from team_model_operations
+            where team_run_id = ? and cycle_id = ? and task_id = ?
+              and status = 'applied' and result_kind = 'worker_query'
+            order by applied_at desc, created_at desc, id desc limit 1
+            """,
+            (
+                operation.team_run_id,
+                operation.cycle_id,
+                operation.task_id,
+            ),
+        ).fetchone()
+        if row is None:
+            raise OperationConflict("Mediation has no applied Worker query")
+        source = self._operations._get(connection, row["id"])
+        effect_ref = source.effect_ref_json
+        query = _worker_query(source)
+        message_id = (
+            effect_ref.get("message_id")
+            if isinstance(effect_ref, dict)
+            else None
+        )
+        if not isinstance(message_id, str):
+            raise OperationConflict("Applied Worker query receipt is invalid")
+        message = self._teams._message_from_connection(connection, message_id)
+        if (
+            source.effect_type != "worker_query"
+            or not isinstance(effect_ref, dict)
+            or effect_ref.get("task_id") != operation.task_id
+            or effect_ref.get("agent_id") != source.agent_id
+            or effect_ref.get("next_stage") != "mediation_lead"
+            or message.team_run_id != operation.team_run_id
+            or message.cycle_id != operation.cycle_id
+            or message.sender_agent_id != source.agent_id
+            or message.recipient_agent_id != operation.agent_id
+            or message.kind != "query"
+            or message.content != query["question"]
+            or message.metadata
+            != {
+                "operation_id": source.id,
+                "task_id": operation.task_id,
+                "topic": query["topic"],
+            }
+        ):
+            raise OperationConflict(
+                "Applied Worker query rows do not match"
+            )
+        return message
+
+    def _replay_mediation_lead(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        task: TeamTask,
+        leader: TeamAgent,
+        worker: TeamAgent,
+        resolution: dict[str, object],
+    ) -> MediationEffectResult:
+        effect_ref = operation.effect_ref_json
+        expected_keys = {
+            "task_id",
+            "worker_agent_id",
+            "query_message_id",
+            "answer_message_id",
+            "decision_request_id",
+            "next_stage",
+            "round",
+            "resolution_digest",
+        }
+        if (
+            operation.effect_type != "mediation_lead"
+            or not isinstance(effect_ref, dict)
+            or set(effect_ref) != expected_keys
+            or effect_ref["task_id"] != task.id
+            or effect_ref["worker_agent_id"] != worker.id
+            or effect_ref["round"] != operation.stage_ordinal
+            or effect_ref["resolution_digest"]
+            != _canonical_digest(resolution)
+            or not _operation_session_matches(operation, leader)
+        ):
+            raise OperationConflict("Applied mediation receipt is invalid")
+        query_id = effect_ref["query_message_id"]
+        if not isinstance(query_id, str):
+            raise OperationConflict("Applied mediation query receipt is invalid")
+        query = self._teams._message_from_connection(connection, query_id)
+        if (
+            query.team_run_id != operation.team_run_id
+            or query.cycle_id != operation.cycle_id
+            or query.sender_agent_id != worker.id
+            or query.recipient_agent_id != leader.id
+            or query.kind != "query"
+        ):
+            raise OperationConflict("Applied mediation query rows do not match")
+
+        if effect_ref["next_stage"] == "mediation_worker":
+            answer_id = effect_ref["answer_message_id"]
+            if (
+                not isinstance(answer_id, str)
+                or effect_ref["decision_request_id"] is not None
+            ):
+                raise OperationConflict(
+                    "Applied mediation answer receipt is invalid"
+                )
+            message = self._teams._message_from_connection(
+                connection,
+                answer_id,
+            )
+            cycle = connection.execute(
+                "select rounds_used from team_run_cycles where id = ?",
+                (operation.cycle_id,),
+            ).fetchone()
+            if (
+                cycle is None
+                or cycle["rounds_used"] != operation.stage_ordinal
+                or task.status != "in_progress"
+                or worker.status != "running"
+                or worker.current_task_id != task.id
+                or message.sender_agent_id != leader.id
+                or message.recipient_agent_id != worker.id
+                or message.kind != "answer"
+                or message.content != resolution["answer"]
+                or message.metadata
+                != {
+                    "operation_id": operation.id,
+                    "task_id": task.id,
+                    "round": operation.stage_ordinal,
+                    "query_id": query.id,
+                }
+            ):
+                raise OperationConflict("Applied mediation answer rows do not match")
+            return MediationEffectResult(
+                task=task,
+                agent=worker,
+                next_stage="mediation_worker",
+                message=message,
+            )
+
+        if (
+            effect_ref["next_stage"] != "user_decision"
+            or effect_ref["answer_message_id"] is not None
+            or not isinstance(effect_ref["decision_request_id"], str)
+            or task.status != "blocked"
+            or worker.status != "waiting"
+            or worker.current_task_id is not None
+        ):
+            raise OperationConflict("Applied mediation decision rows do not match")
+        request = self._teams._decision_request_from_connection(
+            connection,
+            effect_ref["decision_request_id"],
+        )
+        return MediationEffectResult(
+            task=task,
+            agent=worker,
+            next_stage="user_decision",
+            decision_request=request,
+        )
+
+    def _replay_acceptance_lead(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        task: TeamTask,
+        leader: TeamAgent,
+        worker: TeamAgent,
+        resolution: dict[str, object],
+    ) -> AcceptanceEffectResult:
+        effect_ref = operation.effect_ref_json
+        if (
+            operation.effect_type != "acceptance_lead"
+            or not isinstance(effect_ref, dict)
+            or set(effect_ref)
+            != {
+                "task_id",
+                "worker_agent_id",
+                "message_id",
+                "decision_request_id",
+                "next_stage",
+                "attempt",
+                "resolution_digest",
+            }
+            or effect_ref["task_id"] != task.id
+            or effect_ref["worker_agent_id"] != worker.id
+            or effect_ref["attempt"] != operation.stage_ordinal
+            or effect_ref["resolution_digest"]
+            != _canonical_digest(resolution)
+            or not _operation_session_matches(operation, leader)
+            or not isinstance(effect_ref["message_id"], str)
+        ):
+            raise OperationConflict("Applied acceptance receipt is invalid")
+        message = self._teams._message_from_connection(
+            connection,
+            effect_ref["message_id"],
+        )
+        if (
+            message.team_run_id != operation.team_run_id
+            or message.cycle_id != operation.cycle_id
+            or message.sender_agent_id != leader.id
+            or message.recipient_agent_id != worker.id
+            or message.kind != "acceptance_review"
+            or message.metadata.get("operation_id") != operation.id
+            or message.metadata.get("task_id") != task.id
+            or message.metadata.get("attempt") != operation.stage_ordinal
+            or message.metadata.get("action") != resolution["kind"]
+        ):
+            raise OperationConflict("Applied acceptance audit rows do not match")
+        next_stage = effect_ref["next_stage"]
+        request = None
+        if next_stage == "acceptance_worker":
+            if (
+                effect_ref["decision_request_id"] is not None
+                or task.status != "in_progress"
+                or worker.status != "running"
+                or worker.current_task_id != task.id
+                or task.acceptance_recovery_attempts
+                != operation.stage_ordinal
+            ):
+                raise OperationConflict(
+                    "Applied acceptance retry rows do not match"
+                )
+        elif next_stage == "user_decision":
+            request_id = effect_ref["decision_request_id"]
+            if (
+                not isinstance(request_id, str)
+                or task.status != "blocked"
+                or worker.status != "waiting"
+                or worker.current_task_id is not None
+            ):
+                raise OperationConflict(
+                    "Applied acceptance decision rows do not match"
+                )
+            request = self._teams._decision_request_from_connection(
+                connection,
+                request_id,
+            )
+        elif next_stage is None:
+            if (
+                effect_ref["decision_request_id"] is not None
+                or task.status != "failed"
+                or worker.status != "failed"
+                or worker.current_task_id is not None
+            ):
+                raise OperationConflict(
+                    "Applied acceptance terminal rows do not match"
+                )
+        else:
+            raise OperationConflict("Applied acceptance next stage is invalid")
+        return AcceptanceEffectResult(
+            task=task,
+            agent=worker,
+            next_stage=next_stage,
+            attempt=operation.stage_ordinal,
+            message=message,
+            decision_request=request,
+        )
 
     def _replay_worker_query(
         self,
@@ -842,7 +1569,10 @@ class TeamModelEffectService:
                 """,
                 (now, now, agent.id),
             )
-        elif is_recoverable_acceptance_failure(acceptance.reason_code):
+        elif (
+            is_recoverable_acceptance_failure(acceptance.reason_code)
+            and task.acceptance_recovery_attempts < ACCEPTANCE_RECOVERY_CAP
+        ):
             next_stage = "acceptance_lead"
         else:
             connection.execute(
@@ -975,7 +1705,8 @@ class TeamModelEffectService:
         outcome = _task_outcome(operation)
         acceptance = task.acceptance_result
         expected_next_stage, task_status, agent_status = _expected_worker_state(
-            acceptance
+            acceptance,
+            task.acceptance_recovery_attempts,
         )
         expected_outcome = _json_object(asdict(outcome))
         expected_message_metadata = {
@@ -1292,6 +2023,133 @@ def _worker_query(operation: TeamModelOperation) -> dict[str, object]:
     return payload
 
 
+def _mediation_resolution_payload(
+    resolution: Mapping[str, object],
+) -> dict[str, object]:
+    normalized = _json_object(dict(resolution))
+    if (
+        normalized.get("kind") == "answer"
+        and set(normalized) == {"kind", "answer"}
+        and isinstance(normalized["answer"], str)
+        and normalized["answer"].strip()
+    ):
+        normalized["answer"] = normalized["answer"].strip()
+        return normalized
+    if _valid_user_decision(normalized):
+        return normalized
+    raise ValueError("Invalid mediation resolution")
+
+
+def _acceptance_resolution_payload(
+    resolution: AcceptanceReviewResolution,
+) -> dict[str, object]:
+    kind = getattr(resolution, "kind", None)
+    reason = getattr(resolution, "reason", None)
+    instruction = getattr(resolution, "instruction", None)
+    reason_code = getattr(resolution, "reason_code", None)
+    acceptance = getattr(resolution, "acceptance", None)
+    decision = getattr(resolution, "decision", None)
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("Acceptance resolution requires a reason")
+    payload = {
+        "kind": kind,
+        "reason": reason.strip(),
+        "instruction": (
+            instruction.strip()
+            if isinstance(instruction, str) and instruction.strip()
+            else None
+        ),
+        "reason_code": (
+            reason_code.strip()
+            if isinstance(reason_code, str) and reason_code.strip()
+            else None
+        ),
+        "acceptance": (
+            _json_object(asdict(acceptance))
+            if isinstance(acceptance, TaskAcceptance)
+            else None
+        ),
+        "decision": (
+            _json_object(decision)
+            if isinstance(decision, dict)
+            else None
+        ),
+    }
+    if kind == "retry_worker":
+        if (
+            payload["instruction"] is None
+            or payload["reason_code"] is not None
+            or payload["acceptance"] is not None
+            or payload["decision"] is not None
+        ):
+            raise ValueError("Invalid acceptance retry resolution")
+    elif kind == "revise_acceptance":
+        if (
+            payload["instruction"] is None
+            or payload["reason_code"] is not None
+            or payload["acceptance"] is None
+            or payload["decision"] is not None
+        ):
+            raise ValueError("Invalid revised acceptance resolution")
+        _validate_task_acceptance(acceptance)
+    elif kind == "ask_user":
+        if (
+            payload["instruction"] is not None
+            or payload["reason_code"] is not None
+            or payload["acceptance"] is not None
+            or not isinstance(payload["decision"], dict)
+            or not _valid_user_decision(payload["decision"])
+        ):
+            raise ValueError("Invalid acceptance user decision")
+    elif kind == "fail":
+        if (
+            payload["instruction"] is not None
+            or payload["reason_code"] is None
+            or payload["acceptance"] is not None
+            or payload["decision"] is not None
+        ):
+            raise ValueError("Invalid terminal acceptance resolution")
+    else:
+        raise ValueError("Invalid acceptance resolution kind")
+    return payload
+
+
+def _persisted_task_outcome(task: TeamTask):
+    if not isinstance(task.outcome, dict):
+        raise OperationConflict("Acceptance task has no persisted outcome")
+    try:
+        return parse_task_outcome(
+            json.dumps(task.outcome, ensure_ascii=False, sort_keys=True)
+        )
+    except TaskOutcomeError as exc:
+        raise OperationConflict(
+            "Acceptance task outcome is invalid"
+        ) from exc
+
+
+def _persisted_acceptance_result(task: TeamTask) -> AcceptanceResult:
+    value = task.acceptance_result
+    if not isinstance(value, dict):
+        raise OperationConflict(
+            "Acceptance task has no persisted acceptance result"
+        )
+    try:
+        acceptance = AcceptanceResult(
+            accepted=value["accepted"],
+            status=value["status"],
+            reason_code=value["reason_code"],
+            evidence=value["evidence"],
+        )
+    except (KeyError, TypeError) as exc:
+        raise OperationConflict(
+            "Persisted acceptance result is invalid"
+        ) from exc
+    _validate_acceptance_result(acceptance)
+    if acceptance.accepted:
+        raise OperationConflict("Acceptance review requires a rejected outcome")
+    return acceptance
+
+
 def _synthesis_summary(operation: TeamModelOperation) -> str:
     payload = _result_payload(operation, "synthesis")
     if not _valid_synthesis(payload):
@@ -1449,6 +2307,7 @@ def _persisted_worker_input_digest(
 
 def _expected_worker_state(
     acceptance: dict[str, object] | None,
+    acceptance_recovery_attempts: int,
 ) -> tuple[
     Literal["acceptance_lead"] | None,
     Literal["in_progress", "completed", "failed"],
@@ -1471,7 +2330,10 @@ def _expected_worker_state(
     reason_code = acceptance["reason_code"]
     if not isinstance(reason_code, str) or not reason_code:
         raise OperationConflict("Applied rejected result is invalid")
-    if is_recoverable_acceptance_failure(reason_code):
+    if (
+        is_recoverable_acceptance_failure(reason_code)
+        and acceptance_recovery_attempts < ACCEPTANCE_RECOVERY_CAP
+    ):
         return "acceptance_lead", "in_progress", "running"
     return None, "failed", "failed"
 
@@ -1677,6 +2539,19 @@ def team_model_effect_result_validators() -> OperationResultValidatorRegistry:
             "user_decision": _valid_user_decision,
             "worker_query": _valid_worker_query,
         },
+        "mediation_lead": {
+            "mediation_resolution": _valid_mediation_resolution,
+        },
+        "mediation_worker": {
+            "task_outcome": _valid_task_outcome,
+            "worker_query": _valid_worker_query,
+        },
+        "acceptance_lead": {
+            "acceptance_review": _valid_acceptance_resolution,
+        },
+        "acceptance_worker": {
+            "task_outcome": _valid_task_outcome,
+        },
         "cycle_synthesis": {
             "synthesis": _valid_synthesis,
             "user_decision": _valid_user_decision,
@@ -1700,6 +2575,79 @@ def _valid_worker_query(payload: dict[str, object]) -> bool:
             for field in ("topic", "question")
         )
     )
+
+
+def _valid_mediation_resolution(payload: dict[str, object]) -> bool:
+    try:
+        _mediation_resolution_payload(payload)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _valid_acceptance_resolution(payload: dict[str, object]) -> bool:
+    kind = payload.get("kind")
+    if set(payload) != {
+        "kind",
+        "reason",
+        "instruction",
+        "reason_code",
+        "acceptance",
+        "decision",
+    }:
+        return False
+    if not isinstance(payload["reason"], str) or not payload["reason"].strip():
+        return False
+    instruction = payload["instruction"]
+    reason_code = payload["reason_code"]
+    acceptance = payload["acceptance"]
+    decision = payload["decision"]
+    if kind == "retry_worker":
+        return (
+            isinstance(instruction, str)
+            and bool(instruction.strip())
+            and reason_code is None
+            and acceptance is None
+            and decision is None
+        )
+    if kind == "revise_acceptance":
+        try:
+            _validate_task_acceptance(
+                TaskAcceptance(
+                    required_outputs=tuple(acceptance["required_outputs"]),
+                    required_verifications=tuple(
+                        acceptance["required_verifications"]
+                    ),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+        return (
+            isinstance(instruction, str)
+            and bool(instruction.strip())
+            and reason_code is None
+            and isinstance(acceptance, dict)
+            and set(acceptance)
+            == {"required_outputs", "required_verifications"}
+            and decision is None
+        )
+    if kind == "ask_user":
+        return (
+            instruction is None
+            and reason_code is None
+            and acceptance is None
+            and isinstance(decision, dict)
+            and _valid_user_decision(decision)
+        )
+    if kind == "fail":
+        return (
+            instruction is None
+            and isinstance(reason_code, str)
+            and bool(reason_code.strip())
+            and acceptance is None
+            and decision is None
+        )
+    return False
 
 
 def _valid_user_decision(payload: dict[str, object]) -> bool:

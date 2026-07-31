@@ -21,6 +21,7 @@ from personal_agent_gateway.team_outcomes import (
     TaskOutcome,
     VerificationEvidence,
 )
+from personal_agent_gateway.team_runtime import AcceptanceReviewResolution
 from personal_agent_gateway.teams import TaskAcceptance
 from team_cycle_helpers import make_cycle_services, make_queued_cycle
 
@@ -254,6 +255,228 @@ def make_completed_synthesis_operation(tmp_path, *, decision=None):
         operation=operation,
         effects=TeamModelEffectService(db, teams, operations),
     )
+
+
+def complete_followup_operation(
+    services,
+    *,
+    stage,
+    ordinal,
+    actor,
+    result_kind,
+    payload,
+    upstream_session_id=None,
+):
+    validators = team_model_effect_result_validators()
+    validators.setdefault(stage, {})[result_kind] = lambda _payload: True
+    operations = TeamModelOperationService(
+        services.db,
+        result_validators=validators,
+    )
+    reserved = operations.reserve(
+        OperationSpec(
+            operation_key=(
+                f"{services.cycle.id}:{services.task.id}:{stage}:{ordinal}"
+            ),
+            team_run_id=services.run.id,
+            cycle_id=services.cycle.id,
+            task_id=services.task.id,
+            agent_id=actor.id,
+            provider=actor.backend,
+            stage=stage,
+            stage_ordinal=ordinal,
+            request_digest=REQUEST_DIGEST,
+            upstream_session_id=actor.upstream_session_id,
+        )
+    )
+    invoking = operations.begin_attempt(reserved.id, "consumer-followup")
+    operation = operations.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult(result_kind, payload),
+        upstream_session_id=upstream_session_id,
+    )
+    return SimpleNamespace(
+        operation=operation,
+        operations=operations,
+        effects=TeamModelEffectService(
+            services.db,
+            services.teams,
+            operations,
+        ),
+    )
+
+
+def test_mediation_lead_answer_is_atomic_and_idempotent(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        query={"topic": "scope", "question": "Which scope?"},
+    )
+    query_effect = services.effects.apply_worker_query(services.operation.id)
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    resolution = {"kind": "answer", "answer": "Use the current scope."}
+    followup = complete_followup_operation(
+        services,
+        stage="mediation_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="mediation_resolution",
+        payload=resolution,
+        upstream_session_id="lead-session",
+    )
+
+    first = followup.effects.apply_mediation_lead(
+        followup.operation.id,
+        resolution,
+    )
+    second = followup.effects.apply_mediation_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert second.message.id == first.message.id
+    assert second.next_stage == "mediation_worker"
+    assert services.teams.get_cycle(services.cycle.id).rounds_used == 1
+    answers = [
+        message
+        for message in services.teams.list_messages(
+            services.run.id,
+            services.cycle.id,
+        )
+        if message.kind == "answer"
+    ]
+    assert len(answers) == 1
+    assert answers[0].sender_agent_id == leader.id
+    assert answers[0].recipient_agent_id == services.worker.id
+    assert answers[0].metadata["query_id"] == query_effect.message.id
+    assert services.teams.get_agent(leader.id).upstream_session_id == (
+        "lead-session"
+    )
+    assert followup.operations.get(followup.operation.id).status == "applied"
+
+
+def test_acceptance_lead_retry_is_atomic_and_idempotent(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    rejected = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="required_verification_failed",
+        evidence={},
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        rejected,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="Citation verification is missing.",
+        instruction="Add the citation verification.",
+    )
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "retry_worker",
+            "reason": resolution.reason,
+            "instruction": resolution.instruction,
+            "reason_code": None,
+            "acceptance": None,
+            "decision": None,
+        },
+        upstream_session_id="lead-session",
+    )
+
+    first = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+    second = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert second.message.id == first.message.id
+    assert second.next_stage == "acceptance_worker"
+    assert second.attempt == 1
+    task = services.teams.get_task(services.task.id)
+    assert task.acceptance_recovery_attempts == 1
+    reviews = [
+        message
+        for message in services.teams.list_messages(services.run.id)
+        if message.kind == "acceptance_review"
+    ]
+    assert len(reviews) == 1
+    assert reviews[0].metadata["operation_id"] == followup.operation.id
+    assert services.teams.get_agent(leader.id).upstream_session_id == (
+        "lead-session"
+    )
+    assert services.teams.get_agent(services.worker.id).upstream_session_id == (
+        "worker-session"
+    )
+    assert followup.operations.get(followup.operation.id).status == "applied"
+
+
+def test_acceptance_lead_user_decision_is_atomic_and_idempotent(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        AcceptanceResult(
+            accepted=False,
+            status="failed",
+            reason_code="required_verification_failed",
+            evidence={},
+        ),
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    decision = user_decision()
+    resolution = AcceptanceReviewResolution(
+        kind="ask_user",
+        reason="Publication scope is ambiguous.",
+        decision=decision,
+    )
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "ask_user",
+            "reason": resolution.reason,
+            "instruction": None,
+            "reason_code": None,
+            "acceptance": None,
+            "decision": decision,
+        },
+    )
+
+    first = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+    second = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert second.decision_request.id == first.decision_request.id
+    assert second.next_stage == "user_decision"
+    assert len(services.teams.list_decision_requests(services.run.id)) == 1
+    assert services.teams.get_task(services.task.id).status == "blocked"
+    assert services.teams.get_agent(services.worker.id).status == "waiting"
+    assert followup.operations.get(followup.operation.id).status == "applied"
 
 
 def test_apply_plan_and_operation_are_atomic_and_idempotent(tmp_path):

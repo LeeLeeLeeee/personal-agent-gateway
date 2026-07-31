@@ -271,6 +271,25 @@ class CrashAfterOperationStage:
         )
 
 
+class CrashAfterAppliedAcceptanceLead:
+    def __init__(self, delegate):
+        self._delegate = delegate
+        self._crashed = False
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
+
+    def apply_acceptance_lead(self, operation_id, resolution):
+        result = self._delegate.apply_acceptance_lead(
+            operation_id,
+            resolution,
+        )
+        if not self._crashed:
+            self._crashed = True
+            raise SimulatedProcessCrash
+        return result
+
+
 async def _no_sleep(_delay):
     return None
 
@@ -449,6 +468,222 @@ def make_operation_runtime_with_completed_worker(tmp_path):
         worker_operation=operation,
     )
     return SimpleNamespace(**values)
+
+
+def make_recoverable_acceptance_runtime(tmp_path):
+    setup = make_operation_runtime(tmp_path)
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Research",
+        "Research the request.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), ("worker-result",)),
+    )
+    setup.worker_client.responses = [
+        ModelResponse(
+            _outcome_json("draft", verification="wrong-check"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+        ModelResponse(
+            _outcome_json("draft-fixed"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+    ]
+    values = vars(setup).copy()
+    values["task"] = task
+    return SimpleNamespace(**values)
+
+
+@pytest.mark.asyncio
+async def test_lead_acceptance_retry_uses_separate_worker_operation(tmp_path):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review("Fix the missing citation check."), []),
+        ModelResponse("summary", []),
+    ]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.worker_client.calls == 2
+    lead_operation = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:1"
+    )
+    worker_operation = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_worker:1"
+    )
+    assert lead_operation is not None
+    assert lead_operation.status == "applied"
+    assert worker_operation is not None
+    assert worker_operation.status == "applied"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:worker_execution:0"
+    ).status == "applied"
+
+
+@pytest.mark.asyncio
+async def test_lead_review_session_is_owned_by_lead_and_keeps_worker_applied(
+    tmp_path,
+):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(
+            json.dumps(
+                {
+                    "resolution": {
+                        "kind": "fail",
+                        "reason_code": "requirements_not_met",
+                        "summary": "The requirements cannot be met.",
+                    }
+                }
+            ),
+            [],
+            upstream_session_id="lead-session",
+        )
+    ]
+    setup.worker_client.responses = setup.worker_client.responses[:1]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    operation = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:1"
+    )
+    assert operation is not None
+    assert operation.stage == "acceptance_lead"
+    assert operation.agent_id == setup.run.leader_agent_id
+    assert operation.status == "applied"
+    assert setup.teams.get_agent(
+        setup.run.leader_agent_id
+    ).upstream_session_id == "lead-session"
+    assert setup.teams.get_agent(setup.worker.id).upstream_session_id == (
+        "worker-session"
+    )
+    assert setup.worker_client.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_completed_acceptance_lead_applies_after_restart_without_second_call(
+    tmp_path,
+):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review(), [], upstream_session_id="lead-session"),
+        ModelResponse("summary", []),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        TeamModelInvoker(setup.operations, sleep=_no_sleep),
+        "acceptance_lead",
+        1,
+        "completed",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    lead_calls = setup.lead_client.calls
+    operation = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert operation is not None
+    assert (operation.stage, operation.status) == (
+        "acceptance_lead",
+        "completed",
+    )
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.lead_client.calls == lead_calls + 1
+    assert setup.operations.get(operation.id).status == "applied"
+    reviews = [
+        message
+        for message in setup.teams.list_messages(setup.run.id)
+        if message.kind == "acceptance_review"
+    ]
+    assert len(reviews) == 1
+
+
+@pytest.mark.asyncio
+async def test_completed_acceptance_worker_finishes_once_after_restart(
+    tmp_path,
+):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review(), []),
+        ModelResponse("summary", []),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        TeamModelInvoker(setup.operations, sleep=_no_sleep),
+        "acceptance_worker",
+        1,
+        "completed",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    worker_calls = setup.worker_client.calls
+    operation = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert operation is not None
+    assert (operation.stage, operation.status) == (
+        "acceptance_worker",
+        "completed",
+    )
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.worker_client.calls == worker_calls
+    assert setup.operations.get(operation.id).status == "applied"
+    assert setup.teams.get_task(setup.task.id).status == "completed"
+    outputs = [
+        message
+        for message in setup.teams.list_messages(setup.run.id)
+        if message.kind == "agent_output"
+    ]
+    assert len(outputs) == 2
+
+
+@pytest.mark.asyncio
+async def test_applied_acceptance_lead_resumes_worker_without_repeating_audit(
+    tmp_path,
+):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review(), []),
+        ModelResponse("summary", []),
+    ]
+    setup.runtime._model_effects = CrashAfterAppliedAcceptanceLead(
+        TeamModelEffectService(setup.db, setup.teams, setup.operations)
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:1"
+    ).status == "applied"
+    assert setup.operations.get_open_for_cycle(setup.cycle.id) is None
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.worker_client.calls == 2
+    reviews = [
+        message
+        for message in setup.teams.list_messages(setup.run.id)
+        if message.kind == "acceptance_review"
+    ]
+    assert len(reviews) == 1
 
 
 @pytest.mark.asyncio
@@ -1131,6 +1366,21 @@ async def test_worker_query_operation_applies_before_current_lead_mediation(
         if message.kind == "query"
     )
     assert query.metadata["operation_id"] == worker_operation.id
+    operations = setup.operations.list_for_cycle(setup.cycle.id)
+    mediation_lead = next(
+        operation
+        for operation in operations
+        if operation.stage == "mediation_lead"
+    )
+    mediation_worker = next(
+        operation
+        for operation in operations
+        if operation.stage == "mediation_worker"
+    )
+    assert mediation_lead.agent_id == setup.run.leader_agent_id
+    assert mediation_lead.status == "applied"
+    assert mediation_worker.agent_id == setup.worker.id
+    assert mediation_worker.status == "applied"
     assert result.status == "completed"
 
 
@@ -1720,11 +1970,16 @@ async def test_acceptance_review_keeps_task_run_and_cycle_active(tmp_path) -> No
         ],
         normalize_worker=False,
     )
+
+    def model_factory(agent, _cycle_id=None):
+        model = leader_model if agent.role == "leader" else worker_model
+        if agent.role != "leader":
+            model.operation_session_id = agent.upstream_session_id
+        return model
+
     runtime = TeamRuntime(
         teams,
-        lambda agent, _cycle_id=None: (
-            leader_model if agent.role == "leader" else worker_model
-        ),
+        model_factory,
     )
     running = asyncio.create_task(runtime.start(run.id, cycle.id))
     await asyncio.wait_for(review_started.wait(), timeout=2)

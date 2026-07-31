@@ -1906,22 +1906,22 @@ class TeamRunService:
                     """,
                     (next_attempts, acceptance_json, now, task_id),
                 )
-            metadata = {
-                "task_id": task_id,
-                "attempt": current_attempts + 1,
-                "reason_code": reason_code,
-                "action": action,
-                "reason": reason,
-                "instruction": instruction,
-                "acceptance_before": json.loads(task["acceptance_json"]),
-                "acceptance_after": (
+            metadata = _acceptance_review_metadata(
+                task_id=task_id,
+                attempt=current_attempts + 1,
+                reason_code=reason_code,
+                action=action,
+                reason=reason,
+                instruction=instruction,
+                acceptance_before=json.loads(task["acceptance_json"]),
+                acceptance_after=(
                     json.loads(_task_acceptance_json(acceptance_after))
                     if acceptance_after is not None
                     else None
                 ),
-                "rejected_deliverables": list(rejected_deliverables),
-                "rejected_verifications": list(rejected_verifications),
-            }
+                rejected_deliverables=rejected_deliverables,
+                rejected_verifications=rejected_verifications,
+            )
             connection.execute(
                 """
                 insert into team_messages (
@@ -3016,6 +3016,37 @@ def _task_acceptance_json(acceptance: TaskAcceptance) -> str:
         ensure_ascii=False,
         sort_keys=True,
     )
+
+
+def _acceptance_review_metadata(
+    *,
+    task_id: str,
+    attempt: int,
+    reason_code: str,
+    action: str,
+    reason: str,
+    instruction: str | None,
+    acceptance_before: dict[str, object],
+    acceptance_after: dict[str, object] | None,
+    rejected_deliverables: tuple[str, ...] | list[str],
+    rejected_verifications: tuple[str, ...] | list[str],
+    operation_id: str | None = None,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "task_id": task_id,
+        "attempt": attempt,
+        "reason_code": reason_code,
+        "action": action,
+        "reason": reason,
+        "instruction": instruction,
+        "acceptance_before": acceptance_before,
+        "acceptance_after": acceptance_after,
+        "rejected_deliverables": list(rejected_deliverables),
+        "rejected_verifications": list(rejected_verifications),
+    }
+    if operation_id is not None:
+        metadata["operation_id"] = operation_id
+    return metadata
 
 
 def _validate_task_acceptance(acceptance: TaskAcceptance) -> None:
