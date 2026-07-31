@@ -672,6 +672,57 @@ def _migration_19_team_acceptance_recovery(
         )
 
 
+def _migration_20_team_model_operations(
+    connection: sqlite3.Connection,
+) -> None:
+    connection.executescript(
+        """
+        create table if not exists team_model_operations (
+            id text primary key,
+            operation_key text not null unique,
+            team_run_id text not null
+                references team_runs(id) on delete cascade,
+            cycle_id text not null
+                references team_run_cycles(id) on delete cascade,
+            task_id text references team_tasks(id) on delete cascade,
+            agent_id text not null
+                references team_agents(id) on delete cascade,
+            provider text not null,
+            stage text not null,
+            stage_ordinal integer not null check (stage_ordinal >= 0),
+            status text not null,
+            version integer not null default 0 check (version >= 0),
+            attempts integer not null default 0 check (attempts >= 0),
+            consumer_run_id text,
+            upstream_session_id text,
+            request_digest text not null,
+            result_kind text,
+            result_json text,
+            result_digest text,
+            effect_type text,
+            effect_ref_json text,
+            reason_code text,
+            created_at text not null,
+            started_at text,
+            completed_at text,
+            applied_at text,
+            updated_at text not null
+        );
+
+        create unique index if not exists
+        idx_team_model_operations_one_open_cycle
+        on team_model_operations(cycle_id)
+        where status in (
+            'prepared', 'invoking', 'completed',
+            'waiting_for_provider', 'ambiguous'
+        );
+
+        create index if not exists idx_team_model_operations_run_cycle
+        on team_model_operations(team_run_id, cycle_id, created_at, id);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -692,6 +743,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (17, "team-task-acceptance", _migration_17_team_task_acceptance),
     (18, "team-cycle-space-snapshot", _migration_18_team_cycle_space_snapshot),
     (19, "team-acceptance-recovery", _migration_19_team_acceptance_recovery),
+    (20, "team-model-operations", _migration_20_team_model_operations),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

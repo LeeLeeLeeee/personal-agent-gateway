@@ -10,7 +10,55 @@ from personal_agent_gateway.migrations import (
     _migration_17_team_task_acceptance,
     _migration_18_team_cycle_space_snapshot,
     _migration_19_team_acceptance_recovery,
+    _migration_20_team_model_operations,
 )
+
+
+def test_migration_20_creates_team_model_operation_ledger_idempotently() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.execute("pragma foreign_keys = on")
+    connection.executescript(
+        """
+        create table team_runs (id text primary key);
+        create table team_run_cycles (
+            id text primary key,
+            team_run_id text not null references team_runs(id)
+        );
+        create table team_tasks (
+            id text primary key,
+            team_run_id text not null references team_runs(id)
+        );
+        create table team_agents (
+            id text primary key,
+            team_run_id text not null references team_runs(id)
+        );
+        """
+    )
+
+    _migration_20_team_model_operations(connection)
+    _migration_20_team_model_operations(connection)
+
+    columns = {
+        row["name"]
+        for row in connection.execute("pragma table_info(team_model_operations)")
+    }
+    assert {
+        "operation_key",
+        "stage",
+        "status",
+        "version",
+        "attempts",
+        "consumer_run_id",
+        "result_json",
+        "effect_ref_json",
+    } <= columns
+    assert any(
+        row["name"] == "idx_team_model_operations_one_open_cycle"
+        for row in connection.execute(
+            "select name from sqlite_master where type = 'index'"
+        )
+    )
 
 
 def test_migration_18_adds_nullable_cycle_space_snapshot() -> None:
