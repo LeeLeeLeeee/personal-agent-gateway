@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from personal_agent_gateway.db import Database
+from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.team_acceptance import AcceptanceResult
 from personal_agent_gateway.team_model_effects import (
     TeamModelEffectService,
@@ -22,7 +24,7 @@ from personal_agent_gateway.team_outcomes import (
     VerificationEvidence,
 )
 from personal_agent_gateway.team_runtime import AcceptanceReviewResolution
-from personal_agent_gateway.teams import TaskAcceptance
+from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
 from team_cycle_helpers import make_cycle_services, make_queued_cycle
 
 
@@ -353,6 +355,90 @@ def test_mediation_lead_answer_is_atomic_and_idempotent(tmp_path):
         "lead-session"
     )
     assert followup.operations.get(followup.operation.id).status == "applied"
+
+
+def test_first_worker_mediation_increments_once_after_other_cycle_rounds(
+    tmp_path,
+):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker_personas = [
+        personas.create_persona(name, "worker", "d", [], [])
+        for name in ("Worker A", "Worker B")
+    ]
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [persona.id for persona in worker_personas],
+        "plan_and_execute",
+        2,
+        rounds_budget=3,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "multi-worker")
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(run.id, "running")
+    workers = [
+        agent
+        for agent in teams.list_agents(run.id)
+        if agent.role == "member"
+    ]
+    teams.increment_agent_reinvocations(workers[0].id)
+    db.execute(
+        "update team_run_cycles set rounds_used = 1 where id = ?",
+        (cycle.id,),
+    )
+    task = teams.create_task(
+        run.id,
+        "Worker B task",
+        "Continue after Worker A used the first round.",
+        owner_agent_id=workers[1].id,
+        cycle_id=cycle.id,
+        acceptance=TaskAcceptance(("draft.md",), ("review",)),
+    )
+    task, worker_b = teams.start_task(task.id, workers[1].id)
+    services = SimpleNamespace(
+        db=db,
+        teams=teams,
+        run=run,
+        cycle=cycle,
+        task=task,
+        worker=worker_b,
+    )
+    followup = complete_followup_operation(
+        services,
+        stage="mediation_worker",
+        ordinal=2,
+        actor=worker_b,
+        result_kind="task_outcome",
+        payload=asdict(completed_outcome("draft.md")),
+    )
+    acceptance = AcceptanceResult(
+        accepted=True,
+        status="completed",
+        reason_code=None,
+        evidence={},
+    )
+
+    first = followup.effects.apply_worker_outcome(
+        followup.operation.id,
+        acceptance,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    second = followup.effects.apply_worker_outcome(
+        followup.operation.id,
+        acceptance,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+
+    assert first.agent.reinvocations == 1
+    assert second.agent.reinvocations == 1
+    assert teams.get_agent(workers[0].id).reinvocations == 1
+    assert teams.get_agent(worker_b.id).reinvocations == 1
 
 
 def test_acceptance_lead_retry_is_atomic_and_idempotent(tmp_path):

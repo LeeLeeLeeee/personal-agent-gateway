@@ -2336,34 +2336,6 @@ class TeamRunService:
             }
             if set(normalized) != required_ids:
                 raise ValueError("Every open decision requires an answer")
-            mediation_rounds = sum(
-                len(
-                    {
-                        query_id
-                        for query_id in item.get("query_message_ids", [])
-                        if isinstance(query_id, str)
-                    }
-                )
-                for item in items
-            )
-            if row["cycle_id"] is not None and mediation_rounds:
-                cursor = connection.execute(
-                    """
-                    update team_run_cycles
-                    set rounds_used = rounds_used + ?, updated_at = ?
-                    where id = ? and rounds_used + ? <= rounds_budget
-                    """,
-                    (
-                        mediation_rounds,
-                        now,
-                        row["cycle_id"],
-                        mediation_rounds,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError(
-                        "Decision answers exceed the mediation round budget"
-                    )
             blocking_task_ids = {
                 task_id
                 for item in items

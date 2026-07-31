@@ -27,6 +27,7 @@ from personal_agent_gateway.team_outcomes import (
 )
 from personal_agent_gateway.team_model_effects import (
     TeamModelEffectService,
+    lead_decision_item_digest,
     team_model_effect_result_validators,
 )
 from personal_agent_gateway.team_model_invoker import (
@@ -1332,14 +1333,20 @@ class TeamRuntime:
             if operation is None:
                 continue
             worker = self._teams.get_agent(task.owner_agent_id)
-            if task.status == "pending":
-                answer = self._resolved_lead_decision_answer(
-                    operation,
-                    task,
-                )
-                if answer is None:
-                    continue
-                task, worker = self._teams.start_task(task.id, worker.id)
+            answer = self._resolved_lead_decision_answer(
+                operation,
+                task,
+            )
+            if answer is not None:
+                if task.status == "pending":
+                    task, worker = self._teams.start_task(task.id, worker.id)
+                elif (
+                    worker.status != "running"
+                    or worker.current_task_id != task.id
+                ):
+                    raise OperationConflict(
+                        "Resolved Lead decision task is not actively owned"
+                    )
                 if operation.stage == "mediation_lead":
                     stage = "mediation_worker"
                     messages = _mediation_worker_messages(
@@ -1394,6 +1401,8 @@ class TeamRuntime:
                     continuation,
                     before=None,
                 )
+            if task.status == "pending":
+                continue
             if operation.stage == "acceptance_lead":
                 resolution = _operation_acceptance_resolution(operation)
                 effect = self._model_effects.apply_acceptance_lead(
@@ -1481,7 +1490,15 @@ class TeamRuntime:
             or request.cycle_id != operation.cycle_id
             or request.status != "resolved"
             or item is None
-            or _canonical_digest(item)
+            or lead_decision_item_digest(
+                item,
+                task.id,
+                (
+                    effect_ref.get("query_message_id")
+                    if operation.stage == "mediation_lead"
+                    else None
+                ),
+            )
             != effect_ref["decision_item_digest"]
             or task.id not in item.get("blocking_task_ids", [])
         ):
@@ -2987,16 +3004,6 @@ def _operation_request_digest(
             "actor_id": actor_id,
             "messages": messages,
         },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
-
-def _canonical_digest(value: object) -> str:
-    serialized = json.dumps(
-        value,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

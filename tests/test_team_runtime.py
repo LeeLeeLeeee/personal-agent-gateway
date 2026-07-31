@@ -319,6 +319,17 @@ async def _no_sleep(_delay):
     return None
 
 
+def crash_after_next_task_start(teams):
+    original = teams.start_task
+
+    def crash_after_start(task_id, agent_id):
+        original(task_id, agent_id)
+        raise SimulatedProcessCrash
+
+    teams.start_task = crash_after_start
+    return original
+
+
 def valid_plan_json(owner_agent_id=None, verification="review"):
     return json.dumps(
         [
@@ -806,6 +817,118 @@ async def test_acceptance_user_answer_resumes_distinct_worker_operation(
 
 
 @pytest.mark.asyncio
+async def test_mediation_answer_recovers_after_crash_between_start_and_reserve(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Research",
+        "Research the request.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), ("worker-result",)),
+    )
+    setup.worker_client.responses = [
+        ModelResponse(
+            '```json\n{"needs_info":{"topic":"scope","question":"Which scope?"}}\n```',
+            [],
+            upstream_session_id="worker-session",
+        ),
+        ModelResponse(
+            _outcome_json("done"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+    ]
+    setup.lead_client.responses = [
+        ModelResponse(_ask_user_resolution(), []),
+        ModelResponse("summary", []),
+    ]
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+    request = setup.teams.list_decision_requests(setup.run.id)[0]
+    setup.teams.answer_decision_request(
+        setup.run.id,
+        request.id,
+        request.revision,
+        {request.items[0]["id"]: "Use the current scope."},
+    )
+    original_start = crash_after_next_task_start(setup.teams)
+
+    with pytest.raises(SimulatedProcessCrash):
+        await restart_operation_runtime(setup).resume(
+            setup.run.id,
+            setup.cycle.id,
+        )
+
+    setup.teams.start_task = original_start
+    assert setup.teams.get_task(task.id).status == "in_progress"
+    assert (
+        setup.operations.get_by_key(
+            f"{setup.cycle.id}:{task.id}:mediation_worker:1"
+        )
+        is None
+    )
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.worker_client.calls == 2
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{task.id}:mediation_worker:1"
+    ).status == "applied"
+
+
+@pytest.mark.asyncio
+async def test_acceptance_answer_recovers_after_crash_between_start_and_reserve(
+    tmp_path,
+):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(_ask_user_resolution("Which acceptance scope?"), []),
+        ModelResponse("summary", []),
+    ]
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+    request = setup.teams.list_decision_requests(setup.run.id)[0]
+    setup.teams.answer_decision_request(
+        setup.run.id,
+        request.id,
+        request.revision,
+        {request.items[0]["id"]: "Use the current acceptance scope."},
+    )
+    original_start = crash_after_next_task_start(setup.teams)
+
+    with pytest.raises(SimulatedProcessCrash):
+        await restart_operation_runtime(setup).resume(
+            setup.run.id,
+            setup.cycle.id,
+        )
+
+    setup.teams.start_task = original_start
+    assert setup.teams.get_task(setup.task.id).status == "in_progress"
+    assert (
+        setup.operations.get_by_key(
+            f"{setup.cycle.id}:{setup.task.id}:acceptance_worker:1"
+        )
+        is None
+    )
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.worker_client.calls == 2
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_worker:1"
+    ).status == "applied"
+
+
+@pytest.mark.asyncio
 async def test_mediation_budget_forces_worker_final_without_second_lead(
     tmp_path,
 ):
@@ -859,6 +982,158 @@ async def test_mediation_budget_forces_worker_final_without_second_lead(
     )
     assert forced is not None
     assert forced.status == "applied"
+
+
+@pytest.mark.asyncio
+async def test_mediation_decisions_reserve_budget_before_batch_answer(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    setup.db.execute(
+        "update team_run_cycles set rounds_budget = 1 where id = ?",
+        (setup.cycle.id,),
+    )
+    first = setup.teams.create_task(
+        setup.run.id,
+        "First",
+        "Research the first request.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), ("worker-result",)),
+    )
+    second = setup.teams.create_task(
+        setup.run.id,
+        "Second",
+        "Research the second request.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), ("worker-result",)),
+    )
+    query = (
+        '```json\n{"needs_info":{"topic":"scope",'
+        '"question":"Which scope?"}}\n```'
+    )
+    setup.worker_client.responses = [
+        ModelResponse(query, [], upstream_session_id="worker-session"),
+        ModelResponse(query, [], upstream_session_id="worker-session"),
+        ModelResponse(
+            _outcome_json("second best effort"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+        ModelResponse(
+            _outcome_json("first resolved"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+    ]
+    setup.lead_client.responses = [
+        ModelResponse(_ask_user_resolution(), []),
+        ModelResponse("summary", []),
+    ]
+
+    waiting = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+    request = setup.teams.list_decision_requests(setup.run.id)[0]
+
+    assert waiting.status == "waiting_for_user"
+    assert setup.teams.get_cycle(setup.cycle.id).rounds_used == 1
+    assert len(request.items) == 1
+    assert request.items[0]["blocking_task_ids"] == [first.id]
+    assert setup.teams.get_task(second.id).status == "completed"
+    assert len(
+        [
+            operation
+            for operation in setup.operations.list_for_cycle(setup.cycle.id)
+            if operation.stage == "mediation_lead"
+        ]
+    ) == 1
+
+    setup.teams.answer_decision_request(
+        setup.run.id,
+        request.id,
+        request.revision,
+        {request.items[0]["id"]: "Use the current scope."},
+    )
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.teams.get_cycle(setup.cycle.id).rounds_used == 1
+
+
+@pytest.mark.asyncio
+async def test_batched_mediation_decisions_keep_both_operation_receipts_valid(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    setup.db.execute(
+        "update team_run_cycles set rounds_budget = 2 where id = ?",
+        (setup.cycle.id,),
+    )
+    tasks = [
+        setup.teams.create_task(
+            setup.run.id,
+            title,
+            f"Research {title.lower()}.",
+            owner_agent_id=setup.worker.id,
+            cycle_id=setup.cycle.id,
+            acceptance=TaskAcceptance((), ("worker-result",)),
+        )
+        for title in ("First", "Second")
+    ]
+    query = (
+        '```json\n{"needs_info":{"topic":"scope",'
+        '"question":"Which scope?"}}\n```'
+    )
+    setup.worker_client.responses = [
+        ModelResponse(query, [], upstream_session_id="worker-session"),
+        ModelResponse(query, [], upstream_session_id="worker-session"),
+        ModelResponse(
+            _outcome_json("first resolved"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+        ModelResponse(
+            _outcome_json("second resolved"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+    ]
+    setup.lead_client.responses = [
+        ModelResponse(_ask_user_resolution(), []),
+        ModelResponse(_ask_user_resolution(), []),
+        ModelResponse("summary", []),
+    ]
+
+    waiting = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+    request = setup.teams.list_decision_requests(setup.run.id)[0]
+
+    assert waiting.status == "waiting_for_user"
+    assert len(request.items) == 1
+    assert set(request.items[0]["blocking_task_ids"]) == {
+        task.id for task in tasks
+    }
+    assert len(request.items[0]["query_message_ids"]) == 2
+    setup.teams.answer_decision_request(
+        setup.run.id,
+        request.id,
+        request.revision,
+        {request.items[0]["id"]: "Use the current scope."},
+    )
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.teams.get_cycle(setup.cycle.id).rounds_used == 2
+    for ordinal, task in enumerate(tasks, start=1):
+        assert setup.operations.get_by_key(
+            f"{setup.cycle.id}:{task.id}:mediation_worker:{ordinal}"
+        ).status == "applied"
 
 
 @pytest.mark.asyncio

@@ -175,6 +175,11 @@ class TeamModelEffectService:
             if agent.status != "running" or agent.current_task_id != task.id:
                 raise OperationConflict("Worker is not running the operation task")
 
+            _apply_mediation_reinvocation(
+                connection,
+                operation,
+                now,
+            )
             if operation.result_kind == "user_decision":
                 result = self._apply_worker_decision(
                     connection,
@@ -195,11 +200,6 @@ class TeamModelEffectService:
                     normalized_changes,
                     now,
                 )
-            _apply_mediation_reinvocation(
-                connection,
-                operation,
-                now,
-            )
             _promote_actor_session(connection, operation, now)
             _mark_applied(
                 connection,
@@ -351,23 +351,24 @@ class TeamModelEffectService:
             request_id: str | None = None
             decision_item_id: str | None = None
             decision_item_digest: str | None = None
-            if normalized["kind"] == "answer":
-                cursor = connection.execute(
-                    """
-                    update team_run_cycles
-                    set rounds_used = rounds_used + 1, updated_at = ?
-                    where id = ? and rounds_used = ?
-                    """,
-                    (
-                        now,
-                        operation.cycle_id,
-                        operation.stage_ordinal - 1,
-                    ),
+            cursor = connection.execute(
+                """
+                update team_run_cycles
+                set rounds_used = rounds_used + 1, updated_at = ?
+                where id = ? and rounds_used = ?
+                  and rounds_used < rounds_budget
+                """,
+                (
+                    now,
+                    operation.cycle_id,
+                    operation.stage_ordinal - 1,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise OperationConflict(
+                    "Mediation round changed before effect application"
                 )
-                if cursor.rowcount != 1:
-                    raise OperationConflict(
-                        "Mediation round changed before effect application"
-                    )
+            if normalized["kind"] == "answer":
                 message_id = uuid4().hex
                 connection.execute(
                     """
@@ -1352,7 +1353,7 @@ class TeamModelEffectService:
             ).fetchone()
             if (
                 cycle is None
-                or cycle["rounds_used"] != operation.stage_ordinal
+                or cycle["rounds_used"] < operation.stage_ordinal
                 or task.status != "in_progress"
                 or worker.status != "running"
                 or worker.current_task_id != task.id
@@ -1391,6 +1392,10 @@ class TeamModelEffectService:
             connection,
             effect_ref["decision_request_id"],
         )
+        cycle = connection.execute(
+            "select rounds_used from team_run_cycles where id = ?",
+            (operation.cycle_id,),
+        ).fetchone()
         item = next(
             (
                 candidate
@@ -1404,12 +1409,19 @@ class TeamModelEffectService:
         if (
             request.team_run_id != operation.team_run_id
             or request.cycle_id != operation.cycle_id
+            or cycle is None
+            or cycle["rounds_used"] < operation.stage_ordinal
             or request.status != "collecting"
             or request.answers != {}
             or request.published_at is not None
             or request.answered_at is not None
             or item is None
-            or _canonical_digest(item) != effect_ref["decision_item_digest"]
+            or lead_decision_item_digest(
+                item,
+                task.id,
+                query.id,
+            )
+            != effect_ref["decision_item_digest"]
             or not _decision_item_matches(item, decision, task.id)
             or query.id not in item["query_message_ids"]
             or not _decision_item_references_are_valid(
@@ -1545,7 +1557,11 @@ class TeamModelEffectService:
                 or request.published_at is not None
                 or request.answered_at is not None
                 or item is None
-                or _canonical_digest(item)
+                or lead_decision_item_digest(
+                    item,
+                    task.id,
+                    None,
+                )
                 != effect_ref["decision_item_digest"]
                 or not _decision_item_matches(item, decision, task.id)
                 or not _decision_item_references_are_valid(
@@ -2605,7 +2621,34 @@ def _task_decision_receipt(
     item_id = item.get("id")
     if not isinstance(item_id, str):
         raise OperationConflict("Lead decision item ID is invalid")
-    return item_id, _canonical_digest(item)
+    return item_id, lead_decision_item_digest(
+        item,
+        task_id,
+        query_message_id,
+    )
+
+
+def lead_decision_item_digest(
+    item: dict[str, object],
+    task_id: str,
+    query_message_id: str | None,
+) -> str:
+    return _canonical_digest(
+        {
+            "id": item.get("id"),
+            "stage": item.get("stage"),
+            "topic": item.get("topic"),
+            "question": item.get("question"),
+            "why_needed": item.get("why_needed"),
+            "options": item.get("options"),
+            "recommended_option_id": item.get(
+                "recommended_option_id"
+            ),
+            "blocking_scope": item.get("blocking_scope"),
+            "task_id": task_id,
+            "query_message_id": query_message_id,
+        }
+    )
 
 
 def _acceptance_audit_matches(
@@ -3014,11 +3057,10 @@ def _apply_mediation_reinvocation(
     cursor = connection.execute(
         """
         update team_agents
-        set reinvocations = max(reinvocations, ?), updated_at = ?
+        set reinvocations = reinvocations + 1, updated_at = ?
         where id = ? and team_run_id = ?
         """,
         (
-            operation.stage_ordinal,
             now,
             operation.agent_id,
             operation.team_run_id,
