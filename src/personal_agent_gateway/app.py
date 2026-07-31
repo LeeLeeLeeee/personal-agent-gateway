@@ -61,6 +61,7 @@ from personal_agent_gateway.hooks import HookService
 from personal_agent_gateway.intake import IntakeGate
 from personal_agent_gateway.job_worker import JobWorker
 from personal_agent_gateway.jobs import JobService
+from personal_agent_gateway.lmg_client import fetch_sessions_strict
 from personal_agent_gateway.mail_knowledge import MailKnowledgeService, MailWorkspaceProjector
 from personal_agent_gateway.model_client import ModelClient
 from personal_agent_gateway.personas import PersonaService
@@ -92,6 +93,14 @@ from personal_agent_gateway.team_cycle_loop import TeamCycleLoop
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_delivery import TeamRunDeliveryService
 from personal_agent_gateway.team_directory import TeamService
+from personal_agent_gateway.team_model_effects import (
+    TeamModelEffectService,
+    team_model_effect_result_validators,
+)
+from personal_agent_gateway.team_model_invoker import TeamModelInvoker
+from personal_agent_gateway.team_model_operations import (
+    TeamModelOperationService,
+)
 from personal_agent_gateway.team_provider_recovery import (
     TeamProviderRecovery,
     capabilities_for_cycle,
@@ -204,6 +213,26 @@ def create_app(
         hooks_dir=app_config.hooks_dir,
         intake_gate=app.state.intake_gate,
     )
+    operation_service = TeamModelOperationService(
+        app.state.database,
+        result_validators=team_model_effect_result_validators(),
+    )
+    effect_service = TeamModelEffectService(
+        app.state.database,
+        app.state.team_run_service,
+        operation_service,
+    )
+    operation_invoker = TeamModelInvoker(operation_service)
+    provider_recovery = TeamProviderRecovery(
+        app.state.team_run_service,
+        app.state.agent_registry,
+        operation_service,
+        session_loader=lambda: fetch_sessions_strict(app_config),
+    )
+    app.state.team_model_operation_service = operation_service
+    app.state.team_model_effect_service = effect_service
+    app.state.team_model_invoker = operation_invoker
+    app.state.team_provider_recovery = provider_recovery
     app.state.team_runtime = TeamRuntime(
         app.state.team_run_service,
         _team_model_factory(
@@ -217,6 +246,10 @@ def create_app(
         result_packager=app.state.team_result_packager,
         artifact_publisher=TeamArtifactPublisher(app.state.artifact_store),
         staged_inputs_resolver=app.state.execution_contexts.staged_inputs_for,
+        operations=operation_service,
+        model_invoker=operation_invoker,
+        model_effects=effect_service,
+        provider_recovery=provider_recovery,
     )
     app.state.team_run_orchestrator = TeamRunOrchestrator(
         team_run_registry,
@@ -227,10 +260,7 @@ def create_app(
         app.state.team_run_service,
         app.state.team_run_orchestrator,
         event_bus,
-        provider_recovery=TeamProviderRecovery(
-            app.state.team_run_service,
-            app.state.agent_registry,
-        ),
+        provider_recovery=provider_recovery,
     )
     app.state.team_cycle_loop = TeamCycleLoop(
         app.state.team_cycle_service,
@@ -662,31 +692,20 @@ def _team_model_factory(
             and cycle is not None
             and effective_cycle_id is not None
         ):
-            existing = (
-                cycle.execution_metadata
-                if isinstance(cycle.execution_metadata, dict)
-                else {}
-            )
-            existing_agents = existing.get("agents")
-            agents_metadata = (
-                dict(existing_agents)
-                if isinstance(existing_agents, dict)
-                else {}
-            )
-            agents_metadata[agent.id] = {
-                "provider": agent.backend,
-                "model": agent.model,
-                **execution,
-                "input_manifest_path": (
-                    str(compiled.input_manifest_path)
-                    if compiled.input_manifest_path is not None
-                    else None
-                ),
-                "input_manifest_sha256": compiled.input_manifest_sha256,
-            }
-            team_runs.set_cycle_execution_metadata(
+            team_runs.set_cycle_agent_execution_metadata(
                 effective_cycle_id,
-                {**existing, "agents": agents_metadata},
+                agent.id,
+                {
+                    "provider": agent.backend,
+                    "model": agent.model,
+                    **execution,
+                    "input_manifest_path": (
+                        str(compiled.input_manifest_path)
+                        if compiled.input_manifest_path is not None
+                        else None
+                    ),
+                    "input_manifest_sha256": compiled.input_manifest_sha256,
+                },
             )
         return HttpModelClient(
             base_url=config.lmg_base_url,

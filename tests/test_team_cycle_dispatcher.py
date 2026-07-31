@@ -12,13 +12,16 @@ from personal_agent_gateway.run_state import TeamRunRegistry
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_provider_recovery import (
+    OperationReconcileResult,
+    ProviderOperationWaiting,
     ProviderRecoveryRequired,
     TeamProviderRecovery,
 )
+from personal_agent_gateway.team_model_invoker import AmbiguousModelOperation
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamRun, TeamRunService
-from team_cycle_helpers import RecordingOrchestrator, make_cycle_services
+from team_cycle_helpers import RecordingOrchestrator, dt, make_cycle_services
 
 
 @dataclass
@@ -554,6 +557,140 @@ async def test_dispatch_failure_marks_cycle_failed_and_settles_request(
     assert (
         "team.cycle.started" in event_types
     ) is (failure_source == "orchestrator")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("marker", ["waiting", "ambiguous"])
+async def test_operation_markers_preserve_persisted_cycle_state(
+    tmp_path: Path,
+    marker: str,
+) -> None:
+    services = make_dispatcher_services(tmp_path)
+    request = services.cycles.enqueue_request(
+        services.run.id,
+        "manual",
+        f"marker-{marker}",
+        "work",
+        previous_cycle_id=None,
+    )
+
+    async def raise_persisted_marker(team_run_id, cycle_id, _instruction):
+        if marker == "waiting":
+            services.teams.mark_waiting_for_provider(
+                cycle_id,
+                provider="codex",
+                reason_code="provider_unavailable",
+                attempts=3,
+                task_id=None,
+                agent_id=None,
+                now=dt("2026-07-31T00:00:00+00:00"),
+            )
+            raise ProviderOperationWaiting("operation-1")
+        services.teams.set_run_status(team_run_id, "interrupted")
+        services.teams.set_cycle_status(cycle_id, "interrupted")
+        raise AmbiguousModelOperation(
+            "operation-1",
+            "consumer-1",
+            "run_timeout",
+        )
+
+    services.orchestrator.run_cycle = raise_persisted_marker
+
+    await services.dispatcher.run_one(services.run.id)
+
+    cycle = services.teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    assert cycle.status == (
+        "waiting_for_provider" if marker == "waiting" else "interrupted"
+    )
+    assert services.cycles.get_request(request.id).status == "dispatching"
+
+
+@pytest.mark.asyncio
+async def test_waiting_cycle_observer_does_not_settle(tmp_path: Path) -> None:
+    services = make_dispatcher_services(tmp_path)
+    request = services.cycles.enqueue_request(
+        services.run.id,
+        "manual",
+        "observer-waiting",
+        "work",
+        previous_cycle_id=None,
+    )
+    await services.dispatcher.run_one(services.run.id)
+    cycle = services.teams.get_cycle_for_request(request.id)
+    services.teams.mark_waiting_for_provider(
+        cycle.id,
+        provider="codex",
+        reason_code="provider_unavailable",
+        attempts=3,
+        task_id=None,
+        agent_id=None,
+        now=dt("2026-07-31T00:00:00+00:00"),
+    )
+
+    await services.dispatcher.on_team_run_settled(
+        services.teams.get_team_run(services.run.id),
+        cycle.id,
+    )
+
+    assert services.cycles.get_request(request.id).status == "dispatching"
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_schedules_only_runnable_operations(
+    tmp_path: Path,
+) -> None:
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = _dispatching_cycle(teams, cycles, run)
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(run.id, "running")
+
+    class Recovery:
+        def freeze_cycle(self, cycle_id):
+            return teams.get_cycle(cycle_id)
+
+        def reconcile_startup(self):
+            return OperationReconcileResult((cycle.id,), (), ("ambiguous",))
+
+        def get_open_operation(self, cycle_id):
+            assert cycle_id == cycle.id
+            return SimpleNamespace(
+                stage="cycle_add_work",
+                stage_ordinal=0,
+            )
+
+    class Orchestrator:
+        def __init__(self):
+            self.resume_calls = []
+            self.continue_calls = []
+
+        def resume(self, team_run_id, cycle_id=None):
+            self.resume_calls.append((team_run_id, cycle_id))
+
+        def continue_cycle(self, team_run_id, cycle_id, instruction):
+            self.continue_calls.append(
+                (team_run_id, cycle_id, instruction)
+            )
+
+    orchestrator = Orchestrator()
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=Recovery(),
+    )
+
+    assert dispatcher.reconcile() == []
+    await dispatcher.start()
+    try:
+        assert orchestrator.resume_calls == []
+        assert orchestrator.continue_calls == [
+            (run.id, cycle.id, "work")
+        ]
+        assert teams.get_cycle(cycle.id).status == "running"
+    finally:
+        await dispatcher.stop()
 
 
 @pytest.mark.asyncio

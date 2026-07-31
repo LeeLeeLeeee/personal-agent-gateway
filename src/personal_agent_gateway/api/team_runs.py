@@ -18,6 +18,9 @@ from personal_agent_gateway.auth_sessions import SessionPrincipal
 from personal_agent_gateway.pagination import decode_cursor, encode_cursor
 from personal_agent_gateway.team_cycles import TeamAutoSeries, TeamCycleRequest
 from personal_agent_gateway.team_delivery import TeamRunDeliveryError
+from personal_agent_gateway.team_provider_recovery import (
+    AmbiguousOperationNotReconcilable,
+)
 from personal_agent_gateway.teams import (
     TeamAgent,
     TeamDecisionRequest,
@@ -632,6 +635,16 @@ async def resume_team_run(
             raise HTTPException(status_code=409, detail="No interrupted cycle to resume")
         cycle_id = cycle.id
 
+    provider_recovery = request.app.state.team_provider_recovery
+    if provider_recovery.has_ambiguous_operation(team_run_id):
+        try:
+            provider_recovery.prepare_explicit_resume(team_run_id)
+        except AmbiguousOperationNotReconcilable as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=str(exc),
+            ) from exc
+        run = service.get_team_run(team_run_id)
     request.app.state.team_run_orchestrator.resume(team_run_id, cycle_id)
     record_domain_audit(
         request,

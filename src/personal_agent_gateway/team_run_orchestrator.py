@@ -59,13 +59,25 @@ class TeamRunOrchestrator:
     async def run_cycle(
         self, team_run_id: str, cycle_id: str, instruction: str
     ) -> TeamRun:
+        return await self.continue_cycle(
+            team_run_id,
+            cycle_id,
+            instruction,
+        )
+
+    def continue_cycle(
+        self,
+        team_run_id: str,
+        cycle_id: str,
+        instruction: str,
+    ) -> asyncio.Task:
         runtime = self._runtime_provider()
 
         async def execute_cycle() -> TeamRun:
             await runtime.add_work(team_run_id, instruction, cycle_id)
             return await runtime.resume(team_run_id, cycle_id)
 
-        return await self._schedule(team_run_id, cycle_id, execute_cycle)
+        return self._schedule(team_run_id, cycle_id, execute_cycle)
 
     def _schedule(
         self,

@@ -128,6 +128,7 @@ class ProviderRecoveryClaim:
     team_run_id: str
     cycle_id: str
     task_id: str | None
+    operation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1429,7 +1430,18 @@ class TeamRunService:
         run_ids = [
             row["id"]
             for row in self._db.fetchall(
-                "select id from team_runs where status in ('planning', 'running', 'summarizing')"
+                """
+                select run.id from team_runs run
+                where run.status in ('planning', 'running', 'summarizing')
+                  and not exists (
+                      select 1 from team_model_operations operation
+                      where operation.team_run_id = run.id
+                        and operation.status in (
+                            'prepared', 'invoking', 'completed',
+                            'waiting_for_provider', 'ambiguous'
+                        )
+                  )
+                """
             )
         ]
         return [self.interrupt_run(team_run_id) for team_run_id in run_ids]

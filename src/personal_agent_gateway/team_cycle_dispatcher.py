@@ -8,7 +8,11 @@ from personal_agent_gateway.team_cycles import (
     TeamCycleRequest,
     TeamCycleService,
 )
-from personal_agent_gateway.team_provider_recovery import TeamProviderRecovery
+from personal_agent_gateway.team_model_invoker import AmbiguousModelOperation
+from personal_agent_gateway.team_provider_recovery import (
+    ProviderOperationWaiting,
+    TeamProviderRecovery,
+)
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.teams import TeamRun, TeamRunCycle, TeamRunService
 
@@ -50,6 +54,7 @@ class TeamCycleDispatcher:
         self._task: asyncio.Task[None] | None = None
         self._last_error: str | None = None
         self._interrupt_on_stop = True
+        self._startup_operation_cycles: list[str] = []
 
     @property
     def alive(self) -> bool:
@@ -62,6 +67,39 @@ class TeamCycleDispatcher:
     async def start(self) -> None:
         if not self.alive:
             self._task = asyncio.create_task(self._run_loop())
+            startup_cycles = self._startup_operation_cycles
+            self._startup_operation_cycles = []
+            for cycle_id in startup_cycles:
+                cycle = self._teams.get_cycle(cycle_id)
+                operation = self._provider_recovery.get_open_operation(
+                    cycle.id
+                )
+                add_work_operation = (
+                    operation is not None
+                    and (
+                        operation.stage == "cycle_add_work"
+                        or (
+                            operation.stage == "cycle_planning_repair"
+                            and operation.stage_ordinal == 2
+                        )
+                    )
+                )
+                if add_work_operation:
+                    instruction = (
+                        self._teams.get_cycle_effective_instruction(cycle.id)
+                        or self._teams.get_cycle_objective(cycle.id)
+                    )
+                    if instruction is None:
+                        raise RuntimeError(
+                            "Startup add-work operation has no instruction"
+                        )
+                    self._orchestrator.continue_cycle(
+                        cycle.team_run_id,
+                        cycle.id,
+                        instruction,
+                    )
+                else:
+                    self._orchestrator.resume(cycle.team_run_id, cycle.id)
 
     async def stop(self, *, interrupt_active: bool = True) -> None:
         if self._task is None:
@@ -144,6 +182,14 @@ class TeamCycleDispatcher:
                 await self._interrupt_cycle(team_run_id, cycle.id)
             if dispatcher_stopping:
                 raise
+        except ProviderOperationWaiting:
+            return
+        except AmbiguousModelOperation:
+            await self.on_team_run_settled(
+                self._teams.get_team_run(team_run_id),
+                cycle.id,
+            )
+            return
         except Exception as exc:
             if self._teams.get_cycle(cycle.id).status in _TERMINAL_CYCLE_STATUSES:
                 current_request = self._cycles.get_request(request.id)
@@ -171,6 +217,8 @@ class TeamCycleDispatcher:
         if cycle_id is None:
             return
         cycle = self._teams.get_cycle(cycle_id)
+        if cycle.status == "waiting_for_provider":
+            return
         result = self._cycles.settle_cycle(cycle_id)
         if not result.transitioned:
             return
@@ -218,9 +266,19 @@ class TeamCycleDispatcher:
             await self.enqueue_run(run.id)
 
     def reconcile(self) -> list[str]:
+        operation_result = self._provider_recovery.reconcile_startup()
+        startup_cycle_ids = {
+            *operation_result.runnable_cycle_ids,
+            *operation_result.locally_applicable_cycle_ids,
+        }
+        self._startup_operation_cycles = sorted(startup_cycle_ids)
         for request in self._cycles.list_dispatching_requests():
             cycle = self._teams.get_cycle_for_request(request.id)
-            if cycle is not None and cycle.status in {"queued", "running"}:
+            if (
+                cycle is not None
+                and cycle.id not in startup_cycle_ids
+                and cycle.status in {"queued", "running"}
+            ):
                 self._teams.set_cycle_status(cycle.id, "interrupted")
         return self._cycles.reconcile(self._teams)
 

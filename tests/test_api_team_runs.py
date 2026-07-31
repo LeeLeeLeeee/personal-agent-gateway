@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -13,6 +14,11 @@ from fastapi.testclient import TestClient
 from personal_agent_gateway.app import create_app
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.model_client import ModelResponse
+from personal_agent_gateway.team_model_operations import (
+    OperationSpec,
+    TeamModelOperationService,
+)
+from personal_agent_gateway.team_provider_recovery import TeamProviderRecovery
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TaskAcceptance
 
@@ -23,6 +29,168 @@ _TERMINAL_STATUSES = {
     "failed",
     "canceled",
 }
+
+
+def _make_ambiguous_api_operation(client, sessions):
+    app = client.app
+    teams = app.state.team_run_service
+    cycles = app.state.team_cycle_service
+    leader = app.state.persona_service.create_persona(
+        "Ambiguous Lead",
+        "lead",
+        "d",
+        [],
+        [],
+    )
+    worker = app.state.persona_service.create_persona(
+        "Ambiguous Worker",
+        "worker",
+        "d",
+        [],
+        [],
+    )
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "ambiguous-api",
+        "work",
+        previous_cycle_id=None,
+    )
+    cycles.claim_next(run.id)
+    cycle = teams.create_cycle(
+        run.id,
+        request.source_type,
+        request.source_id,
+        request_id=request.id,
+    )
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(run.id, "running")
+    worker_agent = next(
+        agent
+        for agent in teams.list_agents(run.id)
+        if agent.id != run.leader_agent_id
+    )
+    task = teams.create_task(
+        run.id,
+        "work",
+        "work",
+        owner_agent_id=worker_agent.id,
+        cycle_id=cycle.id,
+    )
+    teams.start_task(task.id, worker_agent.id)
+    operations = TeamModelOperationService(app.state.database)
+    operation = operations.reserve(
+        OperationSpec(
+            operation_key=f"{cycle.id}:worker_execution:0",
+            team_run_id=run.id,
+            cycle_id=cycle.id,
+            task_id=task.id,
+            agent_id=worker_agent.id,
+            provider=worker_agent.backend,
+            stage="worker_execution",
+            stage_ordinal=0,
+            request_digest=hashlib.sha256(b"worker").hexdigest(),
+        )
+    )
+    operation = operations.begin_attempt(operation.id, "consumer-1")
+    recovery = TeamProviderRecovery(
+        teams,
+        app.state.agent_registry,
+        operations,
+        session_loader=lambda: sessions(operation, run),
+    )
+    asyncio.run(
+        recovery.interrupt_ambiguous_operation(
+            operation.id,
+            consumer_run_id="consumer-1",
+            upstream_session_id=None,
+        )
+    )
+    app.state.team_provider_recovery = recovery
+
+    class RecordingOrchestrator:
+        def __init__(self):
+            self.resume_calls = []
+
+        def resume(self, team_run_id, cycle_id=None):
+            self.resume_calls.append((team_run_id, cycle_id))
+
+    orchestrator = RecordingOrchestrator()
+    app.state.team_run_orchestrator = orchestrator
+    return run, cycle, task, worker_agent, operations, operation, orchestrator
+
+
+@pytest.mark.parametrize(
+    "session_mode",
+    [
+        "exact",
+        "none",
+        "duplicate",
+        "provider_mismatch",
+        "consumer_mismatch",
+        "loader_failure",
+    ],
+)
+def test_ambiguous_resume_requires_strict_reconciliation(
+    tmp_path: Path,
+    session_mode: str,
+) -> None:
+    client = authenticated_client(tmp_path)
+
+    def sessions(operation, run):
+        exact = {
+            "provider": operation.provider,
+            "upstream_id": "strict-session",
+            "consumer": "personal-agent-gateway",
+            "consumer_session_id": run.id,
+            "consumer_run_id": operation.consumer_run_id,
+        }
+        if session_mode == "loader_failure":
+            raise RuntimeError("LMG unavailable")
+        if session_mode == "none":
+            return []
+        if session_mode == "duplicate":
+            return [
+                exact,
+                {**exact, "upstream_id": "strict-session-2"},
+            ]
+        if session_mode == "provider_mismatch":
+            return [{**exact, "provider": "claude"}]
+        if session_mode == "consumer_mismatch":
+            return [{**exact, "consumer_run_id": "other-run"}]
+        return [exact]
+
+    run, cycle, _task, _worker, operations, operation, orchestrator = (
+        _make_ambiguous_api_operation(client, sessions)
+    )
+
+    response = client.post(f"/api/team-runs/{run.id}/resume")
+
+    if session_mode == "exact":
+        assert response.status_code == 200
+        assert orchestrator.resume_calls == [(run.id, cycle.id)]
+        restored = operations.get(operation.id)
+        assert restored.status == "prepared"
+        assert restored.upstream_session_id == "strict-session"
+    else:
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            "ambiguous_operation_not_reconcilable"
+        )
+        assert orchestrator.resume_calls == []
+        assert operations.get(operation.id).status == "ambiguous"
+        assert client.app.state.team_run_service.get_team_run(
+            run.id
+        ).status == "interrupted"
 
 
 def make_config(tmp_path: Path) -> AppConfig:
@@ -462,7 +630,11 @@ async def test_cancel_during_add_work_cannot_resurrect_continuous_lineage(
     tmp_path: Path,
     execution_policy: str,
 ) -> None:
-    app = create_app(make_config(tmp_path))
+    config = make_config(tmp_path)
+    app = create_app(
+        config,
+        agent_registry=ready_agent_registry(config),
+    )
     teams = app.state.team_run_service
     cycles = app.state.team_cycle_service
     leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])

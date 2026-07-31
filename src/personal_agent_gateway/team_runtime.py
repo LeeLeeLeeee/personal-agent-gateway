@@ -31,7 +31,9 @@ from personal_agent_gateway.team_model_effects import (
     team_model_effect_result_validators,
 )
 from personal_agent_gateway.team_model_invoker import (
+    AmbiguousModelOperation,
     InvalidOperationResult,
+    ProviderOperationUnavailable,
     TeamModelInvoker,
 )
 from personal_agent_gateway.team_model_operations import (
@@ -40,6 +42,10 @@ from personal_agent_gateway.team_model_operations import (
     TeamModelOperation,
     TeamModelOperationService,
     ValidatedOperationResult,
+)
+from personal_agent_gateway.team_provider_recovery import (
+    ProviderOperationWaiting,
+    TeamProviderRecovery,
 )
 from personal_agent_gateway.team_results import (
     TeamRunResultPackager,
@@ -270,6 +276,7 @@ class TeamRuntime:
         operations: TeamModelOperationService | None = None,
         model_invoker: TeamModelInvoker | None = None,
         model_effects: TeamModelEffectService | None = None,
+        provider_recovery: TeamProviderRecovery | None = None,
     ) -> None:
         self._teams = teams
         self._model_factory = model_factory
@@ -289,6 +296,7 @@ class TeamRuntime:
             teams,
             self._operations,
         )
+        self._provider_recovery = provider_recovery
 
     def _model(
         self,
@@ -355,12 +363,30 @@ class TeamRuntime:
             spec.cycle_id,
             upstream_session_id=operation.upstream_session_id,
         )
-        return await self._model_invoker.invoke(
-            operation,
-            client,
-            messages,
-            parser,
-        )
+        try:
+            return await self._model_invoker.invoke(
+                operation,
+                client,
+                messages,
+                parser,
+            )
+        except ProviderOperationUnavailable as exc:
+            if self._provider_recovery is None:
+                raise
+            self._provider_recovery.wait_for_operation(
+                exc.operation_id,
+                reason_code=exc.reason_code,
+            )
+            raise ProviderOperationWaiting(exc.operation_id) from exc
+        except AmbiguousModelOperation as exc:
+            if self._provider_recovery is None:
+                raise OperationConflict(exc.reason_code) from exc
+            await self._provider_recovery.interrupt_ambiguous_operation(
+                exc.operation_id,
+                consumer_run_id=exc.consumer_run_id,
+                upstream_session_id=None,
+            )
+            raise
 
     async def _recover_open_operation(
         self,
@@ -859,6 +885,8 @@ class TeamRuntime:
             if run is not None:
                 self._settle_canceled(run, cycle_id)
             raise
+        except (ProviderOperationWaiting, AmbiguousModelOperation):
+            raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__
             run = self._teams.set_run_status(run.id, "failed", error_message=error)
@@ -1293,6 +1321,8 @@ class TeamRuntime:
                     ),
                 )
             except asyncio.CancelledError:
+                raise
+            except (ProviderOperationWaiting, AmbiguousModelOperation):
                 raise
             except Exception as exc:  # noqa: BLE001
                 error = redact_text(exc) or type(exc).__name__
@@ -2566,6 +2596,18 @@ class TeamRuntime:
     async def resume(self, team_run_id: str, cycle_id: str | None = None) -> TeamRun:
         run = self._teams.get_team_run(team_run_id)
         self._validate_cycle(run, cycle_id)
+        if cycle_id is not None:
+            open_operation = self._operations.get_open_for_cycle(cycle_id)
+            if open_operation is not None:
+                if open_operation.status == "ambiguous":
+                    raise AmbiguousModelOperation(
+                        open_operation.id,
+                        open_operation.consumer_run_id or "",
+                        open_operation.reason_code
+                        or "ambiguous_remote_result",
+                    )
+                if open_operation.status == "waiting_for_provider":
+                    raise ProviderOperationWaiting(open_operation.id)
         if not self._teams.list_tasks(run.id, cycle_id):
             return await self.start(team_run_id, cycle_id)
         leader: TeamAgent | None = None
@@ -2592,6 +2634,8 @@ class TeamRuntime:
         except asyncio.CancelledError:
             if run is not None:
                 self._settle_canceled(run, cycle_id)
+            raise
+        except (ProviderOperationWaiting, AmbiguousModelOperation):
             raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__

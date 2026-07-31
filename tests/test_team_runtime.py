@@ -10,6 +10,10 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
+from personal_agent_gateway.remote_model_client import (
+    RemoteRunAbortedError,
+    RemoteRunFailedError,
+)
 from personal_agent_gateway.team_acceptance import AcceptanceResult
 from personal_agent_gateway.team_artifact_publisher import ArtifactPublicationError
 from personal_agent_gateway.team_cycles import TeamCycleService
@@ -17,7 +21,10 @@ from personal_agent_gateway.team_model_effects import (
     TeamModelEffectService,
     team_model_effect_result_validators,
 )
-from personal_agent_gateway.team_model_invoker import TeamModelInvoker
+from personal_agent_gateway.team_model_invoker import (
+    AmbiguousModelOperation,
+    TeamModelInvoker,
+)
 from personal_agent_gateway.team_model_operations import (
     OperationConflict,
     OperationSpec,
@@ -26,6 +33,10 @@ from personal_agent_gateway.team_model_operations import (
 )
 from personal_agent_gateway.team_outcomes import TaskOutcome
 from personal_agent_gateway.team_results import workspace_snapshot
+from personal_agent_gateway.team_provider_recovery import (
+    ProviderOperationWaiting,
+    TeamProviderRecovery,
+)
 from personal_agent_gateway.team_runtime import (
     WORKER_PROMPT,
     TeamRuntime,
@@ -441,6 +452,202 @@ def add_completed_operation_task(setup):
         result="existing result",
     )
     return task
+
+
+@pytest.mark.asyncio
+async def test_internal_resume_does_not_claim_or_mutate_ambiguous_operation(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.teams.set_run_status(setup.run.id, "running")
+    task = setup.teams.create_task(
+        setup.run.id,
+        "work",
+        "work",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+    )
+    setup.teams.start_task(task.id, setup.worker.id)
+    operation = setup.operations.reserve(
+        OperationSpec(
+            operation_key=f"{setup.cycle.id}:worker_execution:0",
+            team_run_id=setup.run.id,
+            cycle_id=setup.cycle.id,
+            task_id=task.id,
+            agent_id=setup.worker.id,
+            provider=setup.worker.backend,
+            stage="worker_execution",
+            stage_ordinal=0,
+            request_digest="0" * 64,
+        )
+    )
+    operation = setup.operations.begin_attempt(operation.id, "consumer-1")
+    setup.db.execute(
+        """
+        update team_model_operations set status = 'ambiguous'
+        where id = ?
+        """,
+        (operation.id,),
+    )
+    setup.db.execute(
+        """
+        update team_tasks set status = 'pending', started_at = null
+        where id = ?
+        """,
+        (task.id,),
+    )
+    setup.db.execute(
+        """
+        update team_agents set status = 'pending', current_task_id = null
+        where team_run_id = ?
+        """,
+        (setup.run.id,),
+    )
+    setup.teams.set_run_status(setup.run.id, "interrupted")
+    setup.teams.set_cycle_status(setup.cycle.id, "interrupted")
+
+    with pytest.raises(AmbiguousModelOperation):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.operations.get(operation.id).status == "ambiguous"
+    assert setup.teams.get_team_run(setup.run.id).status == "interrupted"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "interrupted"
+    assert setup.worker_client.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_cycle_add_work_safe_admission_exhaustion_enters_waiting(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.teams.set_cycle_status(setup.cycle.id, "queued")
+    setup.teams.set_run_status(setup.run.id, "draft")
+    setup.lead_client.responses = [
+        RemoteRunFailedError(
+            "provider_unavailable",
+            "not ready",
+            pre_stream=True,
+        )
+        for _ in range(3)
+    ]
+    recovery = TeamProviderRecovery(
+        setup.teams,
+        SimpleNamespace(),
+        setup.operations,
+    )
+    setup.runtime._provider_recovery = recovery
+
+    with pytest.raises(ProviderOperationWaiting):
+        await setup.runtime.add_work(
+            setup.run.id,
+            "work",
+            setup.cycle.id,
+        )
+
+    operation = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert operation is not None
+    assert operation.status == "waiting_for_provider"
+    assert operation.attempts == 3
+    assert setup.teams.get_team_run(
+        setup.run.id
+    ).status == "waiting_for_provider"
+    assert setup.teams.get_cycle(
+        setup.cycle.id
+    ).status == "waiting_for_provider"
+    assert setup.cycle_request is not None
+    cycles = TeamCycleService(setup.db)
+    assert cycles.get_request(
+        setup.cycle_request.id
+    ).status == "dispatching"
+    assert setup.teams.get_agent(
+        setup.run.leader_agent_id
+    ).upstream_session_id is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_add_work_closes_initial_operation_then_waits_on_repair(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.teams.set_cycle_status(setup.cycle.id, "queued")
+    setup.teams.set_run_status(setup.run.id, "draft")
+    setup.lead_client.responses = [
+        ModelResponse(
+            "invalid plan",
+            [],
+            upstream_session_id="lead-repair-session",
+        ),
+        *[
+            RemoteRunFailedError(
+                "provider_unavailable",
+                "not ready",
+                pre_stream=True,
+            )
+            for _ in range(3)
+        ],
+    ]
+    setup.runtime._provider_recovery = TeamProviderRecovery(
+        setup.teams,
+        SimpleNamespace(),
+        setup.operations,
+    )
+
+    with pytest.raises(ProviderOperationWaiting):
+        await setup.runtime.add_work(
+            setup.run.id,
+            "work",
+            setup.cycle.id,
+        )
+
+    initial, repair = setup.operations.list_for_cycle(setup.cycle.id)
+    assert (initial.stage, initial.status) == ("cycle_add_work", "failed")
+    assert (repair.stage, repair.stage_ordinal, repair.status) == (
+        "cycle_planning_repair",
+        2,
+        "waiting_for_provider",
+    )
+    assert repair.upstream_session_id == "lead-repair-session"
+    assert setup.teams.get_agent(
+        setup.run.leader_agent_id
+    ).upstream_session_id is None
+    assert setup.teams.get_team_run(
+        setup.run.id
+    ).status == "waiting_for_provider"
+    assert setup.teams.get_cycle(
+        setup.cycle.id
+    ).status == "waiting_for_provider"
+
+
+@pytest.mark.asyncio
+async def test_cycle_add_work_ambiguous_call_interrupts_without_replay(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.teams.set_cycle_status(setup.cycle.id, "queued")
+    setup.teams.set_run_status(setup.run.id, "draft")
+    setup.lead_client.responses = [
+        RemoteRunAbortedError("run_timeout", "timed out")
+    ]
+    setup.runtime._provider_recovery = TeamProviderRecovery(
+        setup.teams,
+        SimpleNamespace(),
+        setup.operations,
+    )
+
+    with pytest.raises(AmbiguousModelOperation):
+        await setup.runtime.add_work(
+            setup.run.id,
+            "work",
+            setup.cycle.id,
+        )
+
+    operation = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert operation is not None
+    assert operation.status == "ambiguous"
+    assert operation.attempts == 1
+    assert setup.lead_client.calls == 1
+    assert setup.teams.get_team_run(setup.run.id).status == "interrupted"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "interrupted"
 
 
 def restart_operation_runtime(setup):

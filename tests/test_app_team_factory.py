@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent_gateway.app import _team_model_factory
+from personal_agent_gateway.app import _team_model_factory, create_app
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.execution_contract import ExecutionContractError
 from personal_agent_gateway.lmg_client import ProviderExecutionCapabilities
@@ -84,6 +84,20 @@ class _TeamRuns:
         assert cycle_id == "cycle-1"
         self.execution_metadata = metadata
 
+    def set_cycle_agent_execution_metadata(
+        self,
+        cycle_id: str,
+        agent_id: str,
+        metadata: dict[str, object],
+    ):
+        assert cycle_id == "cycle-1"
+        agents = dict(self.execution_metadata.get("agents", {}))
+        agents[agent_id] = metadata
+        self.execution_metadata = {
+            **self.execution_metadata,
+            "agents": agents,
+        }
+
 
 def _frozen_capability(
     *,
@@ -163,6 +177,24 @@ def test_factory_picks_codex_by_default(tmp_path):
     assert client._local_token == "local-secret"
     assert client._consumer == "personal-agent-gateway"
     assert client._consumer_session_id == "r1"
+
+
+def test_app_wires_one_shared_team_operation_graph(tmp_path):
+    app = create_app(_config(tmp_path))
+
+    operations = app.state.team_model_operation_service
+    effects = app.state.team_model_effect_service
+    invoker = app.state.team_model_invoker
+    recovery = app.state.team_provider_recovery
+
+    assert app.state.team_runtime._operations is operations
+    assert app.state.team_runtime._model_effects is effects
+    assert app.state.team_runtime._model_invoker is invoker
+    assert app.state.team_runtime._provider_recovery is recovery
+    assert app.state.team_cycle_dispatcher._provider_recovery is recovery
+    assert effects._operations is operations
+    assert invoker._operations is operations
+    assert recovery._operations is operations
 
 
 def test_factory_picks_claude_when_backend_claude(tmp_path):

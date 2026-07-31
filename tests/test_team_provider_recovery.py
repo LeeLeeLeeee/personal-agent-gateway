@@ -1,5 +1,13 @@
+import hashlib
+from types import SimpleNamespace
+
 import pytest
 
+from personal_agent_gateway.team_model_operations import (
+    OperationSpec,
+    TeamModelOperationService,
+)
+from personal_agent_gateway.team_provider_recovery import TeamProviderRecovery
 from personal_agent_gateway.teams import ProviderRecoveryClaim
 from team_cycle_helpers import (
     dt,
@@ -7,6 +15,333 @@ from team_cycle_helpers import (
     make_queued_cycle,
     make_running_task_in_cycle,
 )
+
+
+class SessionLoader:
+    def __init__(self, result=None, error=None):
+        self.result = [] if result is None else result
+        self.error = error
+
+    def __call__(self):
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _registry():
+    return SimpleNamespace(get=lambda _provider: None)
+
+
+def _digest(value):
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def make_invoking_operation(tmp_path, stage, *, lead_actor=False, preplanning=False):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    if preplanning:
+        cycle = make_queued_cycle(teams, cycles, run)
+        task = None
+        actor = teams.get_agent(run.leader_agent_id)
+        worker = next(
+            agent
+            for agent in teams.list_agents(run.id)
+            if agent.id != run.leader_agent_id
+        )
+    else:
+        cycle, task, worker = make_running_task_in_cycle(
+            teams,
+            cycles,
+            run,
+        )
+        actor = teams.get_agent(run.leader_agent_id) if lead_actor else worker
+        if lead_actor:
+            actor = teams.set_agent_status(actor.id, "running")
+    operations = TeamModelOperationService(db)
+    operation = operations.reserve(
+        OperationSpec(
+            operation_key=f"{cycle.id}:{stage}:0",
+            team_run_id=run.id,
+            cycle_id=cycle.id,
+            task_id=task.id if task is not None else None,
+            agent_id=actor.id,
+            provider=actor.backend,
+            stage=stage,
+            stage_ordinal=0,
+            request_digest=_digest(f"{stage}-request"),
+        )
+    )
+    operation = operations.begin_attempt(operation.id, "consumer-1")
+    loader = SessionLoader()
+    recovery = TeamProviderRecovery(
+        teams,
+        _registry(),
+        operations,
+        session_loader=loader,
+    )
+    return SimpleNamespace(
+        db=db,
+        teams=teams,
+        cycles=cycles,
+        run=run,
+        cycle=cycle,
+        task=task,
+        worker=worker,
+        actor=actor,
+        operations=operations,
+        operation=operation,
+        recovery=recovery,
+        session_loader=loader,
+    )
+
+
+def _session(setup, *, provider=None, consumer_run_id=None, upstream_id="sess-1"):
+    return {
+        "provider": provider or setup.operation.provider,
+        "upstream_id": upstream_id,
+        "consumer": "personal-agent-gateway",
+        "consumer_session_id": setup.run.id,
+        "consumer_run_id": consumer_run_id or setup.operation.consumer_run_id,
+    }
+
+
+def test_claim_lead_waiting_operation_restores_stage_without_pending_worker(
+    tmp_path,
+):
+    setup = make_invoking_operation(
+        tmp_path,
+        "acceptance_lead",
+        lead_actor=True,
+    )
+    setup.recovery.wait_for_operation(
+        setup.operation.id,
+        reason_code="provider_unavailable",
+        now=dt("2026-07-31T00:00:00+00:00"),
+    )
+
+    claim = setup.recovery.claim_operation(
+        setup.cycle.id,
+        now=dt("2026-07-31T00:00:30+00:00"),
+    )
+    second = setup.recovery.claim_operation(
+        setup.cycle.id,
+        now=dt("2026-07-31T00:00:31+00:00"),
+    )
+
+    assert claim.operation_id == setup.operation.id
+    assert second is None
+    assert setup.operations.get(setup.operation.id).status == "prepared"
+    assert setup.teams.get_task(setup.task.id).status == "in_progress"
+    assert setup.teams.get_task(setup.task.id).owner_agent_id == setup.worker.id
+    assert setup.teams.get_agent(setup.run.leader_agent_id).status == "running"
+    assert setup.cycles.get_request(setup.cycle.request_id).status == "dispatching"
+
+
+@pytest.mark.parametrize(
+    ("stage", "preplanning"),
+    [("worker_execution", False), ("cycle_add_work", True)],
+)
+def test_claim_waiting_operation_restores_worker_and_preplanning_sources(
+    tmp_path,
+    stage,
+    preplanning,
+):
+    setup = make_invoking_operation(
+        tmp_path,
+        stage,
+        preplanning=preplanning,
+    )
+    setup.recovery.wait_for_operation(
+        setup.operation.id,
+        reason_code="provider_unavailable",
+        now=dt("2026-07-31T00:00:00+00:00"),
+    )
+
+    claim = setup.recovery.claim_operation(
+        setup.cycle.id,
+        now=dt("2026-07-31T00:00:30+00:00"),
+    )
+
+    assert claim.operation_id == setup.operation.id
+    assert setup.operations.get(setup.operation.id).status == "prepared"
+    assert setup.cycles.get_request(setup.cycle.request_id).status == "dispatching"
+    if preplanning:
+        assert setup.teams.get_cycle(setup.cycle.id).status == "queued"
+        assert setup.teams.get_team_run(setup.run.id).status == "draft"
+        assert setup.teams.list_tasks(setup.run.id, setup.cycle.id) == []
+    else:
+        assert setup.teams.get_task(setup.task.id).status == "in_progress"
+        assert setup.teams.get_agent(setup.worker.id).status == "running"
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_operation_without_one_strict_session_stays_interrupted(
+    tmp_path,
+):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+
+    await setup.recovery.interrupt_ambiguous_operation(
+        setup.operation.id,
+        consumer_run_id="consumer-1",
+        upstream_session_id=None,
+    )
+
+    assert setup.operations.get(setup.operation.id).status == "ambiguous"
+    assert setup.teams.get_team_run(setup.run.id).status == "interrupted"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "interrupted"
+    assert setup.session_loader.result == []
+
+
+@pytest.mark.parametrize(
+    "sessions",
+    [
+        [],
+        ["duplicate"],
+        ["provider_mismatch"],
+        ["consumer_run_mismatch"],
+    ],
+)
+@pytest.mark.asyncio
+async def test_explicit_resume_requires_exactly_one_strict_session(
+    tmp_path,
+    sessions,
+):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+    await setup.recovery.interrupt_ambiguous_operation(
+        setup.operation.id,
+        consumer_run_id="consumer-1",
+        upstream_session_id=None,
+    )
+    if sessions == ["duplicate"]:
+        setup.session_loader.result = [
+            _session(setup, upstream_id="sess-1"),
+            _session(setup, upstream_id="sess-2"),
+        ]
+    elif sessions == ["provider_mismatch"]:
+        setup.session_loader.result = [_session(setup, provider="claude")]
+    elif sessions == ["consumer_run_mismatch"]:
+        setup.session_loader.result = [
+            _session(setup, consumer_run_id="consumer-2")
+        ]
+
+    with pytest.raises(
+        ValueError,
+        match="ambiguous_operation_not_reconcilable",
+    ):
+        setup.recovery.prepare_explicit_resume(setup.run.id)
+
+    assert setup.operations.get(setup.operation.id).status == "ambiguous"
+    assert setup.teams.get_team_run(setup.run.id).status == "interrupted"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_explicit_resume_records_strict_session_and_restores_source(
+    tmp_path,
+):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+    await setup.recovery.interrupt_ambiguous_operation(
+        setup.operation.id,
+        consumer_run_id="consumer-1",
+        upstream_session_id=None,
+    )
+    setup.session_loader.result = [_session(setup)]
+
+    claim = setup.recovery.prepare_explicit_resume(setup.run.id)
+
+    operation = setup.operations.get(setup.operation.id)
+    assert claim.operation_id == operation.id
+    assert operation.status == "prepared"
+    assert operation.upstream_session_id == "sess-1"
+    assert setup.teams.get_team_run(setup.run.id).status == "running"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "running"
+    assert setup.teams.get_task(setup.task.id).status == "in_progress"
+    assert setup.teams.get_agent(setup.worker.id).status == "running"
+    assert setup.teams.get_agent(setup.worker.id).upstream_session_id is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_resume_loader_failure_keeps_ambiguous_state(tmp_path):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+    await setup.recovery.interrupt_ambiguous_operation(
+        setup.operation.id,
+        consumer_run_id="consumer-1",
+        upstream_session_id=None,
+    )
+    setup.session_loader.error = RuntimeError("LMG unavailable")
+
+    with pytest.raises(
+        ValueError,
+        match="ambiguous_operation_not_reconcilable",
+    ):
+        setup.recovery.prepare_explicit_resume(setup.run.id)
+
+    assert setup.operations.get(setup.operation.id).status == "ambiguous"
+    assert setup.teams.get_team_run(setup.run.id).status == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_recorded_ambiguous_session_still_requires_strict_identity(
+    tmp_path,
+):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+    await setup.recovery.interrupt_ambiguous_operation(
+        setup.operation.id,
+        consumer_run_id="consumer-1",
+        upstream_session_id="recorded-session",
+    )
+    setup.session_loader.result = [
+        _session(setup, upstream_id="different-session")
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="ambiguous_operation_not_reconcilable",
+    ):
+        setup.recovery.prepare_explicit_resume(setup.run.id)
+
+    operation = setup.operations.get(setup.operation.id)
+    assert operation.status == "ambiguous"
+    assert operation.upstream_session_id == "recorded-session"
+
+
+def test_startup_reconciliation_separates_runnable_and_ambiguous(tmp_path):
+    invoking = make_invoking_operation(tmp_path / "invoking", "worker_execution")
+    prepared = make_invoking_operation(
+        tmp_path / "prepared",
+        "cycle_add_work",
+        preplanning=True,
+    )
+    prepared.operations.prepare_retry(
+        prepared.operation.id,
+        prepared.operation.version,
+        "provider_unavailable",
+    )
+
+    invoking_result = invoking.recovery.reconcile_startup()
+    prepared_result = prepared.recovery.reconcile_startup()
+
+    assert invoking.operations.get(invoking.operation.id).status == "ambiguous"
+    assert invoking.teams.get_team_run(invoking.run.id).status == "interrupted"
+    assert invoking.cycle.id in invoking_result.interrupted_cycle_ids
+    assert prepared.operations.get(prepared.operation.id).status == "prepared"
+    assert prepared.cycle.id in prepared_result.runnable_cycle_ids
+
+
+def test_generic_startup_interrupt_skips_operation_backed_run(tmp_path):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+    setup.operations.prepare_retry(
+        setup.operation.id,
+        setup.operation.version,
+        "provider_unavailable",
+    )
+
+    interrupted = setup.teams.interrupt_active_runs()
+
+    assert interrupted == []
+    assert setup.teams.get_team_run(setup.run.id).status == "running"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "running"
+    assert setup.teams.get_task(setup.task.id).status == "in_progress"
+    assert setup.teams.get_agent(setup.worker.id).status == "running"
 
 
 def make_waiting_provider_state(tmp_path):
