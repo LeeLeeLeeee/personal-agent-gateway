@@ -119,12 +119,19 @@ class TeamModelInvoker:
             try:
                 result = parser(response)
             except Exception as exc:
-                self._operations.mark_failed(
-                    invoking.id,
-                    invoking.version,
-                    "invalid_structured_output",
-                    upstream_session_id=response.upstream_session_id,
-                )
+                try:
+                    self._operations.mark_failed(
+                        invoking.id,
+                        invoking.version,
+                        "invalid_structured_output",
+                        upstream_session_id=response.upstream_session_id,
+                    )
+                except OperationSessionConflict as session_exc:
+                    raise AmbiguousModelOperation(
+                        invoking.id,
+                        consumer_run_id,
+                        "upstream_session_conflict",
+                    ) from session_exc
                 raise InvalidOperationResult(
                     invoking.id,
                     consumer_run_id,
@@ -145,12 +152,19 @@ class TeamModelInvoker:
                     "upstream_session_conflict",
                 ) from exc
             except OperationResultValidationError as exc:
-                self._operations.mark_failed(
-                    invoking.id,
-                    invoking.version,
-                    "invalid_structured_output",
-                    upstream_session_id=response.upstream_session_id,
-                )
+                try:
+                    self._operations.mark_failed(
+                        invoking.id,
+                        invoking.version,
+                        "invalid_structured_output",
+                        upstream_session_id=response.upstream_session_id,
+                    )
+                except OperationSessionConflict as session_exc:
+                    raise AmbiguousModelOperation(
+                        invoking.id,
+                        consumer_run_id,
+                        "upstream_session_conflict",
+                    ) from session_exc
                 raise InvalidOperationResult(
                     invoking.id,
                     consumer_run_id,

@@ -157,6 +157,75 @@ async def test_invoker_maps_response_session_conflict_to_ambiguous_identity(tmp_
 
 
 @pytest.mark.asyncio
+async def test_invoker_maps_parser_failure_with_session_conflict_to_ambiguous(tmp_path):
+    service, spec = make_operation_service_and_spec(
+        tmp_path,
+        upstream_session_id="existing-session",
+    )
+    client = RecordingOperationClient(
+        [
+            ModelResponse(
+                content="not-json",
+                tool_calls=[],
+                upstream_session_id="different-session",
+            )
+        ]
+    )
+    reserved = service.reserve(spec)
+
+    with pytest.raises(AmbiguousModelOperation) as raised:
+        await TeamModelInvoker(service).invoke(
+            reserved,
+            client,
+            [{"role": "user", "content": "work"}],
+            parse_test_result,
+        )
+
+    assert client.calls == 1
+    operation = service.get(raised.value.operation_id)
+    assert operation.status == "invoking"
+    assert operation.consumer_run_id == raised.value.consumer_run_id
+    assert operation.upstream_session_id == "existing-session"
+
+
+@pytest.mark.asyncio
+async def test_invoker_maps_result_validation_with_session_conflict_to_ambiguous(
+    tmp_path,
+):
+    service, spec = make_operation_service_and_spec(
+        tmp_path,
+        upstream_session_id="existing-session",
+    )
+    client = RecordingOperationClient(
+        [
+            ModelResponse(
+                content='{"ok":true}',
+                tool_calls=[],
+                upstream_session_id="different-session",
+            )
+        ]
+    )
+    reserved = service.reserve(spec)
+
+    with pytest.raises(AmbiguousModelOperation) as raised:
+        await TeamModelInvoker(service).invoke(
+            reserved,
+            client,
+            [{"role": "user", "content": "work"}],
+            lambda response: ValidatedOperationResult(
+                "unregistered",
+                json.loads(response.content),
+            ),
+        )
+
+    assert client.calls == 1
+    operation = service.get(raised.value.operation_id)
+    assert operation.status == "invoking"
+    assert operation.consumer_run_id == raised.value.consumer_run_id
+    assert operation.upstream_session_id == "existing-session"
+
+
+@pytest.mark.asyncio
 async def test_invoker_leaves_exhausted_safe_admission_invoking(tmp_path):
     service, spec = make_operation_service_and_spec(tmp_path)
     client = RecordingOperationClient(
