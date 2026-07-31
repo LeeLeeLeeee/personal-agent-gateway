@@ -235,6 +235,7 @@ def make_completed_synthesis_operation(tmp_path):
         teams=teams,
         run=run,
         cycle=cycle,
+        task=task,
         leader=leader,
         operations=operations,
         operation=operation,
@@ -596,6 +597,31 @@ def test_plan_replay_rejects_actor_session_that_no_longer_matches(tmp_path):
         services.effects.apply_plan(services.operation.id)
 
 
+def test_plan_replay_rejects_duplicate_task_ids_for_identical_specs(tmp_path):
+    spec = valid_task_spec("Research", None)
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult(
+            "task_plan",
+            {"tasks": [spec, dict(spec)]},
+        ),
+    )
+    tasks = services.effects.apply_plan(services.operation.id)
+    effect_ref = services.operations.get(services.operation.id).effect_ref_json
+    effect_ref["task_ids"] = [tasks[0].id, tasks[0].id]
+    services.db.execute(
+        "update team_model_operations set effect_ref_json = ? where id = ?",
+        (
+            json.dumps(effect_ref, sort_keys=True),
+            services.operation.id,
+        ),
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_plan(services.operation.id)
+
+
 def test_worker_replay_rejects_unrelated_agent_output(tmp_path):
     services = make_completed_worker_operation(
         tmp_path,
@@ -752,6 +778,57 @@ def test_worker_decision_replay_rejects_request_outside_applied_state(tmp_path):
         )
 
 
+def test_worker_decision_apply_and_replay_preserve_shared_batching_ids(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        decision=user_decision(),
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    other_task = services.teams.create_task(
+        services.run.id,
+        "Clarify publication",
+        "Collect the prior publication question.",
+        owner_agent_id=leader.id,
+        cycle_id=services.cycle.id,
+    )
+    other_task, leader = services.teams.start_task(other_task.id, leader.id)
+    query = services.teams.append_message(
+        services.run.id,
+        leader.id,
+        services.worker.id,
+        "query",
+        "Should this draft be published?",
+        {"task_id": other_task.id, "topic": "publication"},
+        cycle_id=services.cycle.id,
+    )
+    existing = services.teams.defer_task_for_user_decision(
+        other_task.id,
+        leader.id,
+        {
+            **user_decision(),
+            "query_message_id": query.id,
+        },
+    )
+    changes = {"created": [], "modified": [], "deleted": []}
+
+    first = services.effects.apply_worker_outcome(
+        services.operation.id,
+        None,
+        workspace_changes=changes,
+    )
+    second = services.effects.apply_worker_outcome(
+        services.operation.id,
+        None,
+        workspace_changes=changes,
+    )
+
+    assert first.decision_request.id == existing.id
+    assert second.decision_request.id == existing.id
+    item = second.decision_request.items[0]
+    assert item["blocking_task_ids"] == [other_task.id, services.task.id]
+    assert item["query_message_ids"] == [query.id]
+
+
 @pytest.mark.parametrize("tampered_state", ["run", "cycle", "agent", "session"])
 def test_synthesis_replay_rejects_tampered_expected_state(
     tmp_path,
@@ -783,6 +860,107 @@ def test_synthesis_replay_rejects_tampered_expected_state(
 
     with pytest.raises(OperationConflict):
         services.effects.apply_synthesis(services.operation.id, summary)
+
+
+def test_synthesis_replay_recomputes_terminal_status_from_cycle_tasks(tmp_path):
+    services = make_completed_synthesis_operation(tmp_path)
+    summary = "The draft is complete."
+    services.effects.apply_synthesis(services.operation.id, summary)
+    services.db.execute(
+        "update team_tasks set status = 'failed' where id = ?",
+        (services.task.id,),
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_synthesis(services.operation.id, summary)
+
+
+@pytest.mark.parametrize(
+    "effect_kind",
+    ["plan", "worker_outcome", "worker_decision", "synthesis"],
+)
+def test_stateless_operation_replay_preserves_existing_actor_session(
+    tmp_path,
+    effect_kind,
+):
+    if effect_kind == "plan":
+        services = make_completed_operation(
+            tmp_path,
+            stage="cycle_planning",
+            result=ValidatedOperationResult(
+                "task_plan",
+                {"tasks": [valid_task_spec("Research", None)]},
+            ),
+        )
+        actor_id = services.actor.id
+    elif effect_kind == "worker_outcome":
+        services = make_completed_worker_operation(
+            tmp_path,
+            outcome=completed_outcome("draft.md"),
+        )
+        actor_id = services.worker.id
+    elif effect_kind == "worker_decision":
+        services = make_completed_worker_operation(
+            tmp_path,
+            decision=user_decision(),
+        )
+        actor_id = services.worker.id
+    else:
+        services = make_completed_synthesis_operation(tmp_path)
+        actor_id = services.leader.id
+    services.db.execute(
+        "update team_model_operations set upstream_session_id = null where id = ?",
+        (services.operation.id,),
+    )
+    services.db.execute(
+        "update team_agents set upstream_session_id = ? where id = ?",
+        ("existing-session", actor_id),
+    )
+
+    if effect_kind == "plan":
+        first = services.effects.apply_plan(services.operation.id)
+        second = services.effects.apply_plan(services.operation.id)
+        assert [task.id for task in second] == [task.id for task in first]
+    elif effect_kind == "worker_outcome":
+        acceptance = AcceptanceResult(
+            accepted=False,
+            status="failed",
+            reason_code="undeclared_deliverable",
+            evidence={},
+        )
+        changes = {"created": ["draft.md"], "modified": [], "deleted": []}
+        first = services.effects.apply_worker_outcome(
+            services.operation.id,
+            acceptance,
+            workspace_changes=changes,
+        )
+        second = services.effects.apply_worker_outcome(
+            services.operation.id,
+            acceptance,
+            workspace_changes=changes,
+        )
+        assert second.message.id == first.message.id
+    elif effect_kind == "worker_decision":
+        changes = {"created": [], "modified": [], "deleted": []}
+        first = services.effects.apply_worker_outcome(
+            services.operation.id,
+            None,
+            workspace_changes=changes,
+        )
+        second = services.effects.apply_worker_outcome(
+            services.operation.id,
+            None,
+            workspace_changes=changes,
+        )
+        assert second.decision_request.id == first.decision_request.id
+    else:
+        summary = "The draft is complete."
+        first = services.effects.apply_synthesis(services.operation.id, summary)
+        second = services.effects.apply_synthesis(services.operation.id, summary)
+        assert second == first
+    assert services.teams.get_agent(actor_id).upstream_session_id == (
+        "existing-session"
+    )
 
 
 @pytest.mark.parametrize("changed_input", ["acceptance", "workspace_changes"])

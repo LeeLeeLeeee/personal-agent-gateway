@@ -378,6 +378,15 @@ class TeamModelEffectService:
             connection,
             operation.agent_id,
         )
+        task_rows = connection.execute(
+            """
+            select status, required from team_tasks
+            where team_run_id = ? and cycle_id = ?
+            order by created_at asc, id asc
+            """,
+            (operation.team_run_id, operation.cycle_id),
+        ).fetchall()
+        terminal_status = _terminal_status(task_rows)
         if (
             message.team_run_id != operation.team_run_id
             or message.cycle_id != operation.cycle_id
@@ -386,6 +395,7 @@ class TeamModelEffectService:
             or message.kind != "synthesis"
             or message.content != summary
             or message.metadata != {"operation_id": operation.id}
+            or effect_ref["status"] != terminal_status
             or run is None
             or run["status"] != effect_ref["status"]
             or run["summary"] != summary
@@ -397,7 +407,7 @@ class TeamModelEffectService:
             or agent.status != "completed"
             or agent.current_task_id is not None
             or agent.finished_at is None
-            or agent.upstream_session_id != operation.upstream_session_id
+            or not _operation_session_matches(operation, agent)
         ):
             raise OperationConflict(
                 "Applied synthesis rows do not match the operation"
@@ -667,7 +677,7 @@ class TeamModelEffectService:
             or task.status != task_status
             or agent.team_run_id != operation.team_run_id
             or agent.status != agent_status
-            or agent.upstream_session_id != operation.upstream_session_id
+            or not _operation_session_matches(operation, agent)
             or effect_ref["next_stage"] != expected_next_stage
             or not _worker_terminal_fields_match(
                 task,
@@ -753,7 +763,7 @@ class TeamModelEffectService:
             or agent.team_run_id != operation.team_run_id
             or agent.status != "waiting"
             or agent.current_task_id is not None
-            or agent.upstream_session_id != operation.upstream_session_id
+            or not _operation_session_matches(operation, agent)
             or request.team_run_id != operation.team_run_id
             or request.cycle_id != operation.cycle_id
             or request.status != "collecting"
@@ -766,6 +776,11 @@ class TeamModelEffectService:
                 item,
                 _user_decision(operation),
                 task.id,
+            )
+            or not _decision_item_references_are_valid(
+                connection,
+                operation,
+                item,
             )
         ):
             raise OperationConflict("Applied Worker decision rows do not match")
@@ -877,6 +892,7 @@ class TeamModelEffectService:
             or set(effect_ref) != {"task_ids", "message_id"}
             or not isinstance(effect_ref["task_ids"], list)
             or not all(isinstance(item, str) for item in effect_ref["task_ids"])
+            or len(set(effect_ref["task_ids"])) != len(effect_ref["task_ids"])
             or not isinstance(effect_ref["message_id"], str)
         ):
             raise OperationConflict("Applied plan effect reference is invalid")
@@ -897,7 +913,7 @@ class TeamModelEffectService:
             or not _task_matches_plan_spec(task, spec)
             for task, spec in zip(tasks, specs, strict=True)
         ) or (
-            actor.upstream_session_id != operation.upstream_session_id
+            not _operation_session_matches(operation, actor)
         ):
             raise OperationConflict("Applied plan tasks do not match the operation")
         message = self._teams._message_from_connection(
@@ -1025,6 +1041,12 @@ def _worker_effect_ref(
                 "Worker decision does not have one exact request item"
             )
         item = matching_items[0]
+        if not _decision_item_references_are_valid(
+            connection,
+            operation,
+            item,
+        ):
+            raise OperationConflict("Worker decision item references are invalid")
         item_id = item.get("id")
         if not isinstance(item_id, str):
             raise OperationConflict("Worker decision item ID is invalid")
@@ -1207,9 +1229,68 @@ def _decision_item_matches(
         and item["recommended_option_id"]
         == decision["recommended_option_id"]
         and item["blocking_scope"] == decision["blocking_scope"]
-        and item["blocking_task_ids"] == [task_id]
-        and item["query_message_ids"] == []
+        and isinstance(item["blocking_task_ids"], list)
+        and all(
+            isinstance(value, str) for value in item["blocking_task_ids"]
+        )
+        and len(set(item["blocking_task_ids"]))
+        == len(item["blocking_task_ids"])
+        and task_id in item["blocking_task_ids"]
+        and isinstance(item["query_message_ids"], list)
+        and all(
+            isinstance(value, str) for value in item["query_message_ids"]
+        )
+        and len(set(item["query_message_ids"]))
+        == len(item["query_message_ids"])
     )
+
+
+def _decision_item_references_are_valid(
+    connection: sqlite3.Connection,
+    operation: TeamModelOperation,
+    item: dict[str, object],
+) -> bool:
+    blocking_task_ids = item["blocking_task_ids"]
+    query_message_ids = item["query_message_ids"]
+    for task_id in blocking_task_ids:
+        task = connection.execute(
+            """
+            select team_run_id, cycle_id, status from team_tasks where id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+        if (
+            task is None
+            or task["team_run_id"] != operation.team_run_id
+            or task["cycle_id"] != operation.cycle_id
+            or task["status"] != "blocked"
+        ):
+            return False
+    for message_id in query_message_ids:
+        message = connection.execute(
+            """
+            select team_run_id, cycle_id, kind, metadata_json
+            from team_messages where id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+        if (
+            message is None
+            or message["team_run_id"] != operation.team_run_id
+            or message["cycle_id"] != operation.cycle_id
+            or message["kind"] != "query"
+        ):
+            return False
+        try:
+            metadata = json.loads(message["metadata_json"])
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("task_id") not in blocking_task_ids
+        ):
+            return False
+    return True
 
 
 def _canonical_digest(value: object) -> str:
@@ -1348,6 +1429,16 @@ def _promote_actor_session(
     )
     if cursor.rowcount != 1:
         raise OperationConflict("Operation actor changed before effect application")
+
+
+def _operation_session_matches(
+    operation: TeamModelOperation,
+    agent: TeamAgent,
+) -> bool:
+    return (
+        operation.upstream_session_id is None
+        or agent.upstream_session_id == operation.upstream_session_id
+    )
 
 
 def _mark_applied(
