@@ -292,7 +292,7 @@ def valid_plan_json(owner_agent_id=None, verification="review"):
     )
 
 
-def make_operation_runtime(tmp_path):
+def make_operation_runtime(tmp_path, *, cycle_instruction=None):
     db = Database(tmp_path / "app.db")
     db.initialize()
     personas = PersonaService(db)
@@ -308,7 +308,26 @@ def make_operation_runtime(tmp_path):
         lifecycle_mode="continuous",
         execution_policy="triggered",
     )
-    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    cycle_request = None
+    if cycle_instruction is None:
+        cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    else:
+        cycles = TeamCycleService(db)
+        cycle_request = cycles.enqueue_request(
+            run.id,
+            "manual",
+            "manual-1",
+            cycle_instruction,
+            previous_cycle_id=None,
+        )
+        cycle_request = cycles.claim_next(run.id)
+        assert cycle_request is not None
+        cycle = teams.create_cycle(
+            run.id,
+            "manual",
+            cycle_request.source_id,
+            request_id=cycle_request.id,
+        )
     teams.set_cycle_status(cycle.id, "running")
     worker_agent = next(
         agent for agent in teams.list_agents(run.id) if agent.role == "member"
@@ -339,6 +358,7 @@ def make_operation_runtime(tmp_path):
         teams=teams,
         run=run,
         cycle=cycle,
+        cycle_request=cycle_request,
         worker=worker_agent,
         operations=operations,
         lead_client=lead_client,
@@ -347,6 +367,25 @@ def make_operation_runtime(tmp_path):
         model_factory=model_factory,
         runtime=runtime,
     )
+
+
+def add_completed_operation_task(setup):
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Existing work",
+        "Previously completed work.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), ("worker-result",)),
+    )
+    task, worker = setup.teams.start_task(task.id, setup.worker.id)
+    task, worker = setup.teams.finish_task(
+        task.id,
+        worker.id,
+        "completed",
+        result="existing result",
+    )
+    return task
 
 
 def restart_operation_runtime(setup):
@@ -567,6 +606,124 @@ async def test_completed_add_work_repair_is_applied_without_another_model_call(
     assert len(created) == 1
     assert setup.operations.get(repair.id).status == "applied"
     assert setup.lead_client.calls == calls_before_restart
+
+
+@pytest.mark.asyncio
+async def test_resume_invokes_prepared_add_work_from_cycle_request(tmp_path):
+    instruction = "Research another source."
+    setup = make_operation_runtime(
+        tmp_path,
+        cycle_instruction=instruction,
+    )
+    add_completed_operation_task(setup)
+    setup.lead_client.responses = [
+        ModelResponse(
+            valid_plan_json(setup.worker.id, "worker-result"),
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+        ModelResponse(
+            "summary",
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_add_work",
+        0,
+        "prepared",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.add_work(
+            setup.run.id,
+            instruction,
+            setup.cycle.id,
+        )
+
+    add_work = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert add_work is not None
+    assert (add_work.stage, add_work.stage_ordinal, add_work.status) == (
+        "cycle_add_work",
+        0,
+        "prepared",
+    )
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    recovered = setup.operations.get(add_work.id)
+    assert completed.status == "completed"
+    assert recovered.status == "applied"
+    assert recovered.attempts == 1
+    assert setup.teams.get_cycle_objective(setup.cycle.id) == instruction
+    assert setup.lead_client.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_resume_applies_completed_add_work_repair_without_reinvoking_it(
+    tmp_path,
+):
+    instruction = "Research another source."
+    setup = make_operation_runtime(
+        tmp_path,
+        cycle_instruction=instruction,
+    )
+    add_completed_operation_task(setup)
+    setup.lead_client.responses = [
+        ModelResponse(
+            "invalid add work",
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+        ModelResponse(
+            valid_plan_json(setup.worker.id, "worker-result"),
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+        ModelResponse(
+            "summary",
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_planning_repair",
+        2,
+        "completed",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.add_work(
+            setup.run.id,
+            instruction,
+            setup.cycle.id,
+        )
+
+    repair = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert repair is not None
+    assert (repair.stage, repair.stage_ordinal, repair.status) == (
+        "cycle_planning_repair",
+        2,
+        "completed",
+    )
+    attempts_before_resume = repair.attempts
+    calls_before_resume = setup.lead_client.calls
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    recovered = setup.operations.get(repair.id)
+    assert completed.status == "completed"
+    assert recovered.status == "applied"
+    assert recovered.attempts == attempts_before_resume
+    assert setup.lead_client.calls == calls_before_resume + 1
 
 
 @pytest.mark.asyncio

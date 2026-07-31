@@ -372,10 +372,36 @@ class TeamRuntime:
             "cycle_planning_repair",
             "cycle_add_work",
         }:
-            if planning_stage is None or planning_messages is None:
-                raise OperationConflict(
-                    "Open planning operation requires its source request"
+            if operation.status == "completed":
+                return OpenOperationRecovery(
+                    operation,
+                    self._model_effects.apply_plan(operation.id),
                 )
+            if planning_stage is None or planning_messages is None:
+                if (
+                    operation.stage == "cycle_add_work"
+                    or (
+                        operation.stage == "cycle_planning_repair"
+                        and operation.stage_ordinal == 2
+                    )
+                ):
+                    instruction = self._teams.get_cycle_objective(cycle_id)
+                    if instruction is None:
+                        raise OperationConflict(
+                            "Prepared add-work operation has no persisted instruction"
+                        )
+                    planning_stage = "cycle_add_work"
+                    planning_messages = self._add_work_messages(
+                        run,
+                        leader,
+                        _find_workers(self._teams.list_agents(run.id)),
+                        instruction,
+                        cycle_id,
+                    )
+                else:
+                    raise OperationConflict(
+                        "Open planning operation requires its source request"
+                    )
             expected_repair_ordinal = (
                 1 if planning_stage == "cycle_planning" else 2
             )
@@ -532,6 +558,37 @@ class TeamRuntime:
                 f"Current cycle objective: {objective}"
             )
         return objective or run.goal
+
+    def _add_work_messages(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        members: list[TeamAgent],
+        instruction: str,
+        cycle_id: str | None,
+    ) -> list[dict[str, object]]:
+        existing = (
+            ", ".join(
+                task.title for task in self._teams.list_tasks(run.id, cycle_id)
+            )
+            or "(none)"
+        )
+        goal_context = self._goal_context(run, cycle_id)
+        prompt = _space_block(
+            run,
+            self._space_policy(run, cycle_id),
+            cycle_id,
+        ) + self._archive_block(
+            f"{goal_context}\n{instruction}",
+            persona_id=leader.persona_id,
+            allow_request=False,
+        ) + ADD_WORK_PROMPT.format(
+            goal=goal_context,
+            existing_titles=existing,
+            instruction=instruction,
+            team_roster_json=_assignment_roster_json(members),
+        )
+        return [{"role": "user", "content": prompt}]
 
     def _archive_block(
         self,
@@ -785,6 +842,12 @@ class TeamRuntime:
                     open_operation = recovery.operation
                     if open_operation.stage == "cycle_synthesis":
                         return
+                    if open_operation.stage in {
+                        "cycle_planning",
+                        "cycle_planning_repair",
+                        "cycle_add_work",
+                    }:
+                        continue
                     if (
                         open_operation.stage != "worker_execution"
                         or open_operation.task_id is None
@@ -1826,28 +1889,13 @@ class TeamRuntime:
         leader_agent = self._teams.get_agent(leader.id)
         members = _find_workers(self._teams.list_agents(run.id))
         member_ids = {member.id for member in members}
-        existing = (
-            ", ".join(
-                task.title for task in self._teams.list_tasks(run.id, cycle_id)
-            )
-            or "(none)"
-        )
-        goal_context = self._goal_context(run, cycle_id)
-        prompt = _space_block(
+        messages = self._add_work_messages(
             run,
-            self._space_policy(run, cycle_id),
+            leader_agent,
+            members,
+            instruction,
             cycle_id,
-        ) + self._archive_block(
-            f"{goal_context}\n{instruction}",
-            persona_id=leader_agent.persona_id,
-            allow_request=False,
-        ) + ADD_WORK_PROMPT.format(
-            goal=goal_context,
-            existing_titles=existing,
-            instruction=instruction,
-            team_roster_json=_assignment_roster_json(members),
         )
-        messages: list[dict[str, object]] = [{"role": "user", "content": prompt}]
         if cycle_id is not None:
             operation = await self._invoke_plan_with_repair(
                 run,
@@ -1875,7 +1923,7 @@ class TeamRuntime:
             specs = _parse_task_plan(response.content)
         except ValueError:
             retry = await model.complete(
-                [{"role": "user", "content": prompt + "\nReturn ONLY a JSON array. No prose, no code fences."}]
+                _planning_repair_messages(messages)
             )
             if retry.upstream_session_id:
                 self._teams.set_agent_session(leader_agent.id, retry.upstream_session_id)
