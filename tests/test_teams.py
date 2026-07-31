@@ -24,6 +24,58 @@ from team_cycle_helpers import (
 )
 
 
+def test_cycle_metadata_owned_writers_preserve_each_other_and_recovery(tmp_path):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    leader = teams.get_agent(run.leader_agent_id)
+    worker = next(
+        candidate
+        for candidate in teams.list_agents(run.id)
+        if candidate.id != leader.id
+    )
+    recovery = {
+        "provider": "codex",
+        "reason_code": "provider_not_ready",
+        "attempts": 3,
+    }
+    teams.set_cycle_execution_metadata(
+        cycle.id,
+        {
+            "provider_recovery": recovery,
+            "unrelated": {"keep": True},
+        },
+    )
+
+    teams.set_cycle_provider_capabilities(
+        cycle.id,
+        {"codex": {"ready": False}},
+    )
+    teams.set_cycle_agent_execution_metadata(
+        cycle.id,
+        worker.id,
+        {"sandbox_mode": "workspace-write"},
+    )
+    teams.set_cycle_agent_execution_metadata(
+        cycle.id,
+        leader.id,
+        {"sandbox_mode": "read-only"},
+    )
+    updated = teams.set_cycle_provider_capabilities(
+        cycle.id,
+        {"codex": {"ready": True}},
+    )
+
+    assert updated.execution_metadata == {
+        "provider_recovery": recovery,
+        "provider_capabilities": {"codex": {"ready": True}},
+        "agents": {
+            worker.id: {"sandbox_mode": "workspace-write"},
+            leader.id: {"sandbox_mode": "read-only"},
+        },
+        "unrelated": {"keep": True},
+    }
+
+
 @pytest.mark.parametrize(
     ("run_status", "request_status", "cycle_status", "series_status", "expected"),
     [

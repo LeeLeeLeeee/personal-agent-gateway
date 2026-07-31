@@ -576,6 +576,96 @@ class TeamRunService:
         )
         return self.get_cycle(cycle_id)
 
+    def set_cycle_provider_capabilities(
+        self,
+        cycle_id: str,
+        snapshots: dict[str, object],
+    ) -> TeamRunCycle:
+        if not isinstance(snapshots, dict):
+            raise ValueError("Provider capabilities must be an object")
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            row = connection.execute(
+                "select * from team_run_cycles where id = ?",
+                (cycle_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Team run cycle not found: {cycle_id}")
+            metadata = _execution_metadata_object(row["execution_metadata_json"])
+            metadata["provider_capabilities"] = snapshots
+            cursor = connection.execute(
+                """
+                update team_run_cycles
+                set execution_metadata_json = ?, updated_at = ? where id = ?
+                """,
+                (
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    now,
+                    cycle_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Team run cycle changed before metadata update")
+            updated = connection.execute(
+                "select * from team_run_cycles where id = ?",
+                (cycle_id,),
+            ).fetchone()
+            return _team_run_cycle_from_row(updated)
+
+    def set_cycle_agent_execution_metadata(
+        self,
+        cycle_id: str,
+        agent_id: str,
+        metadata: dict[str, object],
+    ) -> TeamRunCycle:
+        if not isinstance(metadata, dict):
+            raise ValueError("Agent execution metadata must be an object")
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            row = connection.execute(
+                "select * from team_run_cycles where id = ?",
+                (cycle_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Team run cycle not found: {cycle_id}")
+            agent = connection.execute(
+                "select team_run_id from team_agents where id = ?",
+                (agent_id,),
+            ).fetchone()
+            if agent is None or agent["team_run_id"] != row["team_run_id"]:
+                raise ValueError("Agent does not belong to the cycle team run")
+            execution_metadata = _execution_metadata_object(
+                row["execution_metadata_json"]
+            )
+            agents = execution_metadata.get("agents", {})
+            if not isinstance(agents, dict):
+                raise ValueError("Cycle agent execution metadata is invalid")
+            execution_metadata["agents"] = {**agents, agent_id: metadata}
+            cursor = connection.execute(
+                """
+                update team_run_cycles
+                set execution_metadata_json = ?, updated_at = ? where id = ?
+                """,
+                (
+                    json.dumps(
+                        execution_metadata,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    now,
+                    cycle_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Team run cycle changed before metadata update")
+            updated = connection.execute(
+                "select * from team_run_cycles where id = ?",
+                (cycle_id,),
+            ).fetchone()
+            return _team_run_cycle_from_row(updated)
+
     def mark_waiting_for_provider(
         self,
         cycle_id: str,
@@ -2613,8 +2703,34 @@ class TeamRunService:
             raise KeyError(f"Team agent not found: {agent_id}")
         return _team_agent_from_row(row)
 
+    def _agent_from_connection(
+        self,
+        connection: sqlite3.Connection,
+        agent_id: str,
+    ) -> TeamAgent:
+        row = connection.execute(
+            "select * from team_agents where id = ?",
+            (agent_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Team agent not found: {agent_id}")
+        return _team_agent_from_row(row)
+
     def _get_task(self, task_id: str) -> TeamTask:
         row = self._db.fetchone("select * from team_tasks where id = ?", (task_id,))
+        if row is None:
+            raise KeyError(f"Team task not found: {task_id}")
+        return _team_task_from_row(row)
+
+    def _task_from_connection(
+        self,
+        connection: sqlite3.Connection,
+        task_id: str,
+    ) -> TeamTask:
+        row = connection.execute(
+            "select * from team_tasks where id = ?",
+            (task_id,),
+        ).fetchone()
         if row is None:
             raise KeyError(f"Team task not found: {task_id}")
         return _team_task_from_row(row)
@@ -2624,6 +2740,32 @@ class TeamRunService:
         if row is None:
             raise KeyError(f"Team message not found: {message_id}")
         return _team_message_from_row(row)
+
+    def _message_from_connection(
+        self,
+        connection: sqlite3.Connection,
+        message_id: str,
+    ) -> TeamMessage:
+        row = connection.execute(
+            "select * from team_messages where id = ?",
+            (message_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Team message not found: {message_id}")
+        return _team_message_from_row(row)
+
+    def _decision_request_from_connection(
+        self,
+        connection: sqlite3.Connection,
+        request_id: str,
+    ) -> TeamDecisionRequest:
+        row = connection.execute(
+            "select * from team_decision_requests where id = ?",
+            (request_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Decision request not found: {request_id}")
+        return _team_decision_request_from_row(row)
 
 
 def _persona_snapshot(persona: Persona) -> dict[str, object]:
@@ -2719,6 +2861,15 @@ def _team_run_cycle_from_row(row: object) -> TeamRunCycle:
             else None
         ),
     )
+
+
+def _execution_metadata_object(value: str | None) -> dict[str, object]:
+    if value is None:
+        return {}
+    metadata = json.loads(value)
+    if not isinstance(metadata, dict):
+        raise ValueError("Cycle execution metadata is invalid")
+    return metadata
 
 
 def _team_agent_from_row(row: object) -> TeamAgent:
