@@ -589,9 +589,10 @@ def _valid_task_spec(value: object) -> bool:
     )
 
 
-# team_model_operations is a leaf module that team_verification_checks depends on;
-# importing it here to reuse parse_required_verifications would create an import
-# cycle, so the check vocabulary is restated below for this validator only.
+# This validator only gates the shape stored in the operation ledger.
+# team_model_operations is a leaf module that must not import the domain modules
+# above it (e.g. teams), so the check vocabulary is restated below for this
+# validator only rather than reused from parse_required_verifications.
 def _valid_acceptance(value: object) -> bool:
     if not isinstance(value, dict) or set(value) != {
         "required_outputs",
