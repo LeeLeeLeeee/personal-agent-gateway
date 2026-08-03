@@ -2041,6 +2041,7 @@ async def test_second_contract_violation_is_returned_as_is(tmp_path):
     cycle = setup.teams.get_cycle(setup.cycle.id)
     assert cycle.status == "completed"
     assert "<library_draft>" not in (cycle.summary or "")
+    assert (cycle.summary or "").strip() == _PROSE_SUMMARY.strip()
 
 
 @pytest.mark.asyncio
@@ -2340,11 +2341,56 @@ async def test_synthesis_repair_restart_recovers_exact_open_operation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_ask_user_during_repair_does_not_poison_next_synthesis_key(tmp_path):
+async def test_recovered_base_synthesis_contract_violation_still_repairs(tmp_path):
     setup = make_operation_runtime_with_completed_worker(tmp_path)
     _set_library_draft_contract(setup)
     setup.lead_client.responses = [
         ModelResponse(_PROSE_SUMMARY, []),
+        ModelResponse(_LIBRARY_DRAFT_SUMMARY, []),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_synthesis",
+        0,
+        "prepared",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    base = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert base is not None
+    assert (base.stage, base.stage_ordinal, base.status) == (
+        "cycle_synthesis",
+        0,
+        "prepared",
+    )
+    assert setup.lead_client.calls == 0
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert completed.summary == "Draft ready."
+    assert setup.lead_client.calls == 2
+    operations = setup.operations.list_for_cycle(setup.cycle.id)
+    stages = [item.stage for item in operations]
+    assert stages.count("cycle_synthesis") == 1
+    assert stages.count("cycle_synthesis_repair") == 1
+    assert setup.operations.get(base.id).status == "failed"
+    repair = next(item for item in operations if item.stage == "cycle_synthesis_repair")
+    assert repair.status == "applied"
+    assert "<library_draft>" in repair.result_json["payload"]["contract_payload"]
+
+
+@pytest.mark.asyncio
+async def test_ask_user_during_repair_does_not_poison_next_synthesis_key(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    _set_library_draft_contract(setup)
+    setup.lead_client.responses = [
+        ModelResponse(_PROSE_SUMMARY, [], upstream_session_id="lead-session-1"),
         ModelResponse(
             json.dumps(
                 {
@@ -2396,6 +2442,15 @@ async def test_ask_user_during_repair_does_not_poison_next_synthesis_key(tmp_pat
         item for item in operations if item.stage == "cycle_synthesis"
     ]
     assert [item.stage_ordinal for item in synthesis_operations] == [0, 1]
+    failed_base = next(
+        item
+        for item in operations
+        if item.stage == "cycle_synthesis" and item.stage_ordinal == 0
+    )
+    repair_operation = next(
+        item for item in operations if item.stage == "cycle_synthesis_repair"
+    )
+    assert repair_operation.upstream_session_id == failed_base.upstream_session_id
 
 
 @pytest.mark.asyncio

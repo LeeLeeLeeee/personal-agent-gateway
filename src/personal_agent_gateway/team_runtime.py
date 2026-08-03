@@ -782,6 +782,35 @@ class TeamRuntime:
             parser,
         )
 
+    async def _synthesis_repair_operation(
+        self,
+        run: TeamRun,
+        cycle_id: str,
+        leader_agent: TeamAgent,
+        contract: OutputContract,
+        messages: list[dict[str, object]],
+        failed_operation_id: str,
+    ) -> TeamModelOperation:
+        failed = self._operations.get(failed_operation_id)
+        repair_messages = _synthesis_repair_messages(messages, contract)
+        repair_spec = _operation_spec(
+            run,
+            cycle_id,
+            leader_agent,
+            "cycle_synthesis_repair",
+            failed.stage_ordinal,
+            repair_messages,
+            upstream_session_id=failed.upstream_session_id,
+        )
+        return await self._invoke_operation(
+            repair_spec,
+            leader_agent,
+            repair_messages,
+            lambda response: self._validated_synthesis_result(
+                response, leader_agent, run, contract, strict=False
+            ),
+        )
+
     def _apply_cycle_synthesis_operation(
         self,
         operation: TeamModelOperation,
@@ -2842,14 +2871,22 @@ class TeamRuntime:
                     contract,
                 )
 
-            recovery = await self._recover_open_operation(
-                run,
-                leader_agent,
-                cycle_id,
-                synthesis_messages=messages,
-                synthesis_parser=synthesis_parser,
-                synthesis_contract=contract,
-            )
+            try:
+                recovery = await self._recover_open_operation(
+                    run,
+                    leader_agent,
+                    cycle_id,
+                    synthesis_messages=messages,
+                    synthesis_parser=synthesis_parser,
+                    synthesis_contract=contract,
+                )
+            except InvalidOperationResult as exc:
+                if contract is None:
+                    raise
+                operation = await self._synthesis_repair_operation(
+                    run, cycle_id, leader_agent, contract, messages, exc.operation_id
+                )
+                return self._apply_cycle_synthesis_operation(operation)
             if recovery is not None:
                 if not isinstance(
                     recovery.result,
@@ -2891,24 +2928,8 @@ class TeamRuntime:
             except InvalidOperationResult as exc:
                 if contract is None:
                     raise
-                failed = self._operations.get(exc.operation_id)
-                repair_messages = _synthesis_repair_messages(messages, contract)
-                repair_spec = _operation_spec(
-                    run,
-                    cycle_id,
-                    leader_agent,
-                    "cycle_synthesis_repair",
-                    synthesis_ordinal,
-                    repair_messages,
-                    upstream_session_id=failed.upstream_session_id,
-                )
-                operation = await self._invoke_operation(
-                    repair_spec,
-                    leader_agent,
-                    repair_messages,
-                    lambda response: self._validated_synthesis_result(
-                        response, leader_agent, run, contract, strict=False
-                    ),
+                operation = await self._synthesis_repair_operation(
+                    run, cycle_id, leader_agent, contract, messages, exc.operation_id
                 )
             return self._apply_cycle_synthesis_operation(operation)
 
@@ -3173,19 +3194,14 @@ def _synthesis_repair_messages(
     messages: list[dict[str, object]],
     contract: OutputContract,
 ) -> list[dict[str, object]]:
-    return [
-        *messages,
-        {
-            "role": "user",
-            "content": (
-                "Your previous response did not satisfy the output contract. "
-                "Send the same result again: first a short plain-text summary, "
-                "then the contract output in exactly the required form, with "
-                "nothing after it.\n\nOUTPUT CONTRACT\n"
-                f"{contract.instructions}"
-            ),
-        },
-    ]
+    correction = (
+        "Your previous response did not satisfy the output contract. "
+        "Send the same result again: first a short plain-text summary, "
+        "then the contract output in exactly the required form, with "
+        "nothing after it.\n\nOUTPUT CONTRACT\n"
+        f"{contract.instructions}"
+    )
+    return [{"role": "user", "content": f"{messages[0]['content']}\n\n{correction}"}]
 
 
 def _worker_repair_messages(
