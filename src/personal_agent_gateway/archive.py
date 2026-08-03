@@ -33,6 +33,7 @@ _REQUEST_PATTERN = re.compile(
 )
 _LIBRARY_DRAFT_OPEN = "<library_draft>"
 _LIBRARY_DRAFT_CLOSE = "</library_draft>"
+_DRAFT_ERROR_MESSAGE_LIMIT = 500
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,10 @@ class KnowledgeRequest:
     assigned_team_run_id: str | None
     status: str
     fulfilled_by_entry_id: str | None
+    last_draft_error_code: str | None
+    last_draft_error_message: str | None
+    last_draft_failed_at: str | None
+    last_draft_cycle_id: str | None
     created_at: str
     updated_at: str
 
@@ -634,6 +639,56 @@ class ArchiveService:
         )
         return self.get_request(request_id)
 
+    def record_draft_failure(
+        self,
+        request_id: str,
+        *,
+        error_code: str,
+        message: str,
+        cycle_id: str | None,
+    ) -> KnowledgeRequest:
+        request = self.get_request(request_id)
+        if request.status == "fulfilled":
+            raise ValueError("A fulfilled request cannot record a draft failure")
+        now = _now()
+        self._db.execute(
+            """
+            update knowledge_requests
+            set status = 'open',
+                last_draft_error_code = ?,
+                last_draft_error_message = ?,
+                last_draft_failed_at = ?,
+                last_draft_cycle_id = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (
+                error_code,
+                message.strip()[:_DRAFT_ERROR_MESSAGE_LIMIT],
+                now,
+                cycle_id,
+                now,
+                request_id,
+            ),
+        )
+        return self.get_request(request_id)
+
+    def clear_draft_failure(self, request_id: str) -> KnowledgeRequest:
+        self.get_request(request_id)
+        self._db.execute(
+            """
+            update knowledge_requests
+            set last_draft_error_code = null,
+                last_draft_error_message = null,
+                last_draft_failed_at = null,
+                last_draft_cycle_id = null,
+                updated_at = ?
+            where id = ?
+            """,
+            (_now(), request_id),
+        )
+        return self.get_request(request_id)
+
     def assign_request_team(
         self,
         request_id: str,
@@ -654,7 +709,13 @@ class ArchiveService:
         self._db.execute(
             """
             update knowledge_requests
-            set assigned_team_run_id = ?, status = 'in_progress', updated_at = ?
+            set assigned_team_run_id = ?,
+                status = 'in_progress',
+                last_draft_error_code = null,
+                last_draft_error_message = null,
+                last_draft_failed_at = null,
+                last_draft_cycle_id = null,
+                updated_at = ?
             where id = ?
             """,
             (team_run_id, _now(), request_id),
@@ -1183,6 +1244,10 @@ def _request_from_row(row: sqlite3.Row) -> KnowledgeRequest:
         assigned_team_run_id=row["assigned_team_run_id"],
         status=row["status"],
         fulfilled_by_entry_id=row["fulfilled_by_entry_id"],
+        last_draft_error_code=row["last_draft_error_code"],
+        last_draft_error_message=row["last_draft_error_message"],
+        last_draft_failed_at=row["last_draft_failed_at"],
+        last_draft_cycle_id=row["last_draft_cycle_id"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
