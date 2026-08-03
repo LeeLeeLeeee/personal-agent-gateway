@@ -12,10 +12,12 @@ from personal_agent_gateway.team_outcomes import (
     TaskOutcome,
     VerificationEvidence,
 )
-from personal_agent_gateway.teams import TaskAcceptance, TeamTask
+from personal_agent_gateway.team_verification_checks import VerificationCheck
+from personal_agent_gateway.teams import RequiredVerification, TaskAcceptance, TeamTask
 
 _DEFAULT_DELIVERABLES = (Deliverable("outputs/report.md", "markdown"),)
 _DEFAULT_VERIFICATIONS = (VerificationEvidence("pytest", "passed", "42 passed"),)
+_DEFAULT_REQUIRED_VERIFICATIONS = (RequiredVerification("pytest"),)
 
 
 @pytest.mark.parametrize(
@@ -43,7 +45,11 @@ def test_infrastructure_acceptance_failures_are_not_recoverable(
     assert not is_recoverable_acceptance_failure(reason_code)
 
 
-def _task(*, outputs=("outputs/report.md",), verifications=("pytest",)) -> TeamTask:
+def _task(
+    *,
+    outputs=("outputs/report.md",),
+    verifications=_DEFAULT_REQUIRED_VERIFICATIONS,
+) -> TeamTask:
     return TeamTask(
         id="task-1",
         team_run_id="run-1",
@@ -189,3 +195,109 @@ def test_modified_staged_inputs_block_acceptance(tmp_path: Path) -> None:
     assert result.accepted is False
     assert result.status == "blocked"
     assert result.reason_code == "input_snapshot_modified"
+
+
+def _marker_check() -> VerificationCheck:
+    return VerificationCheck("file_contains", "outputs/report.md", value="<library_draft>")
+
+
+def _workspace_with_report(tmp_path: Path, content: str) -> Path:
+    workspace = tmp_path / "workspace"
+    output = workspace / "outputs" / "report.md"
+    output.parent.mkdir(parents=True)
+    output.write_text(content, encoding="utf-8")
+    return workspace
+
+
+def test_a_server_check_decides_regardless_of_the_worker_claim(tmp_path: Path) -> None:
+    workspace = _workspace_with_report(tmp_path, "# Report\nNo marker here.\n")
+    task = _task(verifications=(RequiredVerification("marker", _marker_check()),))
+    outcome = _outcome(
+        verifications=(
+            VerificationEvidence("marker", "passed", "파일 본문 기준 단일 마커 확인"),
+        )
+    )
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert result.accepted is False
+    assert result.reason_code == "required_verification_failed"
+
+
+def test_a_server_check_failure_records_the_failing_verification_and_evidence(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace_with_report(tmp_path, "# Report\nNo marker here.\n")
+    task = _task(verifications=(RequiredVerification("marker", _marker_check()),))
+    outcome = _outcome(
+        verifications=(
+            VerificationEvidence("marker", "passed", "worker claims it passed"),
+        )
+    )
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert result.accepted is False
+    assert result.reason_code == "required_verification_failed"
+    assert result.evidence["verifications"]["marker"]["mode"] == "verified"
+    assert result.evidence["verifications"]["marker"]["status"] == "failed"
+    assert "lacks the value" in result.evidence["verifications"]["marker"]["evidence"]
+
+
+def test_a_server_check_accepts_regardless_of_the_worker_claim(tmp_path: Path) -> None:
+    workspace = _workspace_with_report(
+        tmp_path, "prose\n<library_draft>{}</library_draft>"
+    )
+    task = _task(verifications=(RequiredVerification("marker", _marker_check()),))
+    outcome = _outcome(
+        verifications=(
+            VerificationEvidence("marker", "failed", "worker claims it failed"),
+        )
+    )
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert result.accepted is True
+    assert result.evidence["verifications"]["marker"]["mode"] == "verified"
+    assert result.evidence["verifications"]["marker"]["status"] == "passed"
+
+
+def test_a_passing_server_check_is_recorded_as_verified(tmp_path: Path) -> None:
+    workspace = _workspace_with_report(
+        tmp_path, "prose\n<library_draft>{}</library_draft>"
+    )
+    task = _task(verifications=(RequiredVerification("marker", _marker_check()),))
+
+    result = TeamAcceptanceService().evaluate(
+        task, _outcome(verifications=()), workspace
+    )
+
+    assert result.accepted is True
+    assert result.evidence["verifications"]["marker"]["mode"] == "verified"
+    assert result.evidence["attested_only"] is False
+
+
+def test_an_attested_verification_keeps_the_self_reported_rule(tmp_path: Path) -> None:
+    workspace = _workspace_with_report(tmp_path, "report")
+    task = _task(verifications=(RequiredVerification("reviewed"),))
+    outcome = _outcome(
+        verifications=(VerificationEvidence("reviewed", "passed", "read it"),)
+    )
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert result.accepted is True
+    assert result.evidence["verifications"]["reviewed"]["mode"] == "attested"
+    assert result.evidence["attested_only"] is True
+
+
+def test_an_attested_verification_the_worker_omitted_still_fails(tmp_path: Path) -> None:
+    workspace = _workspace_with_report(tmp_path, "report")
+    task = _task(verifications=(RequiredVerification("reviewed"),))
+
+    result = TeamAcceptanceService().evaluate(
+        task, _outcome(verifications=()), workspace
+    )
+
+    assert result.accepted is False
+    assert result.reason_code == "required_verification_failed"

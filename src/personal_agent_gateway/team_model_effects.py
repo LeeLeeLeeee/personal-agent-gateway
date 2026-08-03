@@ -13,6 +13,7 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.team_acceptance import (
     AcceptanceResult,
     is_recoverable_acceptance_failure,
+    rejected_verification_names,
 )
 from personal_agent_gateway.team_model_operations import (
     OperationConflict,
@@ -22,6 +23,11 @@ from personal_agent_gateway.team_model_operations import (
     TeamModelOperationService,
 )
 from personal_agent_gateway.team_outcomes import TaskOutcomeError, parse_task_outcome
+from personal_agent_gateway.team_verification_checks import (
+    CHECK_TYPES,
+    VerificationCheck,
+    verification_check_payload,
+)
 from personal_agent_gateway.teams import (
     ACCEPTANCE_RECOVERY_CAP,
     TaskAcceptance,
@@ -31,7 +37,9 @@ from personal_agent_gateway.teams import (
     TeamRunService,
     TeamTask,
     _acceptance_review_metadata,
+    _task_acceptance_json,
     _validate_task_acceptance,
+    parse_required_verifications,
 )
 
 if TYPE_CHECKING:
@@ -539,7 +547,7 @@ class TeamModelEffectService:
             verification_status = {
                 item.name: item.status for item in outcome.verifications
             }
-            acceptance_before = asdict(task.acceptance)
+            acceptance_before = json.loads(_task_acceptance_json(task.acceptance))
             acceptance_after = normalized["acceptance"]
             consumes_attempt = normalized["kind"] in {
                 "retry_worker",
@@ -590,11 +598,14 @@ class TeamModelEffectService:
                 rejected_deliverables=[
                     item.path for item in outcome.deliverables
                 ],
-                rejected_verifications=[
-                    name
-                    for name in task.acceptance.required_verifications
-                    if verification_status.get(name) != "passed"
-                ],
+                rejected_verifications=rejected_verification_names(
+                    (
+                        (required.name, required.check is not None)
+                        for required in task.acceptance.required_verifications
+                    ),
+                    verification_status,
+                    acceptance.evidence,
+                ),
             )
             connection.execute(
                 """
@@ -2050,7 +2061,7 @@ class TeamModelEffectService:
             raise OperationConflict("Task plan acceptance is invalid")
         acceptance = TaskAcceptance(
             required_outputs=tuple(acceptance_payload["required_outputs"]),
-            required_verifications=tuple(
+            required_verifications=parse_required_verifications(
                 acceptance_payload["required_verifications"]
             ),
         )
@@ -2074,16 +2085,7 @@ class TeamModelEffectService:
                 spec["description"],
                 owner_agent_id,
                 int(spec["required"]),
-                json.dumps(
-                    {
-                        "required_outputs": list(acceptance.required_outputs),
-                        "required_verifications": list(
-                            acceptance.required_verifications
-                        ),
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
+                _task_acceptance_json(acceptance),
                 now,
                 now,
             ),
@@ -2225,7 +2227,7 @@ def _acceptance_resolution_payload(
             else None
         ),
         "acceptance": (
-            _json_object(asdict(acceptance))
+            json.loads(_task_acceptance_json(acceptance))
             if isinstance(acceptance, TaskAcceptance)
             else None
         ),
@@ -2530,6 +2532,63 @@ def _worker_terminal_fields_match(
     )
 
 
+def _canonical_check_payload(value: object) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    check_type = value.get("type")
+    path = value.get("path")
+    if check_type not in CHECK_TYPES or not isinstance(path, str):
+        return None
+    check_value = value.get("value", "")
+    pattern = value.get("pattern", "")
+    return verification_check_payload(
+        VerificationCheck(
+            type=check_type,
+            path=path.strip(),
+            value=check_value if isinstance(check_value, str) else "",
+            pattern=pattern if isinstance(pattern, str) else "",
+        )
+    )
+
+
+def _canonical_verification_item(item: object) -> object | None:
+    if isinstance(item, str):
+        name = item.strip()
+        return name or None
+    if not isinstance(item, dict) or set(item) - {"name", "check"}:
+        return None
+    name = item.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    name = name.strip()
+    check = item.get("check")
+    if check is None:
+        return name
+    payload = _canonical_check_payload(check)
+    return None if payload is None else {"name": name, "check": payload}
+
+
+def _canonical_acceptance(value: object) -> dict[str, object] | None:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"required_outputs", "required_verifications"}
+        or not isinstance(value["required_outputs"], list)
+        or not all(isinstance(item, str) for item in value["required_outputs"])
+        or not isinstance(value["required_verifications"], list)
+    ):
+        return None
+    verifications: list[object] = []
+    for item in value["required_verifications"]:
+        canonical_item = _canonical_verification_item(item)
+        if canonical_item is None:
+            return None
+        verifications.append(canonical_item)
+    return {
+        "required_outputs": value["required_outputs"],
+        "required_verifications": verifications,
+    }
+
+
 def _task_matches_plan_spec(
     task: TeamTask,
     spec: dict[str, object],
@@ -2541,10 +2600,8 @@ def _task_matches_plan_spec(
         and task.description == spec.get("description")
         and task.owner_agent_id == spec.get("owner_agent_id")
         and task.required is spec.get("required")
-        and list(task.acceptance.required_outputs)
-        == acceptance.get("required_outputs")
-        and list(task.acceptance.required_verifications)
-        == acceptance.get("required_verifications")
+        and _canonical_acceptance(acceptance)
+        == json.loads(_task_acceptance_json(task.acceptance))
     )
 
 
@@ -2655,6 +2712,20 @@ def lead_decision_item_digest(
     )
 
 
+def _acceptance_before_verification_name(item: object) -> str | None:
+    if isinstance(item, str):
+        return item
+    if (
+        isinstance(item, dict)
+        and set(item) == {"name", "check"}
+        and isinstance(item.get("name"), str)
+        and item["name"].strip()
+        and (item.get("check") is None or isinstance(item.get("check"), dict))
+    ):
+        return item["name"]
+    return None
+
+
 def _acceptance_audit_matches(
     message: TeamMessage,
     operation: TeamModelOperation,
@@ -2667,16 +2738,16 @@ def _acceptance_audit_matches(
         or set(acceptance_before)
         != {"required_outputs", "required_verifications"}
         or not isinstance(acceptance_before["required_outputs"], list)
+        or not all(
+            isinstance(item, str) for item in acceptance_before["required_outputs"]
+        )
         or not isinstance(
             acceptance_before["required_verifications"],
             list,
         )
-        or not all(
-            isinstance(item, str)
-            for item in (
-                *acceptance_before["required_outputs"],
-                *acceptance_before["required_verifications"],
-            )
+        or any(
+            _acceptance_before_verification_name(item) is None
+            for item in acceptance_before["required_verifications"]
         )
     ):
         return False
@@ -2692,6 +2763,13 @@ def _acceptance_audit_matches(
     verification_status = {
         item.name: item.status for item in outcome.verifications
     }
+    verification_pairs = [
+        (
+            _acceptance_before_verification_name(item),
+            isinstance(item, dict) and item.get("check") is not None,
+        )
+        for item in acceptance_before["required_verifications"]
+    ]
     expected_metadata = _acceptance_review_metadata(
         operation_id=operation.id,
         task_id=task.id,
@@ -2711,20 +2789,15 @@ def _acceptance_audit_matches(
             else None
         ),
         rejected_deliverables=[item.path for item in outcome.deliverables],
-        rejected_verifications=[
-            name
-            for name in acceptance_before["required_verifications"]
-            if verification_status.get(name) != "passed"
-        ],
-    )
-    current_acceptance = {
-        "required_outputs": list(task.acceptance.required_outputs),
-        "required_verifications": list(
-            task.acceptance.required_verifications
+        rejected_verifications=rejected_verification_names(
+            verification_pairs,
+            verification_status,
+            acceptance.evidence,
         ),
-    }
+    )
+    current_acceptance = json.loads(_task_acceptance_json(task.acceptance))
     expected_current = (
-        resolution["acceptance"]
+        _canonical_acceptance(resolution["acceptance"])
         if resolution["kind"] == "revise_acceptance"
         else acceptance_before
     )
@@ -2922,7 +2995,7 @@ def _valid_acceptance_resolution(payload: dict[str, object]) -> bool:
             _validate_task_acceptance(
                 TaskAcceptance(
                     required_outputs=tuple(acceptance["required_outputs"]),
-                    required_verifications=tuple(
+                    required_verifications=parse_required_verifications(
                         acceptance["required_verifications"]
                     ),
                 )

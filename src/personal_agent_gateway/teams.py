@@ -17,6 +17,11 @@ from personal_agent_gateway.space_policies import (
     policy_from_snapshot,
     policy_json,
 )
+from personal_agent_gateway.team_verification_checks import (
+    VerificationCheck,
+    parse_verification_check,
+    verification_check_payload,
+)
 
 if TYPE_CHECKING:
     from personal_agent_gateway.team_cycles import ExecutionPolicy, TeamCycleService
@@ -153,9 +158,15 @@ class TeamAgent:
 
 
 @dataclass(frozen=True)
+class RequiredVerification:
+    name: str
+    check: VerificationCheck | None = None
+
+
+@dataclass(frozen=True)
 class TaskAcceptance:
     required_outputs: tuple[str, ...]
-    required_verifications: tuple[str, ...]
+    required_verifications: tuple[RequiredVerification, ...]
 
 
 @dataclass(frozen=True)
@@ -3130,8 +3141,8 @@ def _team_task_from_row(row: object) -> TeamTask:
         required=bool(row["required"]) if "required" in row.keys() else True,
         acceptance=TaskAcceptance(
             required_outputs=tuple(acceptance.get("required_outputs", ())),
-            required_verifications=tuple(
-                acceptance.get("required_verifications", ())
+            required_verifications=parse_required_verifications(
+                acceptance.get("required_verifications", [])
             ),
         ),
         outcome=(
@@ -3167,11 +3178,35 @@ def _task_acceptance_json(acceptance: TaskAcceptance) -> str:
     return json.dumps(
         {
             "required_outputs": list(acceptance.required_outputs),
-            "required_verifications": list(acceptance.required_verifications),
+            "required_verifications": [
+                item.name
+                if item.check is None
+                else {"name": item.name, "check": verification_check_payload(item.check)}
+                for item in acceptance.required_verifications
+            ],
         },
         ensure_ascii=False,
         sort_keys=True,
     )
+
+
+def required_verifications_payload(
+    required_verifications: tuple[RequiredVerification, ...],
+) -> list[dict[str, object]]:
+    """Explicit form for API/run-result consumers: always {"name", "check"}.
+
+    This is distinct from `_task_acceptance_json`'s canonical form, which
+    collapses a check-less verification to a bare string for DB/ledger digest
+    stability. Consumers here (API responses, run-result packages) need a
+    stable, uniform shape instead.
+    """
+    return [
+        {
+            "name": item.name,
+            "check": None if item.check is None else verification_check_payload(item.check),
+        }
+        for item in required_verifications
+    ]
 
 
 def _acceptance_review_metadata(
@@ -3209,6 +3244,36 @@ def _operation_workspace_baseline_id(operation_id: str) -> str:
     return f"operation-workspace-baseline:{operation_id}"
 
 
+def parse_required_verifications(value: object) -> tuple[RequiredVerification, ...]:
+    if not isinstance(value, list):
+        raise ValueError(  # noqa: TRY004
+            "Required verifications must be a list"
+        )
+    parsed: list[RequiredVerification] = []
+    names: set[str] = set()
+    for raw in value:
+        if isinstance(raw, str):
+            name, check = raw, None
+        elif isinstance(raw, dict):
+            if set(raw) - {"name", "check"}:
+                raise ValueError("Required verification fields must be name and check")
+            name = raw.get("name")
+            raw_check = raw.get("check")
+            check = None if raw_check is None else parse_verification_check(raw_check)
+        else:
+            raise ValueError(  # noqa: TRY004
+                "Required verification must be a string or an object"
+            )
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Required verification requires a name")
+        normalized = name.strip()
+        if normalized in names:
+            raise ValueError("Acceptance has duplicate required verifications")
+        names.add(normalized)
+        parsed.append(RequiredVerification(normalized, check))
+    return tuple(parsed)
+
+
 def _validate_task_acceptance(acceptance: TaskAcceptance) -> None:
     outputs = acceptance.required_outputs
     verifications = acceptance.required_verifications
@@ -3216,9 +3281,10 @@ def _validate_task_acceptance(acceptance: TaskAcceptance) -> None:
         raise ValueError("Acceptance requires an output or verification")
     if len(set(outputs)) != len(outputs):
         raise ValueError("Acceptance has duplicate required outputs")
-    if len(set(verifications)) != len(verifications):
+    names = [item.name for item in verifications]
+    if len(set(names)) != len(names):
         raise ValueError("Acceptance has duplicate required verifications")
-    if any(not item.strip() for item in (*outputs, *verifications)):
+    if any(not item.strip() for item in (*outputs, *names)):
         raise ValueError("Acceptance items must not be blank")
     if any(not _safe_relative_task_output(path) for path in outputs):
         raise ValueError("Acceptance output path must be relative and bounded")

@@ -52,7 +52,13 @@ from personal_agent_gateway.team_runtime import (
     _task_delta,
     _terminal_status,
 )
-from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
+from personal_agent_gateway.team_verification_checks import VerificationCheck
+from personal_agent_gateway.teams import (
+    RequiredVerification,
+    TaskAcceptance,
+    TeamRunService,
+    parse_required_verifications,
+)
 
 
 @dataclass
@@ -463,7 +469,7 @@ def add_completed_operation_task(setup):
         "Previously completed work.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     task, worker = setup.teams.start_task(task.id, setup.worker.id)
     task, worker = setup.teams.finish_task(
@@ -709,7 +715,7 @@ def make_operation_runtime_with_completed_worker(
         "Research the request.",
         owner_agent_id=worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     task, worker = setup.teams.start_task(task.id, worker.id)
     reserved = setup.operations.reserve(
@@ -760,7 +766,7 @@ def make_recoverable_acceptance_runtime(
         "Research the request.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     setup.worker_client.responses = [
         ModelResponse(
@@ -1088,7 +1094,7 @@ async def test_mediation_user_answer_resumes_distinct_worker_operation(
         "Research the request.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     setup.worker_client.responses = [
         ModelResponse(
@@ -1182,7 +1188,7 @@ async def test_mediation_answer_recovers_after_crash_between_start_and_reserve(
         "Research the request.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     setup.worker_client.responses = [
         ModelResponse(
@@ -1298,7 +1304,7 @@ async def test_mediation_budget_forces_worker_final_without_second_lead(
         "Research the request.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     query = (
         '```json\n{"needs_info":{"topic":"scope",'
@@ -1354,7 +1360,7 @@ async def test_mediation_decisions_reserve_budget_before_batch_answer(
         "Research the first request.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     second = setup.teams.create_task(
         setup.run.id,
@@ -1362,7 +1368,7 @@ async def test_mediation_decisions_reserve_budget_before_batch_answer(
         "Research the second request.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     query = (
         '```json\n{"needs_info":{"topic":"scope",'
@@ -1434,7 +1440,7 @@ async def test_batched_mediation_decisions_keep_both_operation_receipts_valid(
             f"Research {title.lower()}.",
             owner_agent_id=setup.worker.id,
             cycle_id=setup.cycle.id,
-            acceptance=TaskAcceptance((), ("worker-result",)),
+            acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
         )
         for title in ("First", "Second")
     ]
@@ -1502,7 +1508,7 @@ async def test_completed_mediation_worker_recovery_increments_reinvocation_once(
         "Research the request.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     setup.worker_client.responses = [
         ModelResponse(
@@ -2462,7 +2468,7 @@ async def test_invalid_worker_output_uses_one_separate_repair_operation(tmp_path
         "Research the request.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     setup.worker_client.responses = [
         ModelResponse("not-json", [], upstream_session_id="worker-session-1"),
@@ -2507,7 +2513,7 @@ async def test_worker_repair_restart_recovers_exact_open_operation(
         "Research the request.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     setup.worker_client.responses = [
         ModelResponse("not-json", [], upstream_session_id="worker-session-1"),
@@ -2561,7 +2567,7 @@ async def test_worker_query_operation_applies_before_current_lead_mediation(
         "Research the request.",
         owner_agent_id=setup.worker.id,
         cycle_id=setup.cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     setup.worker_client.responses = [
         ModelResponse(
@@ -2789,7 +2795,7 @@ async def test_fenced_worker_outcome_reaches_normal_acceptance_path(
         run.id,
         "Inspect",
         "Inspect dashboard",
-        acceptance=TaskAcceptance((), ("pytest",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("pytest"),)),
     )
     payload = json.dumps(
         {
@@ -3570,7 +3576,7 @@ async def test_acceptance_recovery_resume_preserves_rejection_before_review_audi
         run.id,
         "T",
         "D",
-        acceptance=TaskAcceptance((), ("source-check",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("source-check"),)),
     )
     teams.set_run_status(run.id, "running")
     teams.set_agent_status(leader_agent.id, "running")
@@ -3894,14 +3900,14 @@ def test_terminal_status_respects_required_tasks(
         "required",
         "D",
         required=True,
-        acceptance=TaskAcceptance((), ("review",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("review"),)),
     )
     optional = teams.create_task(
         run.id,
         "optional",
         "D",
         required=False,
-        acceptance=TaskAcceptance((), ("review",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("review"),)),
     )
     teams.set_task_status(required.id, required_status)
     teams.set_task_status(optional.id, optional_status)
@@ -3935,10 +3941,63 @@ def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
             "required": True,
             "acceptance": TaskAcceptance(
                 required_outputs=("outputs/d3-guide.md",),
-                required_verifications=("markdown-link-check",),
+                required_verifications=(RequiredVerification("markdown-link-check"),),
             ),
         }
     ]
+
+
+def test_acceptance_review_messages_use_canonical_acceptance_json(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    cycles = TeamCycleService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace", cycle_service=cycles)
+    leader_persona = personas.create_persona("Lead", "Planning", "Plans", [], [])
+    worker_persona = personas.create_persona("Worker", "Execution", "Executes", [], [])
+    run = teams.create_team_run(
+        "Goal", leader_persona.id, [worker_persona.id], "plan_and_execute", 1
+    )
+    agents = teams.list_agents(run.id)
+    leader_agent = next(agent for agent in agents if agent.role == "leader")
+    worker_agent = next(agent for agent in agents if agent.role == "member")
+    task = teams.create_task(
+        run.id,
+        "Title",
+        "Desc",
+        worker_agent.id,
+        acceptance=TaskAcceptance(
+            required_outputs=("outputs/schema.json",),
+            required_verifications=(
+                RequiredVerification(
+                    "schema-check",
+                    VerificationCheck(
+                        type="file_nonempty", path="outputs/schema.json"
+                    ),
+                ),
+            ),
+        ),
+    )
+    runtime = TeamRuntime(teams, lambda _agent: FakeModel("[]"))
+    outcome = TaskOutcome("completed", "done", None, (), ())
+    acceptance_result = AcceptanceResult(True, "completed", None, {})
+
+    messages = runtime._acceptance_review_messages(
+        run,
+        leader_agent,
+        worker_agent,
+        task,
+        outcome=outcome,
+        acceptance=acceptance_result,
+        changes={},
+    )
+
+    marker = "Authoritative review context:\n"
+    payload = json.loads(messages[0]["content"].split(marker, 1)[1])
+    required = parse_required_verifications(
+        payload["acceptance"]["required_verifications"]
+    )
+    assert required == task.acceptance.required_verifications
 
 
 def test_acceptance_review_resolution_parses_worker_retry() -> None:
@@ -3984,7 +4043,7 @@ def test_acceptance_review_resolution_parses_revised_acceptance() -> None:
     assert resolution.instruction == "Resubmit the document under the revised contract."
     assert resolution.acceptance == TaskAcceptance(
         required_outputs=("docs/knowledge/d3-review.md",),
-        required_verifications=("source-check",),
+        required_verifications=(RequiredVerification("source-check"),),
     )
     assert resolution.decision is None
     assert resolution.reason_code is None
@@ -4276,7 +4335,7 @@ def test_task_plan_accepts_one_outer_json_fence() -> None:
     assert tasks[0]["title"] == "Create D3 guide"
     assert tasks[0]["acceptance"] == TaskAcceptance(
         required_outputs=("outputs/d3-guide.md",),
-        required_verifications=("markdown-link-check",),
+        required_verifications=(RequiredVerification("markdown-link-check"),),
     )
 
 
@@ -4448,6 +4507,57 @@ async def test_planning_only_creates_tasks_and_completes_run(tmp_path):
     assert "Planning completed" in teams.list_messages(run.id)[-1].content
     leader_agent = teams.list_agents(run.id)[0]
     assert leader_agent.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_planned_task_keeps_a_checked_verification(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, workspace)
+    leader = personas.create_persona("Tech Lead", "Planning", "Plans work.", ["Plan"], [])
+    run = teams.create_team_run("Build teams", leader.id, [], "planning_only", 1)
+    runtime = TeamRuntime(
+        teams=teams,
+        model_factory=lambda _agent: FakeModel(
+            json.dumps(
+                [
+                    {
+                        "title": "Define schema",
+                        "description": "Add team tables",
+                        "owner_agent_id": None,
+                        "required": True,
+                        "acceptance": {
+                            "required_outputs": ["draft.md"],
+                            "required_verifications": [
+                                {
+                                    "name": "marker",
+                                    "check": {
+                                        "type": "file_contains",
+                                        "path": "draft.md",
+                                        "value": "<library_draft>",
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ]
+            )
+        ),
+    )
+
+    completed = await runtime.start(run.id)
+
+    assert completed.status == "completed"
+    stored_task = teams.list_tasks(run.id)[0]
+    assert stored_task.acceptance.required_verifications == (
+        RequiredVerification(
+            "marker",
+            VerificationCheck("file_contains", "draft.md", value="<library_draft>"),
+        ),
+    )
 
 
 @pytest.mark.asyncio

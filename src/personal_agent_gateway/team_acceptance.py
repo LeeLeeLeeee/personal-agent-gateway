@@ -1,14 +1,18 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from personal_agent_gateway.file_safety import is_sensitive_file
 from personal_agent_gateway.source_staging import (
     InputSnapshotModified,
     SourceStager,
     StagedInputs,
 )
 from personal_agent_gateway.team_outcomes import TaskOutcome
+from personal_agent_gateway.team_verification_checks import (
+    run_verification_check,
+    safe_workspace_file,
+)
 from personal_agent_gateway.teams import TeamTask
 
 
@@ -66,10 +70,36 @@ class TeamAcceptanceService:
         verification_by_name = {
             verification.name: verification for verification in outcome.verifications
         }
+        recorded: dict[str, dict[str, str]] = {}
+        verified_count = 0
         for required in task.acceptance.required_verifications:
-            verification = verification_by_name.get(required)
-            if verification is None or verification.status != "passed":
-                return _rejected("failed", "required_verification_failed")
+            reported = verification_by_name.get(required.name)
+            if required.check is not None:
+                outcome_result = run_verification_check(required.check, workspace)
+                recorded[required.name] = {
+                    "mode": "verified",
+                    "status": "passed" if outcome_result.passed else "failed",
+                    "evidence": outcome_result.evidence,
+                }
+                if not outcome_result.passed:
+                    return _rejected(
+                        "failed",
+                        "required_verification_failed",
+                        evidence={"verifications": recorded},
+                    )
+                verified_count += 1
+                continue
+            if reported is None or reported.status != "passed":
+                return _rejected(
+                    "failed",
+                    "required_verification_failed",
+                    evidence={"verifications": recorded},
+                )
+            recorded[required.name] = {
+                "mode": "attested",
+                "status": reported.status,
+                "evidence": reported.evidence,
+            }
 
         if staged_inputs is not None:
             try:
@@ -83,13 +113,8 @@ class TeamAcceptanceService:
             reason_code=None,
             evidence={
                 "deliverables": sorted(declared),
-                "verifications": {
-                    item.name: {
-                        "status": item.status,
-                        "evidence": item.evidence,
-                    }
-                    for item in outcome.verifications
-                },
+                "verifications": recorded,
+                "attested_only": verified_count == 0,
             },
         )
 
@@ -97,31 +122,47 @@ class TeamAcceptanceService:
 def _rejected(
     status: Literal["completed", "blocked", "failed"],
     reason_code: str,
+    *,
+    evidence: dict[str, object] | None = None,
 ) -> AcceptanceResult:
     return AcceptanceResult(
         accepted=False,
         status=status,
         reason_code=reason_code,
-        evidence={},
+        evidence=evidence or {},
     )
+
+
+def rejected_verification_names(
+    required_verifications: Iterable[tuple[str, bool]],
+    verification_status: dict[str, str],
+    acceptance_evidence: dict[str, object],
+) -> list[str]:
+    """Names of required verifications not confirmed passed.
+
+    For a checked verification, the server's own verdict (carried in
+    ``acceptance_evidence["verifications"]``, populated by `evaluate`) decides
+    it — never the worker's self-report. For an attested (check-less)
+    verification, the worker's self-reported status is the only signal
+    available, so it is used as before.
+    """
+    verified = acceptance_evidence.get("verifications")
+    verified_status = (
+        {name: entry.get("status") for name, entry in verified.items()}
+        if isinstance(verified, dict)
+        else {}
+    )
+    return [
+        name
+        for name, has_check in required_verifications
+        if (
+            verified_status.get(name)
+            if has_check
+            else verification_status.get(name)
+        )
+        != "passed"
+    ]
 
 
 def _safe_file(workspace: Path, relative_path: str) -> bool:
-    candidate = workspace / relative_path
-    current = candidate
-    while current != workspace:
-        if current.is_symlink():
-            return False
-        current = current.parent
-        if workspace not in current.parents and current != workspace:
-            break
-    try:
-        resolved = candidate.resolve()
-        resolved.relative_to(workspace)
-    except (OSError, ValueError):
-        return False
-    return (
-        candidate.is_file()
-        and not candidate.is_symlink()
-        and not is_sensitive_file(candidate.name)
-    )
+    return safe_workspace_file(workspace, relative_path) is not None

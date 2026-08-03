@@ -32,7 +32,7 @@ from personal_agent_gateway.team_model_operations import (
 )
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.team_runtime import TeamRuntime
-from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
+from personal_agent_gateway.teams import RequiredVerification, TaskAcceptance, TeamRunService
 
 _LIBRARY_DRAFT_RESPONSE = (
     "Draft ready.\n\n"
@@ -900,7 +900,7 @@ async def test_real_synthesis_settles_knowledge_request_from_the_ledger(
         "Research the request.",
         owner_agent_id=worker_agent.id,
         cycle_id=cycle.id,
-        acceptance=TaskAcceptance((), ("worker-result",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
     )
     task, worker_agent = teams.start_task(task.id, worker_agent.id)
 

@@ -15,6 +15,7 @@ from personal_agent_gateway.team_acceptance import (
     AcceptanceResult,
     TeamAcceptanceService,
     is_recoverable_acceptance_failure,
+    rejected_verification_names,
 )
 from personal_agent_gateway.team_artifact_publisher import (
     ArtifactPublicationError,
@@ -67,7 +68,9 @@ from personal_agent_gateway.teams import (
     TeamRun,
     TeamRunService,
     TeamTask,
+    _task_acceptance_json,
     _validate_task_acceptance,
+    parse_required_verifications,
 )
 
 PLANNING_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
@@ -2004,7 +2007,7 @@ class TeamRuntime:
                         "id": worker.id,
                         "persona_snapshot": worker.persona_snapshot,
                     },
-                    "acceptance": asdict(task.acceptance),
+                    "acceptance": json.loads(_task_acceptance_json(task.acceptance)),
                     "outcome": asdict(outcome),
                     "acceptance_result": asdict(acceptance),
                     "workspace_changes": changes,
@@ -2231,9 +2234,14 @@ class TeamRuntime:
                     item.path for item in outcome.deliverables
                 ),
                 rejected_verifications=tuple(
-                    name
-                    for name in task.acceptance.required_verifications
-                    if verification_status.get(name) != "passed"
+                    rejected_verification_names(
+                        (
+                            (required.name, required.check is not None)
+                            for required in task.acceptance.required_verifications
+                        ),
+                        verification_status,
+                        acceptance.evidence,
+                    )
                 ),
             )
             await self._publish(
@@ -2262,12 +2270,7 @@ class TeamRuntime:
                 )
 
             assert resolution.instruction is not None
-            current_acceptance = {
-                "required_outputs": list(task.acceptance.required_outputs),
-                "required_verifications": list(
-                    task.acceptance.required_verifications
-                ),
-            }
+            current_acceptance = json.loads(_task_acceptance_json(task.acceptance))
             content = await self._resume_worker(
                 worker.id,
                 (
@@ -2537,16 +2540,7 @@ class TeamRuntime:
             task_title=task.title,
             task_description=task.description,
         )
-        prompt += "\n\nAcceptance criteria:\n" + json.dumps(
-            {
-                "required_outputs": list(task.acceptance.required_outputs),
-                "required_verifications": list(
-                    task.acceptance.required_verifications
-                ),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        )
+        prompt += "\n\nAcceptance criteria:\n" + _task_acceptance_json(task.acceptance)
         decision_context = self._teams.decision_context_for_task(run.id, task.id)
         if decision_context:
             prompt += f"\n\nResolved user decisions for this task:\n{decision_context}"
@@ -3255,19 +3249,13 @@ def _acceptance_worker_messages(
         raise OperationConflict(
             "Acceptance Worker operation requires a correction instruction"
         )
-    current_acceptance = {
-        "required_outputs": list(task.acceptance.required_outputs),
-        "required_verifications": list(
-            task.acceptance.required_verifications
-        ),
-    }
     return [
         {
             "role": "user",
             "content": (
                 f"{resolution.instruction}\n\n"
                 "Authoritative current acceptance criteria:\n"
-                f"{json.dumps(current_acceptance, ensure_ascii=False, sort_keys=True)}\n"
+                f"{_task_acceptance_json(task.acceptance)}\n"
                 "Return only the required TaskOutcome JSON object."
             ),
         }
@@ -3278,12 +3266,6 @@ def _acceptance_user_answer_messages(
     task: TeamTask,
     answer: str,
 ) -> list[dict[str, object]]:
-    current_acceptance = {
-        "required_outputs": list(task.acceptance.required_outputs),
-        "required_verifications": list(
-            task.acceptance.required_verifications
-        ),
-    }
     return [
         {
             "role": "user",
@@ -3291,7 +3273,7 @@ def _acceptance_user_answer_messages(
                 f"User decision: {answer}\n\n"
                 "Continue the rejected task using that decision.\n"
                 "Authoritative current acceptance criteria:\n"
-                f"{json.dumps(current_acceptance, ensure_ascii=False, sort_keys=True)}\n"
+                f"{_task_acceptance_json(task.acceptance)}\n"
                 "Return only the required TaskOutcome JSON object."
             ),
         }
@@ -3359,14 +3341,9 @@ def _validated_task_plan(response: ModelResponse) -> ValidatedOperationResult:
             "tasks": [
                 {
                     **task,
-                    "acceptance": {
-                        "required_outputs": list(
-                            task["acceptance"].required_outputs
-                        ),
-                        "required_verifications": list(
-                            task["acceptance"].required_verifications
-                        ),
-                    },
+                    "acceptance": json.loads(
+                        _task_acceptance_json(task["acceptance"])
+                    ),
                 }
                 for task in tasks
             ]
@@ -3435,14 +3412,7 @@ def _acceptance_resolution_json(
         "instruction": resolution.instruction,
         "reason_code": resolution.reason_code,
         "acceptance": (
-            {
-                "required_outputs": list(
-                    resolution.acceptance.required_outputs
-                ),
-                "required_verifications": list(
-                    resolution.acceptance.required_verifications
-                ),
-            }
+            json.loads(_task_acceptance_json(resolution.acceptance))
             if resolution.acceptance is not None
             else None
         ),
@@ -3470,7 +3440,7 @@ def _operation_acceptance_resolution(
                 required_outputs=tuple(
                     acceptance_payload["required_outputs"]
                 ),
-                required_verifications=tuple(
+                required_verifications=parse_required_verifications(
                     acceptance_payload["required_verifications"]
                 ),
             )
@@ -3674,14 +3644,11 @@ def _parse_task_plan(content: str) -> list[dict[str, object]]:
             acceptance.get("required_outputs"),
             "required_outputs",
         )
-        required_verifications = _string_list(
-            acceptance.get("required_verifications"),
-            "required_verifications",
+        required_verifications = parse_required_verifications(
+            acceptance.get("required_verifications")
         )
         if len(set(required_outputs)) != len(required_outputs):
             raise ValueError("Planner task has duplicate required outputs")
-        if len(set(required_verifications)) != len(required_verifications):
-            raise ValueError("Planner task has duplicate required verifications")
         if any(not _safe_relative_output(path) for path in required_outputs):
             raise ValueError("Planner task output path must be relative and bounded")
         if not required_outputs and not required_verifications:
@@ -3698,7 +3665,7 @@ def _parse_task_plan(content: str) -> list[dict[str, object]]:
                 "required": required,
                 "acceptance": TaskAcceptance(
                     required_outputs=tuple(required_outputs),
-                    required_verifications=tuple(required_verifications),
+                    required_verifications=required_verifications,
                 ),
             }
         )
@@ -3924,8 +3891,8 @@ def _parse_revised_acceptance(value: object) -> TaskAcceptance:
         raise ValueError
     acceptance = TaskAcceptance(
         required_outputs=tuple(_string_list(value.get("required_outputs"), "required_outputs")),
-        required_verifications=tuple(
-            _string_list(value.get("required_verifications"), "required_verifications")
+        required_verifications=parse_required_verifications(
+            value.get("required_verifications")
         ),
     )
     _validate_task_acceptance(acceptance)

@@ -9,7 +9,7 @@ from personal_agent_gateway.team_artifact_publisher import (
     TeamArtifactPublisher,
 )
 from personal_agent_gateway.team_outcomes import Deliverable, TaskOutcome
-from personal_agent_gateway.teams import TaskAcceptance, TeamTask
+from personal_agent_gateway.teams import RequiredVerification, TaskAcceptance, TeamTask
 
 
 def _task() -> TeamTask:
@@ -21,7 +21,7 @@ def _task() -> TeamTask:
         owner_agent_id="worker-1",
         status="in_progress",
         required=True,
-        acceptance=TaskAcceptance(("outputs/report.md",), ("pytest",)),
+        acceptance=TaskAcceptance(("outputs/report.md",), (RequiredVerification("pytest"),)),
         outcome=None,
         acceptance_result=None,
         result=None,

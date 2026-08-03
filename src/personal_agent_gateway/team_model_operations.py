@@ -589,6 +589,10 @@ def _valid_task_spec(value: object) -> bool:
     )
 
 
+# This validator only gates the shape stored in the operation ledger.
+# team_model_operations is a leaf module that must not import the domain modules
+# above it (e.g. teams), so the check vocabulary is restated below for this
+# validator only rather than reused from parse_required_verifications.
 def _valid_acceptance(value: object) -> bool:
     if not isinstance(value, dict) or set(value) != {
         "required_outputs",
@@ -599,9 +603,42 @@ def _valid_acceptance(value: object) -> bool:
     verifications = value["required_verifications"]
     return (
         _valid_string_list(outputs)
-        and _valid_string_list(verifications)
+        and isinstance(verifications, list)
+        and all(_valid_required_verification(item) for item in verifications)
         and bool(outputs or verifications)
     )
+
+
+def _valid_required_verification(value: object) -> bool:
+    if _nonempty_text(value):
+        return True
+    if not isinstance(value, dict) or set(value) - {"name", "check"}:
+        return False
+    if not _nonempty_text(value.get("name")):
+        return False
+    check = value.get("check")
+    return check is None or _valid_verification_check(check)
+
+
+def _valid_verification_check(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    check_type = value.get("type")
+    if check_type not in {"file_nonempty", "file_contains", "file_matches", "json_parses"}:
+        return False
+    if not _nonempty_text(value.get("path")):
+        return False
+    expected = {"type", "path"}
+    if check_type == "file_contains":
+        expected.add("value")
+    if check_type == "file_matches":
+        expected.add("pattern")
+    if set(value) != expected:
+        return False
+    detail_key = "value" if check_type == "file_contains" else "pattern"
+    if detail_key in expected:
+        return _nonempty_text(value.get(detail_key))
+    return True
 
 
 def _valid_string_list(value: object) -> bool:

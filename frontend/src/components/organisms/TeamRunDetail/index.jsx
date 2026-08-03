@@ -212,7 +212,8 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
               <div className="mono">VERIFICATIONS</div>
               {(acceptance.required_verifications || []).length ? (
                 <ul>
-                  {acceptance.required_verifications.map((name) => {
+                  {acceptance.required_verifications.map((item) => {
+                    const name = typeof item === "string" ? item : item.name;
                     const verification = verificationByName.get(name);
                     return (
                       <li key={name}>

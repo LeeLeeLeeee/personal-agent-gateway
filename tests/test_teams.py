@@ -11,10 +11,13 @@ from personal_agent_gateway.rule_sets import RuleSetService
 from personal_agent_gateway.space_policies import SpacePolicyService
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_directory import TeamService
+from personal_agent_gateway.team_verification_checks import VerificationCheck
 from personal_agent_gateway.teams import (
+    RequiredVerification,
     TaskAcceptance,
     TeamRunService,
     _team_run_display_status,
+    parse_required_verifications,
 )
 from team_cycle_helpers import (
     dt,
@@ -89,6 +92,101 @@ def _run_with_cycle(tmp_path: Path):
     _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, cycles, run)
     return teams, cycle
+
+
+def _run_with_cycle_and_agents(tmp_path: Path):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    return teams, run, cycle
+
+
+def test_required_verifications_accept_plain_strings_and_objects() -> None:
+    parsed = parse_required_verifications(
+        [
+            "source-url-verification",
+            {
+                "name": "marker-format",
+                "check": {
+                    "type": "file_contains",
+                    "path": "draft.md",
+                    "value": "<library_draft>",
+                },
+            },
+            {"name": "reviewed", "check": None},
+        ]
+    )
+
+    assert [item.name for item in parsed] == [
+        "source-url-verification",
+        "marker-format",
+        "reviewed",
+    ]
+    assert parsed[0].check is None
+    assert parsed[1].check == VerificationCheck(
+        "file_contains", "draft.md", value="<library_draft>"
+    )
+    assert parsed[2].check is None
+
+
+def test_required_verifications_reject_malformed_items() -> None:
+    for invalid in (
+        "not-a-list",
+        [""],
+        [{"name": ""}],
+        [{"check": {"type": "file_nonempty", "path": "a.md"}}],
+        [{"name": "x", "check": {"type": "shell", "path": "a.md"}}],
+        [{"name": "x", "extra": 1}],
+        ["dup", "dup"],
+    ):
+        with pytest.raises(ValueError):
+            parse_required_verifications(invalid)
+
+
+def test_acceptance_json_round_trips_both_shapes(tmp_path: Path) -> None:
+    teams, run, cycle = _run_with_cycle_and_agents(tmp_path)
+    acceptance = TaskAcceptance(
+        required_outputs=("draft.md",),
+        required_verifications=(
+            RequiredVerification("source-url-verification"),
+            RequiredVerification(
+                "marker-format",
+                VerificationCheck("file_contains", "draft.md", value="<library_draft>"),
+            ),
+        ),
+    )
+
+    task = teams.create_task(
+        run.id,
+        "Write the draft",
+        "Write it.",
+        cycle_id=cycle.id,
+        acceptance=acceptance,
+    )
+
+    assert teams.get_task(task.id).acceptance == acceptance
+
+
+def test_stored_string_verifications_still_load(tmp_path: Path) -> None:
+    teams, run, cycle = _run_with_cycle_and_agents(tmp_path)
+    task = teams.create_task(
+        run.id,
+        "Write the draft",
+        "Write it.",
+        cycle_id=cycle.id,
+        acceptance=TaskAcceptance(("draft.md",), (RequiredVerification("legacy"),)),
+    )
+    with teams._db.connection() as connection:
+        connection.execute(
+            "update team_tasks set acceptance_json = ? where id = ?",
+            (
+                '{"required_outputs": ["draft.md"], "required_verifications": ["legacy"]}',
+                task.id,
+            ),
+        )
+
+    loaded = teams.get_task(task.id)
+
+    assert loaded.acceptance.required_verifications == (RequiredVerification("legacy"),)
 
 
 def test_cycle_stores_and_returns_the_output_contract_id(tmp_path: Path) -> None:
@@ -1114,7 +1212,7 @@ def test_task_outcome_and_acceptance_result_are_persisted(tmp_path):
         run.id,
         "T",
         "D",
-        acceptance=TaskAcceptance((), ("review",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("review"),)),
     )
 
     updated = teams.record_task_outcome(
@@ -1154,7 +1252,7 @@ def test_acceptance_review_retry_worker_persists_audit_and_counter(tmp_path: Pat
         run.id,
         "Task",
         "Description",
-        acceptance=TaskAcceptance((), ("source-check",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("source-check"),)),
     )
     teams.start_task(task.id, worker_agent.id)
 
@@ -1173,7 +1271,7 @@ def test_acceptance_review_retry_worker_persists_audit_and_counter(tmp_path: Pat
 
     assert updated.status == "in_progress"
     assert updated.acceptance_recovery_attempts == 1
-    assert updated.acceptance == TaskAcceptance((), ("source-check",))
+    assert updated.acceptance == TaskAcceptance((), (RequiredVerification("source-check"),))
     review = teams.list_messages(run.id)[-1]
     assert review.kind == "acceptance_review"
     assert review.sender_agent_id == leader_agent.id
@@ -1198,12 +1296,12 @@ def test_acceptance_review_revises_contract_and_ask_user_preserves_counter(
         run.id,
         "Task",
         "Description",
-        acceptance=TaskAcceptance((), ("source-check",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("source-check"),)),
     )
     teams.start_task(task.id, worker_agent.id)
     acceptance_after = TaskAcceptance(
         ("docs/knowledge/d3-review.md",),
-        ("source-check",),
+        (RequiredVerification("source-check"),),
     )
 
     updated = teams.record_acceptance_review(
@@ -1256,39 +1354,42 @@ def test_acceptance_review_revises_contract_and_ask_user_preserves_counter(
             "Acceptance requires an output or verification",
         ),
         (
-            TaskAcceptance(("report.md", "report.md"), ("source-check",)),
+            TaskAcceptance(("report.md", "report.md"), (RequiredVerification("source-check"),)),
             "Acceptance has duplicate required outputs",
         ),
         (
-            TaskAcceptance(("report.md",), ("source-check", "source-check")),
+            TaskAcceptance(
+                ("report.md",),
+                (RequiredVerification("source-check"), RequiredVerification("source-check")),
+            ),
             "Acceptance has duplicate required verifications",
         ),
         (
-            TaskAcceptance((" ",), ("source-check",)),
+            TaskAcceptance((" ",), (RequiredVerification("source-check"),)),
             "Acceptance items must not be blank",
         ),
         (
-            TaskAcceptance(("report.md",), (" ",)),
+            TaskAcceptance(("report.md",), (RequiredVerification(" "),)),
             "Acceptance items must not be blank",
         ),
         (
-            TaskAcceptance(("../outside.md",), ("source-check",)),
+            TaskAcceptance(("../outside.md",), (RequiredVerification("source-check"),)),
             "Acceptance output path must be relative and bounded",
         ),
         (
-            TaskAcceptance(("/absolute.md",), ("source-check",)),
+            TaskAcceptance(("/absolute.md",), (RequiredVerification("source-check"),)),
             "Acceptance output path must be relative and bounded",
         ),
         (
-            TaskAcceptance((r"C:\absolute.md",), ("source-check",)),
+            TaskAcceptance((r"C:\absolute.md",), (RequiredVerification("source-check"),)),
             "Acceptance output path must be relative and bounded",
         ),
         (
-            TaskAcceptance((r"\outside.md",), ("source-check",)),
+            TaskAcceptance((r"\outside.md",), (RequiredVerification("source-check"),)),
             "Acceptance output path must be relative and bounded",
         ),
         (
-            TaskAcceptance(("C:outside.md",), ("source-check",)),
+            TaskAcceptance(("C:outside.md",), (RequiredVerification("source-check"),)),
             "Acceptance output path must be relative and bounded",
         ),
     ],
@@ -1305,7 +1406,7 @@ def test_acceptance_review_rejects_invalid_revised_contract(
         "goal", lead_persona.id, [worker_persona.id], "plan_and_execute", 1
     )
     leader_agent, worker_agent = teams.list_agents(run.id)
-    original_acceptance = TaskAcceptance((), ("source-check",))
+    original_acceptance = TaskAcceptance((), (RequiredVerification("source-check"),))
     task = teams.create_task(
         run.id,
         "Task",
@@ -1350,7 +1451,7 @@ def test_acceptance_review_non_consuming_action_does_not_update_task_row(
         run.id,
         "Task",
         "Description",
-        acceptance=TaskAcceptance((), ("source-check",)),
+        acceptance=TaskAcceptance((), (RequiredVerification("source-check"),)),
     )
     teams.start_task(task.id, worker_agent.id)
     teams._db.execute(
@@ -1499,7 +1600,7 @@ def test_retry_failed_task_creates_linked_task_and_preserves_original(tmp_path):
         required=False,
         acceptance=TaskAcceptance(
             required_outputs=("outputs/report.md",),
-            required_verifications=("pytest",),
+            required_verifications=(RequiredVerification("pytest"),),
         ),
     )
     teams.set_task_status(completed.id, "completed", result="kept result")
@@ -1519,7 +1620,7 @@ def test_retry_failed_task_creates_linked_task_and_preserves_original(tmp_path):
     assert retry_task.required is False
     assert retry_task.acceptance == TaskAcceptance(
         required_outputs=("outputs/report.md",),
-        required_verifications=("pytest",),
+        required_verifications=(RequiredVerification("pytest"),),
     )
     assert retry_task.result is None
     assert retry_task.error_message is None
@@ -1552,7 +1653,7 @@ def test_task_persists_acceptance_outcome_and_blocked_finish_time(tmp_path):
         required=True,
         acceptance=TaskAcceptance(
             required_outputs=("outputs/report.md",),
-            required_verifications=("pytest",),
+            required_verifications=(RequiredVerification("pytest"),),
         ),
     )
     teams._db.execute(
@@ -1569,7 +1670,7 @@ def test_task_persists_acceptance_outcome_and_blocked_finish_time(tmp_path):
     assert blocked.required is True
     assert blocked.acceptance == TaskAcceptance(
         required_outputs=("outputs/report.md",),
-        required_verifications=("pytest",),
+        required_verifications=(RequiredVerification("pytest"),),
     )
     assert blocked.outcome == {"status": "blocked"}
     assert blocked.acceptance_result == {"accepted": False}

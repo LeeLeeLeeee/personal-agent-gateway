@@ -23,8 +23,14 @@ from personal_agent_gateway.team_outcomes import (
     TaskOutcome,
     VerificationEvidence,
 )
+from personal_agent_gateway import team_runtime
 from personal_agent_gateway.team_runtime import AcceptanceReviewResolution
-from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
+from personal_agent_gateway.team_verification_checks import VerificationCheck
+from personal_agent_gateway.teams import (
+    RequiredVerification,
+    TaskAcceptance,
+    TeamRunService,
+)
 from team_cycle_helpers import make_cycle_services, make_queued_cycle
 
 
@@ -127,6 +133,7 @@ def make_completed_worker_operation(
     outcome=None,
     decision=None,
     query=None,
+    acceptance=None,
 ):
     db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, _cycles, run)
@@ -143,9 +150,10 @@ def make_completed_worker_operation(
         "Create a draft.",
         owner_agent_id=worker.id,
         cycle_id=cycle.id,
-        acceptance=TaskAcceptance(
+        acceptance=acceptance
+        or TaskAcceptance(
             required_outputs=("draft.md",),
-            required_verifications=("review",),
+            required_verifications=(RequiredVerification("review"),),
         ),
     )
     task, worker = teams.start_task(task.id, worker.id)
@@ -268,9 +276,11 @@ def complete_followup_operation(
     result_kind,
     payload,
     upstream_session_id=None,
+    stub_result_validator=True,
 ):
     validators = team_model_effect_result_validators()
-    validators.setdefault(stage, {})[result_kind] = lambda _payload: True
+    if stub_result_validator:
+        validators.setdefault(stage, {})[result_kind] = lambda _payload: True
     operations = TeamModelOperationService(
         services.db,
         result_validators=validators,
@@ -398,7 +408,7 @@ def test_first_worker_mediation_increments_once_after_other_cycle_rounds(
         "Continue after Worker A used the first round.",
         owner_agent_id=workers[1].id,
         cycle_id=cycle.id,
-        acceptance=TaskAcceptance(("draft.md",), ("review",)),
+        acceptance=TaskAcceptance(("draft.md",), (RequiredVerification("review"),)),
     )
     task, worker_b = teams.start_task(task.id, workers[1].id)
     services = SimpleNamespace(
@@ -508,6 +518,278 @@ def test_acceptance_lead_retry_is_atomic_and_idempotent(tmp_path):
         "worker-session"
     )
     assert followup.operations.get(followup.operation.id).status == "applied"
+
+
+def test_acceptance_lead_revise_acceptance_replays_with_an_unchecked_verification(
+    tmp_path,
+):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    rejected = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="required_output_missing",
+        evidence={},
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        rejected,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    revised_acceptance = TaskAcceptance(
+        required_outputs=("draft.md",),
+        required_verifications=(RequiredVerification("review"),),
+    )
+    resolution = AcceptanceReviewResolution(
+        kind="revise_acceptance",
+        reason="The contract omitted the review verification.",
+        instruction="Resubmit under the revised contract.",
+        acceptance=revised_acceptance,
+    )
+    acceptance_payload = team_runtime._acceptance_resolution_json(resolution)["acceptance"]
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "revise_acceptance",
+            "reason": resolution.reason,
+            "instruction": resolution.instruction,
+            "reason_code": None,
+            "acceptance": acceptance_payload,
+            "decision": None,
+        },
+        upstream_session_id="lead-session",
+    )
+
+    first = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+    second = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert second.message.id == first.message.id
+    assert second.next_stage == "acceptance_worker"
+
+
+def test_acceptance_lead_revise_acceptance_validates_and_replays_with_a_checked_verification(
+    tmp_path,
+):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    rejected = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="required_output_missing",
+        evidence={},
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        rejected,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    revised_acceptance = TaskAcceptance(
+        required_outputs=("draft.md",),
+        required_verifications=(
+            RequiredVerification(
+                "marker",
+                VerificationCheck("file_contains", "draft.md", value="<library_draft>"),
+            ),
+        ),
+    )
+    resolution = AcceptanceReviewResolution(
+        kind="revise_acceptance",
+        reason="The contract omitted the marker verification.",
+        instruction="Resubmit under the revised contract.",
+        acceptance=revised_acceptance,
+    )
+    acceptance_payload = team_runtime._acceptance_resolution_json(resolution)["acceptance"]
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "revise_acceptance",
+            "reason": resolution.reason,
+            "instruction": resolution.instruction,
+            "reason_code": None,
+            "acceptance": acceptance_payload,
+            "decision": None,
+        },
+        upstream_session_id="lead-session",
+        stub_result_validator=False,
+    )
+
+    first = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+    second = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert second.message.id == first.message.id
+    assert second.next_stage == "acceptance_worker"
+
+
+def test_acceptance_lead_records_the_failing_verification_and_server_evidence(
+    tmp_path,
+):
+    """Replays the incident: the worker claims `marker: passed`, but the
+    server's check fails and rejects with `required_verification_failed`.
+    The recorded audit must name the failing verification and keep the
+    server's evidence, not silently record `rejected_verifications: []`.
+    """
+    outcome = TaskOutcome(
+        status="completed",
+        summary="Created draft.md.",
+        reason_code=None,
+        deliverables=(Deliverable(path="draft.md", kind="document"),),
+        verifications=(
+            VerificationEvidence(
+                name="marker", status="passed", evidence="worker claims it passed"
+            ),
+        ),
+    )
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=outcome,
+        acceptance=TaskAcceptance(
+            required_outputs=("draft.md",),
+            required_verifications=(
+                RequiredVerification(
+                    "marker",
+                    VerificationCheck(
+                        "file_contains", "draft.md", value="<library_draft>"
+                    ),
+                ),
+            ),
+        ),
+    )
+    server_evidence = {
+        "verifications": {
+            "marker": {
+                "mode": "verified",
+                "status": "failed",
+                "evidence": "file_contains: draft.md lacks the value",
+            }
+        }
+    }
+    rejected = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="required_verification_failed",
+        evidence=server_evidence,
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        rejected,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="The verification check is failing.",
+        instruction="Add the marker to draft.md.",
+    )
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "retry_worker",
+            "reason": resolution.reason,
+            "instruction": resolution.instruction,
+            "reason_code": None,
+            "acceptance": None,
+            "decision": None,
+        },
+        upstream_session_id="lead-session",
+    )
+
+    applied = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert applied.message.metadata["rejected_verifications"] == ["marker"]
+
+
+def test_acceptance_lead_retry_replays_with_a_checked_verification(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+        acceptance=TaskAcceptance(
+            required_outputs=("draft.md",),
+            required_verifications=(
+                RequiredVerification(
+                    "review",
+                    VerificationCheck("file_nonempty", "draft.md"),
+                ),
+            ),
+        ),
+    )
+    rejected = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="required_verification_failed",
+        evidence={},
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        rejected,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="The verification check is failing.",
+        instruction="Add content to draft.md.",
+    )
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "retry_worker",
+            "reason": resolution.reason,
+            "instruction": resolution.instruction,
+            "reason_code": None,
+            "acceptance": None,
+            "decision": None,
+        },
+        upstream_session_id="lead-session",
+    )
+
+    first = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+    second = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert second.message.id == first.message.id
+    assert second.next_stage == "acceptance_worker"
 
 
 def test_acceptance_lead_user_decision_is_atomic_and_idempotent(tmp_path):
@@ -745,6 +1027,80 @@ def test_apply_plan_and_operation_are_atomic_and_idempotent(tmp_path):
     applied = services.operations.get(services.operation.id)
     assert applied.status == "applied"
     assert applied.effect_type == "task_plan"
+
+
+def test_apply_plan_replay_accepts_an_explicit_null_check_verification(tmp_path):
+    spec = valid_task_spec("Research", None)
+    spec["acceptance"] = {
+        "required_outputs": ["research.md"],
+        "required_verifications": [{"name": "review", "check": None}],
+    }
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+
+    first = services.effects.apply_plan(services.operation.id)
+    second = services.effects.apply_plan(services.operation.id)
+
+    assert [task.id for task in second] == [task.id for task in first]
+    task = services.teams.get_task(first[0].id)
+    assert task.acceptance.required_verifications == (RequiredVerification("review"),)
+
+
+def test_apply_plan_replay_accepts_a_verification_with_no_check_key(tmp_path):
+    spec = valid_task_spec("Research", None)
+    spec["acceptance"] = {
+        "required_outputs": ["research.md"],
+        "required_verifications": [{"name": "review"}],
+    }
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+
+    first = services.effects.apply_plan(services.operation.id)
+    second = services.effects.apply_plan(services.operation.id)
+
+    assert [task.id for task in second] == [task.id for task in first]
+    task = services.teams.get_task(first[0].id)
+    assert task.acceptance.required_verifications == (RequiredVerification("review"),)
+
+
+def test_apply_plan_replay_strips_a_padded_check_path(tmp_path):
+    spec = valid_task_spec("Research", None)
+    spec["acceptance"] = {
+        "required_outputs": ["research.md"],
+        "required_verifications": [
+            {
+                "name": "marker",
+                "check": {
+                    "type": "file_contains",
+                    "path": "  research.md  ",
+                    "value": "<library_draft>",
+                },
+            }
+        ],
+    }
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+
+    first = services.effects.apply_plan(services.operation.id)
+    second = services.effects.apply_plan(services.operation.id)
+
+    assert [task.id for task in second] == [task.id for task in first]
+    task = services.teams.get_task(first[0].id)
+    assert task.acceptance.required_verifications == (
+        RequiredVerification(
+            "marker",
+            VerificationCheck("file_contains", "research.md", value="<library_draft>"),
+        ),
+    )
 
 
 def test_apply_plan_rolls_back_all_effects_for_unknown_owner(tmp_path):
