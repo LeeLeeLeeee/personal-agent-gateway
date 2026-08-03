@@ -3211,6 +3211,19 @@ p {
     color: var(--c-link);
     font-weight: 700;
 }
+.team-task-check {
+    color: var(--c-grey);
+    font-size: 8px;
+    letter-spacing: 0.7px;
+}
+.team-task-attested {
+    border: var(--bd-sm);
+    border-color: var(--c-warn);
+    padding: 2px 5px;
+    color: var(--c-warn);
+    font-size: 8px;
+    letter-spacing: 0.8px;
+}
 .team-activity-agent {
     border: 1px solid var(--c-black);
     padding: 0 5px;

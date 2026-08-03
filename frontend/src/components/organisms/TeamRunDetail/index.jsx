@@ -152,6 +152,11 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
   const verificationByName = new Map(
     verifications.map((verification) => [verification.name, verification])
   );
+  const verificationModes = Object.fromEntries(
+    Object.entries(acceptanceResult.evidence?.verifications || {})
+      .map(([name, item]) => [name, item?.mode])
+      .filter(([, mode]) => Boolean(mode))
+  );
   const reasonCode = acceptanceResult.reason_code || outcome.reason_code;
   const diagnostic = task.result
     || (task.error_message && task.error_message !== reasonCode
@@ -195,6 +200,9 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
             <div className="mono team-task-dialog-label">
               {task.required === false ? "OPTIONAL TASK" : "REQUIRED TASK"}
             </div>
+            {acceptanceResult.evidence?.attested_only ? (
+              <span className="mono team-task-attested">ATTESTED</span>
+            ) : null}
             {reasonCode ? (
               <div className="team-task-dialog-copy">
                 <span className="mono">{reasonCode}</span>
@@ -214,7 +222,9 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
                 <ul>
                   {acceptance.required_verifications.map((item) => {
                     const name = typeof item === "string" ? item : item.name;
+                    const check = typeof item === "string" ? null : item.check;
                     const verification = verificationByName.get(name);
+                    const mode = verificationModes[name];
                     return (
                       <li key={name}>
                         <span className="mono">{name}</span>
@@ -222,6 +232,19 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
                         <span className="mono">
                           {String(verification?.status || "missing").toUpperCase()}
                         </span>
+                        {mode ? (
+                          <>
+                            {" · "}
+                            <span className="mono">{mode.toUpperCase()}</span>
+                          </>
+                        ) : null}
+                        {check ? (
+                          <div className="mono team-task-check">
+                            {`${check.type} · ${check.path}`}
+                            {check.value ? ` · ${check.value}` : ""}
+                            {check.pattern ? ` · ${check.pattern}` : ""}
+                          </div>
+                        ) : null}
                         {verification?.evidence ? ` · ${verification.evidence}` : ""}
                       </li>
                     );
