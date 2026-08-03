@@ -423,8 +423,10 @@ Before finalizing, identify any consequential choice that only the user can make
 produce an accurate final response. First use the goal, frozen rules, prior user
 decisions, and task results.
 Return either:
-1. The final response in exactly the form the OUTPUT CONTRACT below requires. The
-   contract governs this response, not a file you wrote during the run.
+1. A short plain-text summary of what was accomplished, including any failures,
+   followed by the final response in exactly the form the OUTPUT CONTRACT below
+   requires. The contract governs this response, not a file you wrote during the
+   run.
 2. ONLY {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the final response cannot be completed accurately","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 At this stage, ask only about final interpretation or presentation that does not
 require additional worker execution.
@@ -433,7 +435,7 @@ OUTPUT CONTRACT
 {contract}"""
 ```
 
-The sentence about the contract governing the response rather than a file is deliberate: on the observed failure the leader satisfied the contract by writing files and summarized in prose.
+Two deliberate details in option 1. The sentence about the contract governing the response rather than a file addresses the observed failure, where the leader satisfied the contract by writing files and then summarized in prose. The short summary **before** the contract output is what Task 4 stores as the cycle summary — without it the cycle's summary would be the raw contract payload, which then propagates into the next cycle's prompt as `PREVIOUS CYCLE SUMMARY`, into the Team Run UI, and into `run-result.json`. The Library Draft contract permits text before the marker and forbids it after, so this composes with the contract rather than fighting it.
 
 3b. Add the lookup helper on `TeamRunRuntime`, next to `_goal_context`:
 
@@ -489,7 +491,12 @@ git commit -m "feat: 계약이 있는 사이클은 합성에서 계약 형식을
 
 **Interfaces:**
 - Consumes: `OutputContract.validate` from Task 1, `_cycle_output_contract` from Task 3.
-- Produces: operation stage `"cycle_synthesis_repair"`; `_repair_synthesis_for_contract(run, leader_agent, cycle_id, messages, first_result, contract) -> str | UserDecisionResolution`.
+- Produces:
+  - operation stage `"cycle_synthesis_repair"`
+  - `OutputContract.human_summary: Callable[[str], str]` (added to the Task 1 dataclass)
+  - `_validated_synthesis_result(response, leader, run, contract=None, *, strict=True)`
+  - `_synthesis_repair_messages(messages, contract)`
+  - the applied synthesis operation's `result_json` carries `contract_payload` (the raw contract-shaped response) whenever a contract was satisfied — Task 5 reads it from there.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -515,7 +522,28 @@ async def test_contract_violation_triggers_exactly_one_repair(tmp_path):
     assert stages.count("cycle_synthesis_repair") == 1
     assert setup.lead_client.calls == 2
     summary = setup.teams.get_cycle(setup.cycle.id).summary or ""
-    assert "<library_draft>" in summary
+    assert summary.startswith("Draft ready.")
+    assert "<library_draft>" not in summary
+
+
+@pytest.mark.asyncio
+async def test_successful_contract_stores_prose_summary_and_ledger_payload(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    _set_library_draft_contract(setup)
+    setup.lead_client.responses = [ModelResponse(_LIBRARY_DRAFT_SUMMARY)]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    summary = setup.teams.get_cycle(setup.cycle.id).summary or ""
+    assert summary.strip() == "Draft ready."
+    assert "<library_draft>" not in summary
+    applied = [
+        item
+        for item in setup.operations.list_for_cycle(setup.cycle.id)
+        if item.stage == "cycle_synthesis" and item.status == "applied"
+    ]
+    assert len(applied) == 1
+    assert "<library_draft>" in applied[0].result_json["contract_payload"]
 
 
 @pytest.mark.asyncio
@@ -599,89 +627,124 @@ No result validator entry is needed: `_built_in_result_validators` covers only t
 
 3c. In `team_provider_recovery.py`, do the same: every place that names `"cycle_synthesis"` gains `"cycle_synthesis_repair"` with identical handling. Grep for `cycle_synthesis` in that file and cover each hit.
 
-3d. In `_leader_synthesis`, validate before returning. Both the operation path (`return self._apply_cycle_synthesis_operation(operation)`) and the direct-model path (`return content`) funnel through one check:
+3d. Teach `_validated_synthesis_result` about the contract. It gains two parameters and, on success, splits the response into the human summary and the contract payload:
 
 ```python
-        result = ...  # the existing return value at each of the two exit points
-        if contract is None or isinstance(result, UserDecisionResolution):
-            return result
-        try:
-            contract.validate(result)
-        except ValueError as exc:
-            return await self._repair_synthesis_for_contract(
-                run,
-                leader_agent,
-                cycle_id,
-                messages,
-                result,
-                contract,
-                redact_text(exc) or "output contract violation",
-            )
-        return result
-```
-
-3e. Add the repair method next to `_leader_synthesis`:
-
-```python
-    async def _repair_synthesis_for_contract(
+    def _validated_synthesis_result(
         self,
+        response: ModelResponse,
+        leader: TeamAgent,
         run: TeamRun,
-        leader_agent: TeamAgent,
-        cycle_id: str | None,
-        messages: list[dict[str, object]],
-        first_result: str,
-        contract: OutputContract,
-        violation: str,
-    ) -> str | UserDecisionResolution:
-        repair_messages = [
-            *messages,
-            {"role": "assistant", "content": first_result},
+        contract: OutputContract | None = None,
+        *,
+        strict: bool = True,
+    ) -> ValidatedOperationResult:
+        resolution = _parse_mediation_resolution(response.content)
+        if resolution["kind"] == "ask_user":
+            return ValidatedOperationResult("user_decision", resolution)
+        content = self._finalize_persona_content(
+            response.content,
+            persona_id=leader.persona_id,
+            team_run_id=run.id,
+        )
+        if contract is None:
+            return ValidatedOperationResult("synthesis", {"summary": content})
+        try:
+            contract.validate(content)
+        except ValueError:
+            if strict:
+                raise
+            return ValidatedOperationResult("synthesis", {"summary": content})
+        return ValidatedOperationResult(
+            "synthesis",
             {
-                "role": "user",
-                "content": (
-                    "Your response did not satisfy the output contract: "
-                    f"{violation}\n"
-                    "Send the same result again in exactly the contract's form. "
-                    "Do not explain, apologize, or add anything outside it.\n\n"
-                    "OUTPUT CONTRACT\n"
-                    f"{contract.instructions}"
-                ),
+                "summary": contract.human_summary(content),
+                "contract_payload": content,
             },
-        ]
-        if cycle_id is None:
-            model = self._model(leader_agent, cycle_id)
-            response = await model.complete(repair_messages)
-            if response.upstream_session_id:
-                self._teams.set_agent_session(
-                    leader_agent.id, response.upstream_session_id
-                )
-            return self._finalize_persona_content(
-                response.content,
-                persona_id=leader_agent.persona_id,
-                team_run_id=run.id,
-            )
-
-        def synthesis_parser(response):
-            return self._validated_synthesis_result(response, leader_agent, run)
-
-        spec = _operation_spec(
-            run,
-            cycle_id,
-            leader_agent,
-            "cycle_synthesis_repair",
-            0,
-            repair_messages,
         )
-        operation = await self._invoke_operation(
-            spec,
-            leader_agent,
-            repair_messages,
-            synthesis_parser,
-        )
-        return self._apply_cycle_synthesis_operation(operation)
 ```
 
-Ordinal `0` is correct: a repair happens at most once per synthesis attempt, and the stage itself distinguishes it from the synthesis operation. The returned result is **not** re-validated — one repair, then whatever comes back is the cycle's summary.
+`contract.human_summary(content)` is a new field on `OutputContract` added in this task — a `Callable[[str], str]` that returns the part of the response a person should read. For `library_draft` it returns the text before the marker, falling back to the payload's own `summary` field when the leader wrote nothing before it, and to `"(no summary)"` if both are empty. Add it to the dataclass in `team_output_contracts.py` alongside `validate`, with a unit test in `tests/test_team_output_contracts.py` covering all three cases.
+
+Storing the prose rather than the raw response is what keeps the contract payload out of the next cycle's `PREVIOUS CYCLE SUMMARY`, the Team Run UI, and `run-result.json`. Keeping the payload in the same result JSON is what lets Task 5 read it without any new storage.
+
+The `strict=False` variant exists for the repair call only: if the second attempt also violates the contract, the repair must still produce a usable operation. Letting it raise would abort the cycle as failed and discard the leader's summary entirely, after the team has already done all the work.
+
+3e. In `_leader_synthesis`, pass the contract to the parser and wrap the invoke in the repair pattern that `_plan_operation` (lines 1014-1038) already uses. Read that method first and mirror it — this is the same shape, not a new mechanism:
+
+```python
+            def synthesis_parser(response):
+                return self._validated_synthesis_result(
+                    response, leader_agent, run, contract
+                )
+
+            ...  # existing recovery, resolved_request_ids, synthesis_ordinal, spec
+
+            try:
+                operation = await self._invoke_operation(
+                    spec,
+                    leader_agent,
+                    messages,
+                    synthesis_parser,
+                )
+            except InvalidOperationResult as exc:
+                if contract is None:
+                    raise
+                failed = self._operations.get(exc.operation_id)
+                repair_messages = _synthesis_repair_messages(messages, contract)
+                repair_spec = _operation_spec(
+                    run,
+                    cycle_id,
+                    leader_agent,
+                    "cycle_synthesis_repair",
+                    synthesis_ordinal,
+                    repair_messages,
+                    upstream_session_id=failed.upstream_session_id,
+                )
+                operation = await self._invoke_operation(
+                    repair_spec,
+                    leader_agent,
+                    repair_messages,
+                    lambda response: self._validated_synthesis_result(
+                        response, leader_agent, run, contract, strict=False
+                    ),
+                )
+            return self._apply_cycle_synthesis_operation(operation)
+```
+
+Three things this relies on, all verified in the existing code:
+
+- when the parser raises, `TeamModelInvoker` marks the operation `failed` with reason `invalid_structured_output` and raises `InvalidOperationResult` (`team_model_invoker.py:135`). The violating operation is closed, not left open, so nothing needs cancelling and crash recovery will not resurrect it.
+- reusing `failed.upstream_session_id` keeps the leader's provider session, so it sees its own previous answer.
+- apply runs exactly once, on whichever operation succeeded, so `apply_synthesis`'s check that the applied summary equals the recorded one (`team_model_effects.py:738`) holds.
+
+The repair spec reuses the same `synthesis_ordinal`: the operation key is `{cycle}:{task}:{stage}:{ordinal}`, so the differing stage already makes it unique.
+
+3f. Add the repair message builder next to `_planning_repair_messages`:
+
+```python
+def _synthesis_repair_messages(
+    messages: list[dict[str, object]],
+    contract: OutputContract,
+) -> list[dict[str, object]]:
+    return [
+        *messages,
+        {
+            "role": "user",
+            "content": (
+                "Your previous response did not satisfy the output contract. "
+                "Send the same result again: first a short plain-text summary, "
+                "then the contract output in exactly the required form, with "
+                "nothing after it.\n\nOUTPUT CONTRACT\n"
+                f"{contract.instructions}"
+            ),
+        },
+    ]
+```
+
+The instruction repeats "a short plain-text summary first" so the repair does not contradict Task 3's prompt and leave the cycle with an empty summary.
+
+3g. The direct-model path in `_leader_synthesis` — the branch taken when `cycle_id is None` — is unchanged. A run without a cycle has no contract, so `contract` is always `None` there.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -700,7 +763,143 @@ git commit -m "feat: 계약 위반 시 합성을 1회 재요청"
 
 ---
 
-### Task 5: Full verification
+### Task 5: Settlement reads the contract payload from the ledger
+
+**Files:**
+- Modify: `src/personal_agent_gateway/hook_runner.py` (`_apply_knowledge_request_draft`)
+- Test: `tests/test_hook_runner.py`
+
+**Interfaces:**
+- Consumes: the applied synthesis operation's `result_json["contract_payload"]` from Task 4.
+- Produces: no new public interface. `_apply_knowledge_request_draft` prefers the ledger payload and falls back to parsing `cycle.summary`.
+
+**Why this task exists:** after Task 4, `cycle.summary` no longer contains the marker on the success path — it contains the prose. `_apply_knowledge_request_draft` currently parses `cycle.summary`, so without this change every successful contract would be recorded as `draft_contract_violation`. The fallback is equally load-bearing: cycles that completed **before** this feature still carry the marker in their summary, and startup reconciliation replays them.
+
+- [ ] **Step 1: Write the failing tests**
+
+Two tests, both in `tests/test_hook_runner.py`. The end-to-end "payload reaches the ledger" half is already covered by Task 4's `test_successful_contract_stores_prose_summary_and_ledger_payload`, so these cover the two branches of the lookup rather than re-driving a whole cycle through a second harness.
+
+```python
+class _FakeOperations:
+    def __init__(self, operations):
+        self._operations = operations
+
+    def list_for_cycle(self, cycle_id):
+        return list(self._operations)
+
+
+class _FakeOperation:
+    def __init__(self, stage, status, result_json):
+        self.stage = stage
+        self.status = status
+        self.result_json = result_json
+
+
+@pytest.mark.asyncio
+async def test_draft_is_built_from_the_ledger_contract_payload(tmp_path):
+    (
+        runner,
+        teams,
+        team_run,
+        archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    runner._operations = _FakeOperations(
+        [
+            _FakeOperation(
+                "cycle_synthesis",
+                "applied",
+                {"summary": "Draft ready.", "contract_payload": _LIBRARY_DRAFT_RESPONSE},
+            )
+        ]
+    )
+    teams.set_cycle_status(cycle.id, "completed", summary="Draft ready.")
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    drafts = archive.list_entries(status="draft")
+    assert len(drafts) == 1
+    assert drafts[0].origin_request_id == knowledge_request.id
+    assert archive.get_request(knowledge_request.id).last_draft_error_code is None
+
+
+@pytest.mark.asyncio
+async def test_draft_falls_back_to_parsing_the_cycle_summary(tmp_path):
+    (
+        runner,
+        teams,
+        team_run,
+        archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    teams.set_cycle_status(cycle.id, "completed", summary=_LIBRARY_DRAFT_RESPONSE)
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    drafts = archive.list_entries(status="draft")
+    assert len(drafts) == 1
+    assert drafts[0].origin_request_id == knowledge_request.id
+```
+
+`_LIBRARY_DRAFT_RESPONSE` is the marker-carrying string already used by `test_successful_draft_clears_an_earlier_failure` in this file; lift it to a module-level constant if it is still inline there. The second test sets the cycle summary to exactly the pre-change shape, so it is the regression guard for cycles that completed before this feature.
+
+Setting `runner._operations` directly in the first test is deliberate: the attribute is optional wiring (see Step 3), and a fake keeps this test about the lookup branch rather than about the ledger's internals.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `.venv/Scripts/python.exe -m pytest tests/test_hook_runner.py -k "ledger or fallback" -v`
+Expected: FAIL — the ledger case records `draft_contract_violation` because the prose summary has no marker
+
+- [ ] **Step 3: Write the implementation**
+
+In `_apply_knowledge_request_draft`, replace the direct parse of `cycle.summary` with a payload lookup that falls back:
+
+```python
+            source = self._contract_payload_for_cycle(cycle) or (cycle.summary or "")
+            try:
+                _result_text, payload = parse_library_draft_response(source)
+            except ValueError as exc:
+                return self._fail_draft(
+                    request_id, cycle, "draft_contract_violation", exc
+                )
+```
+
+and add the lookup:
+
+```python
+    def _contract_payload_for_cycle(self, cycle: TeamRunCycle) -> str | None:
+        if self._operations is None:
+            return None
+        for operation in reversed(self._operations.list_for_cycle(cycle.id)):
+            if operation.stage not in {"cycle_synthesis", "cycle_synthesis_repair"}:
+                continue
+            if operation.status != "applied":
+                continue
+            payload = (operation.result_json or {}).get("contract_payload")
+            return payload if isinstance(payload, str) and payload.strip() else None
+        return None
+```
+
+`HookRunner` does not hold the operation service today. Add it through the existing `attach_team_cycle_queue` wiring in `app.py` rather than adding a new constructor argument, and keep it optional so the tests that build a `HookRunner` without it still work — that is what the `self._operations is None` guard is for.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `.venv/Scripts/python.exe -m pytest tests/test_hook_runner.py tests/test_archive.py -v`
+Expected: PASS, including the pre-existing knowledge-request settlement tests
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/personal_agent_gateway/hook_runner.py src/personal_agent_gateway/app.py \
+  tests/test_hook_runner.py
+git commit -m "feat: 정산이 원장의 계약 페이로드를 우선 사용"
+```
+
+---
+
+### Task 6: Full verification
 
 - [ ] **Step 1: Run the backend suite**
 
