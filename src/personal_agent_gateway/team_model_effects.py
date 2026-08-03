@@ -13,6 +13,7 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.team_acceptance import (
     AcceptanceResult,
     is_recoverable_acceptance_failure,
+    rejected_verification_names,
 )
 from personal_agent_gateway.team_model_operations import (
     OperationConflict,
@@ -597,11 +598,14 @@ class TeamModelEffectService:
                 rejected_deliverables=[
                     item.path for item in outcome.deliverables
                 ],
-                rejected_verifications=[
-                    required.name
-                    for required in task.acceptance.required_verifications
-                    if verification_status.get(required.name) != "passed"
-                ],
+                rejected_verifications=rejected_verification_names(
+                    (
+                        (required.name, required.check is not None)
+                        for required in task.acceptance.required_verifications
+                    ),
+                    verification_status,
+                    acceptance.evidence,
+                ),
             )
             connection.execute(
                 """
@@ -2759,8 +2763,11 @@ def _acceptance_audit_matches(
     verification_status = {
         item.name: item.status for item in outcome.verifications
     }
-    verification_names = [
-        _acceptance_before_verification_name(item)
+    verification_pairs = [
+        (
+            _acceptance_before_verification_name(item),
+            isinstance(item, dict) and item.get("check") is not None,
+        )
         for item in acceptance_before["required_verifications"]
     ]
     expected_metadata = _acceptance_review_metadata(
@@ -2782,11 +2789,11 @@ def _acceptance_audit_matches(
             else None
         ),
         rejected_deliverables=[item.path for item in outcome.deliverables],
-        rejected_verifications=[
-            name
-            for name in verification_names
-            if verification_status.get(name) != "passed"
-        ],
+        rejected_verifications=rejected_verification_names(
+            verification_pairs,
+            verification_status,
+            acceptance.evidence,
+        ),
     )
     current_acceptance = json.loads(_task_acceptance_json(task.acceptance))
     expected_current = (

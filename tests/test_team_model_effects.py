@@ -23,13 +23,13 @@ from personal_agent_gateway.team_outcomes import (
     TaskOutcome,
     VerificationEvidence,
 )
+from personal_agent_gateway import team_runtime
 from personal_agent_gateway.team_runtime import AcceptanceReviewResolution
 from personal_agent_gateway.team_verification_checks import VerificationCheck
 from personal_agent_gateway.teams import (
     RequiredVerification,
     TaskAcceptance,
     TeamRunService,
-    _task_acceptance_json,
 )
 from team_cycle_helpers import make_cycle_services, make_queued_cycle
 
@@ -549,7 +549,7 @@ def test_acceptance_lead_revise_acceptance_replays_with_an_unchecked_verificatio
         instruction="Resubmit under the revised contract.",
         acceptance=revised_acceptance,
     )
-    acceptance_payload = json.loads(_task_acceptance_json(revised_acceptance))
+    acceptance_payload = team_runtime._acceptance_resolution_json(resolution)["acceptance"]
     followup = complete_followup_operation(
         services,
         stage="acceptance_lead",
@@ -614,7 +614,7 @@ def test_acceptance_lead_revise_acceptance_validates_and_replays_with_a_checked_
         instruction="Resubmit under the revised contract.",
         acceptance=revised_acceptance,
     )
-    acceptance_payload = json.loads(_task_acceptance_json(revised_acceptance))
+    acceptance_payload = team_runtime._acceptance_resolution_json(resolution)["acceptance"]
     followup = complete_followup_operation(
         services,
         stage="acceptance_lead",
@@ -644,6 +644,91 @@ def test_acceptance_lead_revise_acceptance_validates_and_replays_with_a_checked_
 
     assert second.message.id == first.message.id
     assert second.next_stage == "acceptance_worker"
+
+
+def test_acceptance_lead_records_the_failing_verification_and_server_evidence(
+    tmp_path,
+):
+    """Replays the incident: the worker claims `marker: passed`, but the
+    server's check fails and rejects with `required_verification_failed`.
+    The recorded audit must name the failing verification and keep the
+    server's evidence, not silently record `rejected_verifications: []`.
+    """
+    outcome = TaskOutcome(
+        status="completed",
+        summary="Created draft.md.",
+        reason_code=None,
+        deliverables=(Deliverable(path="draft.md", kind="document"),),
+        verifications=(
+            VerificationEvidence(
+                name="marker", status="passed", evidence="worker claims it passed"
+            ),
+        ),
+    )
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=outcome,
+        acceptance=TaskAcceptance(
+            required_outputs=("draft.md",),
+            required_verifications=(
+                RequiredVerification(
+                    "marker",
+                    VerificationCheck(
+                        "file_contains", "draft.md", value="<library_draft>"
+                    ),
+                ),
+            ),
+        ),
+    )
+    server_evidence = {
+        "verifications": {
+            "marker": {
+                "mode": "verified",
+                "status": "failed",
+                "evidence": "file_contains: draft.md lacks the value",
+            }
+        }
+    }
+    rejected = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="required_verification_failed",
+        evidence=server_evidence,
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        rejected,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="The verification check is failing.",
+        instruction="Add the marker to draft.md.",
+    )
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "retry_worker",
+            "reason": resolution.reason,
+            "instruction": resolution.instruction,
+            "reason_code": None,
+            "acceptance": None,
+            "decision": None,
+        },
+        upstream_session_id="lead-session",
+    )
+
+    applied = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert applied.message.metadata["rejected_verifications"] == ["marker"]
 
 
 def test_acceptance_lead_retry_replays_with_a_checked_verification(tmp_path):
