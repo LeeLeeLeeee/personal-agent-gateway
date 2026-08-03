@@ -87,11 +87,13 @@ Return ONLY one of:
    "required_verifications":[{{"name":"verification-name","check":null}}]}}}}
    A verification may carry a check the server runs itself. Prefer one whenever a
    file can decide the question; use "check":null only for something no file can
-   settle. Available checks, each with a workspace-relative "path":
-   {{"type":"file_nonempty","path":"p"}}
-   {{"type":"file_contains","path":"p","value":"substring"}}
-   {{"type":"file_matches","path":"p","pattern":"regex, at most 200 characters"}}
-   {{"type":"json_parses","path":"p"}}
+   settle. Point "path" at a file this task produces; normally one of its own
+   "required_outputs". Use exactly the fields shown; no others. Available checks,
+   each with a workspace-relative "path":
+   {{"type":"file_nonempty","path":"relative/path"}}
+   {{"type":"file_contains","path":"relative/path","value":"substring"}}
+   {{"type":"file_matches","path":"relative/path","pattern":"regex, at most 200 characters"}}
+   {{"type":"json_parses","path":"relative/path"}}
    A check you supply decides the outcome; your own claim about it is ignored.
    Assign the member whose persona role and responsibilities best match the task.
    Use null only when no member is available. Do not assign by list order or
@@ -140,10 +142,12 @@ Return ONLY one JSON object in exactly one of these forms:
 {{"resolution":{{"kind":"fail","reason_code":"stable-code","summary":"why recovery cannot continue"}}}}
 A revised verification may carry a check the server runs itself. Prefer one whenever a
 file can decide the question; use "check":null only for something no file can settle.
-Available checks, each with a workspace-relative "path": {{"type":"file_nonempty","path":"p"}},
-{{"type":"file_contains","path":"p","value":"substring"}},
-{{"type":"file_matches","path":"p","pattern":"regex, at most 200 characters"}},
-{{"type":"json_parses","path":"p"}}.
+Point "path" at a file this task produces; normally one of its own "required_outputs".
+Use exactly the fields shown; no others. Available checks, each with a
+workspace-relative "path": {{"type":"file_nonempty","path":"relative/path"}},
+{{"type":"file_contains","path":"relative/path","value":"substring"}},
+{{"type":"file_matches","path":"relative/path","pattern":"regex, at most 200 characters"}},
+{{"type":"json_parses","path":"relative/path"}}.
 A check you supply decides the outcome; your own claim about it is ignored."""
 
 SYNTHESIS_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
@@ -201,11 +205,13 @@ Return ONLY a JSON array of task objects using the same exact schema:
 "required_verifications":[{{"name":"verification-name","check":null}}]}}}}
 A verification may carry a check the server runs itself. Prefer one whenever a
 file can decide the question; use "check":null only for something no file can
-settle. Available checks, each with a workspace-relative "path":
-{{"type":"file_nonempty","path":"p"}}
-{{"type":"file_contains","path":"p","value":"substring"}}
-{{"type":"file_matches","path":"p","pattern":"regex, at most 200 characters"}}
-{{"type":"json_parses","path":"p"}}
+settle. Point "path" at a file this task produces; normally one of its own
+"required_outputs". Use exactly the fields shown; no others. Available checks,
+each with a workspace-relative "path":
+{{"type":"file_nonempty","path":"relative/path"}}
+{{"type":"file_contains","path":"relative/path","value":"substring"}}
+{{"type":"file_matches","path":"relative/path","pattern":"regex, at most 200 characters"}}
+{{"type":"json_parses","path":"relative/path"}}
 A check you supply decides the outcome; your own claim about it is ignored.
 Run context:
 {goal}

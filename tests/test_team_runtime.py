@@ -2645,6 +2645,9 @@ def test_planning_prompts_teach_the_check_vocabulary() -> None:
         assert "file_matches" in prompt
         assert "json_parses" in prompt
         assert '"check"' in prompt
+        assert '"path":"p"' not in prompt
+        assert "required_outputs" in prompt
+        assert "exactly the fields shown" in prompt
 
 
 def test_worker_prompt_uses_cycle_space_instead_of_run_space(tmp_path) -> None:
