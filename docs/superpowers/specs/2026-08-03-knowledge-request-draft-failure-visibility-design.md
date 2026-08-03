@@ -105,6 +105,10 @@ persisted columns are the source of truth.
 On success the handler calls `clear_draft_failure` before publishing
 `archive.draft.created`.
 
+`HookRunner._reconcile_knowledge_requests`, the startup reconciliation path,
+has the same silent failure and records through the same helper. It runs
+synchronously, so it records the failure without publishing an SSE event.
+
 ## API
 
 `_request_payload` in `api/archive.py` adds `last_draft_error_code`,
