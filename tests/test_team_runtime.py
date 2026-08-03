@@ -42,6 +42,9 @@ from personal_agent_gateway.team_provider_recovery import (
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.run_state import TeamRunRegistry
 from personal_agent_gateway.team_runtime import (
+    ACCEPTANCE_REVIEW_PROMPT,
+    ADD_WORK_PROMPT,
+    PLANNING_PROMPT,
     WORKER_PROMPT,
     TeamRuntime,
     _bounded_path_exists,
@@ -2633,6 +2636,18 @@ def test_worker_prompt_presents_a_complete_concrete_assignment() -> None:
     assert '"deliverables"' in prompt
     assert '"verifications"' in prompt
     assert "final response must contain only" in prompt
+
+
+def test_planning_prompts_teach_the_check_vocabulary() -> None:
+    for prompt in (PLANNING_PROMPT, ADD_WORK_PROMPT, ACCEPTANCE_REVIEW_PROMPT):
+        assert "file_nonempty" in prompt
+        assert "file_contains" in prompt
+        assert "file_matches" in prompt
+        assert "json_parses" in prompt
+        assert '"check"' in prompt
+        assert '"path":"p"' not in prompt
+        assert "required_outputs" in prompt
+        assert "exactly the fields shown" in prompt
 
 
 def test_worker_prompt_uses_cycle_space_instead_of_run_space(tmp_path) -> None:

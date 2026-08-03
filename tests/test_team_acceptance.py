@@ -6,6 +6,7 @@ from personal_agent_gateway.source_staging import SourceStager
 from personal_agent_gateway.team_acceptance import (
     TeamAcceptanceService,
     is_recoverable_acceptance_failure,
+    rejected_verification_names,
 )
 from personal_agent_gateway.team_outcomes import (
     Deliverable,
@@ -301,3 +302,46 @@ def test_an_attested_verification_the_worker_omitted_still_fails(tmp_path: Path)
 
     assert result.accepted is False
     assert result.reason_code == "required_verification_failed"
+
+
+def test_a_deliverable_rejection_does_not_blame_unevaluated_checks(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace_with_report(
+        tmp_path, "prose\n<library_draft>{}</library_draft>"
+    )
+    task = _task(verifications=(RequiredVerification("marker", _marker_check()),))
+    outcome = _outcome(deliverables=())
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert result.accepted is False
+    assert result.reason_code == "required_output_missing"
+
+    verification_status = {item.name: item.status for item in outcome.verifications}
+    required_verifications = tuple(
+        (required.name, required.check is not None)
+        for required in task.acceptance.required_verifications
+    )
+    assert (
+        rejected_verification_names(
+            required_verifications, verification_status, result.evidence
+        )
+        == []
+    )
+
+
+def test_a_checked_verification_after_an_earlier_failure_is_not_blamed() -> None:
+    required_verifications = (("reviewed", False), ("marker", True))
+
+    assert rejected_verification_names(
+        required_verifications, {}, {"verifications": {}}
+    ) == ["reviewed"]
+
+    required_verifications = (("a", True), ("b", True))
+
+    assert rejected_verification_names(
+        required_verifications,
+        {},
+        {"verifications": {"a": {"status": "failed"}}},
+    ) == ["a"]

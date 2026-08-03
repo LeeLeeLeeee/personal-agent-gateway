@@ -152,6 +152,7 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
   const verificationByName = new Map(
     verifications.map((verification) => [verification.name, verification])
   );
+  const verificationEvidence = acceptanceResult.evidence?.verifications || {};
   const reasonCode = acceptanceResult.reason_code || outcome.reason_code;
   const diagnostic = task.result
     || (task.error_message && task.error_message !== reasonCode
@@ -195,6 +196,9 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
             <div className="mono team-task-dialog-label">
               {task.required === false ? "OPTIONAL TASK" : "REQUIRED TASK"}
             </div>
+            {acceptanceResult.evidence?.attested_only ? (
+              <span className="mono team-task-attested">ATTESTED ONLY</span>
+            ) : null}
             {reasonCode ? (
               <div className="team-task-dialog-copy">
                 <span className="mono">{reasonCode}</span>
@@ -214,15 +218,34 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
                 <ul>
                   {acceptance.required_verifications.map((item) => {
                     const name = typeof item === "string" ? item : item.name;
+                    const check = typeof item === "string" ? null : item.check;
                     const verification = verificationByName.get(name);
+                    const serverEntry = verificationEvidence[name];
+                    const mode = serverEntry?.mode;
+                    const verified = mode === "verified";
+                    const status = verified ? serverEntry.status : verification?.status;
+                    const evidenceText = verified ? serverEntry.evidence : verification?.evidence;
                     return (
                       <li key={name}>
                         <span className="mono">{name}</span>
                         {" · "}
                         <span className="mono">
-                          {String(verification?.status || "missing").toUpperCase()}
+                          {String(status || "missing").toUpperCase()}
                         </span>
-                        {verification?.evidence ? ` · ${verification.evidence}` : ""}
+                        {mode ? (
+                          <>
+                            {" · "}
+                            <span className="mono">{mode.toUpperCase()}</span>
+                          </>
+                        ) : null}
+                        {evidenceText ? <span>{` · ${evidenceText}`}</span> : null}
+                        {check ? (
+                          <div className="mono team-task-check">
+                            {`${check.type} · ${check.path}`}
+                            {check.value ? ` · ${check.value}` : ""}
+                            {check.pattern ? ` · ${check.pattern}` : ""}
+                          </div>
+                        ) : null}
                       </li>
                     );
                   })}

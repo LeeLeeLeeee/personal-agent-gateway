@@ -189,6 +189,9 @@ Expected: FAIL — the check object is not rendered and no badge exists
               ) : null}
 ```
 
+> Amendment (final review fix wave): shipped as `ATTESTED ONLY`, not `ATTESTED`.
+> Deliberate; this snippet was not updated to match.
+
 3c. Add the two CSS rules in `src/personal_agent_gateway/static/styles.css`, next to the other `team-task-` rules:
 
 ```css
@@ -206,6 +209,10 @@ Expected: FAIL — the check object is not rendered and no badge exists
     letter-spacing: 0.8px;
 }
 ```
+
+> Amendment (final review fix wave): `.team-task-check` shipped with
+> `letter-spacing: 0.8px`, not `0.7px`. Deliberate; this snippet was not
+> updated to match.
 
 Check the neighbouring `team-task-` rules before writing these and match their conventions; if `--bd-sm` is not what the neighbours use for a small badge border, use whatever they use.
 
