@@ -882,7 +882,9 @@ and add the lookup:
         return None
 ```
 
-`HookRunner` does not hold the operation service today. Add it through the existing `attach_team_cycle_queue` wiring in `app.py` rather than adding a new constructor argument, and keep it optional so the tests that build a `HookRunner` without it still work — that is what the `self._operations is None` guard is for.
+`HookRunner` does not hold the operation service today. Add it through the existing `attach_team_cycle_queue` wiring in `app.py` rather than adding a new constructor argument.
+
+> **Revised during the final review.** This step originally said to keep the parameter optional so existing tests that build a `HookRunner` without it would still work. That was wrong: an optional argument means dropping it silently reinstates the very defect this plan fixes — settlement falls back to the prose summary, every satisfied contract is recorded as `draft_contract_violation`, and the suite stays green. The shipped code makes `operations` **required** and updates the test call sites, with one end-to-end test driving a real synthesis through `HookRunner.on_team_run_settled` to an Archive draft.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
