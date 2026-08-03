@@ -513,6 +513,68 @@ def test_acceptance_lead_retry_is_atomic_and_idempotent(tmp_path):
     assert followup.operations.get(followup.operation.id).status == "applied"
 
 
+def test_acceptance_lead_revise_acceptance_replays_with_an_unchecked_verification(
+    tmp_path,
+):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    rejected = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="required_output_missing",
+        evidence={},
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        rejected,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    revised_acceptance = TaskAcceptance(
+        required_outputs=("draft.md",),
+        required_verifications=(RequiredVerification("review"),),
+    )
+    resolution = AcceptanceReviewResolution(
+        kind="revise_acceptance",
+        reason="The contract omitted the review verification.",
+        instruction="Resubmit under the revised contract.",
+        acceptance=revised_acceptance,
+    )
+    acceptance_payload = json.loads(
+        json.dumps(asdict(revised_acceptance), ensure_ascii=False, sort_keys=True)
+    )
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "revise_acceptance",
+            "reason": resolution.reason,
+            "instruction": resolution.instruction,
+            "reason_code": None,
+            "acceptance": acceptance_payload,
+            "decision": None,
+        },
+        upstream_session_id="lead-session",
+    )
+
+    first = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+    second = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert second.message.id == first.message.id
+    assert second.next_stage == "acceptance_worker"
+
+
 def test_acceptance_lead_retry_replays_with_a_checked_verification(tmp_path):
     services = make_completed_worker_operation(
         tmp_path,
@@ -809,6 +871,26 @@ def test_apply_plan_and_operation_are_atomic_and_idempotent(tmp_path):
     applied = services.operations.get(services.operation.id)
     assert applied.status == "applied"
     assert applied.effect_type == "task_plan"
+
+
+def test_apply_plan_replay_accepts_an_explicit_null_check_verification(tmp_path):
+    spec = valid_task_spec("Research", None)
+    spec["acceptance"] = {
+        "required_outputs": ["research.md"],
+        "required_verifications": [{"name": "review", "check": None}],
+    }
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+
+    first = services.effects.apply_plan(services.operation.id)
+    second = services.effects.apply_plan(services.operation.id)
+
+    assert [task.id for task in second] == [task.id for task in first]
+    task = services.teams.get_task(first[0].id)
+    assert task.acceptance.required_verifications == (RequiredVerification("review"),)
 
 
 def test_apply_plan_rolls_back_all_effects_for_unknown_owner(tmp_path):
