@@ -224,6 +224,44 @@ def test_a_server_check_decides_regardless_of_the_worker_claim(tmp_path: Path) -
     assert result.reason_code == "required_verification_failed"
 
 
+def test_a_server_check_failure_records_the_failing_verification_and_evidence(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace_with_report(tmp_path, "# Report\nNo marker here.\n")
+    task = _task(verifications=(RequiredVerification("marker", _marker_check()),))
+    outcome = _outcome(
+        verifications=(
+            VerificationEvidence("marker", "passed", "worker claims it passed"),
+        )
+    )
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert result.accepted is False
+    assert result.reason_code == "required_verification_failed"
+    assert result.evidence["verifications"]["marker"]["mode"] == "verified"
+    assert result.evidence["verifications"]["marker"]["status"] == "failed"
+    assert "lacks the value" in result.evidence["verifications"]["marker"]["evidence"]
+
+
+def test_a_server_check_accepts_regardless_of_the_worker_claim(tmp_path: Path) -> None:
+    workspace = _workspace_with_report(
+        tmp_path, "prose\n<library_draft>{}</library_draft>"
+    )
+    task = _task(verifications=(RequiredVerification("marker", _marker_check()),))
+    outcome = _outcome(
+        verifications=(
+            VerificationEvidence("marker", "failed", "worker claims it failed"),
+        )
+    )
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert result.accepted is True
+    assert result.evidence["verifications"]["marker"]["mode"] == "verified"
+    assert result.evidence["verifications"]["marker"]["status"] == "passed"
+
+
 def test_a_passing_server_check_is_recorded_as_verified(tmp_path: Path) -> None:
     workspace = _workspace_with_report(
         tmp_path, "prose\n<library_draft>{}</library_draft>"

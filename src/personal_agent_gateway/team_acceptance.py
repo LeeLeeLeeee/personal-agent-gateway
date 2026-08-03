@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -81,11 +82,19 @@ class TeamAcceptanceService:
                     "evidence": outcome_result.evidence,
                 }
                 if not outcome_result.passed:
-                    return _rejected("failed", "required_verification_failed")
+                    return _rejected(
+                        "failed",
+                        "required_verification_failed",
+                        evidence={"verifications": recorded},
+                    )
                 verified_count += 1
                 continue
             if reported is None or reported.status != "passed":
-                return _rejected("failed", "required_verification_failed")
+                return _rejected(
+                    "failed",
+                    "required_verification_failed",
+                    evidence={"verifications": recorded},
+                )
             recorded[required.name] = {
                 "mode": "attested",
                 "status": reported.status,
@@ -113,13 +122,46 @@ class TeamAcceptanceService:
 def _rejected(
     status: Literal["completed", "blocked", "failed"],
     reason_code: str,
+    *,
+    evidence: dict[str, object] | None = None,
 ) -> AcceptanceResult:
     return AcceptanceResult(
         accepted=False,
         status=status,
         reason_code=reason_code,
-        evidence={},
+        evidence=evidence or {},
     )
+
+
+def rejected_verification_names(
+    required_verifications: Iterable[tuple[str, bool]],
+    verification_status: dict[str, str],
+    acceptance_evidence: dict[str, object],
+) -> list[str]:
+    """Names of required verifications not confirmed passed.
+
+    For a checked verification, the server's own verdict (carried in
+    ``acceptance_evidence["verifications"]``, populated by `evaluate`) decides
+    it — never the worker's self-report. For an attested (check-less)
+    verification, the worker's self-reported status is the only signal
+    available, so it is used as before.
+    """
+    verified = acceptance_evidence.get("verifications")
+    verified_status = (
+        {name: entry.get("status") for name, entry in verified.items()}
+        if isinstance(verified, dict)
+        else {}
+    )
+    return [
+        name
+        for name, has_check in required_verifications
+        if (
+            verified_status.get(name)
+            if has_check
+            else verification_status.get(name)
+        )
+        != "passed"
+    ]
 
 
 def _safe_file(workspace: Path, relative_path: str) -> bool:
