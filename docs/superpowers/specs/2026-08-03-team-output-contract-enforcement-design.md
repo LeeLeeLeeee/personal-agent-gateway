@@ -153,10 +153,12 @@ The result is validated before it is returned:
   `draft_contract_violation` and the Archive request card shows the failure
   banner, exactly as it does today.
 
-The corrective follow-up is a second `cycle_synthesis` operation at the next
-stage ordinal, which is how `_leader_synthesis` already handles a re-synthesis
-after a resolved user decision. It introduces no new retry mechanism and stays
-inside the operation ledger's idempotency rules.
+The corrective follow-up is a `cycle_synthesis_repair` operation, a new stage
+that mirrors the existing `cycle_planning_repair` — the same shape the system
+already uses when the leader's output was rejected and must be asked for again.
+A separate stage rather than a second `cycle_synthesis` ordinal, because the
+synthesis ordinal is derived from resolved user-decision requests and must keep
+that meaning.
 
 ## Part B: Typed acceptance checks
 
