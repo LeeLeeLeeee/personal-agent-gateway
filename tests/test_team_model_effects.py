@@ -24,6 +24,7 @@ from personal_agent_gateway.team_outcomes import (
     VerificationEvidence,
 )
 from personal_agent_gateway.team_runtime import AcceptanceReviewResolution
+from personal_agent_gateway.team_verification_checks import VerificationCheck
 from personal_agent_gateway.teams import RequiredVerification, TaskAcceptance, TeamRunService
 from team_cycle_helpers import make_cycle_services, make_queued_cycle
 
@@ -127,6 +128,7 @@ def make_completed_worker_operation(
     outcome=None,
     decision=None,
     query=None,
+    acceptance=None,
 ):
     db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, _cycles, run)
@@ -143,7 +145,8 @@ def make_completed_worker_operation(
         "Create a draft.",
         owner_agent_id=worker.id,
         cycle_id=cycle.id,
-        acceptance=TaskAcceptance(
+        acceptance=acceptance
+        or TaskAcceptance(
             required_outputs=("draft.md",),
             required_verifications=(RequiredVerification("review"),),
         ),
@@ -508,6 +511,67 @@ def test_acceptance_lead_retry_is_atomic_and_idempotent(tmp_path):
         "worker-session"
     )
     assert followup.operations.get(followup.operation.id).status == "applied"
+
+
+def test_acceptance_lead_retry_replays_with_a_checked_verification(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+        acceptance=TaskAcceptance(
+            required_outputs=("draft.md",),
+            required_verifications=(
+                RequiredVerification(
+                    "review",
+                    VerificationCheck("file_nonempty", "draft.md"),
+                ),
+            ),
+        ),
+    )
+    rejected = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="required_verification_failed",
+        evidence={},
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        rejected,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="The verification check is failing.",
+        instruction="Add content to draft.md.",
+    )
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "retry_worker",
+            "reason": resolution.reason,
+            "instruction": resolution.instruction,
+            "reason_code": None,
+            "acceptance": None,
+            "decision": None,
+        },
+        upstream_session_id="lead-session",
+    )
+
+    first = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+    second = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert second.message.id == first.message.id
+    assert second.next_stage == "acceptance_worker"
 
 
 def test_acceptance_lead_user_decision_is_atomic_and_idempotent(tmp_path):

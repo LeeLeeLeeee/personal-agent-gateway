@@ -2645,6 +2645,20 @@ def lead_decision_item_digest(
     )
 
 
+def _acceptance_before_verification_name(item: object) -> str | None:
+    if isinstance(item, str):
+        return item
+    if (
+        isinstance(item, dict)
+        and set(item) == {"name", "check"}
+        and isinstance(item.get("name"), str)
+        and item["name"].strip()
+        and (item.get("check") is None or isinstance(item.get("check"), dict))
+    ):
+        return item["name"]
+    return None
+
+
 def _acceptance_audit_matches(
     message: TeamMessage,
     operation: TeamModelOperation,
@@ -2657,16 +2671,16 @@ def _acceptance_audit_matches(
         or set(acceptance_before)
         != {"required_outputs", "required_verifications"}
         or not isinstance(acceptance_before["required_outputs"], list)
+        or not all(
+            isinstance(item, str) for item in acceptance_before["required_outputs"]
+        )
         or not isinstance(
             acceptance_before["required_verifications"],
             list,
         )
-        or not all(
-            isinstance(item, str)
-            for item in (
-                *acceptance_before["required_outputs"],
-                *acceptance_before["required_verifications"],
-            )
+        or any(
+            _acceptance_before_verification_name(item) is None
+            for item in acceptance_before["required_verifications"]
         )
     ):
         return False
@@ -2682,6 +2696,10 @@ def _acceptance_audit_matches(
     verification_status = {
         item.name: item.status for item in outcome.verifications
     }
+    verification_names = [
+        _acceptance_before_verification_name(item)
+        for item in acceptance_before["required_verifications"]
+    ]
     expected_metadata = _acceptance_review_metadata(
         operation_id=operation.id,
         task_id=task.id,
@@ -2703,7 +2721,7 @@ def _acceptance_audit_matches(
         rejected_deliverables=[item.path for item in outcome.deliverables],
         rejected_verifications=[
             name
-            for name in acceptance_before["required_verifications"]
+            for name in verification_names
             if verification_status.get(name) != "passed"
         ],
     )
