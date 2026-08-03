@@ -91,6 +91,18 @@ def test_an_oversized_file_fails_rather_than_being_read(tmp_path: Path) -> None:
     assert "too large" in result.evidence
 
 
+def test_file_matches_truncates_the_search_text_and_says_so(tmp_path: Path) -> None:
+    padding = "x" * 64_000
+    workspace = _workspace(tmp_path, "draft.md", padding + "MARKER")
+
+    result = run_verification_check(
+        VerificationCheck("file_matches", "draft.md", pattern="MARKER"), workspace
+    )
+
+    assert not result.passed
+    assert "truncated" in result.evidence
+
+
 def test_an_uncompilable_pattern_fails_rather_than_raising(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path, "draft.md", "content")
 
@@ -130,9 +142,18 @@ def test_parse_verification_check_accepts_each_type_and_rejects_the_rest() -> No
         {"type": "file_matches", "path": "a.md"},
         {"type": "file_nonempty", "path": "a.md", "value": "x"},
         {"type": "file_nonempty", "path": "../a.md"},
+        {"type": "file_matches", "path": "a.md", "pattern": "a" * 201},
     ):
         with pytest.raises(ValueError):
             parse_verification_check(invalid)
+
+
+def test_parse_verification_check_accepts_a_pattern_at_the_length_cap() -> None:
+    check = parse_verification_check(
+        {"type": "file_matches", "path": "a.md", "pattern": "a" * 200}
+    )
+
+    assert check.pattern == "a" * 200
 
 
 def test_payload_round_trips_without_the_unused_field() -> None:

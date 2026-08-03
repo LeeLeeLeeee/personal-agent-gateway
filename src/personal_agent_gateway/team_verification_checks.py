@@ -6,9 +6,20 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from personal_agent_gateway.file_safety import is_sensitive_file
 
 MAX_CHECK_BYTES = 1_000_000
+MAX_PATTERN_LENGTH = 200
+FILE_MATCHES_SEARCH_CAP = 64_000
 CHECK_TYPES = ("file_nonempty", "file_contains", "file_matches", "json_parses")
 _VALUE_TYPES = {"file_contains"}
 _PATTERN_TYPES = {"file_matches"}
+
+# `file_matches` compiles a model-authored regex and searches model-authored
+# text with Python's `re`, which has no execution timeout. Capping the
+# pattern length and the searched text bounds the worst case, but does not
+# eliminate it: even a short pattern (e.g. `(\w+\s?)+$`) can still backtrack
+# exponentially against a crafted input and stall the caller. This is an
+# accepted residual risk for this vocabulary — the pattern author (a model
+# operating on its own task) is inside the trust boundary, and this is a
+# local, single-user gateway.
 
 
 @dataclass(frozen=True)
@@ -27,7 +38,9 @@ class CheckResult:
 
 def parse_verification_check(value: object) -> VerificationCheck:
     if not isinstance(value, dict):
-        raise ValueError("Verification check must be an object")
+        raise ValueError(  # noqa: TRY004
+            "Verification check must be an object"
+        )
     check_type = value.get("type")
     if check_type not in CHECK_TYPES:
         raise ValueError(f"Unknown verification check type: {check_type!r}")
@@ -48,10 +61,17 @@ def parse_verification_check(value: object) -> VerificationCheck:
         detail = value["value"]
     elif check_type in _PATTERN_TYPES:
         detail = value["pattern"]
-    if check_type in _VALUE_TYPES | _PATTERN_TYPES:
-        if not isinstance(detail, str) or not detail.strip():
-            msg = f"Verification check {check_type} requires a non-empty value"
-            raise ValueError(msg)
+    if check_type in _VALUE_TYPES | _PATTERN_TYPES and (
+        not isinstance(detail, str) or not detail.strip()
+    ):
+        msg = f"Verification check {check_type} requires a non-empty value"
+        raise ValueError(msg)
+    if check_type in _PATTERN_TYPES and len(detail) > MAX_PATTERN_LENGTH:
+        msg = (
+            f"Verification check pattern must be at most {MAX_PATTERN_LENGTH} "
+            "characters"
+        )
+        raise ValueError(msg)
     return VerificationCheck(
         type=check_type,
         path=path.strip(),
@@ -131,11 +151,15 @@ def run_verification_check(
         except re.error as exc:
             msg = f"file_matches: pattern did not compile: {exc}"
             return CheckResult(False, msg)
-        passed = pattern.search(text) is not None
+        truncated = len(text) > FILE_MATCHES_SEARCH_CAP
+        search_text = text[:FILE_MATCHES_SEARCH_CAP] if truncated else text
+        passed = pattern.search(search_text) is not None
         evidence = (
             f"file_matches: {check.path} "
             f"{'matched' if passed else 'did not match'}"
         )
+        if truncated:
+            evidence += f" (search truncated to {FILE_MATCHES_SEARCH_CAP} bytes)"
         return CheckResult(passed, evidence)
     if check.type == "json_parses":
         try:
