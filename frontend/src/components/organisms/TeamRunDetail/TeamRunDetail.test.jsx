@@ -688,18 +688,37 @@ describe("TeamRunDetail", () => {
         error_message: "The link checker could not run.",
         acceptance: {
           required_outputs: ["outputs/guide.md"],
-          required_verifications: ["link-check"]
+          required_verifications: [
+            { name: "link-check", check: null },
+            {
+              name: "schema-check",
+              check: { type: "file_nonempty", path: "outputs/schema.json" }
+            },
+            "source-check"
+          ]
         },
         outcome: {
           status: "completed",
           summary: "Guide written.",
           reason_code: null,
           deliverables: [{ path: "outputs/guide.md", kind: "text" }],
-          verifications: [{
-            name: "link-check",
-            status: "failed",
-            evidence: "Executable unavailable"
-          }]
+          verifications: [
+            {
+              name: "link-check",
+              status: "failed",
+              evidence: "Executable unavailable"
+            },
+            {
+              name: "schema-check",
+              status: "passed",
+              evidence: "file_nonempty: outputs/schema.json has content"
+            },
+            {
+              name: "source-check",
+              status: "passed",
+              evidence: "attested"
+            }
+          ]
         },
         acceptance_result: {
           accepted: false,
@@ -722,6 +741,9 @@ describe("TeamRunDetail", () => {
     expect(within(dialog).getByText(/Executable unavailable/)).toBeInTheDocument();
     expect(within(dialog).getByText("required_verification_failed")).toBeInTheDocument();
     expect(within(dialog).getByText("The link checker could not run.")).toBeInTheDocument();
+    expect(within(dialog).getByText("schema-check")).toBeInTheDocument();
+    expect(within(dialog).getByText("source-check")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("PASSED").length).toBe(2);
   });
 
   it("shows acceptance reviews only in the selected task details", async () => {
@@ -745,7 +767,7 @@ describe("TeamRunDetail", () => {
             instruction: "Resubmit without the undeclared file.",
             acceptance_before: {
               required_outputs: [],
-              required_verifications: ["source-check"]
+              required_verifications: [{ name: "source-check", check: null }]
             },
             acceptance_after: null
           },
