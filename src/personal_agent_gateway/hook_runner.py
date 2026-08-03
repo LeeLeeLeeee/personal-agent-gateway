@@ -27,6 +27,7 @@ from personal_agent_gateway.team_cycles import (
     TeamCycleService,
     knowledge_request_id_from_source,
 )
+from personal_agent_gateway.team_model_operations import TeamModelOperationService
 from personal_agent_gateway.team_output_contracts import LIBRARY_DRAFT_CONTRACT_ID
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.teams import TeamRun, TeamRunCycle, TeamRunService
@@ -65,6 +66,7 @@ class HookRunner:
         self._teams: TeamRunService | None = None
         self._team_cycles: TeamCycleService | None = None
         self._team_dispatcher: TeamCycleDispatcher | None = None
+        self._operations: TeamModelOperationService | None = None
         self._mail_knowledge: MailKnowledgeService | None = None
         self._mail_projector: MailWorkspaceProjector | None = None
 
@@ -88,9 +90,11 @@ class HookRunner:
         self,
         cycles: TeamCycleService,
         dispatcher: TeamCycleDispatcher,
+        operations: TeamModelOperationService | None = None,
     ) -> None:
         self._team_cycles = cycles
         self._team_dispatcher = dispatcher
+        self._operations = operations
 
     @property
     def alive(self) -> bool:
@@ -435,8 +439,9 @@ class HookRunner:
         if self._archive is None:
             return None, "", ""
         if cycle.status in {"completed", "completed_with_failures"}:
+            source = self._contract_payload_for_cycle(cycle) or (cycle.summary or "")
             try:
-                _result_text, payload = parse_library_draft_response(cycle.summary or "")
+                _result_text, payload = parse_library_draft_response(source)
             except ValueError as exc:
                 return self._fail_draft(
                     request_id, cycle, "draft_contract_violation", exc
@@ -464,6 +469,18 @@ class HookRunner:
         if cycle.status in {"blocked", "failed", "canceled", "interrupted"}:
             return self._fail_draft(request_id, cycle, f"cycle_{cycle.status}", None)
         return None, "", ""
+
+    def _contract_payload_for_cycle(self, cycle: TeamRunCycle) -> str | None:
+        if self._operations is None:
+            return None
+        for operation in reversed(self._operations.list_for_cycle(cycle.id)):
+            if operation.stage not in {"cycle_synthesis", "cycle_synthesis_repair"}:
+                continue
+            if operation.status != "applied":
+                continue
+            payload = (operation.result_json or {}).get("payload", {}).get("contract_payload")
+            return payload if isinstance(payload, str) and payload.strip() else None
+        return None
 
     def _fail_draft(
         self,

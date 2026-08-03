@@ -22,6 +22,13 @@ from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.teams import TeamRunService
 
+_LIBRARY_DRAFT_RESPONSE = (
+    "Draft ready.\n\n"
+    '<library_draft>{"kind":"search_method","title":"Search verification method",'
+    '"summary":"A repeatable evidence check.","content_markdown":"# Method\\nCheck primary sources.",'
+    '"tags":["research"],"source_urls":[],"persona_ids":[]}</library_draft>'
+)
+
 
 @dataclass
 class FakeRuntimeResult:
@@ -586,13 +593,7 @@ async def test_knowledge_request_cycle_prepares_contract_and_saves_draft(
     instruction = preparation.instruction
     assert knowledge_request.title in instruction
     assert "<library_draft>" in instruction
-    summary = (
-        "Draft ready.\n\n"
-        '<library_draft>{"kind":"search_method","title":"Search verification method",'
-        '"summary":"A repeatable evidence check.","content_markdown":"# Method\\nCheck primary sources.",'
-        '"tags":["research"],"source_urls":[],"persona_ids":[]}</library_draft>'
-    )
-    teams.set_cycle_status(cycle.id, "completed", summary=summary)
+    teams.set_cycle_status(cycle.id, "completed", summary=_LIBRARY_DRAFT_RESPONSE)
     await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
 
     drafts = archive.list_entries(status="draft")
@@ -725,13 +726,7 @@ async def test_successful_draft_clears_an_earlier_failure(tmp_path: Path) -> Non
         message="no marker",
         cycle_id="older-cycle",
     )
-    summary = (
-        "Draft ready.\n\n"
-        '<library_draft>{"kind":"search_method","title":"Search verification method",'
-        '"summary":"A repeatable evidence check.","content_markdown":"# Method\\nCheck primary sources.",'
-        '"tags":["research"],"source_urls":[],"persona_ids":[]}</library_draft>'
-    )
-    teams.set_cycle_status(cycle.id, "completed", summary=summary)
+    teams.set_cycle_status(cycle.id, "completed", summary=_LIBRARY_DRAFT_RESPONSE)
 
     await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
 
@@ -739,6 +734,75 @@ async def test_successful_draft_clears_an_earlier_failure(tmp_path: Path) -> Non
     assert len(archive.list_entries(status="draft")) == 1
     assert stored.last_draft_error_code is None
     assert stored.last_draft_failed_at is None
+
+
+class _FakeOperations:
+    def __init__(self, operations):
+        self._operations = operations
+
+    def list_for_cycle(self, cycle_id):
+        return list(self._operations)
+
+
+class _FakeOperation:
+    def __init__(self, stage, status, result_json):
+        self.stage = stage
+        self.status = status
+        self.result_json = result_json
+
+
+@pytest.mark.asyncio
+async def test_draft_is_built_from_the_ledger_contract_payload(tmp_path: Path) -> None:
+    (
+        runner,
+        teams,
+        team_run,
+        archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    runner._operations = _FakeOperations(
+        [
+            _FakeOperation(
+                "cycle_synthesis",
+                "applied",
+                {
+                    "kind": "synthesis",
+                    "payload": {
+                        "summary": "Draft ready.",
+                        "contract_payload": _LIBRARY_DRAFT_RESPONSE,
+                    },
+                },
+            )
+        ]
+    )
+    teams.set_cycle_status(cycle.id, "completed", summary="Draft ready.")
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    drafts = archive.list_entries(status="draft")
+    assert len(drafts) == 1
+    assert drafts[0].origin_request_id == knowledge_request.id
+    assert archive.get_request(knowledge_request.id).last_draft_error_code is None
+
+
+@pytest.mark.asyncio
+async def test_draft_falls_back_to_parsing_the_cycle_summary(tmp_path: Path) -> None:
+    (
+        runner,
+        teams,
+        team_run,
+        archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    teams.set_cycle_status(cycle.id, "completed", summary=_LIBRARY_DRAFT_RESPONSE)
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    drafts = archive.list_entries(status="draft")
+    assert len(drafts) == 1
+    assert drafts[0].origin_request_id == knowledge_request.id
 
 
 @pytest.mark.asyncio
