@@ -15,6 +15,7 @@ from personal_agent_gateway.team_acceptance import (
     AcceptanceResult,
     TeamAcceptanceService,
     is_recoverable_acceptance_failure,
+    rejected_verification_names,
 )
 from personal_agent_gateway.team_artifact_publisher import (
     ArtifactPublicationError,
@@ -2006,7 +2007,7 @@ class TeamRuntime:
                         "id": worker.id,
                         "persona_snapshot": worker.persona_snapshot,
                     },
-                    "acceptance": asdict(task.acceptance),
+                    "acceptance": json.loads(_task_acceptance_json(task.acceptance)),
                     "outcome": asdict(outcome),
                     "acceptance_result": asdict(acceptance),
                     "workspace_changes": changes,
@@ -2233,9 +2234,14 @@ class TeamRuntime:
                     item.path for item in outcome.deliverables
                 ),
                 rejected_verifications=tuple(
-                    required.name
-                    for required in task.acceptance.required_verifications
-                    if verification_status.get(required.name) != "passed"
+                    rejected_verification_names(
+                        (
+                            (required.name, required.check is not None)
+                            for required in task.acceptance.required_verifications
+                        ),
+                        verification_status,
+                        acceptance.evidence,
+                    )
                 ),
             )
             await self._publish(

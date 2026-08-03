@@ -53,7 +53,12 @@ from personal_agent_gateway.team_runtime import (
     _terminal_status,
 )
 from personal_agent_gateway.team_verification_checks import VerificationCheck
-from personal_agent_gateway.teams import RequiredVerification, TaskAcceptance, TeamRunService
+from personal_agent_gateway.teams import (
+    RequiredVerification,
+    TaskAcceptance,
+    TeamRunService,
+    parse_required_verifications,
+)
 
 
 @dataclass
@@ -3940,6 +3945,59 @@ def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
             ),
         }
     ]
+
+
+def test_acceptance_review_messages_use_canonical_acceptance_json(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    cycles = TeamCycleService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace", cycle_service=cycles)
+    leader_persona = personas.create_persona("Lead", "Planning", "Plans", [], [])
+    worker_persona = personas.create_persona("Worker", "Execution", "Executes", [], [])
+    run = teams.create_team_run(
+        "Goal", leader_persona.id, [worker_persona.id], "plan_and_execute", 1
+    )
+    agents = teams.list_agents(run.id)
+    leader_agent = next(agent for agent in agents if agent.role == "leader")
+    worker_agent = next(agent for agent in agents if agent.role == "member")
+    task = teams.create_task(
+        run.id,
+        "Title",
+        "Desc",
+        worker_agent.id,
+        acceptance=TaskAcceptance(
+            required_outputs=("outputs/schema.json",),
+            required_verifications=(
+                RequiredVerification(
+                    "schema-check",
+                    VerificationCheck(
+                        type="file_nonempty", path="outputs/schema.json"
+                    ),
+                ),
+            ),
+        ),
+    )
+    runtime = TeamRuntime(teams, lambda _agent: FakeModel("[]"))
+    outcome = TaskOutcome("completed", "done", None, (), ())
+    acceptance_result = AcceptanceResult(True, "completed", None, {})
+
+    messages = runtime._acceptance_review_messages(
+        run,
+        leader_agent,
+        worker_agent,
+        task,
+        outcome=outcome,
+        acceptance=acceptance_result,
+        changes={},
+    )
+
+    marker = "Authoritative review context:\n"
+    payload = json.loads(messages[0]["content"].split(marker, 1)[1])
+    required = parse_required_verifications(
+        payload["acceptance"]["required_verifications"]
+    )
+    assert required == task.acceptance.required_verifications
 
 
 def test_acceptance_review_resolution_parses_worker_retry() -> None:
