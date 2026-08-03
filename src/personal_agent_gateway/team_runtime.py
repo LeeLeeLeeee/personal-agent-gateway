@@ -53,6 +53,10 @@ from personal_agent_gateway.team_results import (
     workspace_changes,
     workspace_snapshot,
 )
+from personal_agent_gateway.team_output_contracts import (
+    OutputContract,
+    get_output_contract,
+)
 from personal_agent_gateway.team_structured_output import normalize_json_envelope
 from personal_agent_gateway.teams import (
     ACCEPTANCE_RECOVERY_CAP,
@@ -137,6 +141,26 @@ Return either:
 2. ONLY {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the final response cannot be completed accurately","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 At this stage, ask only about final interpretation or presentation that does not
 require additional worker execution."""
+
+SYNTHESIS_CONTRACT_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
+Goal: {goal}
+Task results:
+{results}
+
+Before finalizing, identify any consequential choice that only the user can make to
+produce an accurate final response. First use the goal, frozen rules, prior user
+decisions, and task results.
+Return either:
+1. A short plain-text summary of what was accomplished, including any failures,
+   followed by the final response in exactly the form the OUTPUT CONTRACT below
+   requires. The contract governs this response, not a file you wrote during the
+   run.
+2. ONLY {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the final response cannot be completed accurately","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
+At this stage, ask only about final interpretation or presentation that does not
+require additional worker execution.
+
+OUTPUT CONTRACT
+{contract}"""
 
 MEDIATION_PROMPT = """You are the leader mediating a Team Run.
 Goal: {goal}
@@ -770,6 +794,13 @@ class TeamRuntime:
                 f"Current cycle objective: {objective}"
             )
         return objective or run.goal
+
+    def _cycle_output_contract(self, cycle_id: str | None) -> OutputContract | None:
+        if cycle_id is None:
+            return None
+        return get_output_contract(
+            self._teams.get_cycle_output_contract_id(cycle_id)
+        )
 
     def _add_work_messages(
         self,
@@ -2738,6 +2769,16 @@ class TeamRuntime:
         )
         leader_agent = self._teams.get_agent(leader.id)
         goal_context = self._goal_context(run, cycle_id)
+        contract = self._cycle_output_contract(cycle_id)
+        synthesis_block = (
+            SYNTHESIS_CONTRACT_PROMPT.format(
+                goal=goal_context,
+                results=results,
+                contract=contract.instructions,
+            )
+            if contract is not None
+            else SYNTHESIS_PROMPT.format(goal=goal_context, results=results)
+        )
         prompt = _space_block(
             run,
             self._space_policy(run, cycle_id),
@@ -2748,9 +2789,7 @@ class TeamRuntime:
             f"{goal_context}\n{results}",
             persona_id=leader_agent.persona_id,
             allow_request=True,
-        ) + SYNTHESIS_PROMPT.format(
-            goal=goal_context, results=results
-        )
+        ) + synthesis_block
         decision_context = "\n\n".join(
             context
             for context in (

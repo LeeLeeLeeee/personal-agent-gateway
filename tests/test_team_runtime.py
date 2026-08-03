@@ -233,6 +233,23 @@ def _ask_user_resolution(question="Which scope should be used?") -> str:
     )
 
 
+_LIBRARY_DRAFT_SUMMARY = (
+    "Draft ready.\n\n"
+    '<library_draft>{"kind":"search_method","title":"Search verification method",'
+    '"summary":"A repeatable evidence check.","content_markdown":"# Method\\nCheck sources.",'
+    '"tags":["research"],"source_urls":[],"persona_ids":[]}</library_draft>'
+)
+
+
+def _set_library_draft_contract(setup) -> None:
+    existing = setup.teams.get_cycle_effective_instruction(setup.cycle.id)
+    setup.teams.set_cycle_effective_instruction(
+        setup.cycle.id,
+        existing or "Prepare the delegated Knowledge Request as a Library review draft.",
+        output_contract_id="library_draft",
+    )
+
+
 def _factory_by_role(
     leader_responses,
     worker_responses,
@@ -1938,6 +1955,32 @@ async def test_completed_worker_operation_applies_without_second_model_call(
     assert setup.operations.get(setup.worker_operation.id).status == "applied"
     assert setup.teams.get_task(setup.task.id).outcome is not None
     assert result.status in {"running", "completed", "completed_with_failures"}
+
+
+@pytest.mark.asyncio
+async def test_synthesis_prompt_uses_the_output_contract(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    _set_library_draft_contract(setup)
+    setup.lead_client.responses = [ModelResponse(_LIBRARY_DRAFT_SUMMARY, [])]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    prompt = setup.lead_client.messages[-1][0]["content"]
+    assert "<library_draft>" in prompt
+    assert "concise plain-text summary" not in prompt
+    assert "ask_user" in prompt
+
+
+@pytest.mark.asyncio
+async def test_synthesis_prompt_is_unchanged_without_a_contract(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    setup.lead_client.responses = [ModelResponse("summary", [])]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    prompt = setup.lead_client.messages[-1][0]["content"]
+    assert "concise plain-text summary" in prompt
+    assert "<library_draft>" not in prompt
 
 
 @pytest.mark.asyncio
