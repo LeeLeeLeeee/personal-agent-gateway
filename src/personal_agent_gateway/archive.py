@@ -650,6 +650,11 @@ class ArchiveService:
         request = self.get_request(request_id)
         if request.status == "fulfilled":
             raise ValueError("A fulfilled request cannot record a draft failure")
+        if (
+            request.last_draft_error_code == error_code
+            and request.last_draft_cycle_id == cycle_id
+        ):
+            return request
         now = _now()
         self._db.execute(
             """

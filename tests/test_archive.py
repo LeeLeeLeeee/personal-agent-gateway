@@ -380,6 +380,88 @@ def test_fulfilled_request_cannot_record_a_draft_failure(tmp_path: Path) -> None
         )
 
 
+def test_record_draft_failure_is_idempotent_for_the_same_code_and_cycle(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "gateway.db")
+    db.initialize()
+    archive = ArchiveService(db)
+    personas = PersonaService(db)
+    team_run = _documentation_team_run(tmp_path, db, personas)
+    request = archive.create_knowledge_request(
+        title="Rollback checklist",
+        reason="Reusable rollback guidance is missing.",
+        suggested_outline=[],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+    archive.assign_request_team(request.id, team_run.id)
+
+    first = archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="no marker",
+        cycle_id="cycle-1",
+    )
+    archive.update_request_status(request.id, "deferred")
+
+    second = archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="no marker, reported again on restart",
+        cycle_id="cycle-1",
+    )
+
+    assert second.status == "deferred"
+    assert second.last_draft_failed_at == first.last_draft_failed_at
+    assert second.last_draft_error_message == first.last_draft_error_message
+    assert archive.get_request(request.id).status == "deferred"
+
+
+def test_record_draft_failure_records_again_for_a_new_cycle_or_code(
+    tmp_path: Path,
+) -> None:
+    archive, _personas = archive_service(tmp_path)
+    request = archive.create_knowledge_request(
+        title="Rollback checklist",
+        reason="Reusable rollback guidance is missing.",
+        suggested_outline=[],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+
+    archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="no marker",
+        cycle_id="cycle-1",
+    )
+    archive.update_request_status(request.id, "deferred")
+
+    reopened_for_new_cycle = archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="no marker on retry",
+        cycle_id="cycle-2",
+    )
+
+    assert reopened_for_new_cycle.status == "open"
+    assert reopened_for_new_cycle.last_draft_cycle_id == "cycle-2"
+    assert reopened_for_new_cycle.last_draft_error_message == "no marker on retry"
+
+    archive.update_request_status(request.id, "deferred")
+
+    reopened_for_new_code = archive.record_draft_failure(
+        request.id,
+        error_code="draft_save_failed",
+        message="save failed",
+        cycle_id="cycle-2",
+    )
+
+    assert reopened_for_new_code.status == "open"
+    assert reopened_for_new_code.last_draft_error_code == "draft_save_failed"
+
+
 def test_clear_and_redelegation_remove_the_recorded_failure(tmp_path: Path) -> None:
     db = Database(tmp_path / "gateway.db")
     db.initialize()
