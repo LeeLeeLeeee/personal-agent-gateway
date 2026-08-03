@@ -137,12 +137,15 @@ def run_verification_check(
             f"{'matched' if passed else 'did not match'}"
         )
         return CheckResult(passed, evidence)
-    try:
-        json.loads(text)
-    except ValueError as exc:
-        msg = f"json_parses: {check.path} is not valid JSON: {exc}"
-        return CheckResult(False, msg)
-    return CheckResult(True, f"json_parses: {check.path} parsed")
+    if check.type == "json_parses":
+        try:
+            json.loads(text)
+        except ValueError as exc:
+            msg = f"json_parses: {check.path} is not valid JSON: {exc}"
+            return CheckResult(False, msg)
+        return CheckResult(True, f"json_parses: {check.path} parsed")
+    msg = f"unknown verification check type: {check.type!r}"
+    return CheckResult(False, msg)
 
 
 def _safe_relative(value: str) -> bool:

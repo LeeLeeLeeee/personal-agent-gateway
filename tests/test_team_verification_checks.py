@@ -142,3 +142,14 @@ def test_payload_round_trips_without_the_unused_field() -> None:
 
     assert payload == {"type": "file_contains", "path": "a.md", "value": "x"}
     assert parse_verification_check(payload) == check
+
+
+def test_unrecognized_check_type_fails_closed(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path, "ok.json", json.dumps({"a": 1}))
+
+    result = run_verification_check(
+        VerificationCheck(type="not_a_real_type", path="ok.json"), workspace
+    )
+
+    assert not result.passed
+    assert "unknown" in result.evidence.lower()
