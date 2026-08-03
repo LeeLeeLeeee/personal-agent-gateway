@@ -2300,6 +2300,105 @@ async def test_synthesis_restart_recovers_exact_open_operation(
 
 
 @pytest.mark.asyncio
+async def test_synthesis_repair_restart_recovers_exact_open_operation(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    _set_library_draft_contract(setup)
+    setup.lead_client.responses = [
+        ModelResponse(_PROSE_SUMMARY, []),
+        ModelResponse(_LIBRARY_DRAFT_SUMMARY, []),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_synthesis_repair",
+        0,
+        "prepared",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    repair = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert repair is not None
+    assert (repair.stage, repair.stage_ordinal, repair.status) == (
+        "cycle_synthesis_repair",
+        0,
+        "prepared",
+    )
+    assert setup.lead_client.calls == 1
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert completed.summary == "Draft ready."
+    assert setup.operations.get(repair.id).status == "applied"
+    assert setup.lead_client.calls == 2
+    applied = setup.operations.get(repair.id)
+    assert "<library_draft>" in applied.result_json["payload"]["contract_payload"]
+
+
+@pytest.mark.asyncio
+async def test_ask_user_during_repair_does_not_poison_next_synthesis_key(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    _set_library_draft_contract(setup)
+    setup.lead_client.responses = [
+        ModelResponse(_PROSE_SUMMARY, []),
+        ModelResponse(
+            json.dumps(
+                {
+                    "resolution": {
+                        "kind": "ask_user",
+                        "topic": "publication",
+                        "question": "Publish as a shared Library entry?",
+                        "why_needed": "The audience changes the wording.",
+                        "options": [
+                            {"id": "shared", "label": "Shared", "impact": "everyone"}
+                        ],
+                        "recommended_option_id": "shared",
+                        "blocking_scope": "run",
+                    }
+                }
+            ),
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+        ModelResponse(
+            _LIBRARY_DRAFT_SUMMARY,
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+    ]
+
+    waiting = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+    assert waiting.status == "waiting_for_user"
+
+    request = setup.teams.get_active_decision_request(setup.run.id, setup.cycle.id)
+    assert request is not None
+    setup.teams.answer_decision_request(
+        setup.run.id,
+        request.id,
+        request.revision,
+        {"Q-001": "shared"},
+    )
+
+    completed = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert completed.status == "completed"
+    assert completed.summary == "Draft ready."
+    assert setup.lead_client.calls == 3
+    operations = setup.operations.list_for_cycle(setup.cycle.id)
+    stages = [item.stage for item in operations]
+    assert stages.count("cycle_synthesis") == 2
+    assert stages.count("cycle_synthesis_repair") == 1
+    synthesis_operations = [
+        item for item in operations if item.stage == "cycle_synthesis"
+    ]
+    assert [item.stage_ordinal for item in synthesis_operations] == [0, 1]
+
+
+@pytest.mark.asyncio
 async def test_invalid_worker_output_uses_one_separate_repair_operation(tmp_path):
     setup = make_operation_runtime(tmp_path)
     task = setup.teams.create_task(

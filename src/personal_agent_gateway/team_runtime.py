@@ -426,6 +426,7 @@ class TeamRuntime:
             ValidatedOperationResult,
         ]
         | None = None,
+        synthesis_contract: OutputContract | None = None,
     ) -> OpenOperationRecovery | None:
         operation = self._operations.get_open_for_cycle(cycle_id)
         if operation is None:
@@ -714,12 +715,33 @@ class TeamRuntime:
                 return OpenOperationRecovery(operation, None)
             recovered = operation
             if operation.status == "prepared":
-                recovered = await self._invoke_existing_operation(
-                    operation,
-                    leader,
-                    synthesis_messages,
-                    synthesis_parser,
-                )
+                if operation.stage == "cycle_synthesis_repair":
+                    if synthesis_contract is None:
+                        raise OperationConflict(
+                            "Open synthesis repair operation requires an output contract"
+                        )
+                    repair_messages = _synthesis_repair_messages(
+                        synthesis_messages, synthesis_contract
+                    )
+                    recovered = await self._invoke_existing_operation(
+                        operation,
+                        leader,
+                        repair_messages,
+                        lambda response: self._validated_synthesis_result(
+                            response,
+                            leader,
+                            run,
+                            synthesis_contract,
+                            strict=False,
+                        ),
+                    )
+                else:
+                    recovered = await self._invoke_existing_operation(
+                        operation,
+                        leader,
+                        synthesis_messages,
+                        synthesis_parser,
+                    )
             return OpenOperationRecovery(
                 recovered,
                 self._apply_cycle_synthesis_operation(recovered),
@@ -2826,6 +2848,7 @@ class TeamRuntime:
                 cycle_id,
                 synthesis_messages=messages,
                 synthesis_parser=synthesis_parser,
+                synthesis_contract=contract,
             )
             if recovery is not None:
                 if not isinstance(
@@ -2842,7 +2865,7 @@ class TeamRuntime:
                 if request.cycle_id == cycle_id and request.status == "resolved"
             }
             synthesis_ordinal = sum(
-                operation.stage == "cycle_synthesis"
+                operation.stage in {"cycle_synthesis", "cycle_synthesis_repair"}
                 and operation.status == "applied"
                 and operation.result_kind == "user_decision"
                 and isinstance(operation.effect_ref_json, dict)
