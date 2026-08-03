@@ -151,6 +151,12 @@ describe("ArchiveView", () => {
     );
   });
 
+  it("makes the draft failure banner conspicuous with a warning border", () => {
+    expect(styles).toMatch(
+      /\.archive-request-failure\s*\{[^}]*border:\s*2px solid var\(--c-warn\);/
+    );
+  });
+
   it("explains the knowledge lifecycle separately from work artifacts", async () => {
     render(<ArchiveView client={makeClient()} artifacts={[artifact]} />);
 
@@ -414,6 +420,12 @@ describe("ArchiveView", () => {
   });
 
   it("shows why a delegated Team Run produced no draft", async () => {
+    const lastDraftFailedAt = "2026-08-03T00:42:36.123456+00:00";
+    const formattedDraftFailedAt = new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric"
+    }).format(new Date(lastDraftFailedAt));
     const client = makeClient();
     client.knowledgeRequests = vi.fn().mockResolvedValue([
       {
@@ -423,7 +435,7 @@ describe("ArchiveView", () => {
         last_draft_error_code: "draft_contract_violation",
         last_draft_error_message:
           "Team response must contain exactly one Library Draft marker",
-        last_draft_failed_at: "2026-08-03T00:42:36Z",
+        last_draft_failed_at: lastDraftFailedAt,
         last_draft_cycle_id: "cycle-1"
       }
     ]);
@@ -435,6 +447,12 @@ describe("ArchiveView", () => {
 
     expect(screen.getByText(/DRAFT FAILED/)).toHaveTextContent(
       "draft_contract_violation"
+    );
+    expect(screen.getByText(/DRAFT FAILED/)).toHaveTextContent(
+      formattedDraftFailedAt
+    );
+    expect(screen.getByText(/DRAFT FAILED/)).not.toHaveTextContent(
+      lastDraftFailedAt
     );
     expect(
       screen.getByText(/exactly one Library Draft marker/)

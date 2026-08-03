@@ -1372,7 +1372,7 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
                       <span className="mono">
                         {`DRAFT FAILED · ${item.last_draft_error_code}`}
                         {item.last_draft_failed_at
-                          ? ` · ${item.last_draft_failed_at}`
+                          ? ` · ${formatDate(item.last_draft_failed_at)}`
                           : ""}
                       </span>
                       {item.last_draft_error_message ? (
