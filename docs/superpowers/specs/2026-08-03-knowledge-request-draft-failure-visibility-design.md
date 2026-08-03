@@ -47,7 +47,16 @@ Out of scope:
 - the hook-sourced draft path (only the Knowledge Request path builds Library
   drafts today);
 - backfilling requests that already failed. Their columns stay null until the
-  next delegation.
+  next delegation;
+- a cycle abandoned in `waiting_for_user`: that state is a resting point where
+  the team is waiting on a decision, not a terminal one, so recording a
+  failure there would be wrong. But if the run is then interrupted or
+  abandoned while parked there, the request stays `in_progress` with no draft
+  and no banner, and, because `delegated` is true, no `Send to team` control
+  either. It remains silently stuck; this is a deliberate deferral, not
+  addressed here;
+- a request delegated but never claimed by any cycle remains silently stuck
+  the same way; also not addressed here.
 
 ## Data Model
 
