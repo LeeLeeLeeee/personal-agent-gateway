@@ -258,6 +258,13 @@ async def test_runtime_attaches_file_changes_and_builds_result_package(
         "verification.md",
     }
     assert not (Path(completed.artifact_root) / "workspace.zip").exists()
+    result_payload = json.loads(
+        (Path(completed.artifact_root) / "run-result.json").read_text(encoding="utf-8")
+    )
+    task_payload = result_payload["tasks"][0]
+    assert task_payload["acceptance"]["required_verifications"] == [
+        {"name": "tests", "check": None}
+    ]
 
 
 def test_cycle_result_uses_objective_and_stored_execution_metadata(tmp_path: Path) -> None:

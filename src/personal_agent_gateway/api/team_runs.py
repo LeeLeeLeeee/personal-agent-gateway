@@ -28,6 +28,7 @@ from personal_agent_gateway.teams import (
     TeamRun,
     TeamRunCycle,
     TeamTask,
+    required_verifications_payload,
 )
 
 
@@ -1280,7 +1281,7 @@ def _task_payload(task: TeamTask) -> dict[str, object]:
         "required": task.required,
         "acceptance": {
             "required_outputs": list(task.acceptance.required_outputs),
-            "required_verifications": list(
+            "required_verifications": required_verifications_payload(
                 task.acceptance.required_verifications
             ),
         },

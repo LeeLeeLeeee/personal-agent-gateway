@@ -24,6 +24,7 @@ from personal_agent_gateway.team_model_operations import (
 from personal_agent_gateway.team_model_invoker import AmbiguousModelOperation
 from personal_agent_gateway.team_provider_recovery import TeamProviderRecovery
 from personal_agent_gateway.team_runtime import TeamRuntime
+from personal_agent_gateway.team_verification_checks import VerificationCheck
 from personal_agent_gateway.teams import RequiredVerification, TaskAcceptance
 
 _TERMINAL_STATUSES = {
@@ -1189,7 +1190,7 @@ def test_team_task_payload_exposes_acceptance_outcome_and_result(tmp_path: Path)
     assert payload["required"] is True
     assert payload["acceptance"] == {
         "required_outputs": ["outputs/guide.md"],
-        "required_verifications": ["link-check"],
+        "required_verifications": [{"name": "link-check", "check": None}],
     }
     assert payload["outcome"]["reason_code"] == "tool_unavailable"
     assert payload["acceptance_result"]["reason_code"] == (
@@ -1216,6 +1217,51 @@ def test_team_task_payload_exposes_acceptance_outcome_and_result(tmp_path: Path)
 
     assert refreshed.status_code == 200
     assert refreshed.json()["tasks"][0]["acceptance_recovery_attempts"] == 1
+
+
+def test_task_payload_exposes_verification_checks(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Leader")
+    worker_id = create_persona(client, "Worker")
+    run = create_standard_run(
+        client.app,
+        leader_id,
+        [worker_id],
+        run_mode="planning_only",
+    )
+    service = client.app.state.team_run_service
+    service.create_task(
+        run["id"],
+        "Draft the library guide",
+        "Write the draft.",
+        required=True,
+        acceptance=TaskAcceptance(
+            required_outputs=("draft.md",),
+            required_verifications=(
+                RequiredVerification("reviewed"),
+                RequiredVerification(
+                    "marker",
+                    VerificationCheck("file_contains", "draft.md", value="<library_draft>"),
+                ),
+            ),
+        ),
+    )
+
+    response = client.get(f"/api/team-runs/{run['id']}/tasks")
+
+    assert response.status_code == 200
+    task_payload = response.json()["tasks"][0]
+    assert task_payload["acceptance"]["required_verifications"] == [
+        {"name": "reviewed", "check": None},
+        {
+            "name": "marker",
+            "check": {
+                "type": "file_contains",
+                "path": "draft.md",
+                "value": "<library_draft>",
+            },
+        },
+    ]
 
 
 def test_restart_completed_auto_series_enqueues_first_cycle(tmp_path: Path) -> None:

@@ -3190,6 +3190,25 @@ def _task_acceptance_json(acceptance: TaskAcceptance) -> str:
     )
 
 
+def required_verifications_payload(
+    required_verifications: tuple[RequiredVerification, ...],
+) -> list[dict[str, object]]:
+    """Explicit form for API/run-result consumers: always {"name", "check"}.
+
+    This is distinct from `_task_acceptance_json`'s canonical form, which
+    collapses a check-less verification to a bare string for DB/ledger digest
+    stability. Consumers here (API responses, run-result packages) need a
+    stable, uniform shape instead.
+    """
+    return [
+        {
+            "name": item.name,
+            "check": None if item.check is None else verification_check_payload(item.check),
+        }
+        for item in required_verifications
+    ]
+
+
 def _acceptance_review_metadata(
     *,
     task_id: str,

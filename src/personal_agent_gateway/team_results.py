@@ -5,7 +5,13 @@ from pathlib import Path
 
 from personal_agent_gateway.artifacts import Artifact, ArtifactStore
 from personal_agent_gateway.file_safety import iter_safe_files
-from personal_agent_gateway.teams import TeamMessage, TeamRun, TeamRunService, TeamTask
+from personal_agent_gateway.teams import (
+    TeamMessage,
+    TeamRun,
+    TeamRunService,
+    TeamTask,
+    required_verifications_payload,
+)
 
 WorkspaceSnapshot = dict[str, tuple[int, int]]
 
@@ -204,7 +210,7 @@ class TeamRunResultPackager:
             "required": task.required,
             "acceptance": {
                 "required_outputs": list(task.acceptance.required_outputs),
-                "required_verifications": list(
+                "required_verifications": required_verifications_payload(
                     task.acceptance.required_verifications
                 ),
             },
