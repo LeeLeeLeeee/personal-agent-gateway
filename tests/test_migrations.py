@@ -11,6 +11,7 @@ from personal_agent_gateway.migrations import (
     _migration_18_team_cycle_space_snapshot,
     _migration_19_team_acceptance_recovery,
     _migration_20_team_model_operations,
+    _migration_21_knowledge_request_draft_failure,
 )
 
 
@@ -59,6 +60,36 @@ def test_migration_20_creates_team_model_operation_ledger_idempotently() -> None
             "select name from sqlite_master where type = 'index'"
         )
     )
+
+
+def test_migration_21_adds_knowledge_request_draft_failure_columns_idempotently() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        create table knowledge_requests (
+            id text primary key,
+            status text not null,
+            created_at text not null,
+            updated_at text not null
+        );
+        """
+    )
+
+    _migration_21_knowledge_request_draft_failure(connection)
+    _migration_21_knowledge_request_draft_failure(connection)
+
+    columns = {
+        row["name"]
+        for row in connection.execute("pragma table_info(knowledge_requests)")
+    }
+    assert {
+        "last_draft_error_code",
+        "last_draft_error_message",
+        "last_draft_failed_at",
+        "last_draft_cycle_id",
+    } <= columns
+    assert LATEST_SCHEMA_VERSION == 21
 
 
 def test_migration_18_adds_nullable_cycle_space_snapshot() -> None:
