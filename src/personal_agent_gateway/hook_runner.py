@@ -90,7 +90,7 @@ class HookRunner:
         self,
         cycles: TeamCycleService,
         dispatcher: TeamCycleDispatcher,
-        operations: TeamModelOperationService | None = None,
+        operations: TeamModelOperationService,
     ) -> None:
         self._team_cycles = cycles
         self._team_dispatcher = dispatcher
@@ -478,7 +478,7 @@ class HookRunner:
                 continue
             if operation.status != "applied":
                 continue
-            payload = (operation.result_json or {}).get("payload", {}).get("contract_payload")
+            payload = ((operation.result_json or {}).get("payload") or {}).get("contract_payload")
             return payload if isinstance(payload, str) and payload.strip() else None
         return None
 
