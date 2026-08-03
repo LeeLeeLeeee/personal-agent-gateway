@@ -201,7 +201,7 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
               {task.required === false ? "OPTIONAL TASK" : "REQUIRED TASK"}
             </div>
             {acceptanceResult.evidence?.attested_only ? (
-              <span className="mono team-task-attested">ATTESTED</span>
+              <span className="mono team-task-attested">ATTESTED ONLY</span>
             ) : null}
             {reasonCode ? (
               <div className="team-task-dialog-copy">

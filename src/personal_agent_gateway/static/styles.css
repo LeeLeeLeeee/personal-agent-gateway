@@ -3214,7 +3214,7 @@ p {
 .team-task-check {
     color: var(--c-grey);
     font-size: 8px;
-    letter-spacing: 0.7px;
+    letter-spacing: 0.8px;
 }
 .team-task-attested {
     border: var(--bd-sm);

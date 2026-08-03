@@ -817,7 +817,7 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open task Draft library" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Draft library" });
 
-    expect(within(dialog).getByText("ATTESTED", { selector: ".team-task-attested" })).toBeInTheDocument();
+    expect(within(dialog).getByText("ATTESTED ONLY")).toBeInTheDocument();
   });
 
   it("does not mark an attested badge on a task with a server-run check", async () => {
@@ -856,7 +856,7 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open task Draft library" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Draft library" });
 
-    expect(within(dialog).queryByText("ATTESTED")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("ATTESTED ONLY")).not.toBeInTheDocument();
   });
 
   it("shows acceptance reviews only in the selected task details", async () => {
