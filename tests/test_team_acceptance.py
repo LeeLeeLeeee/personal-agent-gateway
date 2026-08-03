@@ -329,3 +329,19 @@ def test_a_deliverable_rejection_does_not_blame_unevaluated_checks(
         )
         == []
     )
+
+
+def test_a_checked_verification_after_an_earlier_failure_is_not_blamed() -> None:
+    required_verifications = (("reviewed", False), ("marker", True))
+
+    assert rejected_verification_names(
+        required_verifications, {}, {"verifications": {}}
+    ) == ["reviewed"]
+
+    required_verifications = (("a", True), ("b", True))
+
+    assert rejected_verification_names(
+        required_verifications,
+        {},
+        {"verifications": {"a": {"status": "failed"}}},
+    ) == ["a"]
