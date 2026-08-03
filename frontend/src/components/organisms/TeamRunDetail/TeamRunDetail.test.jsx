@@ -785,6 +785,53 @@ describe("TeamRunDetail", () => {
     expect(within(dialog).getByText("VERIFIED")).toBeInTheDocument();
   });
 
+  it("shows the server's verified status and evidence when the worker omits its self-report", async () => {
+    render(<TeamRunDetail detail={{
+      run: { id: "r1", goal: "Draft library", status: "completed", run_mode: "plan_and_execute" },
+      agents: [],
+      messages: [],
+      tasks: [{
+        id: "t1",
+        title: "Draft library",
+        status: "completed",
+        acceptance: {
+          required_outputs: ["draft.md"],
+          required_verifications: [
+            { name: "marker", check: { type: "file_contains", path: "draft.md", value: "<library_draft>" } }
+          ]
+        },
+        outcome: {
+          status: "completed",
+          verifications: []
+        },
+        acceptance_result: {
+          accepted: true,
+          status: "accepted",
+          evidence: {
+            verifications: {
+              marker: {
+                mode: "verified",
+                status: "passed",
+                evidence: "file_contains: draft.md contains the value"
+              }
+            },
+            attested_only: false
+          }
+        }
+      }]
+    }} />);
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Open task Draft library" }));
+    const dialog = screen.getByRole("dialog", { name: "Task details: Draft library" });
+
+    expect(within(dialog).getByText("PASSED")).toBeInTheDocument();
+    expect(within(dialog).queryByText("MISSING")).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/file_contains: draft\.md contains the value/)
+    ).toBeInTheDocument();
+  });
+
   it("marks a task nothing machine-checked as attested", async () => {
     render(<TeamRunDetail detail={{
       run: { id: "r1", goal: "Draft library", status: "completed", run_mode: "plan_and_execute" },

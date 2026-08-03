@@ -152,11 +152,7 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
   const verificationByName = new Map(
     verifications.map((verification) => [verification.name, verification])
   );
-  const verificationModes = Object.fromEntries(
-    Object.entries(acceptanceResult.evidence?.verifications || {})
-      .map(([name, item]) => [name, item?.mode])
-      .filter(([, mode]) => Boolean(mode))
-  );
+  const verificationEvidence = acceptanceResult.evidence?.verifications || {};
   const reasonCode = acceptanceResult.reason_code || outcome.reason_code;
   const diagnostic = task.result
     || (task.error_message && task.error_message !== reasonCode
@@ -224,13 +220,17 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
                     const name = typeof item === "string" ? item : item.name;
                     const check = typeof item === "string" ? null : item.check;
                     const verification = verificationByName.get(name);
-                    const mode = verificationModes[name];
+                    const serverEntry = verificationEvidence[name];
+                    const mode = serverEntry?.mode;
+                    const verified = mode === "verified";
+                    const status = verified ? serverEntry.status : verification?.status;
+                    const evidenceText = verified ? serverEntry.evidence : verification?.evidence;
                     return (
                       <li key={name}>
                         <span className="mono">{name}</span>
                         {" · "}
                         <span className="mono">
-                          {String(verification?.status || "missing").toUpperCase()}
+                          {String(status || "missing").toUpperCase()}
                         </span>
                         {mode ? (
                           <>
@@ -238,6 +238,7 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
                             <span className="mono">{mode.toUpperCase()}</span>
                           </>
                         ) : null}
+                        {evidenceText ? <span>{` · ${evidenceText}`}</span> : null}
                         {check ? (
                           <div className="mono team-task-check">
                             {`${check.type} · ${check.path}`}
@@ -245,7 +246,6 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
                             {check.pattern ? ` · ${check.pattern}` : ""}
                           </div>
                         ) : null}
-                        {verification?.evidence ? ` · ${verification.evidence}` : ""}
                       </li>
                     );
                   })}
