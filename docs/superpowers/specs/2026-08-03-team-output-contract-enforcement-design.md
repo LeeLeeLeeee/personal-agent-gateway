@@ -249,6 +249,9 @@ carries `attested_only`, so a completed task with no machine-checked evidence
 is visibly different from one with it. Nothing blocks on the badge — an
 attested-only task still completes.
 
+> Amendment (final review fix wave): the shipped badge text is `ATTESTED ONLY`,
+> not `ATTESTED`. Deliberate; this section was not updated to match.
+
 ## Error Handling
 
 A check that raises for an unexpected reason (OS error, decode error) fails the

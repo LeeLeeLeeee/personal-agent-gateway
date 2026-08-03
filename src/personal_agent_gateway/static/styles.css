@@ -3217,6 +3217,7 @@ p {
     letter-spacing: 0.8px;
 }
 .team-task-attested {
+    display: inline-block;
     border: var(--bd-sm);
     border-color: var(--c-warn);
     padding: 2px 5px;
