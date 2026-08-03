@@ -2534,10 +2534,7 @@ def _task_matches_plan_spec(
         and task.description == spec.get("description")
         and task.owner_agent_id == spec.get("owner_agent_id")
         and task.required is spec.get("required")
-        and list(task.acceptance.required_outputs)
-        == acceptance.get("required_outputs")
-        and list(task.acceptance.required_verifications)
-        == acceptance.get("required_verifications")
+        and json.loads(_task_acceptance_json(task.acceptance)) == acceptance
     )
 
 
