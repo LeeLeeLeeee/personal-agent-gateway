@@ -11,7 +11,10 @@ from personal_agent_gateway.lmg_client import ProviderExecutionCapabilities
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.remote_model_client import RemoteRunFailedError
 from personal_agent_gateway.run_state import TeamRunRegistry
-from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
+from personal_agent_gateway.team_cycle_dispatcher import (
+    CyclePreparation,
+    TeamCycleDispatcher,
+)
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_model_effects import (
     TeamModelEffectService,
@@ -230,7 +233,7 @@ async def test_dispatcher_persists_preparer_replacement_as_semantic_source(
             worker.id,
             {"provider": "codex"},
         )
-        return "prepared work"
+        return CyclePreparation(instruction="prepared work")
 
     dispatcher.add_preparer(assert_frozen)
     cycles.enqueue_request(

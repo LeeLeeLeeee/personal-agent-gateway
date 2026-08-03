@@ -582,6 +582,7 @@ class TeamRunService:
         self,
         cycle_id: str,
         instruction: str,
+        output_contract_id: str | None = None,
     ) -> TeamRunCycle:
         if not isinstance(instruction, str) or not instruction.strip():
             raise ValueError("Cycle effective instruction is required")
@@ -604,6 +605,7 @@ class TeamRunService:
             metadata["semantic_source"] = {
                 **semantic_source,
                 "effective_instruction": instruction,
+                "output_contract_id": output_contract_id,
             }
             cursor = connection.execute(
                 """
@@ -641,6 +643,24 @@ class TeamRunService:
         if not isinstance(instruction, str) or not instruction.strip():
             raise ValueError("Cycle effective instruction metadata is invalid")
         return instruction
+
+    def get_cycle_output_contract_id(self, cycle_id: str) -> str | None:
+        row = self._db.fetchone(
+            "select execution_metadata_json from team_run_cycles where id = ?",
+            (cycle_id,),
+        )
+        if row is None:
+            raise KeyError(f"Team run cycle not found: {cycle_id}")
+        metadata = _execution_metadata_object(row["execution_metadata_json"])
+        semantic_source = metadata.get("semantic_source", {})
+        if not isinstance(semantic_source, dict):
+            raise ValueError("Cycle semantic source metadata is invalid")
+        contract_id = semantic_source.get("output_contract_id")
+        if contract_id is None:
+            return None
+        if not isinstance(contract_id, str) or not contract_id.strip():
+            raise ValueError("Cycle output contract metadata is invalid")
+        return contract_id
 
     def set_cycle_provider_capabilities(
         self,

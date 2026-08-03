@@ -78,10 +78,40 @@ def test_cycle_metadata_owned_writers_preserve_each_other_and_recovery(tmp_path)
         },
         "semantic_source": {
             "effective_instruction": "prepared work",
+            "output_contract_id": None,
         },
         "unrelated": {"keep": True},
     }
     assert teams.get_cycle_effective_instruction(cycle.id) == "prepared work"
+
+
+def _run_with_cycle(tmp_path: Path):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    return teams, cycle
+
+
+def test_cycle_stores_and_returns_the_output_contract_id(tmp_path: Path) -> None:
+    teams, cycle = _run_with_cycle(tmp_path)
+
+    teams.set_cycle_effective_instruction(
+        cycle.id,
+        "Prepare the delegated Knowledge Request as a Library review draft.",
+        output_contract_id="library_draft",
+    )
+
+    assert teams.get_cycle_output_contract_id(cycle.id) == "library_draft"
+    assert teams.get_cycle_effective_instruction(cycle.id) == (
+        "Prepare the delegated Knowledge Request as a Library review draft."
+    )
+
+
+def test_cycle_without_a_contract_returns_none(tmp_path: Path) -> None:
+    teams, cycle = _run_with_cycle(tmp_path)
+
+    teams.set_cycle_effective_instruction(cycle.id, "Do the work.")
+
+    assert teams.get_cycle_output_contract_id(cycle.id) is None
 
 
 @pytest.mark.parametrize(

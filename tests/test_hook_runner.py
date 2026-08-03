@@ -580,9 +580,10 @@ async def test_knowledge_request_cycle_prepares_contract_and_saves_draft(
         request_id=claimed.id,
     )
 
-    instruction = await runner.prepare_team_cycle(request, cycle)
+    preparation = await runner.prepare_team_cycle(request, cycle)
 
-    assert instruction is not None
+    assert preparation is not None
+    instruction = preparation.instruction
     assert knowledge_request.title in instruction
     assert "<library_draft>" in instruction
     summary = (
@@ -635,6 +636,29 @@ async def _delegated_knowledge_cycle(tmp_path: Path):
         request_id=claimed.id,
     )
     return runner, teams, team_run, archive, knowledge_request, cycle
+
+
+@pytest.mark.asyncio
+async def test_knowledge_request_preparation_carries_the_library_draft_contract(
+    tmp_path: Path,
+) -> None:
+    (
+        runner,
+        teams,
+        _team_run,
+        _archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    request = teams.get_cycle(cycle.id)
+    cycle_request = runner._team_cycles.get_request(request.request_id)
+
+    preparation = await runner.prepare_team_cycle(cycle_request, cycle)
+
+    assert preparation is not None
+    assert preparation.output_contract_id == "library_draft"
+    assert "<library_draft>" in preparation.instruction
+    assert knowledge_request.title in preparation.instruction
 
 
 @pytest.mark.asyncio

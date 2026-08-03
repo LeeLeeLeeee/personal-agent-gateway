@@ -18,12 +18,16 @@ from personal_agent_gateway.mail_knowledge import (
 from personal_agent_gateway.personas import persona_system_prompt
 from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.runtime_factory import AgentRuntimeFactory
-from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
+from personal_agent_gateway.team_cycle_dispatcher import (
+    CyclePreparation,
+    TeamCycleDispatcher,
+)
 from personal_agent_gateway.team_cycles import (
     TeamCycleRequest,
     TeamCycleService,
     knowledge_request_id_from_source,
 )
+from personal_agent_gateway.team_output_contracts import LIBRARY_DRAFT_CONTRACT_ID
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
 from personal_agent_gateway.teams import TeamRun, TeamRunCycle, TeamRunService
 
@@ -220,9 +224,12 @@ class HookRunner:
         self,
         request: TeamCycleRequest,
         cycle: TeamRunCycle,
-    ) -> str | None:
+    ) -> CyclePreparation | None:
         if request.source_type == "knowledge_request":
-            return self._prepare_knowledge_request(request, cycle)
+            return CyclePreparation(
+                instruction=self._prepare_knowledge_request(request, cycle),
+                output_contract_id=LIBRARY_DRAFT_CONTRACT_ID,
+            )
         if request.source_type != "hook":
             return None
         if self._teams is None:
@@ -231,7 +238,7 @@ class HookRunner:
         hook_run = self._hook_runs.link_cycle(hook_run.id, cycle.id)
         hook = self._hooks.get_hook(hook_run.hook_id)
         if hook.source_type != "email":
-            return request.instruction
+            return CyclePreparation(instruction=request.instruction)
         try:
             if self._mail_knowledge is None or self._mail_projector is None:
                 raise RuntimeError("Email Team Hook mail knowledge is not attached")
@@ -245,7 +252,7 @@ class HookRunner:
             if projected.projection_status != "projected":
                 raise RuntimeError("Email Team Hook context projection failed")
             instruction = build_mail_team_instruction(projected, hook.prompt_template)
-            return instruction
+            return CyclePreparation(instruction=instruction)
         except Exception as exc:
             self._hook_runs.mark_failed(hook_run.id, str(exc))
             raise
