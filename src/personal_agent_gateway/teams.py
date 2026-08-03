@@ -3246,7 +3246,9 @@ def _operation_workspace_baseline_id(operation_id: str) -> str:
 
 def parse_required_verifications(value: object) -> tuple[RequiredVerification, ...]:
     if not isinstance(value, list):
-        raise ValueError("Required verifications must be a list")
+        raise ValueError(  # noqa: TRY004
+            "Required verifications must be a list"
+        )
     parsed: list[RequiredVerification] = []
     names: set[str] = set()
     for raw in value:
@@ -3259,7 +3261,9 @@ def parse_required_verifications(value: object) -> tuple[RequiredVerification, .
             raw_check = raw.get("check")
             check = None if raw_check is None else parse_verification_check(raw_check)
         else:
-            raise ValueError("Required verification must be a string or an object")
+            raise ValueError(  # noqa: TRY004
+                "Required verification must be a string or an object"
+            )
         if not isinstance(name, str) or not name.strip():
             raise ValueError("Required verification requires a name")
         normalized = name.strip()
