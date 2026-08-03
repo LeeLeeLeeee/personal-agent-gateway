@@ -386,22 +386,10 @@ class HookRunner:
         if self._archive is None:
             return
         request_id = knowledge_request_id_from_source(request.source_id)
-        if cycle.status in {"completed", "completed_with_failures"}:
-            try:
-                draft = self._save_knowledge_request_draft(request, cycle)
-            except (KeyError, RuntimeError, ValueError) as exc:
-                self._reopen_knowledge_request(request_id)
-                await self._event_bus.publish(
-                    {
-                        "type": "archive.draft.failed",
-                        "source_type": "knowledge_request",
-                        "source_id": request_id,
-                        "team_run_id": cycle.team_run_id,
-                        "cycle_id": cycle.id,
-                        "error": redact_text(exc) or type(exc).__name__,
-                    }
-                )
-                return
+        draft, error_code, message = self._apply_knowledge_request_draft(
+            request_id, cycle
+        )
+        if draft is not None:
             await self._event_bus.publish(
                 {
                     "type": "archive.draft.created",
@@ -413,32 +401,87 @@ class HookRunner:
                 }
             )
             return
-        if cycle.status in {"blocked", "failed", "canceled", "interrupted"}:
-            self._reopen_knowledge_request(request_id)
+        if error_code:
+            await self._event_bus.publish(
+                {
+                    "type": "archive.draft.failed",
+                    "source_type": "knowledge_request",
+                    "source_id": request_id,
+                    "team_run_id": cycle.team_run_id,
+                    "cycle_id": cycle.id,
+                    "error_code": error_code,
+                    "error": message,
+                }
+            )
 
-    def _save_knowledge_request_draft(
+    def _apply_knowledge_request_draft(
         self,
-        request: TeamCycleRequest,
+        request_id: str,
         cycle: TeamRunCycle,
-    ) -> ArchiveEntry:
-        request_id = knowledge_request_id_from_source(request.source_id)
-        _result_text, payload = parse_library_draft_response(cycle.summary or "")
-        return self._save_library_draft(
-            payload,
-            origin_source_type="knowledge_request",
-            origin_source_id=request_id,
-            origin_team_run_id=cycle.team_run_id,
-            origin_cycle_id=cycle.id,
-            origin_request_id=request_id,
-        )
+    ) -> tuple[ArchiveEntry | None, str, str]:
+        """Save the cycle's Library draft, or record why it could not be saved.
 
-    def _reopen_knowledge_request(self, request_id: str) -> None:
+        Returns (draft, error_code, message); error_code is empty on success
+        and for a cycle that has not reached a terminal state. Only the
+        settlement path publishes events for the outcome.
+        """
         if self._archive is None:
-            return
-        try:
-            self._archive.update_request_status(request_id, "open")
-        except (KeyError, ValueError):
-            return
+            return None, "", ""
+        if cycle.status in {"completed", "completed_with_failures"}:
+            try:
+                _result_text, payload = parse_library_draft_response(cycle.summary or "")
+            except ValueError as exc:
+                return self._fail_draft(
+                    request_id, cycle, "draft_contract_violation", exc
+                )
+            try:
+                draft = self._save_library_draft(
+                    payload,
+                    origin_source_type="knowledge_request",
+                    origin_source_id=request_id,
+                    origin_team_run_id=cycle.team_run_id,
+                    origin_cycle_id=cycle.id,
+                    origin_request_id=request_id,
+                )
+            except ValueError as exc:
+                return self._fail_draft(
+                    request_id, cycle, "draft_invalid_payload", exc
+                )
+            except (KeyError, RuntimeError) as exc:
+                return self._fail_draft(request_id, cycle, "draft_save_failed", exc)
+            try:
+                self._archive.clear_draft_failure(request_id)
+            except KeyError:
+                pass
+            return draft, "", ""
+        if cycle.status in {"blocked", "failed", "canceled", "interrupted"}:
+            return self._fail_draft(request_id, cycle, f"cycle_{cycle.status}", None)
+        return None, "", ""
+
+    def _fail_draft(
+        self,
+        request_id: str,
+        cycle: TeamRunCycle,
+        error_code: str,
+        exc: Exception | None,
+    ) -> tuple[None, str, str]:
+        if exc is not None:
+            message = redact_text(exc) or type(exc).__name__
+        elif cycle.error_message:
+            message = redact_text(cycle.error_message)
+        else:
+            message = f"Team Run Cycle {cycle.status}"
+        if self._archive is not None:
+            try:
+                self._archive.record_draft_failure(
+                    request_id,
+                    error_code=error_code,
+                    message=message,
+                    cycle_id=cycle.id,
+                )
+            except (KeyError, ValueError):
+                pass
+        return None, error_code, message
 
     def reconcile_linked_runs(self) -> None:
         if self._teams is None:
@@ -474,14 +517,7 @@ class HookRunner:
                 continue
             if latest is None or latest.id != request.id:
                 continue
-            if cycle.status in {"completed", "completed_with_failures"}:
-                try:
-                    self._save_knowledge_request_draft(request, cycle)
-                except (KeyError, RuntimeError, ValueError):
-                    self._reopen_knowledge_request(request_id)
-                continue
-            if cycle.status in {"blocked", "failed", "canceled", "interrupted"}:
-                self._reopen_knowledge_request(request_id)
+            self._apply_knowledge_request_draft(request_id, cycle)
 
     async def _run_loop(self) -> None:
         while True:

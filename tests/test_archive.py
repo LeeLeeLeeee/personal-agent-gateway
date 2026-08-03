@@ -279,3 +279,224 @@ def test_graph_connects_knowledge_request_team_and_review_draft(tmp_path: Path) 
         and edge["kind"] == "produced"
         for edge in graph["edges"]
     )
+
+
+def _documentation_team_run(tmp_path: Path, db: Database, personas: PersonaService):
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Library Lead", "Editor", "", [], [])
+    return teams.create_team_run(
+        "Prepare reviewed Library drafts",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+
+
+def test_record_draft_failure_reopens_request_and_stores_the_reason(tmp_path: Path) -> None:
+    db = Database(tmp_path / "gateway.db")
+    db.initialize()
+    archive = ArchiveService(db)
+    personas = PersonaService(db)
+    team_run = _documentation_team_run(tmp_path, db, personas)
+    request = archive.create_knowledge_request(
+        title="Rollback checklist",
+        reason="Reusable rollback guidance is missing.",
+        suggested_outline=["Signals", "Steps"],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+    archive.assign_request_team(request.id, team_run.id)
+
+    failed = archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="Team response must contain exactly one Library Draft marker",
+        cycle_id="cycle-1",
+    )
+
+    assert failed.status == "open"
+    assert failed.last_draft_error_code == "draft_contract_violation"
+    assert failed.last_draft_error_message == (
+        "Team response must contain exactly one Library Draft marker"
+    )
+    assert failed.last_draft_cycle_id == "cycle-1"
+    assert failed.last_draft_failed_at
+    assert archive.get_request(request.id).last_draft_error_code == (
+        "draft_contract_violation"
+    )
+
+
+def test_record_draft_failure_truncates_the_message(tmp_path: Path) -> None:
+    archive, _personas = archive_service(tmp_path)
+    request = archive.create_knowledge_request(
+        title="Rollback checklist",
+        reason="Reusable rollback guidance is missing.",
+        suggested_outline=[],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+
+    failed = archive.record_draft_failure(
+        request.id,
+        error_code="draft_invalid_payload",
+        message="x" * 900,
+        cycle_id=None,
+    )
+
+    assert failed.last_draft_error_message == "x" * 500
+    assert failed.last_draft_cycle_id is None
+
+
+def test_fulfilled_request_cannot_record_a_draft_failure(tmp_path: Path) -> None:
+    archive, _personas = archive_service(tmp_path)
+    request = archive.create_knowledge_request(
+        title="Rollback checklist",
+        reason="Reusable rollback guidance is missing.",
+        suggested_outline=[],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+    archive.publish_entry(
+        actor_type="user",
+        kind="checklist",
+        title="Rollback checklist",
+        summary="Verified rollback steps.",
+        content_markdown="Stop traffic, then roll back.",
+        tags=[],
+        source_urls=[],
+        persona_ids=[],
+        request_id=request.id,
+    )
+
+    with pytest.raises(ValueError):
+        archive.record_draft_failure(
+            request.id,
+            error_code="draft_save_failed",
+            message="too late",
+            cycle_id=None,
+        )
+
+
+def test_record_draft_failure_is_idempotent_for_the_same_code_and_cycle(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "gateway.db")
+    db.initialize()
+    archive = ArchiveService(db)
+    personas = PersonaService(db)
+    team_run = _documentation_team_run(tmp_path, db, personas)
+    request = archive.create_knowledge_request(
+        title="Rollback checklist",
+        reason="Reusable rollback guidance is missing.",
+        suggested_outline=[],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+    archive.assign_request_team(request.id, team_run.id)
+
+    first = archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="no marker",
+        cycle_id="cycle-1",
+    )
+    archive.update_request_status(request.id, "deferred")
+
+    second = archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="no marker, reported again on restart",
+        cycle_id="cycle-1",
+    )
+
+    assert second.status == "deferred"
+    assert second.last_draft_failed_at == first.last_draft_failed_at
+    assert second.last_draft_error_message == first.last_draft_error_message
+    assert archive.get_request(request.id).status == "deferred"
+
+
+def test_record_draft_failure_records_again_for_a_new_cycle_or_code(
+    tmp_path: Path,
+) -> None:
+    archive, _personas = archive_service(tmp_path)
+    request = archive.create_knowledge_request(
+        title="Rollback checklist",
+        reason="Reusable rollback guidance is missing.",
+        suggested_outline=[],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+
+    archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="no marker",
+        cycle_id="cycle-1",
+    )
+    archive.update_request_status(request.id, "deferred")
+
+    reopened_for_new_cycle = archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="no marker on retry",
+        cycle_id="cycle-2",
+    )
+
+    assert reopened_for_new_cycle.status == "open"
+    assert reopened_for_new_cycle.last_draft_cycle_id == "cycle-2"
+    assert reopened_for_new_cycle.last_draft_error_message == "no marker on retry"
+
+    archive.update_request_status(request.id, "deferred")
+
+    reopened_for_new_code = archive.record_draft_failure(
+        request.id,
+        error_code="draft_save_failed",
+        message="save failed",
+        cycle_id="cycle-2",
+    )
+
+    assert reopened_for_new_code.status == "open"
+    assert reopened_for_new_code.last_draft_error_code == "draft_save_failed"
+
+
+def test_clear_and_redelegation_remove_the_recorded_failure(tmp_path: Path) -> None:
+    db = Database(tmp_path / "gateway.db")
+    db.initialize()
+    archive = ArchiveService(db)
+    personas = PersonaService(db)
+    team_run = _documentation_team_run(tmp_path, db, personas)
+    request = archive.create_knowledge_request(
+        title="Rollback checklist",
+        reason="Reusable rollback guidance is missing.",
+        suggested_outline=[],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+    archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="no marker",
+        cycle_id="cycle-1",
+    )
+
+    cleared = archive.clear_draft_failure(request.id)
+
+    assert cleared.last_draft_error_code is None
+    assert cleared.last_draft_error_message is None
+    assert cleared.last_draft_failed_at is None
+    assert cleared.last_draft_cycle_id is None
+
+    archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="no marker",
+        cycle_id="cycle-1",
+    )
+    reassigned = archive.assign_request_team(request.id, team_run.id)
+
+    assert reassigned.status == "in_progress"
+    assert reassigned.last_draft_error_code is None
+    assert reassigned.last_draft_failed_at is None

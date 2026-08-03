@@ -723,6 +723,22 @@ def _migration_20_team_model_operations(
     )
 
 
+def _migration_21_knowledge_request_draft_failure(
+    connection: sqlite3.Connection,
+) -> None:
+    columns = _columns(connection, "knowledge_requests")
+    for column in (
+        "last_draft_error_code",
+        "last_draft_error_message",
+        "last_draft_failed_at",
+        "last_draft_cycle_id",
+    ):
+        if column not in columns:
+            connection.execute(
+                f"alter table knowledge_requests add column {column} text"
+            )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -744,6 +760,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (18, "team-cycle-space-snapshot", _migration_18_team_cycle_space_snapshot),
     (19, "team-acceptance-recovery", _migration_19_team_acceptance_recovery),
     (20, "team-model-operations", _migration_20_team_model_operations),
+    (21, "knowledge-request-draft-failure", _migration_21_knowledge_request_draft_failure),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

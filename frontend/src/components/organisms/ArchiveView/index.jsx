@@ -1367,6 +1367,24 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
                     </div>
                   </header>
                   <p>{item.reason}</p>
+                  {active && item.last_draft_error_code ? (
+                    <div className="archive-request-failure">
+                      <span className="mono">
+                        {`DRAFT FAILED · ${item.last_draft_error_code}`}
+                        {item.last_draft_failed_at
+                          ? ` · ${formatDate(item.last_draft_failed_at)}`
+                          : ""}
+                      </span>
+                      {item.last_draft_error_message ? (
+                        <p>{item.last_draft_error_message}</p>
+                      ) : null}
+                      {item.last_draft_cycle_id ? (
+                        <span className="mono">
+                          {`CYCLE ${item.last_draft_cycle_id}`}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="archive-request-context">
                     <div>
                       <strong className="mono">SUGGESTED OUTLINE</strong>

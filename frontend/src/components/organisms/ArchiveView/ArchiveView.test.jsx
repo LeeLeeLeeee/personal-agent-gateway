@@ -151,6 +151,12 @@ describe("ArchiveView", () => {
     );
   });
 
+  it("makes the draft failure banner conspicuous with a warning border", () => {
+    expect(styles).toMatch(
+      /\.archive-request-failure\s*\{[^}]*border:\s*2px solid var\(--c-warn\);/
+    );
+  });
+
   it("explains the knowledge lifecycle separately from work artifacts", async () => {
     render(<ArchiveView client={makeClient()} artifacts={[artifact]} />);
 
@@ -411,6 +417,59 @@ describe("ArchiveView", () => {
       "request-1",
       "team-1"
     ));
+  });
+
+  it("shows why a delegated Team Run produced no draft", async () => {
+    const lastDraftFailedAt = "2026-08-03T00:42:36.123456+00:00";
+    const formattedDraftFailedAt = new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric"
+    }).format(new Date(lastDraftFailedAt));
+    const client = makeClient();
+    client.knowledgeRequests = vi.fn().mockResolvedValue([
+      {
+        ...request,
+        status: "open",
+        assigned_team_run_id: documentationTeam.id,
+        last_draft_error_code: "draft_contract_violation",
+        last_draft_error_message:
+          "Team response must contain exactly one Library Draft marker",
+        last_draft_failed_at: lastDraftFailedAt,
+        last_draft_cycle_id: "cycle-1"
+      }
+    ]);
+
+    render(<ArchiveView client={client} artifacts={[]} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
+
+    expect(screen.getByText(/DRAFT FAILED/)).toHaveTextContent(
+      "draft_contract_violation"
+    );
+    expect(screen.getByText(/DRAFT FAILED/)).toHaveTextContent(
+      formattedDraftFailedAt
+    );
+    expect(screen.getByText(/DRAFT FAILED/)).not.toHaveTextContent(
+      lastDraftFailedAt
+    );
+    expect(
+      screen.getByText(/exactly one Library Draft marker/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/CYCLE cycle-1/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `Send ${request.title} to documentation team` })
+    ).toBeInTheDocument();
+  });
+
+  it("shows no failure banner when the request has never failed", async () => {
+    render(<ArchiveView client={makeClient()} artifacts={[]} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
+
+    expect(screen.queryByText(/DRAFT FAILED/)).not.toBeInTheDocument();
   });
 
   it("turns a persona request into a user-authored Library draft and fulfills it only on publish", async () => {
