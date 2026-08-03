@@ -142,10 +142,18 @@ def rejected_verification_names(
 
     For a checked verification, the server's own verdict (carried in
     ``acceptance_evidence["verifications"]``, populated by `evaluate`) decides
-    it — never the worker's self-report. For an attested (check-less)
-    verification, the worker's self-reported status is the only signal
-    available, so it is used as before.
+    it — never the worker's self-report. Some rejections (missing
+    deliverable, undeclared deliverable, unsafe deliverable, incomplete
+    outcome) happen before the verification loop ever runs, so
+    ``acceptance_evidence`` carries no ``"verifications"`` key at all in that
+    case — checked verifications are then never evaluated and none of them
+    are blamed. A present-but-empty map still means the loop ran, so a
+    checked verification is blamed exactly when the server recorded it as
+    failed. For an attested (check-less) verification, the worker's
+    self-reported status is the only signal available, so it is used as
+    before.
     """
+    verifications_evaluated = "verifications" in acceptance_evidence
     verified = acceptance_evidence.get("verifications")
     verified_status = (
         {name: entry.get("status") for name, entry in verified.items()}
@@ -156,11 +164,10 @@ def rejected_verification_names(
         name
         for name, has_check in required_verifications
         if (
-            verified_status.get(name)
+            (verifications_evaluated and verified_status.get(name) != "passed")
             if has_check
-            else verification_status.get(name)
+            else verification_status.get(name) != "passed"
         )
-        != "passed"
     ]
 
 
