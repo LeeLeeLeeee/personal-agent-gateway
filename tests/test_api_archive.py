@@ -197,3 +197,31 @@ def test_knowledge_request_can_be_delegated_to_documentation_team(
     assert retry_response.status_code == 200
     assert retry_request.id != cycle_request.id
     assert retry_request.source_id == f"{knowledge_request.id}#attempt-2"
+
+
+def test_requests_api_exposes_the_last_draft_failure(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    archive = client.app.state.archive_service
+    request = archive.create_knowledge_request(
+        title="Rollback checklist",
+        reason="Reusable rollback guidance is missing.",
+        suggested_outline=["Signals"],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+    archive.record_draft_failure(
+        request.id,
+        error_code="draft_contract_violation",
+        message="Team response must contain exactly one Library Draft marker",
+        cycle_id="cycle-1",
+    )
+
+    listed = client.get("/api/archive/requests").json()["requests"]
+
+    item = next(entry for entry in listed if entry["id"] == request.id)
+    assert item["last_draft_error_code"] == "draft_contract_violation"
+    assert item["last_draft_error_message"] == (
+        "Team response must contain exactly one Library Draft marker"
+    )
+    assert item["last_draft_cycle_id"] == "cycle-1"
+    assert item["last_draft_failed_at"]

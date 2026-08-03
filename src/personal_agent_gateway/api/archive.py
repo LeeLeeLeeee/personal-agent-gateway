@@ -302,6 +302,10 @@ def _request_payload(item: KnowledgeRequest) -> dict[str, object]:
         "assigned_team_run_id": item.assigned_team_run_id,
         "status": item.status,
         "fulfilled_by_entry_id": item.fulfilled_by_entry_id,
+        "last_draft_error_code": item.last_draft_error_code,
+        "last_draft_error_message": item.last_draft_error_message,
+        "last_draft_failed_at": item.last_draft_failed_at,
+        "last_draft_cycle_id": item.last_draft_cycle_id,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
