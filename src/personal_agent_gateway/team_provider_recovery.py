@@ -629,7 +629,7 @@ def _validate_active_source(operation, run, cycle, task, actor, worker) -> None:
             and run["status"] == "running"
             and cycle["status"] == "running"
         )
-    elif operation.stage == "cycle_synthesis":
+    elif operation.stage in {"cycle_synthesis", "cycle_synthesis_repair"}:
         valid = (
             operation.task_id is None
             and run["status"] == "summarizing"
@@ -660,7 +660,7 @@ def _restore_operation_source(
         run_status = "planning"
         cycle_status = "running"
         actor_status = "running"
-    elif operation.stage == "cycle_synthesis":
+    elif operation.stage in {"cycle_synthesis", "cycle_synthesis_repair"}:
         run_status = "summarizing"
         cycle_status = "running"
         actor_status = "running"

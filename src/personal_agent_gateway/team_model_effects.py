@@ -43,6 +43,10 @@ _PLAN_STAGES = {
     "cycle_planning_repair",
     "cycle_add_work",
 }
+_SYNTHESIS_STAGES = {
+    "cycle_synthesis",
+    "cycle_synthesis_repair",
+}
 MediationResolution = Mapping[str, object]
 
 
@@ -919,7 +923,7 @@ class TeamModelEffectService:
         operation: TeamModelOperation,
     ) -> None:
         if (
-            operation.stage != "cycle_synthesis"
+            operation.stage not in _SYNTHESIS_STAGES
             or operation.task_id is not None
             or operation.result_kind != "user_decision"
         ):
@@ -932,7 +936,7 @@ class TeamModelEffectService:
         operation: TeamModelOperation,
     ) -> None:
         if (
-            operation.stage != "cycle_synthesis"
+            operation.stage not in _SYNTHESIS_STAGES
             or operation.task_id is not None
             or operation.result_kind != "synthesis"
         ):
@@ -2855,6 +2859,10 @@ def team_model_effect_result_validators() -> OperationResultValidatorRegistry:
             "synthesis": _valid_synthesis,
             "user_decision": _valid_user_decision,
         },
+        "cycle_synthesis_repair": {
+            "synthesis": _valid_synthesis,
+            "user_decision": _valid_user_decision,
+        },
     }
 
 
@@ -2992,11 +3000,15 @@ def _valid_decision_option(value: object) -> bool:
 
 
 def _valid_synthesis(payload: dict[str, object]) -> bool:
-    return (
-        set(payload) == {"summary"}
-        and isinstance(payload["summary"], str)
-        and bool(payload["summary"].strip())
-    )
+    if set(payload) not in ({"summary"}, {"summary", "contract_payload"}):
+        return False
+    if not isinstance(payload["summary"], str) or not payload["summary"].strip():
+        return False
+    if "contract_payload" in payload:
+        contract_payload = payload["contract_payload"]
+        if not isinstance(contract_payload, str) or not contract_payload.strip():
+            return False
+    return True
 
 
 def _terminal_status(rows: list[sqlite3.Row]) -> str:

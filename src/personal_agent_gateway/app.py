@@ -279,6 +279,7 @@ def create_app(
     app.state.hook_runner.attach_team_cycle_queue(
         app.state.team_cycle_service,
         app.state.team_cycle_dispatcher,
+        operation_service,
     )
     app.state.emergency_stop_service = EmergencyStopService(
         intake_gate=app.state.intake_gate,

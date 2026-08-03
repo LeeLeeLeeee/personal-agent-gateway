@@ -15,12 +15,53 @@ from personal_agent_gateway.mail_knowledge import (
     MailKnowledgeService,
     MailWorkspaceProjector,
 )
+from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.run_state import TeamRunRegistry
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_model_effects import (
+    TeamModelEffectService,
+    team_model_effect_result_validators,
+)
+from personal_agent_gateway.team_model_invoker import TeamModelInvoker
+from personal_agent_gateway.team_model_operations import (
+    OperationSpec,
+    TeamModelOperationService,
+    ValidatedOperationResult,
+)
 from personal_agent_gateway.team_run_orchestrator import TeamRunOrchestrator
-from personal_agent_gateway.teams import TeamRunService
+from personal_agent_gateway.team_runtime import TeamRuntime
+from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
+
+_LIBRARY_DRAFT_RESPONSE = (
+    "Draft ready.\n\n"
+    '<library_draft>{"kind":"search_method","title":"Search verification method",'
+    '"summary":"A repeatable evidence check.","content_markdown":"# Method\\nCheck primary sources.",'
+    '"tags":["research"],"source_urls":[],"persona_ids":[]}</library_draft>'
+)
+
+
+class _ScriptedOperationModel:
+    """Minimal `complete_operation`/`complete` fake for a real `TeamRuntime`."""
+
+    def __init__(self, responses: list) -> None:
+        self.responses = list(responses)
+        self.calls = 0
+
+    async def complete_operation(self, messages, *, consumer_run_id):
+        self.calls += 1
+        value = self.responses.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def complete(self, messages):
+        return await self.complete_operation(messages, consumer_run_id="direct")
+
+
+async def _no_sleep(_delay: float) -> None:
+    return None
 
 
 @dataclass
@@ -284,7 +325,7 @@ def _setup_team_hook(tmp_path: Path, *, library_draft_enabled: bool = False):
         archive,
     )
     runner.attach_team_runtime(teams, orchestrator)
-    runner.attach_team_cycle_queue(cycles, dispatcher)
+    runner.attach_team_cycle_queue(cycles, dispatcher, TeamModelOperationService(db))
     dispatcher.add_preparer(runner.prepare_team_cycle)
     return runner, runs, teams, team_run, run, cycles, dispatcher, archive
 
@@ -580,18 +621,13 @@ async def test_knowledge_request_cycle_prepares_contract_and_saves_draft(
         request_id=claimed.id,
     )
 
-    instruction = await runner.prepare_team_cycle(request, cycle)
+    preparation = await runner.prepare_team_cycle(request, cycle)
 
-    assert instruction is not None
+    assert preparation is not None
+    instruction = preparation.instruction
     assert knowledge_request.title in instruction
     assert "<library_draft>" in instruction
-    summary = (
-        "Draft ready.\n\n"
-        '<library_draft>{"kind":"search_method","title":"Search verification method",'
-        '"summary":"A repeatable evidence check.","content_markdown":"# Method\\nCheck primary sources.",'
-        '"tags":["research"],"source_urls":[],"persona_ids":[]}</library_draft>'
-    )
-    teams.set_cycle_status(cycle.id, "completed", summary=summary)
+    teams.set_cycle_status(cycle.id, "completed", summary=_LIBRARY_DRAFT_RESPONSE)
     await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
 
     drafts = archive.list_entries(status="draft")
@@ -635,6 +671,29 @@ async def _delegated_knowledge_cycle(tmp_path: Path):
         request_id=claimed.id,
     )
     return runner, teams, team_run, archive, knowledge_request, cycle
+
+
+@pytest.mark.asyncio
+async def test_knowledge_request_preparation_carries_the_library_draft_contract(
+    tmp_path: Path,
+) -> None:
+    (
+        runner,
+        teams,
+        _team_run,
+        _archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    request = teams.get_cycle(cycle.id)
+    cycle_request = runner._team_cycles.get_request(request.request_id)
+
+    preparation = await runner.prepare_team_cycle(cycle_request, cycle)
+
+    assert preparation is not None
+    assert preparation.output_contract_id == "library_draft"
+    assert "<library_draft>" in preparation.instruction
+    assert knowledge_request.title in preparation.instruction
 
 
 @pytest.mark.asyncio
@@ -701,13 +760,7 @@ async def test_successful_draft_clears_an_earlier_failure(tmp_path: Path) -> Non
         message="no marker",
         cycle_id="older-cycle",
     )
-    summary = (
-        "Draft ready.\n\n"
-        '<library_draft>{"kind":"search_method","title":"Search verification method",'
-        '"summary":"A repeatable evidence check.","content_markdown":"# Method\\nCheck primary sources.",'
-        '"tags":["research"],"source_urls":[],"persona_ids":[]}</library_draft>'
-    )
-    teams.set_cycle_status(cycle.id, "completed", summary=summary)
+    teams.set_cycle_status(cycle.id, "completed", summary=_LIBRARY_DRAFT_RESPONSE)
 
     await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
 
@@ -715,6 +768,235 @@ async def test_successful_draft_clears_an_earlier_failure(tmp_path: Path) -> Non
     assert len(archive.list_entries(status="draft")) == 1
     assert stored.last_draft_error_code is None
     assert stored.last_draft_failed_at is None
+
+
+class _FakeOperations:
+    def __init__(self, operations):
+        self._operations = operations
+
+    def list_for_cycle(self, cycle_id):
+        return list(self._operations)
+
+
+class _FakeOperation:
+    def __init__(self, stage, status, result_json):
+        self.stage = stage
+        self.status = status
+        self.result_json = result_json
+
+
+@pytest.mark.asyncio
+async def test_draft_is_built_from_the_ledger_contract_payload(tmp_path: Path) -> None:
+    (
+        runner,
+        teams,
+        team_run,
+        archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    runner._operations = _FakeOperations(
+        [
+            _FakeOperation(
+                "cycle_synthesis",
+                "applied",
+                {
+                    "kind": "synthesis",
+                    "payload": {
+                        "summary": "Draft ready.",
+                        "contract_payload": _LIBRARY_DRAFT_RESPONSE,
+                    },
+                },
+            )
+        ]
+    )
+    teams.set_cycle_status(cycle.id, "completed", summary="Draft ready.")
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    drafts = archive.list_entries(status="draft")
+    assert len(drafts) == 1
+    assert drafts[0].origin_request_id == knowledge_request.id
+    assert archive.get_request(knowledge_request.id).last_draft_error_code is None
+
+
+@pytest.mark.asyncio
+async def test_draft_falls_back_to_parsing_the_cycle_summary(tmp_path: Path) -> None:
+    (
+        runner,
+        teams,
+        team_run,
+        archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    teams.set_cycle_status(cycle.id, "completed", summary=_LIBRARY_DRAFT_RESPONSE)
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    drafts = archive.list_entries(status="draft")
+    assert len(drafts) == 1
+    assert drafts[0].origin_request_id == knowledge_request.id
+
+
+@pytest.mark.asyncio
+async def test_real_synthesis_settles_knowledge_request_from_the_ledger(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: a real TeamRuntime synthesizes a contract cycle, and
+    HookRunner.on_team_run_settled (wired as an orchestrator observer, exactly
+    as app.py wires it) reads the contract payload back off the ledger to
+    save an Archive draft with no recorded failure.
+    """
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    worker = personas.create_persona("W", "worker", "d", [], [])
+    team_run = teams.create_team_run(
+        "kb",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    archive = ArchiveService(db)
+    knowledge_request = archive.create_knowledge_request(
+        title="Search verification method",
+        reason="The personas need a reusable source-checking method.",
+        suggested_outline=["Primary sources"],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+    archive.assign_request_team(knowledge_request.id, team_run.id)
+    cycles = TeamCycleService(db)
+    cycles.enqueue_request(
+        team_run.id,
+        "knowledge_request",
+        f"{knowledge_request.id}#attempt-1",
+        "placeholder",
+        previous_cycle_id=None,
+    )
+    claimed = cycles.claim_next(team_run.id)
+    assert claimed is not None
+    cycle = teams.create_cycle(
+        team_run.id,
+        claimed.source_type,
+        claimed.source_id,
+        request_id=claimed.id,
+    )
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(team_run.id, "running")
+
+    worker_agent = next(
+        agent for agent in teams.list_agents(team_run.id) if agent.role == "member"
+    )
+    task = teams.create_task(
+        team_run.id,
+        "Research",
+        "Research the request.",
+        owner_agent_id=worker_agent.id,
+        cycle_id=cycle.id,
+        acceptance=TaskAcceptance((), ("worker-result",)),
+    )
+    task, worker_agent = teams.start_task(task.id, worker_agent.id)
+
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+    )
+    reserved = operations.reserve(
+        OperationSpec(
+            operation_key=f"{cycle.id}:{task.id}:worker_execution:0",
+            team_run_id=team_run.id,
+            cycle_id=cycle.id,
+            task_id=task.id,
+            agent_id=worker_agent.id,
+            provider=worker_agent.backend,
+            stage="worker_execution",
+            stage_ordinal=0,
+            request_digest="a" * 64,
+        )
+    )
+    invoking = operations.begin_attempt(reserved.id, "consumer-1")
+    outcome = {
+        "status": "completed",
+        "summary": "done",
+        "reason_code": None,
+        "deliverables": [],
+        "verifications": [
+            {"name": "worker-result", "status": "passed", "evidence": "checked"}
+        ],
+    }
+    operations.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult("task_outcome", outcome),
+        upstream_session_id="worker-session-1",
+    )
+
+    leader_client = _ScriptedOperationModel([ModelResponse(_LIBRARY_DRAFT_RESPONSE, [])])
+    worker_client = _ScriptedOperationModel([])
+
+    def model_factory(agent, _cycle_id=None):
+        return leader_client if agent.role == "leader" else worker_client
+
+    runtime = TeamRuntime(
+        teams,
+        model_factory,
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(db, teams, operations),
+    )
+    orchestrator = TeamRunOrchestrator(TeamRunRegistry(), lambda: runtime)
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=PassThroughProviderRecovery(teams),
+    )
+    orchestrator.add_observer(dispatcher.on_team_run_settled)
+    hooks = HookService(db, HookSecretStore(tmp_path / "hooks"), {"email": object()})
+    hook_runs = HookRunService(db)
+    runner = HookRunner(
+        hooks,
+        hook_runs,
+        FakeFactory(FakeRuntime(FakeRuntimeResult([], None))),
+        EventBus(),
+        archive,
+    )
+    runner.attach_team_runtime(teams, orchestrator)
+    runner.attach_team_cycle_queue(cycles, dispatcher, operations)
+
+    preparation = await runner.prepare_team_cycle(claimed, cycle)
+    assert preparation is not None
+    assert preparation.output_contract_id == "library_draft"
+    teams.set_cycle_effective_instruction(
+        cycle.id, preparation.instruction, preparation.output_contract_id
+    )
+
+    result = await orchestrator.resume(team_run.id, cycle.id)
+
+    assert result.status == "completed"
+    settled_cycle = teams.get_cycle(cycle.id)
+    assert settled_cycle.summary == "Draft ready."
+    assert "<library_draft>" not in (settled_cycle.summary or "")
+    applied = [
+        item
+        for item in operations.list_for_cycle(cycle.id)
+        if item.stage == "cycle_synthesis" and item.status == "applied"
+    ]
+    assert len(applied) == 1
+    assert "<library_draft>" in applied[0].result_json["payload"]["contract_payload"]
+    drafts = archive.list_entries(status="draft")
+    assert len(drafts) == 1
+    assert drafts[0].origin_request_id == knowledge_request.id
+    stored_request = archive.get_request(knowledge_request.id)
+    assert stored_request.last_draft_error_code is None
 
 
 @pytest.mark.asyncio
@@ -776,7 +1058,7 @@ async def test_team_hook_queues_next_cycle_while_waiting_then_continues(tmp_path
         EventBus(),
     )
     runner.attach_team_runtime(teams, orchestrator)
-    runner.attach_team_cycle_queue(cycles, dispatcher)
+    runner.attach_team_cycle_queue(cycles, dispatcher, TeamModelOperationService(db))
     dispatcher.add_preparer(runner.prepare_team_cycle)
     mail_knowledge = MailKnowledgeService(db)
     runner.attach_mail_knowledge(

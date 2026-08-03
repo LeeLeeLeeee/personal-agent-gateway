@@ -53,6 +53,10 @@ from personal_agent_gateway.team_results import (
     workspace_changes,
     workspace_snapshot,
 )
+from personal_agent_gateway.team_output_contracts import (
+    OutputContract,
+    get_output_contract,
+)
 from personal_agent_gateway.team_structured_output import normalize_json_envelope
 from personal_agent_gateway.teams import (
     ACCEPTANCE_RECOVERY_CAP,
@@ -137,6 +141,26 @@ Return either:
 2. ONLY {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the final response cannot be completed accurately","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 At this stage, ask only about final interpretation or presentation that does not
 require additional worker execution."""
+
+SYNTHESIS_CONTRACT_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
+Goal: {goal}
+Task results:
+{results}
+
+Before finalizing, identify any consequential choice that only the user can make to
+produce an accurate final response. First use the goal, frozen rules, prior user
+decisions, and task results.
+Return either:
+1. A short plain-text summary of what was accomplished, including any failures,
+   followed by the final response in exactly the form the OUTPUT CONTRACT below
+   requires. The contract governs this response, not a file you wrote during the
+   run.
+2. ONLY {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the final response cannot be completed accurately","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
+At this stage, ask only about final interpretation or presentation that does not
+require additional worker execution.
+
+OUTPUT CONTRACT
+{contract}"""
 
 MEDIATION_PROMPT = """You are the leader mediating a Team Run.
 Goal: {goal}
@@ -402,6 +426,7 @@ class TeamRuntime:
             ValidatedOperationResult,
         ]
         | None = None,
+        synthesis_contract: OutputContract | None = None,
     ) -> OpenOperationRecovery | None:
         operation = self._operations.get_open_for_cycle(cycle_id)
         if operation is None:
@@ -685,17 +710,38 @@ class TeamRuntime:
             )
             return OpenOperationRecovery(recovered, result)
 
-        if operation.stage == "cycle_synthesis":
+        if operation.stage in {"cycle_synthesis", "cycle_synthesis_repair"}:
             if synthesis_messages is None or synthesis_parser is None:
                 return OpenOperationRecovery(operation, None)
             recovered = operation
             if operation.status == "prepared":
-                recovered = await self._invoke_existing_operation(
-                    operation,
-                    leader,
-                    synthesis_messages,
-                    synthesis_parser,
-                )
+                if operation.stage == "cycle_synthesis_repair":
+                    if synthesis_contract is None:
+                        raise OperationConflict(
+                            "Open synthesis repair operation requires an output contract"
+                        )
+                    repair_messages = _synthesis_repair_messages(
+                        synthesis_messages, synthesis_contract
+                    )
+                    recovered = await self._invoke_existing_operation(
+                        operation,
+                        leader,
+                        repair_messages,
+                        lambda response: self._validated_synthesis_result(
+                            response,
+                            leader,
+                            run,
+                            synthesis_contract,
+                            strict=False,
+                        ),
+                    )
+                else:
+                    recovered = await self._invoke_existing_operation(
+                        operation,
+                        leader,
+                        synthesis_messages,
+                        synthesis_parser,
+                    )
             return OpenOperationRecovery(
                 recovered,
                 self._apply_cycle_synthesis_operation(recovered),
@@ -736,6 +782,35 @@ class TeamRuntime:
             parser,
         )
 
+    async def _synthesis_repair_operation(
+        self,
+        run: TeamRun,
+        cycle_id: str,
+        leader_agent: TeamAgent,
+        contract: OutputContract,
+        messages: list[dict[str, object]],
+        failed_operation_id: str,
+    ) -> TeamModelOperation:
+        failed = self._operations.get(failed_operation_id)
+        repair_messages = _synthesis_repair_messages(messages, contract)
+        repair_spec = _operation_spec(
+            run,
+            cycle_id,
+            leader_agent,
+            "cycle_synthesis_repair",
+            failed.stage_ordinal,
+            repair_messages,
+            upstream_session_id=failed.upstream_session_id,
+        )
+        return await self._invoke_operation(
+            repair_spec,
+            leader_agent,
+            repair_messages,
+            lambda response: self._validated_synthesis_result(
+                response, leader_agent, run, contract, strict=False
+            ),
+        )
+
     def _apply_cycle_synthesis_operation(
         self,
         operation: TeamModelOperation,
@@ -770,6 +845,13 @@ class TeamRuntime:
                 f"Current cycle objective: {objective}"
             )
         return objective or run.goal
+
+    def _cycle_output_contract(self, cycle_id: str | None) -> OutputContract | None:
+        if cycle_id is None:
+            return None
+        return get_output_contract(
+            self._teams.get_cycle_output_contract_id(cycle_id)
+        )
 
     def _add_work_messages(
         self,
@@ -1054,7 +1136,10 @@ class TeamRuntime:
                 )
                 if recovery is not None:
                     open_operation = recovery.operation
-                    if open_operation.stage == "cycle_synthesis":
+                    if open_operation.stage in {
+                        "cycle_synthesis",
+                        "cycle_synthesis_repair",
+                    }:
                         return
                     if open_operation.stage in {
                         "cycle_planning",
@@ -2738,6 +2823,16 @@ class TeamRuntime:
         )
         leader_agent = self._teams.get_agent(leader.id)
         goal_context = self._goal_context(run, cycle_id)
+        contract = self._cycle_output_contract(cycle_id)
+        synthesis_block = (
+            SYNTHESIS_CONTRACT_PROMPT.format(
+                goal=goal_context,
+                results=results,
+                contract=contract.instructions,
+            )
+            if contract is not None
+            else SYNTHESIS_PROMPT.format(goal=goal_context, results=results)
+        )
         prompt = _space_block(
             run,
             self._space_policy(run, cycle_id),
@@ -2748,9 +2843,7 @@ class TeamRuntime:
             f"{goal_context}\n{results}",
             persona_id=leader_agent.persona_id,
             allow_request=True,
-        ) + SYNTHESIS_PROMPT.format(
-            goal=goal_context, results=results
-        )
+        ) + synthesis_block
         decision_context = "\n\n".join(
             context
             for context in (
@@ -2775,15 +2868,25 @@ class TeamRuntime:
                     response,
                     leader_agent,
                     run,
+                    contract,
                 )
 
-            recovery = await self._recover_open_operation(
-                run,
-                leader_agent,
-                cycle_id,
-                synthesis_messages=messages,
-                synthesis_parser=synthesis_parser,
-            )
+            try:
+                recovery = await self._recover_open_operation(
+                    run,
+                    leader_agent,
+                    cycle_id,
+                    synthesis_messages=messages,
+                    synthesis_parser=synthesis_parser,
+                    synthesis_contract=contract,
+                )
+            except InvalidOperationResult as exc:
+                if contract is None:
+                    raise
+                operation = await self._synthesis_repair_operation(
+                    run, cycle_id, leader_agent, contract, messages, exc.operation_id
+                )
+                return self._apply_cycle_synthesis_operation(operation)
             if recovery is not None:
                 if not isinstance(
                     recovery.result,
@@ -2799,7 +2902,7 @@ class TeamRuntime:
                 if request.cycle_id == cycle_id and request.status == "resolved"
             }
             synthesis_ordinal = sum(
-                operation.stage == "cycle_synthesis"
+                operation.stage in {"cycle_synthesis", "cycle_synthesis_repair"}
                 and operation.status == "applied"
                 and operation.result_kind == "user_decision"
                 and isinstance(operation.effect_ref_json, dict)
@@ -2815,12 +2918,19 @@ class TeamRuntime:
                 synthesis_ordinal,
                 messages,
             )
-            operation = await self._invoke_operation(
-                spec,
-                leader_agent,
-                messages,
-                synthesis_parser,
-            )
+            try:
+                operation = await self._invoke_operation(
+                    spec,
+                    leader_agent,
+                    messages,
+                    synthesis_parser,
+                )
+            except InvalidOperationResult as exc:
+                if contract is None:
+                    raise
+                operation = await self._synthesis_repair_operation(
+                    run, cycle_id, leader_agent, contract, messages, exc.operation_id
+                )
             return self._apply_cycle_synthesis_operation(operation)
 
         model = self._model(leader_agent, cycle_id)
@@ -2851,6 +2961,9 @@ class TeamRuntime:
         response: ModelResponse,
         leader: TeamAgent,
         run: TeamRun,
+        contract: OutputContract | None = None,
+        *,
+        strict: bool = True,
     ) -> ValidatedOperationResult:
         resolution = _parse_mediation_resolution(response.content)
         if resolution["kind"] == "ask_user":
@@ -2860,9 +2973,20 @@ class TeamRuntime:
             persona_id=leader.persona_id,
             team_run_id=run.id,
         )
+        if contract is None:
+            return ValidatedOperationResult("synthesis", {"summary": content})
+        try:
+            contract.validate(content)
+        except ValueError:
+            if strict:
+                raise
+            return ValidatedOperationResult("synthesis", {"summary": content})
         return ValidatedOperationResult(
             "synthesis",
-            {"summary": content},
+            {
+                "summary": contract.human_summary(content),
+                "contract_payload": content,
+            },
         )
 
     async def _publish_user_decision_request(
@@ -3064,6 +3188,20 @@ def _planning_repair_messages(
             "content": f"{messages[0]['content']}\n{_PLANNING_REPAIR_INSTRUCTION}",
         }
     ]
+
+
+def _synthesis_repair_messages(
+    messages: list[dict[str, object]],
+    contract: OutputContract,
+) -> list[dict[str, object]]:
+    correction = (
+        "Your previous response did not satisfy the output contract. "
+        "Send the same result again: first a short plain-text summary, "
+        "then the contract output in exactly the required form, with "
+        "nothing after it.\n\nOUTPUT CONTRACT\n"
+        f"{contract.instructions}"
+    )
+    return [{"role": "user", "content": f"{messages[0]['content']}\n\n{correction}"}]
 
 
 def _worker_repair_messages(

@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 
 from personal_agent_gateway.events import EventBus
@@ -22,9 +23,15 @@ from personal_agent_gateway.teams import (
 )
 
 
+@dataclass(frozen=True)
+class CyclePreparation:
+    instruction: str
+    output_contract_id: str | None = None
+
+
 CyclePreparer = Callable[
     [TeamCycleRequest, TeamRunCycle],
-    Awaitable[str | None],
+    Awaitable[CyclePreparation | None],
 ]
 
 _TERMINAL_CYCLE_STATUSES = {
@@ -148,10 +155,12 @@ class TeamCycleDispatcher:
             raise
         try:
             instruction = request.instruction
+            output_contract_id: str | None = None
             for preparer in self._preparers:
                 replacement = await preparer(request, cycle)
                 if replacement is not None:
-                    instruction = replacement
+                    instruction = replacement.instruction
+                    output_contract_id = replacement.output_contract_id
             if request.previous_summary_text:
                 instruction += (
                     "\n\nPREVIOUS CYCLE SUMMARY\n"
@@ -160,6 +169,7 @@ class TeamCycleDispatcher:
             self._teams.set_cycle_effective_instruction(
                 cycle.id,
                 instruction,
+                output_contract_id,
             )
             await self._event_bus.publish(
                 {
