@@ -412,7 +412,10 @@ git commit -m "feat: Knowledge Request 초안 실패 기록·해제 추가"
 
 **Interfaces:**
 - Consumes: `ArchiveService.record_draft_failure` / `clear_draft_failure` from Task 2; existing `parse_library_draft_response`, `redact_text`, `self._save_library_draft`.
-- Produces: `HookRunner._record_knowledge_request_failure(request_id: str, cycle: TeamRunCycle, error_code: str, exc: Exception | None) -> str` returning the stored message; `_save_knowledge_request_draft` and `_reopen_knowledge_request` are deleted.
+- Produces:
+  - `HookRunner._apply_knowledge_request_draft(request_id: str, cycle: TeamRunCycle) -> tuple[ArchiveEntry | None, str, str]` returning `(draft, error_code, message)`; `error_code` is `""` on success or when the cycle is not in a terminal state. Both the settlement path and startup reconciliation go through it, so the parse/save/record sequence exists once.
+  - `HookRunner._fail_draft(request_id: str, cycle: TeamRunCycle, error_code: str, exc: Exception | None) -> tuple[None, str, str]` — records the failure and builds the message.
+  - `_save_knowledge_request_draft` and `_reopen_knowledge_request` are deleted.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -554,34 +557,10 @@ Expected: FAIL — `last_draft_error_code` is `None` because the current code on
         if self._archive is None:
             return
         request_id = knowledge_request_id_from_source(request.source_id)
-        if cycle.status in {"completed", "completed_with_failures"}:
-            try:
-                _result_text, payload = parse_library_draft_response(cycle.summary or "")
-            except ValueError as exc:
-                await self._publish_draft_failure(
-                    request_id, cycle, "draft_contract_violation", exc
-                )
-                return
-            try:
-                draft = self._save_library_draft(
-                    payload,
-                    origin_source_type="knowledge_request",
-                    origin_source_id=request_id,
-                    origin_team_run_id=cycle.team_run_id,
-                    origin_cycle_id=cycle.id,
-                    origin_request_id=request_id,
-                )
-            except ValueError as exc:
-                await self._publish_draft_failure(
-                    request_id, cycle, "draft_invalid_payload", exc
-                )
-                return
-            except (KeyError, RuntimeError) as exc:
-                await self._publish_draft_failure(
-                    request_id, cycle, "draft_save_failed", exc
-                )
-                return
-            self._clear_knowledge_request_failure(request_id)
+        draft, error_code, message = self._apply_knowledge_request_draft(
+            request_id, cycle
+        )
+        if draft is not None:
             await self._event_bus.publish(
                 {
                     "type": "archive.draft.created",
@@ -593,106 +572,100 @@ Expected: FAIL — `last_draft_error_code` is `None` because the current code on
                 }
             )
             return
-        if cycle.status in {"blocked", "failed", "canceled", "interrupted"}:
-            await self._publish_draft_failure(
-                request_id, cycle, f"cycle_{cycle.status}", None
+        if error_code:
+            await self._event_bus.publish(
+                {
+                    "type": "archive.draft.failed",
+                    "source_type": "knowledge_request",
+                    "source_id": request_id,
+                    "team_run_id": cycle.team_run_id,
+                    "cycle_id": cycle.id,
+                    "error_code": error_code,
+                    "error": message,
+                }
             )
 ```
 
-3b. Replace `_save_knowledge_request_draft` and `_reopen_knowledge_request` (lines 419-441) with these three helpers:
+3b. Replace `_save_knowledge_request_draft` and `_reopen_knowledge_request` (lines 419-441) with these two helpers. They hold the whole parse/save/record sequence so the settlement path and startup reconciliation share one copy of it:
 
 ```python
-    def _record_knowledge_request_failure(
+    def _apply_knowledge_request_draft(
+        self,
+        request_id: str,
+        cycle: TeamRunCycle,
+    ) -> tuple[ArchiveEntry | None, str, str]:
+        """Save the cycle's Library draft, or record why it could not be saved.
+
+        Returns (draft, error_code, message); error_code is empty on success
+        and for a cycle that has not reached a terminal state. Only the
+        settlement path publishes events for the outcome.
+        """
+        if self._archive is None:
+            return None, "", ""
+        if cycle.status in {"completed", "completed_with_failures"}:
+            try:
+                _result_text, payload = parse_library_draft_response(cycle.summary or "")
+            except ValueError as exc:
+                return self._fail_draft(
+                    request_id, cycle, "draft_contract_violation", exc
+                )
+            try:
+                draft = self._save_library_draft(
+                    payload,
+                    origin_source_type="knowledge_request",
+                    origin_source_id=request_id,
+                    origin_team_run_id=cycle.team_run_id,
+                    origin_cycle_id=cycle.id,
+                    origin_request_id=request_id,
+                )
+            except ValueError as exc:
+                return self._fail_draft(
+                    request_id, cycle, "draft_invalid_payload", exc
+                )
+            except (KeyError, RuntimeError) as exc:
+                return self._fail_draft(request_id, cycle, "draft_save_failed", exc)
+            try:
+                self._archive.clear_draft_failure(request_id)
+            except KeyError:
+                pass
+            return draft, "", ""
+        if cycle.status in {"blocked", "failed", "canceled", "interrupted"}:
+            return self._fail_draft(request_id, cycle, f"cycle_{cycle.status}", None)
+        return None, "", ""
+
+    def _fail_draft(
         self,
         request_id: str,
         cycle: TeamRunCycle,
         error_code: str,
         exc: Exception | None,
-    ) -> str:
+    ) -> tuple[None, str, str]:
         if exc is not None:
             message = redact_text(exc) or type(exc).__name__
         elif cycle.error_message:
             message = redact_text(cycle.error_message)
         else:
             message = f"Team Run Cycle {cycle.status}"
-        if self._archive is None:
-            return message
-        try:
-            self._archive.record_draft_failure(
-                request_id,
-                error_code=error_code,
-                message=message,
-                cycle_id=cycle.id,
-            )
-        except (KeyError, ValueError):
-            return message
-        return message
-
-    def _clear_knowledge_request_failure(self, request_id: str) -> None:
-        if self._archive is None:
-            return
-        try:
-            self._archive.clear_draft_failure(request_id)
-        except KeyError:
-            return
-
-    async def _publish_draft_failure(
-        self,
-        request_id: str,
-        cycle: TeamRunCycle,
-        error_code: str,
-        exc: Exception | None,
-    ) -> None:
-        message = self._record_knowledge_request_failure(
-            request_id, cycle, error_code, exc
-        )
-        await self._event_bus.publish(
-            {
-                "type": "archive.draft.failed",
-                "source_type": "knowledge_request",
-                "source_id": request_id,
-                "team_run_id": cycle.team_run_id,
-                "cycle_id": cycle.id,
-                "error_code": error_code,
-                "error": message,
-            }
-        )
+        if self._archive is not None:
+            try:
+                self._archive.record_draft_failure(
+                    request_id,
+                    error_code=error_code,
+                    message=message,
+                    cycle_id=cycle.id,
+                )
+            except (KeyError, ValueError):
+                pass
+        return None, error_code, message
 ```
 
-3c. Rewrite the tail of `_reconcile_knowledge_requests` (lines 477-484) to use the same recording path. It is synchronous, so it records without publishing:
+3c. Replace the tail of `_reconcile_knowledge_requests` (lines 477-484) — the whole `if cycle.status in {"completed", ...}: ... continue` block and the `if cycle.status in {"blocked", ...}` block that follows it — with the shared call. This path is synchronous, so it records without publishing:
 
 ```python
-            if cycle.status in {"completed", "completed_with_failures"}:
-                try:
-                    _result_text, payload = parse_library_draft_response(
-                        cycle.summary or ""
-                    )
-                    self._save_library_draft(
-                        payload,
-                        origin_source_type="knowledge_request",
-                        origin_source_id=request_id,
-                        origin_team_run_id=cycle.team_run_id,
-                        origin_cycle_id=cycle.id,
-                        origin_request_id=request_id,
-                    )
-                except ValueError as exc:
-                    self._record_knowledge_request_failure(
-                        request_id, cycle, "draft_contract_violation", exc
-                    )
-                except (KeyError, RuntimeError) as exc:
-                    self._record_knowledge_request_failure(
-                        request_id, cycle, "draft_save_failed", exc
-                    )
-                else:
-                    self._clear_knowledge_request_failure(request_id)
-                continue
-            if cycle.status in {"blocked", "failed", "canceled", "interrupted"}:
-                self._record_knowledge_request_failure(
-                    request_id, cycle, f"cycle_{cycle.status}", None
-                )
+            self._apply_knowledge_request_draft(request_id, cycle)
 ```
 
-Note that this path already saves a duplicate draft when one exists; that behaviour is unchanged (`save_draft` is keyed on `(source_type, source_id)`).
+This path already re-saves against an existing draft when one exists; that behaviour is unchanged (`save_draft` is keyed on `(source_type, source_id)`).
 
 3d. Confirm nothing still references the deleted helpers:
 
