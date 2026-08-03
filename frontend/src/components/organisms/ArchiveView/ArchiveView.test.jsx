@@ -413,6 +413,47 @@ describe("ArchiveView", () => {
     ));
   });
 
+  it("shows why a delegated Team Run produced no draft", async () => {
+    const client = makeClient();
+    client.knowledgeRequests = vi.fn().mockResolvedValue([
+      {
+        ...request,
+        status: "open",
+        assigned_team_run_id: documentationTeam.id,
+        last_draft_error_code: "draft_contract_violation",
+        last_draft_error_message:
+          "Team response must contain exactly one Library Draft marker",
+        last_draft_failed_at: "2026-08-03T00:42:36Z",
+        last_draft_cycle_id: "cycle-1"
+      }
+    ]);
+
+    render(<ArchiveView client={client} artifacts={[]} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
+
+    expect(screen.getByText(/DRAFT FAILED/)).toHaveTextContent(
+      "draft_contract_violation"
+    );
+    expect(
+      screen.getByText(/exactly one Library Draft marker/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/CYCLE cycle-1/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `Send ${request.title} to documentation team` })
+    ).toBeInTheDocument();
+  });
+
+  it("shows no failure banner when the request has never failed", async () => {
+    render(<ArchiveView client={makeClient()} artifacts={[]} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
+
+    expect(screen.queryByText(/DRAFT FAILED/)).not.toBeInTheDocument();
+  });
+
   it("turns a persona request into a user-authored Library draft and fulfills it only on publish", async () => {
     const client = makeClient();
     render(<ArchiveView client={client} />);
