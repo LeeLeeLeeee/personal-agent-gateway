@@ -600,6 +600,123 @@ async def test_knowledge_request_cycle_prepares_contract_and_saves_draft(
     assert drafts[0].origin_request_id == knowledge_request.id
 
 
+async def _delegated_knowledge_cycle(tmp_path: Path):
+    (
+        runner,
+        _runs,
+        teams,
+        team_run,
+        _run,
+        cycles,
+        _dispatcher,
+        archive,
+    ) = _setup_team_hook(tmp_path)
+    knowledge_request = archive.create_knowledge_request(
+        title="Search verification method",
+        reason="The personas need a reusable source-checking method.",
+        suggested_outline=["Primary sources"],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+    archive.assign_request_team(knowledge_request.id, team_run.id)
+    cycles.enqueue_request(
+        team_run.id,
+        "knowledge_request",
+        f"{knowledge_request.id}#attempt-1",
+        "placeholder",
+        previous_cycle_id=None,
+    )
+    claimed = cycles.claim_next(team_run.id)
+    assert claimed is not None
+    cycle = teams.create_cycle(
+        team_run.id,
+        claimed.source_type,
+        claimed.source_id,
+        request_id=claimed.id,
+    )
+    return runner, teams, team_run, archive, knowledge_request, cycle
+
+
+@pytest.mark.asyncio
+async def test_completed_cycle_without_marker_records_contract_violation(
+    tmp_path: Path,
+) -> None:
+    (
+        runner,
+        teams,
+        team_run,
+        archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    teams.set_cycle_status(
+        cycle.id,
+        "completed",
+        summary="## 완료 요약\n\n초안을 파일로 정리했습니다.",
+    )
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    stored = archive.get_request(knowledge_request.id)
+    assert archive.list_entries(status="draft") == []
+    assert stored.status == "open"
+    assert stored.last_draft_error_code == "draft_contract_violation"
+    assert "Library Draft marker" in (stored.last_draft_error_message or "")
+    assert stored.last_draft_cycle_id == cycle.id
+
+
+@pytest.mark.asyncio
+async def test_failed_cycle_records_the_cycle_status(tmp_path: Path) -> None:
+    (
+        runner,
+        teams,
+        team_run,
+        archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    teams.set_cycle_status(cycle.id, "failed", error_message="Worker crashed")
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    stored = archive.get_request(knowledge_request.id)
+    assert stored.status == "open"
+    assert stored.last_draft_error_code == "cycle_failed"
+    assert stored.last_draft_cycle_id == cycle.id
+
+
+@pytest.mark.asyncio
+async def test_successful_draft_clears_an_earlier_failure(tmp_path: Path) -> None:
+    (
+        runner,
+        teams,
+        team_run,
+        archive,
+        knowledge_request,
+        cycle,
+    ) = await _delegated_knowledge_cycle(tmp_path)
+    archive.record_draft_failure(
+        knowledge_request.id,
+        error_code="draft_contract_violation",
+        message="no marker",
+        cycle_id="older-cycle",
+    )
+    summary = (
+        "Draft ready.\n\n"
+        '<library_draft>{"kind":"search_method","title":"Search verification method",'
+        '"summary":"A repeatable evidence check.","content_markdown":"# Method\\nCheck primary sources.",'
+        '"tags":["research"],"source_urls":[],"persona_ids":[]}</library_draft>'
+    )
+    teams.set_cycle_status(cycle.id, "completed", summary=summary)
+
+    await runner.on_team_run_settled(teams.get_team_run(team_run.id), cycle.id)
+
+    stored = archive.get_request(knowledge_request.id)
+    assert len(archive.list_entries(status="draft")) == 1
+    assert stored.last_draft_error_code is None
+    assert stored.last_draft_failed_at is None
+
+
 @pytest.mark.asyncio
 async def test_team_hook_queues_next_cycle_while_waiting_then_continues(tmp_path: Path) -> None:
     db = Database(tmp_path / "app.sqlite")
