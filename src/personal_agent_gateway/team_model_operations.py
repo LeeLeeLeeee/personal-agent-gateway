@@ -22,6 +22,7 @@ OperationStage = Literal[
     "acceptance_lead",
     "acceptance_worker",
     "cycle_synthesis",
+    "cycle_synthesis_repair",
 ]
 
 OperationStatus = Literal[

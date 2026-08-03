@@ -1983,6 +1983,97 @@ async def test_synthesis_prompt_is_unchanged_without_a_contract(tmp_path):
     assert "<library_draft>" not in prompt
 
 
+_PROSE_SUMMARY = "## 완료 요약\n\n초안을 파일로 정리했습니다."
+
+
+@pytest.mark.asyncio
+async def test_contract_violation_triggers_exactly_one_repair(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    _set_library_draft_contract(setup)
+    setup.lead_client.responses = [
+        ModelResponse(_PROSE_SUMMARY, []),
+        ModelResponse(_LIBRARY_DRAFT_SUMMARY, []),
+    ]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    stages = [item.stage for item in setup.operations.list_for_cycle(setup.cycle.id)]
+    assert stages.count("cycle_synthesis") == 1
+    assert stages.count("cycle_synthesis_repair") == 1
+    assert setup.lead_client.calls == 2
+    summary = setup.teams.get_cycle(setup.cycle.id).summary or ""
+    assert summary.startswith("Draft ready.")
+    assert "<library_draft>" not in summary
+
+
+@pytest.mark.asyncio
+async def test_successful_contract_stores_prose_summary_and_ledger_payload(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    _set_library_draft_contract(setup)
+    setup.lead_client.responses = [ModelResponse(_LIBRARY_DRAFT_SUMMARY, [])]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    summary = setup.teams.get_cycle(setup.cycle.id).summary or ""
+    assert summary.strip() == "Draft ready."
+    assert "<library_draft>" not in summary
+    applied = [
+        item
+        for item in setup.operations.list_for_cycle(setup.cycle.id)
+        if item.stage == "cycle_synthesis" and item.status == "applied"
+    ]
+    assert len(applied) == 1
+    assert "<library_draft>" in applied[0].result_json["payload"]["contract_payload"]
+
+
+@pytest.mark.asyncio
+async def test_second_contract_violation_is_returned_as_is(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    _set_library_draft_contract(setup)
+    setup.lead_client.responses = [
+        ModelResponse(_PROSE_SUMMARY, []),
+        ModelResponse(_PROSE_SUMMARY, []),
+    ]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.lead_client.calls == 2
+    cycle = setup.teams.get_cycle(setup.cycle.id)
+    assert cycle.status == "completed"
+    assert "<library_draft>" not in (cycle.summary or "")
+
+
+@pytest.mark.asyncio
+async def test_ask_user_resolution_is_not_treated_as_a_violation(tmp_path):
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    _set_library_draft_contract(setup)
+    setup.lead_client.responses = [
+        ModelResponse(
+            json.dumps(
+                {
+                    "resolution": {
+                        "kind": "ask_user",
+                        "topic": "publication",
+                        "question": "Publish as a shared Library entry?",
+                        "why_needed": "The audience changes the wording.",
+                        "options": [
+                            {"id": "shared", "label": "Shared", "impact": "everyone"}
+                        ],
+                        "recommended_option_id": "shared",
+                        "blocking_scope": "run",
+                    }
+                }
+            ),
+            [],
+        )
+    ]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.lead_client.calls == 1
+    assert setup.teams.get_cycle(setup.cycle.id).status == "waiting_for_user"
+
+
 @pytest.mark.asyncio
 async def test_completed_worker_operation_startup_applies_locally_without_worker_call(
     tmp_path,

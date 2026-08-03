@@ -709,7 +709,7 @@ class TeamRuntime:
             )
             return OpenOperationRecovery(recovered, result)
 
-        if operation.stage == "cycle_synthesis":
+        if operation.stage in {"cycle_synthesis", "cycle_synthesis_repair"}:
             if synthesis_messages is None or synthesis_parser is None:
                 return OpenOperationRecovery(operation, None)
             recovered = operation
@@ -1085,7 +1085,10 @@ class TeamRuntime:
                 )
                 if recovery is not None:
                     open_operation = recovery.operation
-                    if open_operation.stage == "cycle_synthesis":
+                    if open_operation.stage in {
+                        "cycle_synthesis",
+                        "cycle_synthesis_repair",
+                    }:
                         return
                     if open_operation.stage in {
                         "cycle_planning",
@@ -2814,6 +2817,7 @@ class TeamRuntime:
                     response,
                     leader_agent,
                     run,
+                    contract,
                 )
 
             recovery = await self._recover_open_operation(
@@ -2854,12 +2858,35 @@ class TeamRuntime:
                 synthesis_ordinal,
                 messages,
             )
-            operation = await self._invoke_operation(
-                spec,
-                leader_agent,
-                messages,
-                synthesis_parser,
-            )
+            try:
+                operation = await self._invoke_operation(
+                    spec,
+                    leader_agent,
+                    messages,
+                    synthesis_parser,
+                )
+            except InvalidOperationResult as exc:
+                if contract is None:
+                    raise
+                failed = self._operations.get(exc.operation_id)
+                repair_messages = _synthesis_repair_messages(messages, contract)
+                repair_spec = _operation_spec(
+                    run,
+                    cycle_id,
+                    leader_agent,
+                    "cycle_synthesis_repair",
+                    synthesis_ordinal,
+                    repair_messages,
+                    upstream_session_id=failed.upstream_session_id,
+                )
+                operation = await self._invoke_operation(
+                    repair_spec,
+                    leader_agent,
+                    repair_messages,
+                    lambda response: self._validated_synthesis_result(
+                        response, leader_agent, run, contract, strict=False
+                    ),
+                )
             return self._apply_cycle_synthesis_operation(operation)
 
         model = self._model(leader_agent, cycle_id)
@@ -2890,6 +2917,9 @@ class TeamRuntime:
         response: ModelResponse,
         leader: TeamAgent,
         run: TeamRun,
+        contract: OutputContract | None = None,
+        *,
+        strict: bool = True,
     ) -> ValidatedOperationResult:
         resolution = _parse_mediation_resolution(response.content)
         if resolution["kind"] == "ask_user":
@@ -2899,9 +2929,20 @@ class TeamRuntime:
             persona_id=leader.persona_id,
             team_run_id=run.id,
         )
+        if contract is None:
+            return ValidatedOperationResult("synthesis", {"summary": content})
+        try:
+            contract.validate(content)
+        except ValueError:
+            if strict:
+                raise
+            return ValidatedOperationResult("synthesis", {"summary": content})
         return ValidatedOperationResult(
             "synthesis",
-            {"summary": content},
+            {
+                "summary": contract.human_summary(content),
+                "contract_payload": content,
+            },
         )
 
     async def _publish_user_decision_request(
@@ -3102,6 +3143,25 @@ def _planning_repair_messages(
             "role": "user",
             "content": f"{messages[0]['content']}\n{_PLANNING_REPAIR_INSTRUCTION}",
         }
+    ]
+
+
+def _synthesis_repair_messages(
+    messages: list[dict[str, object]],
+    contract: OutputContract,
+) -> list[dict[str, object]]:
+    return [
+        *messages,
+        {
+            "role": "user",
+            "content": (
+                "Your previous response did not satisfy the output contract. "
+                "Send the same result again: first a short plain-text summary, "
+                "then the contract output in exactly the required form, with "
+                "nothing after it.\n\nOUTPUT CONTRACT\n"
+                f"{contract.instructions}"
+            ),
+        },
     ]
 
 
