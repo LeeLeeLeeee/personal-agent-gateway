@@ -24,7 +24,7 @@ from personal_agent_gateway.team_outcomes import (
     VerificationEvidence,
 )
 from personal_agent_gateway.team_runtime import AcceptanceReviewResolution
-from personal_agent_gateway.teams import TaskAcceptance, TeamRunService
+from personal_agent_gateway.teams import RequiredVerification, TaskAcceptance, TeamRunService
 from team_cycle_helpers import make_cycle_services, make_queued_cycle
 
 
@@ -145,7 +145,7 @@ def make_completed_worker_operation(
         cycle_id=cycle.id,
         acceptance=TaskAcceptance(
             required_outputs=("draft.md",),
-            required_verifications=("review",),
+            required_verifications=(RequiredVerification("review"),),
         ),
     )
     task, worker = teams.start_task(task.id, worker.id)
@@ -398,7 +398,7 @@ def test_first_worker_mediation_increments_once_after_other_cycle_rounds(
         "Continue after Worker A used the first round.",
         owner_agent_id=workers[1].id,
         cycle_id=cycle.id,
-        acceptance=TaskAcceptance(("draft.md",), ("review",)),
+        acceptance=TaskAcceptance(("draft.md",), (RequiredVerification("review"),)),
     )
     task, worker_b = teams.start_task(task.id, workers[1].id)
     services = SimpleNamespace(

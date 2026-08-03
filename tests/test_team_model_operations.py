@@ -8,6 +8,7 @@ from personal_agent_gateway.team_model_operations import (
     StaleOperation,
     TeamModelOperationService,
     ValidatedOperationResult,
+    _valid_acceptance,
 )
 from team_cycle_helpers import make_cycle_services, make_queued_cycle
 
@@ -375,3 +376,29 @@ def test_record_invoking_reason_preserves_open_operation_with_cas(tmp_path):
             invoking.version,
             "provider_not_ready",
         )
+
+
+def test_valid_acceptance_accepts_both_verification_shapes() -> None:
+    assert _valid_acceptance(
+        {"required_outputs": ["a.md"], "required_verifications": ["reviewed"]}
+    )
+    assert _valid_acceptance(
+        {
+            "required_outputs": ["a.md"],
+            "required_verifications": [
+                {
+                    "name": "marker",
+                    "check": {"type": "file_contains", "path": "a.md", "value": "x"},
+                }
+            ],
+        }
+    )
+    assert not _valid_acceptance(
+        {
+            "required_outputs": ["a.md"],
+            "required_verifications": [
+                {"name": "marker", "check": {"type": "shell", "path": "a.md"}}
+            ],
+        }
+    )
+    assert not _valid_acceptance({"required_outputs": [], "required_verifications": []})

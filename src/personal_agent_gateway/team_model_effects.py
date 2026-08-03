@@ -31,7 +31,9 @@ from personal_agent_gateway.teams import (
     TeamRunService,
     TeamTask,
     _acceptance_review_metadata,
+    _task_acceptance_json,
     _validate_task_acceptance,
+    parse_required_verifications,
 )
 
 if TYPE_CHECKING:
@@ -539,7 +541,7 @@ class TeamModelEffectService:
             verification_status = {
                 item.name: item.status for item in outcome.verifications
             }
-            acceptance_before = asdict(task.acceptance)
+            acceptance_before = json.loads(_task_acceptance_json(task.acceptance))
             acceptance_after = normalized["acceptance"]
             consumes_attempt = normalized["kind"] in {
                 "retry_worker",
@@ -591,9 +593,9 @@ class TeamModelEffectService:
                     item.path for item in outcome.deliverables
                 ],
                 rejected_verifications=[
-                    name
-                    for name in task.acceptance.required_verifications
-                    if verification_status.get(name) != "passed"
+                    required.name
+                    for required in task.acceptance.required_verifications
+                    if verification_status.get(required.name) != "passed"
                 ],
             )
             connection.execute(
@@ -2050,7 +2052,7 @@ class TeamModelEffectService:
             raise OperationConflict("Task plan acceptance is invalid")
         acceptance = TaskAcceptance(
             required_outputs=tuple(acceptance_payload["required_outputs"]),
-            required_verifications=tuple(
+            required_verifications=parse_required_verifications(
                 acceptance_payload["required_verifications"]
             ),
         )
@@ -2074,16 +2076,7 @@ class TeamModelEffectService:
                 spec["description"],
                 owner_agent_id,
                 int(spec["required"]),
-                json.dumps(
-                    {
-                        "required_outputs": list(acceptance.required_outputs),
-                        "required_verifications": list(
-                            acceptance.required_verifications
-                        ),
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
+                _task_acceptance_json(acceptance),
                 now,
                 now,
             ),
@@ -2717,12 +2710,7 @@ def _acceptance_audit_matches(
             if verification_status.get(name) != "passed"
         ],
     )
-    current_acceptance = {
-        "required_outputs": list(task.acceptance.required_outputs),
-        "required_verifications": list(
-            task.acceptance.required_verifications
-        ),
-    }
+    current_acceptance = json.loads(_task_acceptance_json(task.acceptance))
     expected_current = (
         resolution["acceptance"]
         if resolution["kind"] == "revise_acceptance"
@@ -2922,7 +2910,7 @@ def _valid_acceptance_resolution(payload: dict[str, object]) -> bool:
             _validate_task_acceptance(
                 TaskAcceptance(
                     required_outputs=tuple(acceptance["required_outputs"]),
-                    required_verifications=tuple(
+                    required_verifications=parse_required_verifications(
                         acceptance["required_verifications"]
                     ),
                 )

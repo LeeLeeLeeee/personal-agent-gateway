@@ -24,7 +24,7 @@ from personal_agent_gateway.team_model_operations import (
 from personal_agent_gateway.team_model_invoker import AmbiguousModelOperation
 from personal_agent_gateway.team_provider_recovery import TeamProviderRecovery
 from personal_agent_gateway.team_runtime import TeamRuntime
-from personal_agent_gateway.teams import TaskAcceptance
+from personal_agent_gateway.teams import RequiredVerification, TaskAcceptance
 
 _TERMINAL_STATUSES = {
     "completed",
@@ -1157,7 +1157,7 @@ def test_team_task_payload_exposes_acceptance_outcome_and_result(tmp_path: Path)
         required=True,
         acceptance=TaskAcceptance(
             ("outputs/guide.md",),
-            ("link-check",),
+            (RequiredVerification("link-check"),),
         ),
     )
     service.record_task_outcome(
