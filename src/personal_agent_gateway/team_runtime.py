@@ -84,7 +84,15 @@ Return ONLY one of:
 1. A JSON array of task objects. Each object must contain exactly:
    {{"title":"...", "description":"...", "owner_agent_id":"member-id or null",
    "required":true, "acceptance":{{"required_outputs":["relative/path"],
-   "required_verifications":["verification-name"]}}}}
+   "required_verifications":[{{"name":"verification-name","check":null}}]}}}}
+   A verification may carry a check the server runs itself. Prefer one whenever a
+   file can decide the question; use "check":null only for something no file can
+   settle. Available checks, each with a workspace-relative "path":
+   {{"type":"file_nonempty","path":"p"}}
+   {{"type":"file_contains","path":"p","value":"substring"}}
+   {{"type":"file_matches","path":"p","pattern":"regex, at most 200 characters"}}
+   {{"type":"json_parses","path":"p"}}
+   A check you supply decides the outcome; your own claim about it is ignored.
    Assign the member whose persona role and responsibilities best match the task.
    Use null only when no member is available. Do not assign by list order or
    previous completion status. Every task needs at least one required output or
@@ -127,9 +135,16 @@ infer. Never approve the current rejected outcome retroactively.
 
 Return ONLY one JSON object in exactly one of these forms:
 {{"resolution":{{"kind":"retry_worker","instruction":"concrete correction", "reason":"why the current outcome was rejected"}}}}
-{{"resolution":{{"kind":"revise_acceptance","acceptance":{{"required_outputs":["relative/path"],"required_verifications":["verification"]}},"instruction":"concrete resubmission instruction", "reason":"why the contract is wrong"}}}}
+{{"resolution":{{"kind":"revise_acceptance","acceptance":{{"required_outputs":["relative/path"],"required_verifications":[{{"name":"verification-name","check":null}}]}},"instruction":"concrete resubmission instruction", "reason":"why the contract is wrong"}}}}
 {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the Team cannot infer the answer","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"task"}}}}
-{{"resolution":{{"kind":"fail","reason_code":"stable-code","summary":"why recovery cannot continue"}}}}"""
+{{"resolution":{{"kind":"fail","reason_code":"stable-code","summary":"why recovery cannot continue"}}}}
+A revised verification may carry a check the server runs itself. Prefer one whenever a
+file can decide the question; use "check":null only for something no file can settle.
+Available checks, each with a workspace-relative "path": {{"type":"file_nonempty","path":"p"}},
+{{"type":"file_contains","path":"p","value":"substring"}},
+{{"type":"file_matches","path":"p","pattern":"regex, at most 200 characters"}},
+{{"type":"json_parses","path":"p"}}.
+A check you supply decides the outcome; your own claim about it is ignored."""
 
 SYNTHESIS_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
 Goal: {goal}
@@ -183,7 +198,15 @@ The user is adding work to an in-flight run. Break the request into concrete tas
 Return ONLY a JSON array of task objects using the same exact schema:
 {{"title":"...", "description":"...", "owner_agent_id":"member-id or null",
 "required":true, "acceptance":{{"required_outputs":["relative/path"],
-"required_verifications":["verification-name"]}}}}
+"required_verifications":[{{"name":"verification-name","check":null}}]}}}}
+A verification may carry a check the server runs itself. Prefer one whenever a
+file can decide the question; use "check":null only for something no file can
+settle. Available checks, each with a workspace-relative "path":
+{{"type":"file_nonempty","path":"p"}}
+{{"type":"file_contains","path":"p","value":"substring"}}
+{{"type":"file_matches","path":"p","pattern":"regex, at most 200 characters"}}
+{{"type":"json_parses","path":"p"}}
+A check you supply decides the outcome; your own claim about it is ignored.
 Run context:
 {goal}
 Existing tasks: {existing_titles}
