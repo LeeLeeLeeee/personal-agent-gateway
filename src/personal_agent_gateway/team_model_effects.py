@@ -2223,7 +2223,7 @@ def _acceptance_resolution_payload(
             else None
         ),
         "acceptance": (
-            _json_object(asdict(acceptance))
+            json.loads(_task_acceptance_json(acceptance))
             if isinstance(acceptance, TaskAcceptance)
             else None
         ),
@@ -2540,7 +2540,7 @@ def _canonical_check_payload(value: object) -> dict[str, str] | None:
     return verification_check_payload(
         VerificationCheck(
             type=check_type,
-            path=path,
+            path=path.strip(),
             value=check_value if isinstance(check_value, str) else "",
             pattern=pattern if isinstance(pattern, str) else "",
         )
@@ -2551,7 +2551,7 @@ def _canonical_verification_item(item: object) -> object | None:
     if isinstance(item, str):
         name = item.strip()
         return name or None
-    if not isinstance(item, dict) or set(item) != {"name", "check"}:
+    if not isinstance(item, dict) or set(item) - {"name", "check"}:
         return None
     name = item.get("name")
     if not isinstance(name, str) or not name.strip():

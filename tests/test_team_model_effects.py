@@ -25,7 +25,12 @@ from personal_agent_gateway.team_outcomes import (
 )
 from personal_agent_gateway.team_runtime import AcceptanceReviewResolution
 from personal_agent_gateway.team_verification_checks import VerificationCheck
-from personal_agent_gateway.teams import RequiredVerification, TaskAcceptance, TeamRunService
+from personal_agent_gateway.teams import (
+    RequiredVerification,
+    TaskAcceptance,
+    TeamRunService,
+    _task_acceptance_json,
+)
 from team_cycle_helpers import make_cycle_services, make_queued_cycle
 
 
@@ -271,9 +276,11 @@ def complete_followup_operation(
     result_kind,
     payload,
     upstream_session_id=None,
+    stub_result_validator=True,
 ):
     validators = team_model_effect_result_validators()
-    validators.setdefault(stage, {})[result_kind] = lambda _payload: True
+    if stub_result_validator:
+        validators.setdefault(stage, {})[result_kind] = lambda _payload: True
     operations = TeamModelOperationService(
         services.db,
         result_validators=validators,
@@ -542,9 +549,7 @@ def test_acceptance_lead_revise_acceptance_replays_with_an_unchecked_verificatio
         instruction="Resubmit under the revised contract.",
         acceptance=revised_acceptance,
     )
-    acceptance_payload = json.loads(
-        json.dumps(asdict(revised_acceptance), ensure_ascii=False, sort_keys=True)
-    )
+    acceptance_payload = json.loads(_task_acceptance_json(revised_acceptance))
     followup = complete_followup_operation(
         services,
         stage="acceptance_lead",
@@ -560,6 +565,72 @@ def test_acceptance_lead_revise_acceptance_replays_with_an_unchecked_verificatio
             "decision": None,
         },
         upstream_session_id="lead-session",
+    )
+
+    first = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+    second = followup.effects.apply_acceptance_lead(
+        followup.operation.id,
+        resolution,
+    )
+
+    assert second.message.id == first.message.id
+    assert second.next_stage == "acceptance_worker"
+
+
+def test_acceptance_lead_revise_acceptance_validates_and_replays_with_a_checked_verification(
+    tmp_path,
+):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=completed_outcome("draft.md"),
+    )
+    rejected = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="required_output_missing",
+        evidence={},
+    )
+    services.effects.apply_worker_outcome(
+        services.operation.id,
+        rejected,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+    leader = services.teams.get_agent(services.run.leader_agent_id)
+    revised_acceptance = TaskAcceptance(
+        required_outputs=("draft.md",),
+        required_verifications=(
+            RequiredVerification(
+                "marker",
+                VerificationCheck("file_contains", "draft.md", value="<library_draft>"),
+            ),
+        ),
+    )
+    resolution = AcceptanceReviewResolution(
+        kind="revise_acceptance",
+        reason="The contract omitted the marker verification.",
+        instruction="Resubmit under the revised contract.",
+        acceptance=revised_acceptance,
+    )
+    acceptance_payload = json.loads(_task_acceptance_json(revised_acceptance))
+    followup = complete_followup_operation(
+        services,
+        stage="acceptance_lead",
+        ordinal=1,
+        actor=leader,
+        result_kind="acceptance_review",
+        payload={
+            "kind": "revise_acceptance",
+            "reason": resolution.reason,
+            "instruction": resolution.instruction,
+            "reason_code": None,
+            "acceptance": acceptance_payload,
+            "decision": None,
+        },
+        upstream_session_id="lead-session",
+        stub_result_validator=False,
     )
 
     first = followup.effects.apply_acceptance_lead(
@@ -891,6 +962,60 @@ def test_apply_plan_replay_accepts_an_explicit_null_check_verification(tmp_path)
     assert [task.id for task in second] == [task.id for task in first]
     task = services.teams.get_task(first[0].id)
     assert task.acceptance.required_verifications == (RequiredVerification("review"),)
+
+
+def test_apply_plan_replay_accepts_a_verification_with_no_check_key(tmp_path):
+    spec = valid_task_spec("Research", None)
+    spec["acceptance"] = {
+        "required_outputs": ["research.md"],
+        "required_verifications": [{"name": "review"}],
+    }
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+
+    first = services.effects.apply_plan(services.operation.id)
+    second = services.effects.apply_plan(services.operation.id)
+
+    assert [task.id for task in second] == [task.id for task in first]
+    task = services.teams.get_task(first[0].id)
+    assert task.acceptance.required_verifications == (RequiredVerification("review"),)
+
+
+def test_apply_plan_replay_strips_a_padded_check_path(tmp_path):
+    spec = valid_task_spec("Research", None)
+    spec["acceptance"] = {
+        "required_outputs": ["research.md"],
+        "required_verifications": [
+            {
+                "name": "marker",
+                "check": {
+                    "type": "file_contains",
+                    "path": "  research.md  ",
+                    "value": "<library_draft>",
+                },
+            }
+        ],
+    }
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+
+    first = services.effects.apply_plan(services.operation.id)
+    second = services.effects.apply_plan(services.operation.id)
+
+    assert [task.id for task in second] == [task.id for task in first]
+    task = services.teams.get_task(first[0].id)
+    assert task.acceptance.required_verifications == (
+        RequiredVerification(
+            "marker",
+            VerificationCheck("file_contains", "research.md", value="<library_draft>"),
+        ),
+    )
 
 
 def test_apply_plan_rolls_back_all_effects_for_unknown_owner(tmp_path):
