@@ -265,6 +265,7 @@ def create_app(
     app.state.team_cycle_loop = TeamCycleLoop(
         app.state.team_cycle_service,
         app.state.team_cycle_dispatcher,
+        provider_recovery=provider_recovery,
     )
     app.state.team_run_orchestrator.add_observer(
         app.state.team_cycle_dispatcher.on_team_run_settled

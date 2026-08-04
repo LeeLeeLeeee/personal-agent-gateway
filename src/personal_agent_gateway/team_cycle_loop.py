@@ -7,6 +7,9 @@ from personal_agent_gateway.team_cycle_dispatcher import (
     TeamCycleDispatcher,
 )
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_provider_recovery import (
+    TeamProviderRecovery,
+)
 
 
 class TeamCycleLoop:
@@ -14,6 +17,7 @@ class TeamCycleLoop:
         self,
         cycles: TeamCycleService,
         dispatcher: TeamCycleDispatcher,
+        provider_recovery: TeamProviderRecovery | None = None,
         interval_seconds: float = 30.0,
         now: Callable[[], datetime] = (
             lambda: datetime.now(timezone.utc)
@@ -21,14 +25,19 @@ class TeamCycleLoop:
     ) -> None:
         self._cycles = cycles
         self._dispatcher = dispatcher
+        self._provider_recovery = provider_recovery
         self._interval_seconds = interval_seconds
         self._now = now
         self._task: asyncio.Task[None] | None = None
         self._last_error: str | None = None
 
     async def tick(self) -> None:
+        now = self._now()
+        if self._provider_recovery is not None:
+            for claim in self._provider_recovery.recover_due(now=now):
+                self._dispatcher.resume_recovered_operation(claim)
         for request in self._cycles.enqueue_due_auto_requests(
-            now=self._now()
+            now=now
         ):
             await self._dispatcher.enqueue_run(request.team_run_id)
 
