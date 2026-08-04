@@ -1,12 +1,14 @@
 from uuid import uuid4
+from datetime import datetime, timezone
 
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from personal_agent_gateway.artifacts import Artifact
+from personal_agent_gateway.artifacts import ArtifactInUseError
 from personal_agent_gateway.artifacts import ArtifactPathError
 from personal_agent_gateway.api.dependencies import record_domain_audit, session_dependency
 from personal_agent_gateway.auth_sessions import SessionPrincipal
@@ -26,6 +28,15 @@ class RegisterArtifactRequest(BaseModel):
     title: str | None = None
 
 
+class CleanupArtifactsRequest(BaseModel):
+    artifact_ids: list[str] = Field(min_length=1)
+
+
+class UpdateArtifactRetentionRequest(BaseModel):
+    retention_class: str
+    expires_at: str | None = None
+
+
 @router.get("")
 def list_artifacts(
     request: Request,
@@ -43,6 +54,45 @@ def list_artifacts(
         "artifacts": [_artifact_payload(item) for item in artifacts],
         "next_cursor": next_cursor,
     }
+
+
+@router.get("/cleanup-preview")
+def cleanup_preview(
+    request: Request,
+    _session: None = session_dependency,
+) -> dict[str, object]:
+    preview = request.app.state.artifact_store.cleanup_preview(datetime.now(timezone.utc))
+    return {
+        "artifacts": [_artifact_payload(item) for item in preview.artifacts],
+        "artifact_ids": [item.id for item in preview.artifacts],
+        "total_size_bytes": preview.total_size_bytes,
+        "evaluated_at": preview.evaluated_at.isoformat(),
+    }
+
+
+@router.post("/cleanup")
+def cleanup_artifacts(
+    request: Request,
+    payload: CleanupArtifactsRequest,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    result = request.app.state.artifact_store.cleanup(
+        payload.artifact_ids, datetime.now(timezone.utc)
+    )
+    record_domain_audit(
+        request,
+        principal,
+        event_type="artifact.cleanup_executed",
+        action="artifacts.cleanup",
+        resource_type="artifact_cleanup",
+        resource_id="manual",
+        metadata={
+            "requested_ids": payload.artifact_ids,
+            "deleted_ids": list(result.deleted_ids),
+            "skipped_ids": list(result.skipped_ids),
+        },
+    )
+    return {"deleted_ids": list(result.deleted_ids), "skipped_ids": list(result.skipped_ids)}
 
 
 @router.post("/register")
@@ -119,6 +169,8 @@ def delete_artifact(
         request.app.state.artifact_store.delete(artifact_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Artifact not found") from exc
+    except ArtifactInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     record_domain_audit(
         request,
         principal,
@@ -129,6 +181,40 @@ def delete_artifact(
         artifact_id=artifact_id,
     )
     return {"deleted": True}
+
+
+@router.patch("/{artifact_id}/retention")
+def update_artifact_retention(
+    request: Request,
+    artifact_id: str,
+    payload: UpdateArtifactRetentionRequest,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    try:
+        expires_at = (
+            datetime.fromisoformat(payload.expires_at) if payload.expires_at else None
+        )
+        artifact = request.app.state.artifact_store.set_retention(
+            artifact_id, payload.retention_class, expires_at
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Artifact not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="artifact.retention_updated",
+        action="artifacts.retention_update",
+        resource_type="artifact",
+        resource_id=artifact.id,
+        artifact_id=artifact.id,
+        metadata={
+            "retention_class": artifact.retention_class,
+            "expires_at": artifact.expires_at.isoformat() if artifact.expires_at else None,
+        },
+    )
+    return {"artifact": _artifact_payload(artifact)}
 
 
 @router.get("/{artifact_id}/content")
@@ -174,6 +260,8 @@ def _artifact_payload(artifact: Artifact) -> dict[str, object]:
         "source_job_id": artifact.source_job_id,
         "source_session_id": artifact.source_session_id,
         "created_at": artifact.created_at.isoformat(),
+        "retention_class": artifact.retention_class,
+        "expires_at": artifact.expires_at.isoformat() if artifact.expires_at else None,
         "thumbnail_path": str(artifact.thumbnail_path) if artifact.thumbnail_path else None,
         "tags": artifact.tags,
         "metadata": artifact.metadata,
