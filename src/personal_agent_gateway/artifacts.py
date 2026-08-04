@@ -15,6 +15,23 @@ class ArtifactPathError(Exception):
     pass
 
 
+class ArtifactInUseError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class ArtifactCleanupPreview:
+    artifacts: tuple[Artifact, ...]
+    total_size_bytes: int
+    evaluated_at: datetime
+
+
+@dataclass(frozen=True)
+class ArtifactCleanupResult:
+    deleted_ids: tuple[str, ...]
+    skipped_ids: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class Artifact:
     id: str
@@ -28,6 +45,8 @@ class Artifact:
     source_job_id: str | None
     source_session_id: str | None
     created_at: datetime
+    retention_class: str
+    expires_at: datetime | None
     tags: list[str]
     metadata: dict[str, object]
 
@@ -48,6 +67,8 @@ class ArtifactStore:
         source_session_id: str | None = None,
         tags: list[str] | None = None,
         metadata: dict[str, object] | None = None,
+        retention_class: str = "durable",
+        expires_at: datetime | None = None,
     ) -> Artifact:
         destination = self._resolve_artifact_path(relative_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -62,6 +83,8 @@ class ArtifactStore:
             source_session_id=source_session_id,
             tags=tags or [],
             metadata=metadata or {},
+            retention_class=retention_class,
+            expires_at=expires_at,
         )
 
     def register_existing_file(
@@ -75,6 +98,8 @@ class ArtifactStore:
         source_session_id: str | None = None,
         tags: list[str] | None = None,
         metadata: dict[str, object] | None = None,
+        retention_class: str = "durable",
+        expires_at: datetime | None = None,
     ) -> Artifact:
         destination = self._resolve_artifact_path(relative_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +115,8 @@ class ArtifactStore:
                 source_session_id=source_session_id,
                 tags=tags or [],
                 metadata=metadata or {},
+                retention_class=retention_class,
+                expires_at=expires_at,
             )
         except Exception:
             destination.unlink(missing_ok=True)
@@ -141,6 +168,8 @@ class ArtifactStore:
 
     def delete(self, artifact_id: str) -> None:
         artifact = self.get(artifact_id)  # raises KeyError if unknown
+        if self._is_referenced(artifact_id):
+            raise ArtifactInUseError(f"Artifact is used by a Team input: {artifact_id}")
         for path in (artifact.file_path, artifact.thumbnail_path):
             if path is None:
                 continue
@@ -150,6 +179,61 @@ class ArtifactStore:
                 continue
             stored.unlink(missing_ok=True)
         self._db.execute("delete from artifacts where id = ?", (artifact_id,))
+
+    def set_retention(
+        self,
+        artifact_id: str,
+        retention_class: str,
+        expires_at: datetime | None,
+    ) -> Artifact:
+        self.get(artifact_id)
+        self._validate_retention(retention_class, expires_at)
+        normalized_expiry = expires_at if retention_class == "temporary" else None
+        self._db.execute(
+            "update artifacts set retention_class = ?, expires_at = ? where id = ?",
+            (
+                retention_class,
+                normalized_expiry.isoformat() if normalized_expiry else None,
+                artifact_id,
+            ),
+        )
+        return self.get(artifact_id)
+
+    def cleanup_preview(self, evaluated_at: datetime) -> ArtifactCleanupPreview:
+        artifacts = tuple(
+            artifact
+            for artifact in self.list()
+            if self._is_cleanup_eligible(artifact, evaluated_at)
+        )
+        return ArtifactCleanupPreview(
+            artifacts=artifacts,
+            total_size_bytes=sum(artifact.size_bytes for artifact in artifacts),
+            evaluated_at=evaluated_at,
+        )
+
+    def cleanup(
+        self, artifact_ids: list[str], evaluated_at: datetime
+    ) -> ArtifactCleanupResult:
+        if not artifact_ids:
+            raise ValueError("Artifact cleanup requires at least one artifact ID")
+        deleted_ids: list[str] = []
+        skipped_ids: list[str] = []
+        for artifact_id in artifact_ids:
+            try:
+                artifact = self.get(artifact_id)
+            except KeyError:
+                skipped_ids.append(artifact_id)
+                continue
+            if not self._is_cleanup_eligible(artifact, evaluated_at):
+                skipped_ids.append(artifact_id)
+                continue
+            try:
+                self.delete(artifact_id)
+            except ArtifactInUseError:
+                skipped_ids.append(artifact_id)
+            else:
+                deleted_ids.append(artifact_id)
+        return ArtifactCleanupResult(tuple(deleted_ids), tuple(skipped_ids))
 
     def content_path(self, artifact_id: str) -> Path:
         artifact = self.get(artifact_id)
@@ -180,7 +264,10 @@ class ArtifactStore:
         source_session_id: str | None,
         tags: list[str],
         metadata: dict[str, object],
+        retention_class: str,
+        expires_at: datetime | None,
     ) -> Artifact:
+        self._validate_retention(retention_class, expires_at)
         artifact_id = uuid4().hex
         normalized_relative_path = Path(relative_path).as_posix()
         self._db.execute(
@@ -188,9 +275,9 @@ class ArtifactStore:
             insert into artifacts (
                 id, type, title, file_path, relative_path, mime_type, size_bytes,
                 thumbnail_path, source_job_id, source_session_id, created_at,
-                tags_json, metadata_json
+                tags_json, metadata_json, retention_class, expires_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 artifact_id,
@@ -206,6 +293,8 @@ class ArtifactStore:
                 datetime.now(timezone.utc).isoformat(),
                 json.dumps(tags, sort_keys=True),
                 json.dumps(metadata, sort_keys=True),
+                retention_class,
+                expires_at.isoformat() if expires_at else None,
             ),
         )
         return self.get(artifact_id)
@@ -217,6 +306,38 @@ class ArtifactStore:
         except ValueError as exc:
             raise ArtifactPathError("Path is outside artifact root") from exc
         return path
+
+    def _is_cleanup_eligible(self, artifact: Artifact, evaluated_at: datetime) -> bool:
+        return (
+            artifact.retention_class == "temporary"
+            and artifact.expires_at is not None
+            and artifact.expires_at <= evaluated_at
+            and not self._is_referenced(artifact.id)
+        )
+
+    def _is_referenced(self, artifact_id: str) -> bool:
+        row = self._db.fetchone(
+            """
+            select 1 where exists (
+                select 1 from team_cycle_request_input_artifacts where artifact_id = ?
+            ) or exists (
+                select 1 from team_cycle_input_artifacts where artifact_id = ?
+            ) or exists (
+                select 1 from team_task_input_artifacts where artifact_id = ?
+            )
+            """,
+            (artifact_id, artifact_id, artifact_id),
+        )
+        return row is not None
+
+    @staticmethod
+    def _validate_retention(
+        retention_class: str, expires_at: datetime | None
+    ) -> None:
+        if retention_class not in {"pinned", "durable", "temporary"}:
+            raise ValueError("Invalid artifact retention class")
+        if retention_class == "temporary" and expires_at is None:
+            raise ValueError("Temporary artifacts require an expiry")
 
 
 def _artifact_from_row(row: object) -> Artifact:
@@ -233,6 +354,9 @@ def _artifact_from_row(row: object) -> Artifact:
         source_job_id=row["source_job_id"],
         source_session_id=row["source_session_id"],
         created_at=datetime.fromisoformat(row["created_at"]),
+        retention_class=row["retention_class"],
+        expires_at=(datetime.fromisoformat(row["expires_at"])
+                    if row["expires_at"] else None),
         tags=json.loads(row["tags_json"]),
         metadata=json.loads(row["metadata_json"]),
     )

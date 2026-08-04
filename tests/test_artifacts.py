@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,55 @@ def test_artifact_store_registers_file_under_root(tmp_path: Path) -> None:
     assert artifact.type == "text"
     assert (tmp_path / "artifacts" / "logs" / "run.log").read_text() == "hello"
     assert store.get(artifact.id) == artifact
+
+
+def test_artifact_store_records_explicit_temporary_retention(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+    expiry = datetime(2026, 9, 5, tzinfo=timezone.utc)
+
+    artifact = store.register_bytes(
+        artifact_type="text",
+        title="run.log",
+        relative_path="logs/run.log",
+        content=b"hello",
+        mime_type="text/plain",
+        retention_class="temporary",
+        expires_at=expiry,
+    )
+
+    assert artifact.retention_class == "temporary"
+    assert artifact.expires_at == expiry
+
+
+def test_cleanup_preview_excludes_referenced_temporary_artifacts(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+    now = datetime(2026, 9, 5, tzinfo=timezone.utc)
+    eligible = store.register_bytes(
+        "text", "eligible.log", "logs/eligible.log", b"eligible", "text/plain",
+        retention_class="temporary", expires_at=datetime(2026, 9, 4, tzinfo=timezone.utc),
+    )
+    referenced = store.register_bytes(
+        "text", "referenced.log", "logs/referenced.log", b"referenced", "text/plain",
+        retention_class="temporary", expires_at=datetime(2026, 9, 4, tzinfo=timezone.utc),
+    )
+    with db.connection() as connection:
+        connection.execute("pragma foreign_keys = off")
+        connection.execute(
+            "insert into team_task_input_artifacts "
+            "(task_id, artifact_id, relative_path, sha256, size_bytes, staged_path, created_at) "
+            "values (?, ?, ?, ?, ?, ?, ?)",
+            ("task-1", referenced.id, "referenced.log", "digest", referenced.size_bytes,
+             "inputs/referenced.log", now.isoformat()),
+        )
+
+    preview = store.cleanup_preview(now)
+
+    assert preview.artifacts == (eligible,)
+    assert preview.total_size_bytes == eligible.size_bytes
 
 
 def test_artifact_store_rejects_path_escape(tmp_path: Path) -> None:
