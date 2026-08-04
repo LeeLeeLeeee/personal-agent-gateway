@@ -199,6 +199,57 @@ def test_knowledge_request_can_be_delegated_to_documentation_team(
     assert retry_request.source_id == f"{knowledge_request.id}#attempt-2"
 
 
+def test_knowledge_request_delegation_snapshots_selected_artifact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = authenticated_client(tmp_path)
+    personas = client.app.state.persona_service
+    leader = personas.create_persona("Docs Lead", "Research", "", [], [])
+    team_run = client.app.state.team_run_service.create_team_run(
+        "Research and draft reusable Library documents",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    knowledge_request = client.app.state.archive_service.create_knowledge_request(
+        title="D3 conventions",
+        reason="A reusable D3 guide is missing.",
+        suggested_outline=["Scope"],
+        source_hints=[],
+        requested_by_persona_id=leader.id,
+    )
+    artifact = client.app.state.artifact_store.register_bytes(
+        artifact_type="markdown",
+        title="d3-curriculum-draft.md",
+        relative_path="team-runs/previous/d3-curriculum-draft.md",
+        content=b"draft",
+        mime_type="text/markdown",
+    )
+
+    async def record_enqueue(_team_run_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(
+        client.app.state.team_cycle_dispatcher,
+        "enqueue_run",
+        record_enqueue,
+    )
+
+    response = client.post(
+        f"/api/archive/requests/{knowledge_request.id}/delegate",
+        json={"team_run_id": team_run.id, "artifact_ids": [artifact.id]},
+    )
+
+    assert response.status_code == 200
+    request_id = response.json()["cycle_request"]["id"]
+    inputs = client.app.state.team_cycle_service.list_request_input_artifacts(request_id)
+    assert [item.artifact_id for item in inputs] == [artifact.id]
+
+
 def test_requests_api_exposes_the_last_draft_failure(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     archive = client.app.state.archive_service

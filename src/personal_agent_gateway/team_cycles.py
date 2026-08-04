@@ -1,6 +1,8 @@
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
@@ -44,6 +46,23 @@ def knowledge_request_id_from_source(source_id: str) -> str:
     return source_id.partition(_KNOWLEDGE_REQUEST_ATTEMPT_SEPARATOR)[0]
 
 
+def _normalized_artifact_ids(artifact_ids: list[str]) -> list[str]:
+    normalized_ids = [artifact_id.strip() for artifact_id in artifact_ids]
+    if any(not artifact_id for artifact_id in normalized_ids):
+        raise ValueError("Artifact id is required")
+    if len(set(normalized_ids)) != len(normalized_ids):
+        raise ValueError("Artifact ids must be unique")
+    return normalized_ids
+
+
+def _file_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True)
 class TeamCycleRequest:
     id: str
@@ -61,6 +80,15 @@ class TeamCycleRequest:
     claimed_at: str | None
     settled_at: str | None
     updated_at: str
+
+
+@dataclass(frozen=True)
+class TeamCycleInputArtifact:
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -187,6 +215,85 @@ class TeamCycleService:
                 retry_of_request_id=None,
                 now=timestamp,
             )
+
+    def set_request_input_artifacts(
+        self,
+        cycle_request_id: str,
+        artifact_ids: list[str],
+    ) -> None:
+        normalized_ids = _normalized_artifact_ids(artifact_ids)
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            request = connection.execute(
+                "select id from team_cycle_requests where id = ?",
+                (cycle_request_id,),
+            ).fetchone()
+            if request is None:
+                raise KeyError(f"Team cycle request not found: {cycle_request_id}")
+            existing = self._request_input_artifacts(connection, cycle_request_id)
+            if existing:
+                if [item.artifact_id for item in existing] != normalized_ids:
+                    raise ValueError("Cycle request input artifacts are immutable")
+                return
+            timestamp = _timestamp()
+            for artifact_id in normalized_ids:
+                artifact = connection.execute(
+                    "select * from artifacts where id = ?",
+                    (artifact_id,),
+                ).fetchone()
+                if artifact is None:
+                    raise KeyError(f"Artifact not found: {artifact_id}")
+                source_path = Path(artifact["file_path"])
+                if not source_path.is_file():
+                    raise ValueError(f"Artifact source file is unavailable: {artifact_id}")
+                connection.execute(
+                    """
+                    insert into team_cycle_request_input_artifacts (
+                        cycle_request_id, artifact_id, relative_path, sha256,
+                        size_bytes, created_at
+                    ) values (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        cycle_request_id,
+                        artifact_id,
+                        artifact["relative_path"],
+                        _file_sha256(source_path),
+                        source_path.stat().st_size,
+                        timestamp,
+                    ),
+                )
+
+    def list_request_input_artifacts(
+        self,
+        cycle_request_id: str,
+    ) -> list[TeamCycleInputArtifact]:
+        with self._db.connection() as connection:
+            return self._request_input_artifacts(connection, cycle_request_id)
+
+    @staticmethod
+    def _request_input_artifacts(
+        connection: sqlite3.Connection,
+        cycle_request_id: str,
+    ) -> list[TeamCycleInputArtifact]:
+        rows = connection.execute(
+            """
+            select artifact_id, relative_path, sha256, size_bytes, created_at
+            from team_cycle_request_input_artifacts
+            where cycle_request_id = ?
+            order by rowid asc
+            """,
+            (cycle_request_id,),
+        ).fetchall()
+        return [
+            TeamCycleInputArtifact(
+                artifact_id=row["artifact_id"],
+                relative_path=row["relative_path"],
+                sha256=row["sha256"],
+                size_bytes=row["size_bytes"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
 
     def create_auto_series(
         self,

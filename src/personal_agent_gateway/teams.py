@@ -129,6 +129,15 @@ class TeamRunCycle:
 
 
 @dataclass(frozen=True)
+class TeamCycleInputArtifact:
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    created_at: str
+
+
+@dataclass(frozen=True)
 class ProviderRecoveryClaim:
     team_run_id: str
     cycle_id: str
@@ -492,6 +501,20 @@ class TeamRunService:
                     now,
                 ),
             )
+            if request_id is not None:
+                connection.execute(
+                    """
+                    insert into team_cycle_input_artifacts (
+                        cycle_id, artifact_id, relative_path, sha256,
+                        size_bytes, created_at
+                    )
+                    select ?, artifact_id, relative_path, sha256, size_bytes, created_at
+                    from team_cycle_request_input_artifacts
+                    where cycle_request_id = ?
+                    order by rowid asc
+                    """,
+                    (cycle_id, request_id),
+                )
         return self.get_cycle(cycle_id)
 
     def get_cycle_for_request(self, request_id: str) -> TeamRunCycle | None:
@@ -507,6 +530,30 @@ class TeamRunService:
         if row is None:
             raise KeyError(f"Team run cycle not found: {cycle_id}")
         return _team_run_cycle_from_row(row)
+
+    def list_cycle_input_artifacts(
+        self,
+        cycle_id: str,
+    ) -> list[TeamCycleInputArtifact]:
+        rows = self._db.fetchall(
+            """
+            select artifact_id, relative_path, sha256, size_bytes, created_at
+            from team_cycle_input_artifacts
+            where cycle_id = ?
+            order by rowid asc
+            """,
+            (cycle_id,),
+        )
+        return [
+            TeamCycleInputArtifact(
+                artifact_id=row["artifact_id"],
+                relative_path=row["relative_path"],
+                sha256=row["sha256"],
+                size_bytes=row["size_bytes"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
 
     def get_cycle_objective(self, cycle_id: str) -> str | None:
         row = self._db.fetchone(

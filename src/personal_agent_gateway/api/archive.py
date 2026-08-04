@@ -34,6 +34,7 @@ class KnowledgeRequestStatusRequest(BaseModel):
 
 class DelegateKnowledgeRequest(BaseModel):
     team_run_id: str
+    artifact_ids: list[str] = Field(default_factory=list)
 
 
 @router.get("/entries")
@@ -125,6 +126,10 @@ async def delegate_request(
             request_id,
             "Prepare the delegated Knowledge Request as a Library review draft.",
             previous_cycle_id=previous.id if previous is not None else None,
+        )
+        request.app.state.team_cycle_service.set_request_input_artifacts(
+            cycle_request.id,
+            payload.artifact_ids,
         )
         item = request.app.state.archive_service.assign_request_team(
             request_id,

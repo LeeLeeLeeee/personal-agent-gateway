@@ -31,6 +31,21 @@ def test_new_tables_and_columns_exist(tmp_path):
     cycle_cols = _columns(db, "team_run_cycles")
     assert "execution_metadata_json" in cycle_cols
 
+    with db.connect() as connection:
+        cycle_input_cols = {
+            row["name"]
+            for row in connection.execute(
+                "pragma table_info(team_cycle_input_artifacts)"
+            )
+        }
+    assert {
+        "cycle_id",
+        "artifact_id",
+        "relative_path",
+        "sha256",
+        "size_bytes",
+    } <= cycle_input_cols
+
 
 def test_migration_adds_columns_to_existing_team_runs(tmp_path):
     db = Database(tmp_path / "app.db")

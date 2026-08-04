@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from personal_agent_gateway.artifacts import ArtifactStore
 from team_cycle_helpers import dt, make_auto_run, make_triggered_run
 
 
@@ -34,6 +35,36 @@ def test_knowledge_request_uses_triggered_cycle_policy(tmp_path: Path) -> None:
 
     assert request.source_type == "knowledge_request"
     assert request.source_id == "request-1"
+
+
+def test_cycle_copies_its_request_input_artifact_snapshot(tmp_path: Path) -> None:
+    db, teams, cycles, run = make_triggered_run(tmp_path)
+    artifact = ArtifactStore(db, tmp_path / "artifacts").register_bytes(
+        "markdown",
+        "d3-curriculum-draft.md",
+        "previous/d3-curriculum-draft.md",
+        b"draft",
+        "text/markdown",
+    )
+    request = cycles.enqueue_knowledge_request(
+        run.id,
+        "request-1",
+        "Research and draft the requested document",
+        previous_cycle_id=None,
+    )
+    cycles.set_request_input_artifacts(request.id, [artifact.id])
+
+    claimed = cycles.claim_next(run.id)
+    assert claimed is not None
+    cycle = teams.create_cycle(
+        run.id,
+        claimed.source_type,
+        claimed.source_id,
+        request_id=claimed.id,
+    )
+
+    inputs = teams.list_cycle_input_artifacts(cycle.id)
+    assert [item.artifact_id for item in inputs] == [artifact.id]
 
 
 def test_knowledge_request_retry_uses_a_new_cycle_source(tmp_path: Path) -> None:
