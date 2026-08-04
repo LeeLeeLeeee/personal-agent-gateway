@@ -16,10 +16,15 @@ const TYPE_FILTERS = [
 ];
 
 export function ArtifactsView({ artifacts = [], onChange }) {
+  const [segment, setSegment] = useState("saved");
   const [type, setType] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
 
-  const grid = artifacts.filter((a) => type === "all" || a.type === type);
+  const grid = artifacts.filter((a) => {
+    const isTemporary = a.retention_class === "temporary";
+    const inSegment = segment === "saved" ? !isTemporary : isTemporary;
+    return inSegment && (type === "all" || a.type === type);
+  });
   const selected = artifacts.find((a) => a.id === selectedId) || null;
 
   return (
@@ -27,6 +32,11 @@ export function ArtifactsView({ artifacts = [], onChange }) {
       <div className="artifacts-main">
         <h1 className="headline">Artifacts</h1>
         <div className="artifacts-sub mono">{grid.length} shown · ./data/artifacts</div>
+
+        <div className="artifacts-filters" aria-label="Artifact retention">
+          <button type="button" className={`chip${segment === "saved" ? " chip-active" : ""}`} aria-pressed={segment === "saved"} onClick={() => setSegment("saved")}>보관됨</button>
+          <button type="button" className={`chip${segment === "recent" ? " chip-active" : ""}`} aria-pressed={segment === "recent"} onClick={() => setSegment("recent")}>최근 산출물</button>
+        </div>
 
         <div className="artifacts-filters">
           {TYPE_FILTERS.map(([key, label]) => (
@@ -68,6 +78,9 @@ export function ArtifactsView({ artifacts = [], onChange }) {
                 <div className="artifact-card-body">
                   <div className="artifact-card-title">{a.title}</div>
                   <div className="mono artifact-card-meta">{fmtSize(a.size_bytes)} · {fmtDateTime(a.created_at)}</div>
+                  {a.metadata?.team_run_id ? (
+                    <div className="mono artifact-card-meta">TEAM RUN {a.metadata.team_run_id}{a.metadata.task_id ? ` · TASK ${a.metadata.task_id}` : ""}</div>
+                  ) : null}
                 </div>
               </button>
             ))}
