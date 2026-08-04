@@ -812,6 +812,19 @@ def _migration_24_team_task_dependencies(
     )
 
 
+def _migration_25_artifact_retention_cleanup(
+    connection: sqlite3.Connection,
+) -> None:
+    connection.executescript(
+        """
+        alter table artifacts add column retention_class text not null default 'durable';
+        alter table artifacts add column expires_at text;
+        create index if not exists idx_artifacts_retention_expiry
+        on artifacts(retention_class, expires_at);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -837,6 +850,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (22, "team-task-input-artifacts", _migration_22_team_task_input_artifacts),
     (23, "team-task-input-bindings", _migration_23_team_task_input_bindings),
     (24, "team-task-dependencies", _migration_24_team_task_dependencies),
+    (25, "artifact-retention-cleanup", _migration_25_artifact_retention_cleanup),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

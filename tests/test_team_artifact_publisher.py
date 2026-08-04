@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,9 @@ def test_publishes_only_declared_files_with_integrity_metadata(tmp_path: Path) -
     assert artifact.metadata["task_id"] == "task-1"
     assert artifact.metadata["cycle_id"] == "cycle-1"
     assert artifact.metadata["team_run_id"] == "run-1"
+    assert artifact.retention_class == "temporary"
+    assert artifact.expires_at is not None
+    assert timedelta(days=29) < artifact.expires_at - artifact.created_at <= timedelta(days=30)
     assert all("%SystemDrive%" not in item.relative_path for item in store.list())
 
 

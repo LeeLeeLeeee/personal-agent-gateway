@@ -53,6 +53,9 @@ def test_new_tables_and_columns_exist(tmp_path):
         }
     assert {"task_id", "depends_on_task_id"} <= dependency_cols
 
+    artifact_cols = _columns(db, "artifacts")
+    assert {"retention_class", "expires_at"} <= artifact_cols
+
 
 def test_migration_adds_columns_to_existing_team_runs(tmp_path):
     db = Database(tmp_path / "app.db")

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -44,6 +45,55 @@ def test_artifact_payload_includes_created_at_and_thumbnail_path(tmp_path: Path)
     assert payload["id"] == artifact.id
     assert payload["created_at"]
     assert payload["thumbnail_path"] is None
+
+
+def test_cleanup_preview_reports_expired_temporary_artifact_without_deleting_it(
+    tmp_path: Path,
+) -> None:
+    client = authenticated_client(tmp_path)
+    artifact = client.app.state.artifact_store.register_bytes(
+        artifact_type="text",
+        title="run.log",
+        relative_path="logs/run.log",
+        content=b"hello",
+        mime_type="text/plain",
+        retention_class="temporary",
+        expires_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    response = client.get("/api/artifacts/cleanup-preview")
+
+    assert response.status_code == 200
+    assert response.json()["artifact_ids"] == [artifact.id]
+    assert response.json()["total_size_bytes"] == artifact.size_bytes
+    assert client.app.state.artifact_store.get(artifact.id).id == artifact.id
+
+
+def test_cleanup_and_retention_update_return_safe_results(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    store = client.app.state.artifact_store
+    expired = store.register_bytes(
+        "text", "expired.log", "logs/expired.log", b"expired", "text/plain",
+        retention_class="temporary", expires_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    durable = store.register_bytes(
+        "text", "saved.log", "logs/saved.log", b"saved", "text/plain",
+    )
+
+    cleaned = client.post(
+        "/api/artifacts/cleanup", json={"artifact_ids": [expired.id, durable.id]}
+    )
+    updated = client.patch(
+        f"/api/artifacts/{durable.id}/retention", json={"retention_class": "pinned"}
+    )
+
+    assert cleaned.status_code == 200
+    assert cleaned.json() == {"deleted_ids": [expired.id], "skipped_ids": [durable.id]}
+    assert updated.status_code == 200
+    assert updated.json()["artifact"]["retention_class"] == "pinned"
+    assert updated.json()["artifact"]["expires_at"] is None
+    events = client.app.state.audit_service.list(resource_type="artifact_cleanup")
+    assert any(event.action == "artifacts.cleanup" for event in events)
 
 
 def test_get_artifact_content_returns_file_bytes(tmp_path: Path) -> None:
