@@ -64,6 +64,26 @@ describe("api client", () => {
     await expect(api.artifacts()).resolves.toEqual([{ id: "a1" }]);
   });
 
+  it("supports artifact cleanup preview, execution, and retention updates", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ artifacts: [{ id: "a1" }], total_size_bytes: 10 }))
+      .mockResolvedValueOnce(jsonResponse({ deleted_ids: ["a1"], skipped_ids: [] }))
+      .mockResolvedValueOnce(jsonResponse({ artifact: { id: "a1", retention_class: "pinned" } }));
+
+    await expect(api.artifactCleanupPreview()).resolves.toMatchObject({ total_size_bytes: 10 });
+    await expect(api.cleanupArtifacts(["a1"])).resolves.toEqual({ deleted_ids: ["a1"], skipped_ids: [] });
+    await expect(api.updateArtifactRetention("a1", { retention_class: "pinned" }))
+      .resolves.toMatchObject({ artifact: { retention_class: "pinned" } });
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/artifacts/cleanup-preview");
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/artifacts/cleanup", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ artifact_ids: ["a1"] })
+    }));
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/artifacts/a1/retention", expect.objectContaining({
+      method: "PATCH", body: JSON.stringify({ retention_class: "pinned" })
+    }));
+  });
+
   it("supports job retry and schedule detail endpoints", async () => {
     fetch
       .mockResolvedValueOnce(jsonResponse({ job: { id: "j2", source_job_id: "j1" } }))

@@ -185,6 +185,23 @@ export const api = {
   async artifacts() {
     return jsonList(await fetch("/api/artifacts"), "artifacts");
   },
+  async artifactCleanupPreview() {
+    return jsonOrNull(await fetch("/api/artifacts/cleanup-preview"));
+  },
+  async cleanupArtifacts(artifactIds) {
+    return jsonOrNull(await fetch("/api/artifacts/cleanup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ artifact_ids: artifactIds })
+    }));
+  },
+  async updateArtifactRetention(id, payload) {
+    return jsonOrNull(await fetch(`/api/artifacts/${encodeURIComponent(id)}/retention`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }));
+  },
   artifactContentUrl(id) {
     return `/api/artifacts/${encodeURIComponent(id)}/content`;
   },
