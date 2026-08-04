@@ -771,6 +771,28 @@ def _migration_22_team_task_input_artifacts(
     )
 
 
+def _migration_23_team_task_input_bindings(
+    connection: sqlite3.Connection,
+) -> None:
+    connection.executescript(
+        """
+        create table if not exists team_task_input_artifacts (
+            task_id text not null references team_tasks(id) on delete cascade,
+            artifact_id text not null references artifacts(id) on delete restrict,
+            relative_path text not null,
+            sha256 text not null,
+            size_bytes integer not null check (size_bytes >= 0),
+            staged_path text not null,
+            created_at text not null,
+            primary key (task_id, artifact_id)
+        );
+
+        create index if not exists idx_team_task_input_artifacts_task
+        on team_task_input_artifacts(task_id);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -794,6 +816,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (20, "team-model-operations", _migration_20_team_model_operations),
     (21, "knowledge-request-draft-failure", _migration_21_knowledge_request_draft_failure),
     (22, "team-task-input-artifacts", _migration_22_team_task_input_artifacts),
+    (23, "team-task-input-bindings", _migration_23_team_task_input_bindings),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

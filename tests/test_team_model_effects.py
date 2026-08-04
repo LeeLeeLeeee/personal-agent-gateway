@@ -1,10 +1,12 @@
 from dataclasses import asdict
+from hashlib import sha256
 import json
 from types import SimpleNamespace
 
 import pytest
 
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.artifacts import ArtifactStore
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.team_acceptance import AcceptanceResult
 from personal_agent_gateway.team_model_effects import (
@@ -83,6 +85,7 @@ def make_completed_operation(tmp_path, *, stage, result):
     return SimpleNamespace(
         db=db,
         teams=teams,
+        cycles=_cycles,
         run=run,
         cycle=cycle,
         actor=actor,
@@ -1027,6 +1030,96 @@ def test_apply_plan_and_operation_are_atomic_and_idempotent(tmp_path):
     applied = services.operations.get(services.operation.id)
     assert applied.status == "applied"
     assert applied.effect_type == "task_plan"
+
+
+def test_apply_plan_rejects_input_not_selected_for_cycle(tmp_path):
+    spec = valid_task_spec("Research", None)
+    spec["input_artifact_ids"] = ["outside"]
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+
+    with pytest.raises(ValueError, match="unknown task input artifact"):
+        services.effects.apply_plan(services.operation.id)
+
+
+def test_prior_report_cannot_bind_an_unselected_historical_artifact(tmp_path):
+    spec = valid_task_spec("QA review", None)
+    spec["input_artifact_ids"] = ["historical-artifact"]
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+    services.teams.append_message(
+        services.run.id,
+        services.actor.id,
+        None,
+        "agent_output",
+        "Review C:/historical/d3-curriculum-draft.md before QA.",
+        {},
+        cycle_id=services.cycle.id,
+    )
+
+    with pytest.raises(ValueError, match="unknown task input artifact"):
+        services.effects.apply_plan(services.operation.id)
+
+
+def test_apply_plan_persists_selected_task_input(tmp_path):
+    spec = valid_task_spec("Research", None)
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [spec]}),
+    )
+    artifact = ArtifactStore(services.db, tmp_path / "artifacts").register_bytes(
+        "markdown",
+        "d3-curriculum-draft.md",
+        "previous/d3-curriculum-draft.md",
+        b"draft",
+        "text/markdown",
+    )
+    services.db.execute(
+        """
+        insert into team_cycle_input_artifacts (
+            cycle_id, artifact_id, relative_path, sha256, size_bytes, created_at
+        ) values (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            services.cycle.id,
+            artifact.id,
+            artifact.relative_path,
+            sha256(b"draft").hexdigest(),
+            artifact.size_bytes,
+            "2026-08-04T00:00:00+00:00",
+        ),
+    )
+    services.db.execute(
+        """
+        update team_model_operations set result_json = ? where id = ?
+        """,
+        (
+            json.dumps(
+                {
+                    "kind": "task_plan",
+                    "payload": {
+                        "tasks": [{**spec, "input_artifact_ids": [artifact.id]}]
+                    },
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            services.operation.id,
+        ),
+    )
+
+    task = services.effects.apply_plan(services.operation.id)[0]
+
+    inputs = services.teams.list_task_input_artifacts(task.id)
+    assert [item.artifact_id for item in inputs] == [artifact.id]
+    assert inputs[0].staged_path == f"inputs/{artifact.id}/d3-curriculum-draft.md"
 
 
 def test_apply_plan_replay_accepts_an_explicit_null_check_verification(tmp_path):

@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
@@ -2066,6 +2067,26 @@ class TeamModelEffectService:
             ),
         )
         _validate_task_acceptance(acceptance)
+        input_artifact_ids = spec.get("input_artifact_ids", [])
+        if not isinstance(input_artifact_ids, list) or any(
+            not isinstance(artifact_id, str) or not artifact_id.strip()
+            for artifact_id in input_artifact_ids
+        ):
+            raise OperationConflict("Task plan input artifacts are invalid")
+        if len(set(input_artifact_ids)) != len(input_artifact_ids):
+            raise ValueError("Task plan has duplicate input artifact IDs")
+        catalog_rows = connection.execute(
+            """
+            select artifact_id, relative_path, sha256, size_bytes
+            from team_cycle_input_artifacts
+            where cycle_id = ?
+            order by rowid asc
+            """,
+            (operation.cycle_id,),
+        ).fetchall()
+        catalog = {row["artifact_id"]: row for row in catalog_rows}
+        if not set(input_artifact_ids) <= set(catalog):
+            raise ValueError("Planner task has unknown task input artifact")
         task_id = uuid4().hex
         connection.execute(
             """
@@ -2090,6 +2111,28 @@ class TeamModelEffectService:
                 now,
             ),
         )
+        for artifact_id in input_artifact_ids:
+            artifact = catalog[artifact_id]
+            basename = PurePosixPath(artifact["relative_path"]).name
+            if basename in {"", ".", ".."}:
+                raise OperationConflict("Task input artifact path is invalid")
+            connection.execute(
+                """
+                insert into team_task_input_artifacts (
+                    task_id, artifact_id, relative_path, sha256, size_bytes,
+                    staged_path, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    artifact_id,
+                    artifact["relative_path"],
+                    artifact["sha256"],
+                    artifact["size_bytes"],
+                    f"inputs/{artifact_id}/{basename}",
+                    now,
+                ),
+            )
         return self._teams._task_from_connection(connection, task_id)
 
     def _replay_plan(
@@ -2123,6 +2166,7 @@ class TeamModelEffectService:
             task.team_run_id != operation.team_run_id
             or task.cycle_id != operation.cycle_id
             or not _task_matches_plan_spec(task, spec)
+            or not _task_inputs_match_plan_spec(connection, task.id, spec)
             for task, spec in zip(tasks, specs, strict=True)
         ) or (
             not _operation_session_matches(operation, actor)
@@ -2603,6 +2647,26 @@ def _task_matches_plan_spec(
         and _canonical_acceptance(acceptance)
         == json.loads(_task_acceptance_json(task.acceptance))
     )
+
+
+def _task_inputs_match_plan_spec(
+    connection: sqlite3.Connection,
+    task_id: str,
+    spec: dict[str, object],
+) -> bool:
+    input_artifact_ids = spec.get("input_artifact_ids", [])
+    if not isinstance(input_artifact_ids, list) or not all(
+        isinstance(artifact_id, str) for artifact_id in input_artifact_ids
+    ):
+        return False
+    rows = connection.execute(
+        """
+        select artifact_id from team_task_input_artifacts
+        where task_id = ? order by rowid asc
+        """,
+        (task_id,),
+    ).fetchall()
+    return [row["artifact_id"] for row in rows] == input_artifact_ids
 
 
 def _decision_item_matches(

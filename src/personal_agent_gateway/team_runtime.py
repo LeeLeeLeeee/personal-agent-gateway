@@ -59,6 +59,7 @@ from personal_agent_gateway.team_output_contracts import (
     get_output_contract,
 )
 from personal_agent_gateway.team_structured_output import normalize_json_envelope
+from personal_agent_gateway.team_task_inputs import TaskInputStager
 from personal_agent_gateway.teams import (
     ACCEPTANCE_RECOVERY_CAP,
     TaskAcceptance,
@@ -83,7 +84,7 @@ First resolve ambiguity from the goal, frozen rules, and prior user decisions.
 Return ONLY one of:
 1. A JSON array of task objects. Each object must contain exactly:
    {{"title":"...", "description":"...", "owner_agent_id":"member-id or null",
-   "required":true, "acceptance":{{"required_outputs":["relative/path"],
+   "required":true, "input_artifact_ids":["artifact-id"], "acceptance":{{"required_outputs":["relative/path"],
    "required_verifications":[{{"name":"verification-name","check":null}}]}}}}
    A verification may carry a check the server runs itself. Prefer one whenever a
    file can decide the question; use "check":null only for something no file can
@@ -98,7 +99,8 @@ Return ONLY one of:
    Assign the member whose persona role and responsibilities best match the task.
    Use null only when no member is available. Do not assign by list order or
    previous completion status. Every task needs at least one required output or
-   verification.
+   verification. input_artifact_ids must list only IDs from ALLOWED TASK INPUT
+   ARTIFACTS below; use [] when the task needs none.
 2. {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why planning cannot safely continue","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 Use ask_user only when the choice materially changes the plan and cannot be inferred safely."""
 
@@ -353,6 +355,7 @@ class TeamRuntime:
             self._operations,
         )
         self._provider_recovery = provider_recovery
+        self._task_input_stager = TaskInputStager(teams._db, teams)
 
     def _model(
         self,
@@ -1033,6 +1036,10 @@ class TeamRuntime:
             persona_snapshot_json=json.dumps(leader_agent.persona_snapshot, ensure_ascii=False),
             team_roster_json=_assignment_roster_json(members),
         )
+        if cycle_id is not None:
+            prompt += _cycle_input_artifacts_block(
+                self._teams.list_cycle_input_artifacts(cycle_id)
+            )
         decision_context = self._teams.decision_context_for_run(
             run.id, stage="planning", cycle_id=cycle_id
         )
@@ -2553,6 +2560,10 @@ class TeamRuntime:
 
     def _worker_prompt(self, run: TeamRun, worker: TeamAgent, task: TeamTask) -> str:
         goal_context = self._goal_context(run, task.cycle_id)
+        manifest = self._task_input_stager.stage(
+            task,
+            Path(run.working_root or run.workspace_root),
+        )
         prompt = _space_block(
             run,
             self._space_policy(run, task.cycle_id),
@@ -2570,6 +2581,15 @@ class TeamRuntime:
             task_description=task.description,
         )
         prompt += "\n\nAcceptance criteria:\n" + _task_acceptance_json(task.acceptance)
+        prompt += (
+            "\n\nALLOWED TASK INPUTS\n"
+            + (
+                "\n".join(manifest.paths)
+                if manifest.paths
+                else "(none)"
+            )
+            + "\nRead only these workspace-relative staged paths when input is needed."
+        )
         decision_context = self._teams.decision_context_for_task(run.id, task.id)
         if decision_context:
             prompt += f"\n\nResolved user decisions for this task:\n{decision_context}"
@@ -3121,6 +3141,22 @@ def _assignment_roster_json(members: list[TeamAgent]) -> str:
     )
 
 
+def _cycle_input_artifacts_block(inputs: list[object]) -> str:
+    catalog = [
+        {
+            "id": item.artifact_id,
+            "relative_path": item.relative_path,
+        }
+        for item in inputs
+    ]
+    return (
+        "\n\nALLOWED TASK INPUT ARTIFACTS\n"
+        f"{json.dumps(catalog, ensure_ascii=False)}\n"
+        "Only these IDs may appear in input_artifact_ids. "
+        "Task descriptions and prior reports do not grant input access."
+    )
+
+
 def _terminal_status(tasks: list[TeamTask]) -> str:
     if not tasks:
         return "failed"
@@ -3627,7 +3663,10 @@ def _agent_delta(agent: TeamAgent) -> dict[str, object]:
     }
 
 
-def _parse_task_plan(content: str) -> list[dict[str, object]]:
+def _parse_task_plan(
+    content: str,
+    allowed_input_artifact_ids: set[str] | None = None,
+) -> list[dict[str, object]]:
     stripped = normalize_json_envelope(content)
     if stripped.startswith("```"):
         raise ValueError("Planner response must not use code fences")
@@ -3638,13 +3677,16 @@ def _parse_task_plan(content: str) -> list[dict[str, object]]:
     for item in raw:
         if not isinstance(item, dict):
             raise ValueError("Planner task must be an object")
-        if set(item) != {
+        required_fields = {
             "title",
             "description",
             "owner_agent_id",
             "required",
             "acceptance",
-        }:
+        }
+        if not required_fields <= set(item) or set(item) - (
+            required_fields | {"input_artifact_ids"}
+        ):
             raise ValueError("Planner task has missing or unknown fields")
         title = item.get("title")
         description = item.get("description")
@@ -3663,6 +3705,20 @@ def _parse_task_plan(content: str) -> list[dict[str, object]]:
         required = item.get("required")
         if not isinstance(required, bool):
             raise ValueError("Planner task required must be a boolean")
+        input_artifact_ids = item.get("input_artifact_ids", [])
+        if not isinstance(input_artifact_ids, list) or any(
+            not isinstance(artifact_id, str) or not artifact_id.strip()
+            for artifact_id in input_artifact_ids
+        ):
+            raise ValueError("Planner task input_artifact_ids must be strings")
+        input_artifact_ids = [artifact_id.strip() for artifact_id in input_artifact_ids]
+        if len(set(input_artifact_ids)) != len(input_artifact_ids):
+            raise ValueError("Planner task has duplicate input artifact IDs")
+        if (
+            allowed_input_artifact_ids is not None
+            and not set(input_artifact_ids) <= allowed_input_artifact_ids
+        ):
+            raise ValueError("Planner task has unknown task input artifact")
         acceptance = item.get("acceptance")
         if not isinstance(acceptance, dict) or set(acceptance) != {
             "required_outputs",
@@ -3692,6 +3748,7 @@ def _parse_task_plan(content: str) -> list[dict[str, object]]:
                     else None
                 ),
                 "required": required,
+                "input_artifact_ids": input_artifact_ids,
                 "acceptance": TaskAcceptance(
                     required_outputs=tuple(required_outputs),
                     required_verifications=required_verifications,

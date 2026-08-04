@@ -3952,14 +3952,32 @@ def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
         {
             "title": "Create D3 guide",
             "description": "Write the integrated guide.",
-            "owner_agent_id": "worker-1",
-            "required": True,
-            "acceptance": TaskAcceptance(
+                "owner_agent_id": "worker-1",
+                "required": True,
+                "input_artifact_ids": [],
+                "acceptance": TaskAcceptance(
                 required_outputs=("outputs/d3-guide.md",),
                 required_verifications=(RequiredVerification("markdown-link-check"),),
             ),
         }
     ]
+
+
+def test_task_plan_rejects_input_not_selected_for_cycle() -> None:
+    task = {
+        "title": "Review",
+        "description": "Review the source.",
+        "owner_agent_id": None,
+        "required": True,
+        "input_artifact_ids": ["outside"],
+        "acceptance": {
+            "required_outputs": ["outputs/review.md"],
+            "required_verifications": [],
+        },
+    }
+
+    with pytest.raises(ValueError, match="unknown task input artifact"):
+        _parse_task_plan(json.dumps([task]), allowed_input_artifact_ids=set())
 
 
 def test_acceptance_review_messages_use_canonical_acceptance_json(tmp_path) -> None:

@@ -138,6 +138,16 @@ class TeamCycleInputArtifact:
 
 
 @dataclass(frozen=True)
+class TeamTaskInputArtifact:
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    staged_path: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class ProviderRecoveryClaim:
     team_run_id: str
     cycle_id: str
@@ -550,6 +560,31 @@ class TeamRunService:
                 relative_path=row["relative_path"],
                 sha256=row["sha256"],
                 size_bytes=row["size_bytes"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def list_task_input_artifacts(
+        self,
+        task_id: str,
+    ) -> list[TeamTaskInputArtifact]:
+        rows = self._db.fetchall(
+            """
+            select artifact_id, relative_path, sha256, size_bytes, staged_path, created_at
+            from team_task_input_artifacts
+            where task_id = ?
+            order by rowid asc
+            """,
+            (task_id,),
+        )
+        return [
+            TeamTaskInputArtifact(
+                artifact_id=row["artifact_id"],
+                relative_path=row["relative_path"],
+                sha256=row["sha256"],
+                size_bytes=row["size_bytes"],
+                staged_path=row["staged_path"],
                 created_at=row["created_at"],
             )
             for row in rows

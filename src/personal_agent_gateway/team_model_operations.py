@@ -571,13 +571,18 @@ def _valid_task_plan(payload: dict[str, object]) -> bool:
 
 
 def _valid_task_spec(value: object) -> bool:
-    if not isinstance(value, dict) or set(value) != {
+    required_fields = {
         "title",
         "description",
         "owner_agent_id",
         "required",
         "acceptance",
-    }:
+    }
+    if (
+        not isinstance(value, dict)
+        or not required_fields <= set(value)
+        or set(value) - (required_fields | {"input_artifact_ids"})
+    ):
         return False
     owner_agent_id = value["owner_agent_id"]
     return (
@@ -586,6 +591,11 @@ def _valid_task_spec(value: object) -> bool:
         and (owner_agent_id is None or _nonempty_text(owner_agent_id))
         and isinstance(value["required"], bool)
         and _valid_acceptance(value["acceptance"])
+        and (
+            "input_artifact_ids" not in value
+            or _valid_string_list(value["input_artifact_ids"])
+            or value["input_artifact_ids"] == []
+        )
     )
 
 
