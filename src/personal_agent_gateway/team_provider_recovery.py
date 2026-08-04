@@ -286,6 +286,85 @@ class TeamProviderRecovery:
             operation.id,
         )
 
+    def recover_due(
+        self,
+        *,
+        now: datetime,
+    ) -> list[ProviderRecoveryClaim]:
+        claims: list[ProviderRecoveryClaim] = []
+        for cycle in self._teams.list_waiting_provider_cycles():
+            try:
+                recovery = _provider_recovery_metadata(
+                    cycle.execution_metadata
+                )
+                next_retry_at = datetime.fromisoformat(
+                    recovery["next_retry_at"]
+                )
+            except (TypeError, ValueError):
+                continue
+            if next_retry_at > now:
+                continue
+            try:
+                descriptor = self._registry.get(recovery["provider"])
+            except ValueError:
+                descriptor = None
+            if descriptor is None or not descriptor.ready:
+                self._reschedule_waiting_operation(cycle.id, now=now)
+                continue
+            claim = self.claim_operation(cycle.id, now=now)
+            if claim is not None:
+                claims.append(claim)
+        return claims
+
+    def _reschedule_waiting_operation(
+        self,
+        cycle_id: str,
+        *,
+        now: datetime,
+    ) -> None:
+        timestamp = _timestamp(now)
+        next_retry_at = _timestamp(now + timedelta(seconds=30))
+        with self._teams._db.connection() as connection:
+            connection.execute("begin immediate")
+            row = connection.execute(
+                """
+                select id from team_model_operations
+                where cycle_id = ? and status = 'waiting_for_provider'
+                order by created_at asc, id asc
+                """,
+                (cycle_id,),
+            ).fetchone()
+            if row is None:
+                return
+            operation = self._operations._get(connection, row["id"])
+            _validate_single_open_operation(connection, operation)
+            source = _validate_operation_source(
+                connection,
+                operation,
+                expected_mode="waiting",
+            )
+            metadata = _cycle_metadata(source.cycle["execution_metadata_json"])
+            recovery = _provider_recovery_metadata(metadata)
+            if (
+                recovery["operation_id"] != operation.id
+                or recovery["provider"] != operation.provider
+            ):
+                return
+            recovery["next_retry_at"] = next_retry_at
+            cursor = connection.execute(
+                """
+                update team_run_cycles
+                set execution_metadata_json = ?, updated_at = ?
+                where id = ? and status = 'waiting_for_provider'
+                """,
+                (
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    timestamp,
+                    cycle_id,
+                ),
+            )
+            _require_one(cursor, "Provider retry schedule changed")
+
     async def interrupt_ambiguous_operation(
         self,
         operation_id: str,
@@ -873,6 +952,20 @@ def _cycle_metadata(value: object) -> dict[str, object]:
     if not isinstance(parsed, dict):
         raise ValueError("Invalid cycle execution metadata")
     return parsed
+
+
+def _provider_recovery_metadata(
+    metadata: dict[str, object],
+) -> dict[str, object]:
+    recovery = metadata.get("provider_recovery")
+    if not isinstance(recovery, dict):
+        raise ValueError("Invalid provider recovery metadata")
+    if not all(
+        isinstance(recovery.get(field), str) and recovery[field]
+        for field in ("operation_id", "provider", "next_retry_at")
+    ):
+        raise ValueError("Invalid provider recovery metadata")
+    return recovery
 
 
 def _timestamp(value: datetime | None = None) -> str:

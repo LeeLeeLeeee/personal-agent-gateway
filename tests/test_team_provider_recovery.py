@@ -34,6 +34,14 @@ def _registry():
     return SimpleNamespace(get=lambda _provider: None)
 
 
+class ReadinessRegistry:
+    def __init__(self, ready: bool) -> None:
+        self._ready = ready
+
+    def get(self, _provider: str):
+        return SimpleNamespace(ready=self._ready)
+
+
 def _digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -173,6 +181,47 @@ def test_claim_waiting_operation_restores_worker_and_preplanning_sources(
     else:
         assert setup.teams.get_task(setup.task.id).status == "in_progress"
         assert setup.teams.get_agent(setup.worker.id).status == "running"
+
+
+def test_recover_due_claims_a_ready_provider_once(tmp_path):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+    setup.recovery.wait_for_operation(
+        setup.operation.id,
+        reason_code="provider_not_ready",
+        now=dt("2026-08-04T00:00:00+00:00"),
+    )
+    setup.recovery._registry = ReadinessRegistry(ready=True)
+
+    claims = setup.recovery.recover_due(
+        now=dt("2026-08-04T00:00:30+00:00")
+    )
+
+    assert [claim.operation_id for claim in claims] == [setup.operation.id]
+    assert setup.operations.get(setup.operation.id).status == "prepared"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "running"
+    assert setup.recovery.recover_due(
+        now=dt("2026-08-04T00:01:00+00:00")
+    ) == []
+
+
+def test_recover_due_reschedules_an_unready_provider(tmp_path):
+    setup = make_invoking_operation(tmp_path, "worker_execution")
+    setup.recovery.wait_for_operation(
+        setup.operation.id,
+        reason_code="provider_not_ready",
+        now=dt("2026-08-04T00:00:00+00:00"),
+    )
+    setup.recovery._registry = ReadinessRegistry(ready=False)
+
+    assert setup.recovery.recover_due(
+        now=dt("2026-08-04T00:00:30+00:00")
+    ) == []
+
+    cycle = setup.teams.get_cycle(setup.cycle.id)
+    assert cycle.status == "waiting_for_provider"
+    assert cycle.execution_metadata["provider_recovery"]["next_retry_at"] == (
+        "2026-08-04T00:01:00+00:00"
+    )
 
 
 @pytest.mark.asyncio
