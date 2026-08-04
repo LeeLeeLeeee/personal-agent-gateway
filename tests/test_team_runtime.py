@@ -3955,12 +3955,35 @@ def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
                 "owner_agent_id": "worker-1",
                 "required": True,
                 "input_artifact_ids": [],
+                "plan_task_id": None,
+                "depends_on_task_ids": [],
                 "acceptance": TaskAcceptance(
                 required_outputs=("outputs/d3-guide.md",),
                 required_verifications=(RequiredVerification("markdown-link-check"),),
             ),
         }
     ]
+
+
+def test_task_plan_rejects_dependency_cycle() -> None:
+    task = {
+        "title": "Research",
+        "description": "Research the source.",
+        "owner_agent_id": None,
+        "required": True,
+        "input_artifact_ids": [],
+        "acceptance": {
+            "required_outputs": ["research.md"],
+            "required_verifications": [],
+        },
+    }
+    payload = [
+        {**task, "plan_task_id": "research", "depends_on_task_ids": ["draft"]},
+        {**task, "plan_task_id": "draft", "depends_on_task_ids": ["research"]},
+    ]
+
+    with pytest.raises(ValueError, match="dependency cycle"):
+        _parse_task_plan(json.dumps(payload))
 
 
 def test_task_plan_rejects_input_not_selected_for_cycle() -> None:

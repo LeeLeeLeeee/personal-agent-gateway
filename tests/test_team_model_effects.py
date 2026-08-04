@@ -1032,6 +1032,25 @@ def test_apply_plan_and_operation_are_atomic_and_idempotent(tmp_path):
     assert applied.effect_type == "task_plan"
 
 
+def test_apply_plan_persists_task_dependencies(tmp_path):
+    research = valid_task_spec("Research", None)
+    research.update({"plan_task_id": "research", "depends_on_task_ids": []})
+    draft = valid_task_spec("Draft", None)
+    draft.update({"plan_task_id": "draft", "depends_on_task_ids": ["research"]})
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult("task_plan", {"tasks": [research, draft]}),
+    )
+
+    research_task, draft_task = services.effects.apply_plan(services.operation.id)
+
+    assert [
+        dependency.depends_on_task_id
+        for dependency in services.teams.list_task_dependencies(draft_task.id)
+    ] == [research_task.id]
+
+
 def test_apply_plan_rejects_input_not_selected_for_cycle(tmp_path):
     spec = valid_task_spec("Research", None)
     spec["input_artifact_ids"] = ["outside"]

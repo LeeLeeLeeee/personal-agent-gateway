@@ -120,6 +120,7 @@ class TeamModelEffectService:
                 self._create_task(connection, operation, spec, now)
                 for spec in specs
             ]
+            self._persist_plan_dependencies(connection, specs, tasks)
             message_id = uuid4().hex
             connection.execute(
                 """
@@ -2135,6 +2136,35 @@ class TeamModelEffectService:
             )
         return self._teams._task_from_connection(connection, task_id)
 
+    @staticmethod
+    def _persist_plan_dependencies(
+        connection: sqlite3.Connection,
+        specs: list[dict[str, object]],
+        tasks: list[TeamTask],
+    ) -> None:
+        task_ids_by_plan_id = {
+            spec["plan_task_id"]: task.id
+            for spec, task in zip(specs, tasks, strict=True)
+            if spec.get("plan_task_id") is not None
+        }
+        for spec, task in zip(specs, tasks, strict=True):
+            dependency_ids = spec.get("depends_on_task_ids", [])
+            if not isinstance(dependency_ids, list) or not all(
+                isinstance(dependency_id, str) for dependency_id in dependency_ids
+            ):
+                raise OperationConflict("Task plan dependencies are invalid")
+            for dependency_id in dependency_ids:
+                prerequisite_id = task_ids_by_plan_id.get(dependency_id)
+                if prerequisite_id is None:
+                    raise OperationConflict("Task plan dependency is missing")
+                connection.execute(
+                    """
+                    insert into team_task_dependencies (task_id, depends_on_task_id)
+                    values (?, ?)
+                    """,
+                    (task.id, prerequisite_id),
+                )
+
     def _replay_plan(
         self,
         connection: sqlite3.Connection,
@@ -2167,6 +2197,9 @@ class TeamModelEffectService:
             or task.cycle_id != operation.cycle_id
             or not _task_matches_plan_spec(task, spec)
             or not _task_inputs_match_plan_spec(connection, task.id, spec)
+            or not _task_dependencies_match_plan_spec(
+                connection, task.id, spec, tasks, specs
+            )
             for task, spec in zip(tasks, specs, strict=True)
         ) or (
             not _operation_session_matches(operation, actor)
@@ -2667,6 +2700,36 @@ def _task_inputs_match_plan_spec(
         (task_id,),
     ).fetchall()
     return [row["artifact_id"] for row in rows] == input_artifact_ids
+
+
+def _task_dependencies_match_plan_spec(
+    connection: sqlite3.Connection,
+    task_id: str,
+    spec: dict[str, object],
+    tasks: list[TeamTask],
+    specs: list[dict[str, object]],
+) -> bool:
+    plan_ids = {
+        candidate_spec.get("plan_task_id"): candidate_task.id
+        for candidate_task, candidate_spec in zip(tasks, specs, strict=True)
+        if candidate_spec.get("plan_task_id") is not None
+    }
+    dependencies = spec.get("depends_on_task_ids", [])
+    if not isinstance(dependencies, list) or not all(
+        isinstance(dependency, str) for dependency in dependencies
+    ):
+        return False
+    expected = [plan_ids.get(dependency) for dependency in dependencies]
+    if any(dependency is None for dependency in expected):
+        return False
+    rows = connection.execute(
+        """
+        select depends_on_task_id from team_task_dependencies
+        where task_id = ? order by rowid asc
+        """,
+        (task_id,),
+    ).fetchall()
+    return [row["depends_on_task_id"] for row in rows] == expected
 
 
 def _decision_item_matches(

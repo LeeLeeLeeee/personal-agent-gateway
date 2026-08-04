@@ -581,7 +581,8 @@ def _valid_task_spec(value: object) -> bool:
     if (
         not isinstance(value, dict)
         or not required_fields <= set(value)
-        or set(value) - (required_fields | {"input_artifact_ids"})
+        or set(value)
+        - (required_fields | {"input_artifact_ids", "plan_task_id", "depends_on_task_ids"})
     ):
         return False
     owner_agent_id = value["owner_agent_id"]
@@ -595,6 +596,16 @@ def _valid_task_spec(value: object) -> bool:
             "input_artifact_ids" not in value
             or _valid_string_list(value["input_artifact_ids"])
             or value["input_artifact_ids"] == []
+        )
+        and (
+            "plan_task_id" not in value
+            or value["plan_task_id"] is None
+            or _nonempty_text(value["plan_task_id"])
+        )
+        and (
+            "depends_on_task_ids" not in value
+            or _valid_string_list(value["depends_on_task_ids"])
+            or value["depends_on_task_ids"] == []
         )
     )
 

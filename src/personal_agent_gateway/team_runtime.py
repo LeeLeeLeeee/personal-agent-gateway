@@ -83,8 +83,8 @@ Before creating tasks, identify any consequential choice that only the user can 
 First resolve ambiguity from the goal, frozen rules, and prior user decisions.
 Return ONLY one of:
 1. A JSON array of task objects. Each object must contain exactly:
-   {{"title":"...", "description":"...", "owner_agent_id":"member-id or null",
-   "required":true, "input_artifact_ids":["artifact-id"], "acceptance":{{"required_outputs":["relative/path"],
+   {{"plan_task_id":"stable-key", "title":"...", "description":"...", "owner_agent_id":"member-id or null",
+   "required":true, "depends_on_task_ids":["stable-key"], "input_artifact_ids":["artifact-id"], "acceptance":{{"required_outputs":["relative/path"],
    "required_verifications":[{{"name":"verification-name","check":null}}]}}}}
    A verification may carry a check the server runs itself. Prefer one whenever a
    file can decide the question; use "check":null only for something no file can
@@ -100,7 +100,9 @@ Return ONLY one of:
    Use null only when no member is available. Do not assign by list order or
    previous completion status. Every task needs at least one required output or
    verification. input_artifact_ids must list only IDs from ALLOWED TASK INPUT
-   ARTIFACTS below; use [] when the task needs none.
+   ARTIFACTS below; use [] when the task needs none. plan_task_id must be unique
+   in this plan. depends_on_task_ids may reference only plan_task_id values in
+   this response; use [] when the task has no prerequisite.
 2. {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why planning cannot safely continue","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 Use ask_user only when the choice materially changes the plan and cannot be inferred safely."""
 
@@ -1261,14 +1263,10 @@ class TeamRuntime:
                         ):
                             return
                     continue
-            pending = [
-                task
-                for task in self._teams.list_tasks(run.id, cycle_id)
-                if task.status == "pending"
-            ]
-            if not pending:
+            ready_tasks = self._teams.list_dependency_ready_tasks(run.id, cycle_id)
+            if not ready_tasks:
                 return
-            task = pending[0]
+            task = ready_tasks[0]
             assigned = next(
                 (worker for worker in workers if worker.id == task.owner_agent_id),
                 None,
@@ -2636,6 +2634,7 @@ class TeamRuntime:
     ) -> TeamRun:
         while True:
             await self._execute(run, leader, workers, cycle_id)
+            self._teams.block_pending_dependency_failures(run.id, cycle_id)
             request = self._teams.get_active_decision_request(run.id, cycle_id)
             if request is not None and request.status == "collecting":
                 return await self._publish_user_decision_request(run, cycle_id)
@@ -3688,7 +3687,8 @@ def _parse_task_plan(
             "acceptance",
         }
         if not required_fields <= set(item) or set(item) - (
-            required_fields | {"input_artifact_ids"}
+            required_fields
+            | {"input_artifact_ids", "plan_task_id", "depends_on_task_ids"}
         ):
             raise ValueError("Planner task has missing or unknown fields")
         title = item.get("title")
@@ -3708,6 +3708,22 @@ def _parse_task_plan(
         required = item.get("required")
         if not isinstance(required, bool):
             raise ValueError("Planner task required must be a boolean")
+        plan_task_id = item.get("plan_task_id")
+        if plan_task_id is not None and (
+            not isinstance(plan_task_id, str) or not plan_task_id.strip()
+        ):
+            raise ValueError("Planner task plan_task_id must be a string")
+        depends_on_task_ids = item.get("depends_on_task_ids", [])
+        if not isinstance(depends_on_task_ids, list) or any(
+            not isinstance(dependency, str) or not dependency.strip()
+            for dependency in depends_on_task_ids
+        ):
+            raise ValueError("Planner task depends_on_task_ids must be strings")
+        depends_on_task_ids = [dependency.strip() for dependency in depends_on_task_ids]
+        if len(set(depends_on_task_ids)) != len(depends_on_task_ids):
+            raise ValueError("Planner task has duplicate dependencies")
+        if depends_on_task_ids and plan_task_id is None:
+            raise ValueError("Planner task dependencies require plan_task_id")
         input_artifact_ids = item.get("input_artifact_ids", [])
         if not isinstance(input_artifact_ids, list) or any(
             not isinstance(artifact_id, str) or not artifact_id.strip()
@@ -3752,13 +3768,49 @@ def _parse_task_plan(
                 ),
                 "required": required,
                 "input_artifact_ids": input_artifact_ids,
+                "plan_task_id": plan_task_id.strip() if plan_task_id else None,
+                "depends_on_task_ids": depends_on_task_ids,
                 "acceptance": TaskAcceptance(
                     required_outputs=tuple(required_outputs),
                     required_verifications=required_verifications,
                 ),
             }
         )
+    _validate_task_plan_dependencies(tasks)
     return tasks
+
+
+def _validate_task_plan_dependencies(tasks: list[dict[str, object]]) -> None:
+    plan_ids = [task["plan_task_id"] for task in tasks if task["plan_task_id"]]
+    if len(set(plan_ids)) != len(plan_ids):
+        raise ValueError("Planner task plan_task_id values must be unique")
+    plan_id_set = set(plan_ids)
+    graph = {
+        task["plan_task_id"]: set(task["depends_on_task_ids"])
+        for task in tasks
+        if task["plan_task_id"]
+    }
+    for plan_task_id, dependencies in graph.items():
+        if plan_task_id in dependencies:
+            raise ValueError("Planner task cannot depend on itself")
+        if not dependencies <= plan_id_set:
+            raise ValueError("Planner task has unknown dependency")
+    visited: set[str] = set()
+    visiting: set[str] = set()
+
+    def visit(plan_task_id: str) -> None:
+        if plan_task_id in visiting:
+            raise ValueError("Planner task has dependency cycle")
+        if plan_task_id in visited:
+            return
+        visiting.add(plan_task_id)
+        for dependency in graph[plan_task_id]:
+            visit(dependency)
+        visiting.remove(plan_task_id)
+        visited.add(plan_task_id)
+
+    for plan_task_id in graph:
+        visit(plan_task_id)
 
 
 def _string_list(value: object, field: str) -> list[str]:
