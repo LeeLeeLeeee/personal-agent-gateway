@@ -1855,3 +1855,32 @@ def test_legacy_create_team_run_has_no_team_or_rules(tmp_path):
     run = teams.create_team_run("legacy", lead.id, [], "planning_only", 1)
     assert run.team_id is None
     assert run.rules_snapshot is None
+
+
+def test_dependency_ready_tasks_wait_for_prerequisite(tmp_path) -> None:
+    _db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, _cycles, run)
+    research = teams.create_task(run.id, "Research", "Research", cycle_id=cycle.id)
+    draft = teams.create_task(run.id, "Draft", "Draft", cycle_id=cycle.id)
+
+    teams.add_task_dependencies(draft.id, [research.id])
+
+    assert teams.list_dependency_ready_tasks(run.id, cycle.id) == [research]
+    teams.set_task_status(research.id, "completed")
+    assert teams.list_dependency_ready_tasks(run.id, cycle.id) == [draft]
+
+
+def test_failed_prerequisite_blocks_transitive_dependents(tmp_path) -> None:
+    _db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, _cycles, run)
+    research = teams.create_task(run.id, "Research", "Research", cycle_id=cycle.id)
+    draft = teams.create_task(run.id, "Draft", "Draft", cycle_id=cycle.id)
+    qa = teams.create_task(run.id, "QA", "QA", cycle_id=cycle.id)
+    teams.add_task_dependencies(draft.id, [research.id])
+    teams.add_task_dependencies(qa.id, [draft.id])
+    teams.set_task_status(research.id, "failed", error_message="source failed")
+
+    blocked = teams.block_pending_dependency_failures(run.id, cycle.id)
+
+    assert [task.id for task in blocked] == [draft.id, qa.id]
+    assert teams.get_task(draft.id).error_message == "blocked_by_dependency"

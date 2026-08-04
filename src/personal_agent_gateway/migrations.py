@@ -793,6 +793,25 @@ def _migration_23_team_task_input_bindings(
     )
 
 
+def _migration_24_team_task_dependencies(
+    connection: sqlite3.Connection,
+) -> None:
+    connection.executescript(
+        """
+        create table if not exists team_task_dependencies (
+            task_id text not null references team_tasks(id) on delete cascade,
+            depends_on_task_id text not null
+                references team_tasks(id) on delete cascade,
+            primary key (task_id, depends_on_task_id),
+            check (task_id <> depends_on_task_id)
+        );
+
+        create index if not exists idx_team_task_dependencies_prerequisite
+        on team_task_dependencies(depends_on_task_id);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -817,6 +836,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (21, "knowledge-request-draft-failure", _migration_21_knowledge_request_draft_failure),
     (22, "team-task-input-artifacts", _migration_22_team_task_input_artifacts),
     (23, "team-task-input-bindings", _migration_23_team_task_input_bindings),
+    (24, "team-task-dependencies", _migration_24_team_task_dependencies),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

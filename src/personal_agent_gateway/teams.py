@@ -148,6 +148,12 @@ class TeamTaskInputArtifact:
 
 
 @dataclass(frozen=True)
+class TeamTaskDependency:
+    task_id: str
+    depends_on_task_id: str
+
+
+@dataclass(frozen=True)
 class ProviderRecoveryClaim:
     team_run_id: str
     cycle_id: str
@@ -1787,6 +1793,125 @@ class TeamRunService:
                 parameters,
             )
         ]
+
+    def add_task_dependencies(
+        self,
+        task_id: str,
+        prerequisite_ids: list[str],
+    ) -> None:
+        if len(set(prerequisite_ids)) != len(prerequisite_ids):
+            raise ValueError("Task dependencies must be unique")
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            task = connection.execute(
+                "select team_run_id, cycle_id from team_tasks where id = ?",
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                raise KeyError(f"Team task not found: {task_id}")
+            for prerequisite_id in prerequisite_ids:
+                if prerequisite_id == task_id:
+                    raise ValueError("Task cannot depend on itself")
+                prerequisite = connection.execute(
+                    "select team_run_id, cycle_id from team_tasks where id = ?",
+                    (prerequisite_id,),
+                ).fetchone()
+                if prerequisite is None:
+                    raise KeyError(f"Prerequisite task not found: {prerequisite_id}")
+                if (
+                    prerequisite["team_run_id"] != task["team_run_id"]
+                    or prerequisite["cycle_id"] != task["cycle_id"]
+                ):
+                    raise ValueError("Task dependency must belong to the same cycle")
+                connection.execute(
+                    """
+                    insert into team_task_dependencies (task_id, depends_on_task_id)
+                    values (?, ?)
+                    """,
+                    (task_id, prerequisite_id),
+                )
+
+    def list_task_dependencies(self, task_id: str) -> list[TeamTaskDependency]:
+        return [
+            TeamTaskDependency(
+                task_id=row["task_id"],
+                depends_on_task_id=row["depends_on_task_id"],
+            )
+            for row in self._db.fetchall(
+                """
+                select task_id, depends_on_task_id
+                from team_task_dependencies where task_id = ? order by rowid asc
+                """,
+                (task_id,),
+            )
+        ]
+
+    def list_dependency_ready_tasks(
+        self,
+        team_run_id: str,
+        cycle_id: str | None,
+    ) -> list[TeamTask]:
+        self.get_team_run(team_run_id)
+        rows = self._db.fetchall(
+            """
+            select task.* from team_tasks task
+            where task.team_run_id = ? and task.cycle_id is ?
+              and task.status = 'pending'
+              and not exists (
+                  select 1 from team_task_dependencies dependency
+                  join team_tasks prerequisite
+                    on prerequisite.id = dependency.depends_on_task_id
+                  where dependency.task_id = task.id
+                    and prerequisite.status != 'completed'
+              )
+            order by task.created_at asc, task.id asc
+            """,
+            (team_run_id, cycle_id),
+        )
+        return [_team_task_from_row(row) for row in rows]
+
+    def block_pending_dependency_failures(
+        self,
+        team_run_id: str,
+        cycle_id: str | None,
+    ) -> list[TeamTask]:
+        blocked_ids: list[str] = []
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            while True:
+                rows = connection.execute(
+                    """
+                    select task.id from team_tasks task
+                    where task.team_run_id = ? and task.cycle_id is ?
+                      and task.status = 'pending'
+                      and exists (
+                          select 1 from team_task_dependencies dependency
+                          join team_tasks prerequisite
+                            on prerequisite.id = dependency.depends_on_task_id
+                          where dependency.task_id = task.id
+                            and prerequisite.status in ('failed', 'blocked', 'canceled')
+                      )
+                    order by task.created_at asc, task.id asc
+                    """,
+                    (team_run_id, cycle_id),
+                ).fetchall()
+                if not rows:
+                    break
+                now = _now()
+                for row in rows:
+                    connection.execute(
+                        """
+                        update team_tasks
+                        set status = 'blocked', error_message = 'blocked_by_dependency',
+                            finished_at = ?, updated_at = ? where id = ?
+                        """,
+                        (now, now, row["id"]),
+                    )
+                    blocked_ids.append(row["id"])
+            return [
+                self._task_from_connection(connection, task_id)
+                for task_id in blocked_ids
+            ]
 
     def retry_failed_task(
         self,
