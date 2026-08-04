@@ -235,8 +235,17 @@ def test_factory_applies_claude_persona_options(tmp_path):
     )
 
     assert client._execution["effort"] == "xhigh"
-    assert client._execution["permission_mode"] == "acceptEdits"
+    assert client._execution["permission_mode"] == "plan"
     assert client._execution["agent"] == "reviewer"
+
+
+def test_factory_rejects_unsupported_claude_persona_permission_mode(tmp_path):
+    with pytest.raises(ExecutionContractError) as error:
+        _factory(_config(tmp_path))(
+            _agent("claude", options={"permission_mode": "bypassPermissions"})
+        )
+
+    assert error.value.code == "unsupported_execution_capability"
 
 
 @pytest.mark.parametrize("backend", ["codex", "claude"])

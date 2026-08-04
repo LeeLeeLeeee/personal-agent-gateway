@@ -686,6 +686,7 @@ def _team_model_factory(
             capabilities,
             workspace_root,
             network=str(options.get("network") or "unspecified"),
+            permission_mode=str(options.get("permission_mode") or ""),
         )
         execution = contexts.wire_execution(compiled, agent.backend, options)
         if (
