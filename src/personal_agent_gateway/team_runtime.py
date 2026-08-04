@@ -2560,10 +2560,13 @@ class TeamRuntime:
 
     def _worker_prompt(self, run: TeamRun, worker: TeamAgent, task: TeamTask) -> str:
         goal_context = self._goal_context(run, task.cycle_id)
-        manifest = self._task_input_stager.stage(
-            task,
-            Path(run.working_root or run.workspace_root),
-        )
+        task_inputs = self._teams.list_task_input_artifacts(task.id)
+        staged_paths: tuple[str, ...] = ()
+        if task_inputs:
+            staged_paths = self._task_input_stager.stage(
+                task,
+                Path(run.working_root or run.workspace_root),
+            ).paths
         prompt = _space_block(
             run,
             self._space_policy(run, task.cycle_id),
@@ -2584,8 +2587,8 @@ class TeamRuntime:
         prompt += (
             "\n\nALLOWED TASK INPUTS\n"
             + (
-                "\n".join(manifest.paths)
-                if manifest.paths
+                "\n".join(staged_paths)
+                if staged_paths
                 else "(none)"
             )
             + "\nRead only these workspace-relative staged paths when input is needed."
