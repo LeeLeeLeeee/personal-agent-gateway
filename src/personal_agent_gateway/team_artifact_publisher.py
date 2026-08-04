@@ -1,5 +1,6 @@
 import hashlib
 import mimetypes
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from personal_agent_gateway.artifacts import Artifact, ArtifactStore
@@ -24,6 +25,7 @@ class TeamArtifactPublisher:
         workspace_root: Path,
     ) -> tuple[Artifact, ...]:
         workspace = workspace_root.resolve()
+        expiry = datetime.now(timezone.utc) + timedelta(days=30)
         published: list[Artifact] = []
         try:
             for deliverable in outcome.deliverables:
@@ -52,6 +54,8 @@ class TeamArtifactPublisher:
                         "cycle_id": cycle_id,
                         "team_run_id": run_id,
                     },
+                    retention_class="temporary",
+                    expires_at=expiry,
                 )
                 published.append(artifact)
         except Exception as exc:

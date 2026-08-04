@@ -257,6 +257,13 @@ async def test_runtime_attaches_file_changes_and_builds_result_package(
         "file-manifest.json",
         "verification.md",
     }
+    package_artifacts = [
+        artifact for artifact in artifacts.list()
+        if artifact.metadata.get("package_kind")
+    ]
+    assert package_artifacts
+    assert {artifact.retention_class for artifact in package_artifacts} == {"temporary"}
+    assert all(artifact.expires_at is not None for artifact in package_artifacts)
     assert not (Path(completed.artifact_root) / "workspace.zip").exists()
     result_payload = json.loads(
         (Path(completed.artifact_root) / "run-result.json").read_text(encoding="utf-8")

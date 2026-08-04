@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from personal_agent_gateway.artifacts import Artifact, ArtifactStore
@@ -130,6 +131,7 @@ class TeamRunResultPackager:
         self._delete_previous_registrations(current.id, cycle_id)
         scope = cycle_id or "run"
         registered: list[Artifact] = []
+        expiry = datetime.now(timezone.utc) + timedelta(days=30)
         for name in package_names:
             artifact_type, title, mime_type = _PACKAGE_FILES[name]
             registered.append(
@@ -145,6 +147,8 @@ class TeamRunResultPackager:
                         "cycle_id": cycle_id,
                         "package_kind": name,
                     },
+                    retention_class="temporary",
+                    expires_at=expiry,
                 )
             )
         return registered
