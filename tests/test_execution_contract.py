@@ -232,6 +232,20 @@ def test_unsupported_persona_permission_mode_fails_before_execution(
     assert error.value.code == "unsupported_execution_capability"
 
 
+def test_persona_permission_mode_fails_when_provider_has_no_permission_capability(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ExecutionContractError) as error:
+        compile_execution(
+            _requirements(requires_sources=False, permission_mode="bypassPermissions"),
+            _policy("none", None),
+            _capabilities(permission_modes=()),
+            FakeStaging(tmp_path / "run"),
+        )
+
+    assert error.value.code == "unsupported_execution_capability"
+
+
 @pytest.mark.parametrize("mode", ["worktree", "full_access"])
 def test_direct_workspace_modes_do_not_copy_sources(tmp_path: Path, mode: str) -> None:
     workspace = tmp_path / "project"

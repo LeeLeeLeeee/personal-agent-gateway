@@ -61,17 +61,11 @@ def compile_execution(
             "The selected provider does not support the required sandbox mode",
         )
     permission_mode = requirements.permission_mode.strip()
-    if (
-        permission_mode
-        and capabilities.permission_modes
-        and permission_mode not in capabilities.permission_modes
-    ):
+    if permission_mode and permission_mode not in capabilities.permission_modes:
         raise ExecutionContractError(
             "unsupported_execution_capability",
             "The selected provider does not support the persona permission mode",
         )
-    if not capabilities.permission_modes:
-        permission_mode = ""
 
     if requirements.workspace_mode != "isolated":
         if requirements.workspace_root is None:

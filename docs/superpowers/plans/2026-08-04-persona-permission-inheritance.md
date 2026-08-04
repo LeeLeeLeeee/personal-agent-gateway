@@ -13,7 +13,8 @@
 - `default_options.permission_mode` is the sole source of the provider permission mode.
 - Do not downgrade or substitute a persona permission mode.
 - A provider advertising permission modes must reject unsupported persona modes before a model call.
-- A provider without permission-mode capability, or a persona with no configured mode, continues to receive an empty `permission_mode` field.
+- A persona with no configured mode continues to receive an empty `permission_mode` field.
+- A persona with a configured mode fails before model invocation when the provider advertises no permission capability or lacks that mode.
 - Preserve workspace, sandbox, read-root, approval-policy, and network behavior.
 
 ---
@@ -90,7 +91,7 @@ if capabilities.permission_modes and requirements.permission_mode not in capabil
 permission_mode = requirements.permission_mode if capabilities.permission_modes else ""
 ```
 
-Extend `ExecutionContextFactory.for_session()` with `permission_mode: str = ""`, include it in the cache key, and pass it to `ExecutionRequirements`. Validate only a non-empty requested mode, then delete the workspace-mode-derived `requested_permission` branch.
+Extend `ExecutionContextFactory.for_session()` with `permission_mode: str = ""`, include it in the cache key, and pass it to `ExecutionRequirements`. Validate every non-empty requested mode against the provider capability list, then delete the workspace-mode-derived `requested_permission` branch.
 
 - [ ] **Step 4: Run tests to verify they pass**
 

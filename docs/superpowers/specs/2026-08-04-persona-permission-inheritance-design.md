@@ -12,9 +12,8 @@ Team Run 실행은 페르소나의 `default_options.permission_mode`를 유효 �
 
 1. `ExecutionRequirements`와 `ExecutionContextFactory.for_session()`에 `permission_mode`를 명시적으로 전달한다.
 2. `compile_execution()`은 전달받은 권한을 그대로 `CompiledExecution.permission_mode`에 기록한다.
-3. Provider가 `permission_modes` capability를 제공하면, 전달받은 권한이 목록에 있는지 검증한다. 없으면 모델 호출 전에 `unsupported_execution_capability` 오류로 실행을 중단한다.
-4. Provider가 `permission_modes` capability를 제공하지 않으면, 현재처럼 빈 문자열을 전송한다. 이 provider에는 원격 권한 모드 전달 채널이 없기 때문이다.
-5. 페르소나가 권한을 지정하지 않으면 빈 값을 유지한다. Provider에 존재하지 않는 가짜 기본 권한을 보내지 않는다.
+3. 페르소나가 권한을 지정하면, 전달받은 권한이 provider의 `permission_modes` 목록에 있는지 검증한다. 목록이 비어 있거나 값이 없으면 모델 호출 전에 `unsupported_execution_capability` 오류로 실행을 중단한다.
+4. 페르소나가 권한을 지정하지 않으면 빈 값을 유지한다. Provider에 존재하지 않는 가짜 기본 권한을 보내지 않는다.
 
 ## Data Flow
 
@@ -31,7 +30,7 @@ flowchart LR
 ## Error Handling
 
 - `permission_mode`가 비어 있으면 capability 검증과 provider 전송을 생략한다.
-- Provider가 권한 capability를 광고하지만 해당 값을 지원하지 않으면 실행하지 않는다.
+- `permission_mode`가 지정됐지만 provider가 capability를 광고하지 않거나 해당 값을 지원하지 않으면 실행하지 않는다.
 - 오류 코드는 기존 `unsupported_execution_capability`를 사용해 기존 provider-recovery 흐름과 호환한다.
 - workspace mode는 workspace/sandbox/read scope를 계속 결정하지만 permission mode를 변경하지 않는다.
 
