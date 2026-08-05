@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 179,
+  "document_count": 201,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -1333,6 +1333,87 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/ArchiveView/index.jsx` - Modes: `understand`, `refactor` - Verdict: Archive 데이터와 사용자 액션은 `ArchiveView`가 계속 소유하고, 그래프 해석·viewport 상호작용·SVG 렌더링은 같은 파일의 `ArchiveMap`이 맡는 현재 경계를 ..."
+    },
+    {
+      "path": "docs/component-inspector/ArtifactsView/2026-08-05-0948.md",
+      "title": "ArtifactsView 통합 브라우저 분석",
+      "type": "report",
+      "domain": "component",
+      "feature": "artifact-browser",
+      "status": "done",
+      "aliases": [
+        "ArtifactsView analysis",
+        "Artifact 브라우저 컴포넌트 분석"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "artifacts"
+      ],
+      "updated_at": "2026-08-05",
+      "headings": [
+        {
+          "level": 1,
+          "text": "ArtifactsView 통합 브라우저 분석"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 효과"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성과 이 컴포넌트에서의 역할"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 2,
+          "text": "스타일과 레이아웃"
+        },
+        {
+          "level": 2,
+          "text": "테스트와 누락된 RED 사례"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/ArtifactsView/index.jsx` - Modes: `understand`, `refactor`, `api-state`, `style`, `test` - Verdict: 현재 소유 위치는 유지하되, 출처 해석·검색·선택 상태를 feature model/hook으로 분리하고 카드 갤러리를 compact ..."
     },
     {
       "path": "docs/component-inspector/AuthCard/2026-07-27-1345.md",
@@ -4852,14 +4933,14 @@
         "component",
         "analysis"
       ],
-      "updated_at": "2026-07-29",
+      "updated_at": "2026-08-05",
       "headings": [
         {
           "level": 1,
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [ChatView Working Indicator Layout Analysis — 2026-07-30 14:06](./ChatView/2026-07-30-1406.md) - [TeamRunDetail Internal Acceptance Review Analysis — 2026-07-30 10:14](./TeamRunDetail/2026-07-30-1014.md) - [ArchiveV..."
+      "excerpt": "- [ArtifactsView 통합 브라우저 분석 — 2026-08-05 09:48](./ArtifactsView/2026-08-05-0948.md) - [ChatView Working Indicator Layout Analysis — 2026-07-30 14:06](./ChatView/2026-07-30-1406.md) - [TeamRunDetail Internal Acceptance..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -8816,6 +8897,32 @@
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
     },
     {
+      "path": "docs/superpowers/plans/2026-07-30-chat-working-indicator-stream.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Chat Working Indicator Stream Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Move the working indicator into Timeline"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
       "path": "docs/superpowers/plans/2026-07-30-isolated-workspace-preparation.md",
       "title": "",
       "type": "",
@@ -8837,6 +8944,64 @@
         {
           "level": 3,
           "text": "Task 1: Prepare isolated execution workspaces"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-30-pag-provider-cycle-recovery.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PAG Provider Cycle Recovery Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Parse the separated LMG contract and retry status lookup"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Keep a locked last-known-good `AgentRegistry` catalog"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Freeze all roster provider capabilities before cycle planning"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Persist provider waiting and atomically claim recovery"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Retry safe model admission and route exhaustion to provider waiting"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: Poll, recover, survive restart, and support guarded manual resume"
+        },
+        {
+          "level": 3,
+          "text": "Task 7: Show provider waiting distinctly in Team Run UI"
+        },
+        {
+          "level": 2,
+          "text": "PAG Completion Check"
         }
       ],
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
@@ -8919,6 +9084,388 @@
         {
           "level": 2,
           "text": "Completion Evidence"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-pag-team-model-operation-ledger.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "PAG Team Model Operation Ledger Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Add the operation ledger schema and lifecycle service"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Make the remote boundary operation-aware and classify retry safety"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Apply planning and Worker results atomically with their operations"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Route planning, Worker, and synthesis through the operation ledger"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Persist Lead mediation and acceptance as separate operations"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: Connect provider waiting, ambiguous reconciliation, dispatcher, and app wiring"
+        },
+        {
+          "level": 2,
+          "text": "Completion Gate"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-03-activate-typed-acceptance-checks.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Activate Typed Acceptance Checks Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: The prompts learn the check vocabulary"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: `TeamRunDetail` shows the check and the attested badge"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: A rejection that never ran the checks must not blame them"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Full verification"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-03-cycle-output-contract.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Cycle Output Contract Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Output contract registry"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Carry the contract id from the preparer to the cycle"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Synthesis asks for the contract instead of a plain summary"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Validate the synthesized output and re-request once"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Settlement reads the contract payload from the ledger"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: Full verification"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-03-knowledge-request-draft-failure-visibility.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Knowledge Request Draft Failure Visibility Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Migration 21 — draft failure columns"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: ArchiveService records and clears the failure"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Settlement and reconciliation record the failure"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Expose the failure through the requests API"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Render the failure banner in ArchiveView"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: Full verification"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-03-typed-acceptance-checks.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Typed Acceptance Checks Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: The check vocabulary and runner"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: `TaskAcceptance` carries required verifications as objects"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Propagate the type through every construction site"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: The server runs the checks"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Expose the new shape through the API"
+        },
+        {
+          "level": 3,
+          "text": "Task 6: Full verification"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-04-team-task-dependencies.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Task Dependencies Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Persist dependency edges and readiness queries"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Bind planner declarations to persisted task edges"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Schedule only ready tasks and block dependents before cycle failure"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Guard the `94a9b74d` research → draft → QA regression"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-04-team-task-input-artifacts.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Task Artifact Inputs Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Persist cycle artifact catalogs"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Validate and persist task input declarations"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Stage verified inputs immediately before worker invocation"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Add the \\`dfbf2063\\` regression guard"
+        },
+        {
+          "level": 2,
+          "text": "Final verification"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (\\`- [ ]\\`) syntax for tr..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-05-artifact-archive-preview-ux.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Artifact Archive Preview UX Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Add artifact-retention API client methods"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Replace the all-file card grid with retention and provenance list segments"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Add unchecked cleanup review and confirmation flow"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Build and run focused frontend regression checks"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-05-artifact-retention-cleanup.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Artifact Retention Cleanup Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Persist retention metadata and enforce store protection"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Mark Team-generated archive outputs temporary"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Expose preview, cleanup, and pinning through the API"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Verify the complete retention boundary"
         }
       ],
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
@@ -11271,6 +11818,136 @@
       "excerpt": "Every isolated execution must hand LMG an existing session workspace directory, including executions whose read policy does not require source staging."
     },
     {
+      "path": "docs/superpowers/specs/2026-07-30-provider-capability-readiness-recovery-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Provider Capability and Readiness Recovery Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Problem"
+        },
+        {
+          "level": 2,
+          "text": "Definitions"
+        },
+        {
+          "level": 3,
+          "text": "Capability"
+        },
+        {
+          "level": 3,
+          "text": "Readiness"
+        },
+        {
+          "level": 3,
+          "text": "Admission"
+        },
+        {
+          "level": 3,
+          "text": "Last-known-good Snapshot"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 2,
+          "text": "Architecture"
+        },
+        {
+          "level": 3,
+          "text": "LMG Capability Source"
+        },
+        {
+          "level": 3,
+          "text": "PAG Provider Snapshot Store"
+        },
+        {
+          "level": 3,
+          "text": "Team Cycle Freeze"
+        },
+        {
+          "level": 3,
+          "text": "Provider Recovery Coordinator"
+        },
+        {
+          "level": 2,
+          "text": "Retry Policy"
+        },
+        {
+          "level": 3,
+          "text": "Status and Capability Refresh"
+        },
+        {
+          "level": 3,
+          "text": "Model Run Admission"
+        },
+        {
+          "level": 3,
+          "text": "Non-retryable Execution Failures"
+        },
+        {
+          "level": 2,
+          "text": "Persisted State"
+        },
+        {
+          "level": 2,
+          "text": "State Flow"
+        },
+        {
+          "level": 2,
+          "text": "Lead Responsibility"
+        },
+        {
+          "level": 2,
+          "text": "User Experience"
+        },
+        {
+          "level": 2,
+          "text": "Observability"
+        },
+        {
+          "level": 2,
+          "text": "Focused Verification"
+        },
+        {
+          "level": 3,
+          "text": "LMG"
+        },
+        {
+          "level": 3,
+          "text": "PAG Provider Registry"
+        },
+        {
+          "level": 3,
+          "text": "Team Recovery"
+        },
+        {
+          "level": 3,
+          "text": "Frontend"
+        },
+        {
+          "level": 2,
+          "text": "Success Criteria"
+        }
+      ],
+      "excerpt": "Prevent a transient LMG status or model-catalog lookup failure from failing an active Team task before Codex or Claude is invoked."
+    },
+    {
       "path": "docs/superpowers/specs/2026-07-30-team-acceptance-internal-recovery-design.md",
       "title": "",
       "type": "",
@@ -11363,6 +12040,715 @@
         }
       ],
       "excerpt": "작성일: 2026-07-30"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-team-model-operation-ledger-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Model Operation Ledger Design"
+        },
+        {
+          "level": 2,
+          "text": "상태"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "배경"
+        },
+        {
+          "level": 2,
+          "text": "핵심 결정"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 경계"
+        },
+        {
+          "level": 3,
+          "text": "TeamRuntime"
+        },
+        {
+          "level": 3,
+          "text": "TeamModelOperationService"
+        },
+        {
+          "level": 3,
+          "text": "TeamModelInvoker"
+        },
+        {
+          "level": 3,
+          "text": "TeamModelEffectService"
+        },
+        {
+          "level": 3,
+          "text": "TeamRunService"
+        },
+        {
+          "level": 3,
+          "text": "TeamProviderRecovery"
+        },
+        {
+          "level": 2,
+          "text": "데이터 모델"
+        },
+        {
+          "level": 3,
+          "text": "Operation key"
+        },
+        {
+          "level": 3,
+          "text": "Cycle 단일 미완료 제약"
+        },
+        {
+          "level": 3,
+          "text": "저장하지 않는 정보"
+        },
+        {
+          "level": 2,
+          "text": "상태 모델"
+        },
+        {
+          "level": 2,
+          "text": "모델 호출과 결과 적용"
+        },
+        {
+          "level": 3,
+          "text": "호출 전"
+        },
+        {
+          "level": 3,
+          "text": "완료"
+        },
+        {
+          "level": 3,
+          "text": "적용"
+        },
+        {
+          "level": 2,
+          "text": "Stage별 적용"
+        },
+        {
+          "level": 3,
+          "text": "Cycle planning과 add work"
+        },
+        {
+          "level": 3,
+          "text": "Worker execution"
+        },
+        {
+          "level": 3,
+          "text": "Mediation"
+        },
+        {
+          "level": 3,
+          "text": "Acceptance"
+        },
+        {
+          "level": 3,
+          "text": "Synthesis"
+        },
+        {
+          "level": 2,
+          "text": "Provider retry와 waiting"
+        },
+        {
+          "level": 3,
+          "text": "Safe pre-stream admission"
+        },
+        {
+          "level": 3,
+          "text": "Operation-aware claim"
+        },
+        {
+          "level": 2,
+          "text": "Ambiguous timeout과 프로세스 종료"
+        },
+        {
+          "level": 2,
+          "text": "재시작 reconciliation"
+        },
+        {
+          "level": 2,
+          "text": "취소"
+        },
+        {
+          "level": 2,
+          "text": "API와 사용자 표시"
+        },
+        {
+          "level": 2,
+          "text": "보안과 관측성"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "검증 전략"
+        },
+        {
+          "level": 3,
+          "text": "Operation service"
+        },
+        {
+          "level": 3,
+          "text": "Restart matrix"
+        },
+        {
+          "level": 3,
+          "text": "Runtime"
+        },
+        {
+          "level": 3,
+          "text": "Remote admission"
+        },
+        {
+          "level": 3,
+          "text": "Provider recovery와 dispatcher"
+        },
+        {
+          "level": 3,
+          "text": "App factory"
+        },
+        {
+          "level": 2,
+          "text": "성공 조건"
+        }
+      ],
+      "excerpt": "작성일: 2026-07-31"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-03-knowledge-request-draft-failure-visibility-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Knowledge Request Draft Failure Visibility Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Problem"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 2,
+          "text": "Data Model"
+        },
+        {
+          "level": 2,
+          "text": "Domain Layer"
+        },
+        {
+          "level": 2,
+          "text": "Settlement Path"
+        },
+        {
+          "level": 2,
+          "text": "API"
+        },
+        {
+          "level": 2,
+          "text": "UI"
+        },
+        {
+          "level": 2,
+          "text": "Error Handling"
+        },
+        {
+          "level": 2,
+          "text": "Testing"
+        }
+      ],
+      "excerpt": "Make a failed Library draft generation visible on the Knowledge Request that caused it, so the user can see that a delegated Team Run produced nothing usable, why it failed, and can re-delegate from the same screen."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-03-team-output-contract-enforcement-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Output Contract Enforcement Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Problem"
+        },
+        {
+          "level": 3,
+          "text": "A. The output contract never reaches the step that produces the output"
+        },
+        {
+          "level": 3,
+          "text": "B. Acceptance verifies shape, not substance"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 2,
+          "text": "Part A: The cycle output contract"
+        },
+        {
+          "level": 3,
+          "text": "Preparation"
+        },
+        {
+          "level": 3,
+          "text": "Storage"
+        },
+        {
+          "level": 3,
+          "text": "Contract registry"
+        },
+        {
+          "level": 3,
+          "text": "Synthesis"
+        },
+        {
+          "level": 2,
+          "text": "Part B: Typed acceptance checks"
+        },
+        {
+          "level": 3,
+          "text": "Schema"
+        },
+        {
+          "level": 3,
+          "text": "Check vocabulary"
+        },
+        {
+          "level": 3,
+          "text": "Evaluation"
+        },
+        {
+          "level": 3,
+          "text": "Prompts"
+        },
+        {
+          "level": 3,
+          "text": "Safety"
+        },
+        {
+          "level": 2,
+          "text": "UI"
+        },
+        {
+          "level": 2,
+          "text": "Error Handling"
+        },
+        {
+          "level": 2,
+          "text": "Testing"
+        }
+      ],
+      "excerpt": "Make a Team Run actually satisfy the output contract its caller set, and make task acceptance check what a task produced instead of trusting what the worker said about it."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-04-provider-wait-recovery-and-sandbox-state-repair-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Provider Waiting Recovery and Sandbox State Repair Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 2,
+          "text": "Non-goals"
+        },
+        {
+          "level": 2,
+          "text": "Design"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        }
+      ],
+      "excerpt": "Recover Codex provider readiness after a corrupt Windows sandbox ACL state file, and make `waiting_for_provider` Team Runs resume automatically once the affected provider is ready."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-04-team-task-dependencies-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team Task Dependency Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 2,
+          "text": "Data model"
+        },
+        {
+          "level": 2,
+          "text": "Planning validation"
+        },
+        {
+          "level": 2,
+          "text": "Scheduling and failure propagation"
+        },
+        {
+          "level": 2,
+          "text": "Example"
+        },
+        {
+          "level": 2,
+          "text": "Testing"
+        }
+      ],
+      "excerpt": "Make task execution order explicit so a task can run only after every declared prerequisite task has completed successfully."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-04-team-task-input-artifacts-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Team task artifact inputs design"
+        },
+        {
+          "level": 2,
+          "text": "Problem"
+        },
+        {
+          "level": 2,
+          "text": "Decision"
+        },
+        {
+          "level": 2,
+          "text": "Data model"
+        },
+        {
+          "level": 2,
+          "text": "Flow"
+        },
+        {
+          "level": 2,
+          "text": "API and planner contract"
+        },
+        {
+          "level": 2,
+          "text": "Failure handling"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        }
+      ],
+      "excerpt": "A Team Run task currently carries only prose. A planner or a prior task report can name an artifact from another run, but that artifact is not a declared input and is not staged into the current isolated workspace. Pr..."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-05-artifact-archive-preview-ux-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Artifact archive and cleanup preview UX"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 2,
+          "text": "Archive list"
+        },
+        {
+          "level": 2,
+          "text": "Cleanup review"
+        },
+        {
+          "level": 2,
+          "text": "Components and API client"
+        },
+        {
+          "level": 2,
+          "text": "Accessibility and error handling"
+        },
+        {
+          "level": 2,
+          "text": "Tests"
+        },
+        {
+          "level": 2,
+          "text": "Success criteria"
+        }
+      ],
+      "excerpt": "Make the Archive > Artifacts area useful for deciding what to keep and what to remove. A user must be able to understand an artifact's Team provenance, retention state, and cleanup reason without interpreting model-ge..."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-05-artifact-browser-provenance-search-delete-design.md",
+      "title": "Artifact browser provenance, search, preview, and deletion design",
+      "type": "adr",
+      "domain": "artifacts",
+      "feature": "artifact-browser",
+      "status": "draft",
+      "aliases": [
+        "artifact grouping design",
+        "artifact search and delete",
+        "Chat Team artifact browser",
+        "artifact 그룹 검색 삭제"
+      ],
+      "tags": [
+        "artifacts",
+        "archive",
+        "provenance",
+        "search",
+        "deletion"
+      ],
+      "updated_at": "2026-08-05",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Artifact browser provenance, search, preview, and deletion design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Success criteria"
+        },
+        {
+          "level": 2,
+          "text": "Non-goals"
+        },
+        {
+          "level": 2,
+          "text": "Approaches considered"
+        },
+        {
+          "level": 3,
+          "text": "A. Persisted generic collection/producer tree"
+        },
+        {
+          "level": 3,
+          "text": "B. Explicit artifact origin plus computed browser context — selected"
+        },
+        {
+          "level": 3,
+          "text": "C. Generic many-to-many artifact/context links"
+        },
+        {
+          "level": 2,
+          "text": "Core distinction"
+        },
+        {
+          "level": 2,
+          "text": "Data model"
+        },
+        {
+          "level": 3,
+          "text": "Durable Chat turns"
+        },
+        {
+          "level": 3,
+          "text": "Artifact origin columns"
+        },
+        {
+          "level": 3,
+          "text": "Deletion of source records"
+        },
+        {
+          "level": 3,
+          "text": "Legacy backfill"
+        },
+        {
+          "level": 2,
+          "text": "Browser read API"
+        },
+        {
+          "level": 2,
+          "text": "Search design"
+        },
+        {
+          "level": 2,
+          "text": "Deletion API and policy"
+        },
+        {
+          "level": 2,
+          "text": "Archive UI"
+        },
+        {
+          "level": 3,
+          "text": "Information architecture"
+        },
+        {
+          "level": 3,
+          "text": "Selection and deletion"
+        },
+        {
+          "level": 3,
+          "text": "Preview and details"
+        },
+        {
+          "level": 2,
+          "text": "Component boundaries"
+        },
+        {
+          "level": 2,
+          "text": "Error handling"
+        },
+        {
+          "level": 2,
+          "text": "Testing"
+        },
+        {
+          "level": 3,
+          "text": "Backend"
+        },
+        {
+          "level": 3,
+          "text": "Frontend"
+        },
+        {
+          "level": 2,
+          "text": "Rollout"
+        }
+      ],
+      "excerpt": "Replace the raw artifact card gallery with a readable browser that answers four questions without requiring the user to interpret IDs or paths:"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-05-artifact-retention-cleanup-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Artifact retention and manual cleanup"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 2,
+          "text": "Retention model"
+        },
+        {
+          "level": 2,
+          "text": "Protection rules"
+        },
+        {
+          "level": 2,
+          "text": "API and data flow"
+        },
+        {
+          "level": 2,
+          "text": "Storage changes"
+        },
+        {
+          "level": 2,
+          "text": "Error handling and audit"
+        },
+        {
+          "level": 2,
+          "text": "Tests"
+        },
+        {
+          "level": 2,
+          "text": "Success criteria"
+        }
+      ],
+      "excerpt": "Keep the artifact archive usable as Team runs accumulate outputs, without automatically deleting a user's work or breaking artifacts that a Team cycle or task still needs as input."
     },
     {
       "path": "docs/superpowers/specs/completed_2026-07-06-otp-setup-ui-design.md",
