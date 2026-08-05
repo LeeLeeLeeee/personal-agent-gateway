@@ -151,6 +151,15 @@ describe("ArchiveView", () => {
     );
   });
 
+  it("keeps Team artifact groups full-width and grids only their child cards", () => {
+    expect(styles).toMatch(
+      /\.artifact-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/
+    );
+    expect(styles).toMatch(
+      /\.artifact-group\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill, minmax\(180px, 220px\)\);/
+    );
+  });
+
   it("makes the draft failure banner conspicuous with a warning border", () => {
     expect(styles).toMatch(
       /\.archive-request-failure\s*\{[^}]*border:\s*2px solid var\(--c-warn\);/

@@ -3648,9 +3648,20 @@ p {
 }
 .artifact-grid {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+}
+.artifact-group {
+    display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 220px));
     gap: 12px;
-    justify-content: start;
+    min-width: 0;
+}
+.artifact-group > h2 {
+    grid-column: 1 / -1;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+    letter-spacing: 0.7px;
 }
 .artifact-card {
     border: var(--bd);
