@@ -46,9 +46,26 @@ Library에 등록된 문서도 지울 수 있게 한다. 하드 삭제 — 행�
 - 없는 문서에 대한 `KeyError`는 유지한다.
 - 이미 읽은 `row["status"]`를 반환한다. 라우트가 감사 이벤트를 상태별로 갈라 쓰는 데
   필요하고, 이 값을 반환하면 DB를 두 번 조회하지 않는다.
-- 본문의 나머지는 변경하지 않는다: 연결된 `knowledge_requests`를 `status='open'`,
-  `assigned_team_run_id=null` 로 되돌리고, `archive_entries_fts`·`archive_bindings`·
-  `archive_revisions`·`archive_draft_origins`·`archive_entries` 행을 지운다.
+- 연관 테이블 정리(`archive_entries_fts`·`archive_bindings`·`archive_revisions`·
+  `archive_draft_origins`·`archive_entries`)는 변경하지 않는다.
+- **지식 요청 되돌리기는 확장이 필요하다.** 기존 코드는 링크를
+  `archive_draft_origins.knowledge_request_id` 에서만 찾고, `status='in_progress'` 인
+  요청만 되돌린다. 그것은 draft가 만들어진 경로다. 반면 `published` 문서는
+  `_fulfill_request()` 가 요청을 `status='fulfilled'`,
+  `fulfilled_by_entry_id=<entry_id>` 로 바꿔 연결한다 — 기존 조건에 걸리지 않는다.
+  그대로 두면 FK(`on delete set null`)가 컬럼만 비우고 요청은 `fulfilled` 로 남아,
+  근거 문서가 없는 충족 기록이 된다.
+
+  따라서 되돌리기를 두 갈래로 만든다. 두 갈래는 서로 배타적이 아니므로 둘 다 실행한다.
+
+  1. **origin 경로** (기존 유지): `archive_draft_origins` 로 연결되고
+     `status='in_progress'` 인 요청 → `status='open'`, `assigned_team_run_id=null`
+  2. **fulfilled 경로** (신규): `fulfilled_by_entry_id = <entry_id>` 이고
+     `status='fulfilled'` 인 요청 → `status='open'`,
+     `fulfilled_by_entry_id=null`, `assigned_team_run_id=null`
+
+  두 번째 갈래는 `archive_entries` 행을 지우기 **전에** 실행해야 한다. FK가
+  `on delete set null` 이라 행을 먼저 지우면 연결 정보를 잃는다.
 
 ### 2. `src/personal_agent_gateway/api/archive.py`
 
@@ -111,11 +128,20 @@ const editingDraft = drafts.find((entry) => entry.id === editingId) || null;
 | `archive_bindings` | 삭제 |
 | `archive_entries_fts` | 삭제 (검색 결과에서 사라짐) |
 | `archive_draft_origins` | 삭제 |
-| 연결된 `knowledge_requests` | **행 보존**, `status='open'`·`assigned_team_run_id=null` 로 되돌림 |
+| 연결된 `knowledge_requests` | **행 보존**, `status='open'` 으로 되돌림 (아래 참조) |
 
 지식 요청을 `open`으로 되돌리는 이유: 문서가 사라지면 그 지식 수요는 다시 미해결
-상태다. 링크만 끊고 `fulfilled` 로 남기면 근거 없는 충족 기록이 된다. 이는 draft
-삭제가 이미 하는 동작과 같다.
+상태다. 링크만 끊고 `fulfilled` 로 남기면 근거 없는 충족 기록이 된다.
+
+연결 방식이 문서 상태에 따라 다르다는 점이 이 변경의 핵심 난점이다.
+
+| 문서 상태 | 연결 경로 | 요청의 상태 | 기존 코드가 되돌리는가 |
+| --- | --- | --- | --- |
+| `draft` | `archive_draft_origins.knowledge_request_id` | `in_progress` | 예 |
+| `published` | `knowledge_requests.fulfilled_by_entry_id` | `fulfilled` | **아니오** |
+
+한 문서가 두 경로로 동시에 연결될 수 있다(요청을 위해 초안이 작성되고 그 초안이
+발행된 경우). 그래서 두 갈래를 조건 없이 모두 실행한다.
 
 ## 오류 처리
 
@@ -131,8 +157,13 @@ const editingDraft = drafts.find((entry) => entry.id === editingId) || null;
 
 - `published` 문서 삭제 → 행·revisions·bindings·FTS 항목이 모두 사라진다
 - `archived` 문서 삭제 → 같은 결과
-- 삭제된 문서로 충족돼 있던 지식 요청이 `open` 이 되고 `assigned_team_run_id` 가
-  `null` 이 된다
+- **fulfilled 경로**: `published` 문서를 발행해 `fulfilled` 가 된 지식 요청이, 그 문서를
+  삭제하면 `open` 이 되고 `fulfilled_by_entry_id` 가 `null` 이 된다. 이 테스트는 변경
+  전에는 실패해야 한다 — 기존 코드가 이 경로를 다루지 않는다는 것이 이 작업의 핵심
+  발견이다
+- **origin 경로 회귀**: `in_progress` 인 요청을 위해 만든 draft를 삭제하면 여전히
+  `open` 이 되고 `assigned_team_run_id` 가 `null` 이 된다
+- 두 경로로 동시에 연결된 문서를 삭제해도 요청이 한 번만, 올바르게 `open` 이 된다
 - 없는 id → 404
 - 감사 이벤트가 상태별로 갈린다: `draft` 삭제는 `archive.draft_deleted`,
   `published` 삭제는 `archive.entry_deleted`
