@@ -62,6 +62,7 @@ def _requirements(
     workspace_mode="isolated",
     workspace_root=None,
     network="unspecified",
+    permission_mode="",
 ):
     return ExecutionRequirements(
         source_roots=tuple(source_roots),
@@ -69,6 +70,7 @@ def _requirements(
         workspace_mode=workspace_mode,
         workspace_root=workspace_root,
         network=network,
+        permission_mode=permission_mode,
     )
 
 
@@ -197,6 +199,47 @@ def test_required_network_must_be_supported(tmp_path: Path) -> None:
             _requirements(requires_sources=False, network="required"),
             _policy("none", None),
             _capabilities(network_modes=("unspecified",)),
+            FakeStaging(tmp_path / "run"),
+        )
+
+    assert error.value.code == "unsupported_execution_capability"
+
+
+def test_persona_permission_mode_is_preserved_for_supported_provider(
+    tmp_path: Path,
+) -> None:
+    compiled = compile_execution(
+        _requirements(requires_sources=False, permission_mode="plan"),
+        _policy("none", None),
+        _capabilities(permission_modes=("default", "acceptEdits", "plan")),
+        FakeStaging(tmp_path / "run"),
+    )
+
+    assert compiled.permission_mode == "plan"
+
+
+def test_unsupported_persona_permission_mode_fails_before_execution(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ExecutionContractError) as error:
+        compile_execution(
+            _requirements(requires_sources=False, permission_mode="bypassPermissions"),
+            _policy("none", None),
+            _capabilities(permission_modes=("default", "acceptEdits", "plan")),
+            FakeStaging(tmp_path / "run"),
+        )
+
+    assert error.value.code == "unsupported_execution_capability"
+
+
+def test_persona_permission_mode_fails_when_provider_has_no_permission_capability(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ExecutionContractError) as error:
+        compile_execution(
+            _requirements(requires_sources=False, permission_mode="bypassPermissions"),
+            _policy("none", None),
+            _capabilities(permission_modes=()),
             FakeStaging(tmp_path / "run"),
         )
 

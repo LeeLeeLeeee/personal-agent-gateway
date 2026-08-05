@@ -39,6 +39,7 @@ class ExecutionContextFactory:
         consumer_workspace: Path,
         *,
         network: str = "unspecified",
+        permission_mode: str = "",
     ) -> CompiledExecution:
         if policy.write_mode == "isolated":
             try:
@@ -66,6 +67,7 @@ class ExecutionContextFactory:
             capabilities,
             workspace_root,
             network,
+            permission_mode,
         )
         cached = self._cache.get(key)
         if cached is not None:
@@ -85,6 +87,7 @@ class ExecutionContextFactory:
                 workspace_mode=policy.write_mode,
                 workspace_root=workspace_root,
                 network=network,
+                permission_mode=permission_mode,
             ),
             policy,
             capabilities,

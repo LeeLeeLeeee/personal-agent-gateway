@@ -16,6 +16,7 @@ class ExecutionRequirements:
     workspace_mode: WorkspaceMode
     workspace_root: Path | None
     network: NetworkMode
+    permission_mode: str = ""
 
 
 @dataclass(frozen=True)
@@ -59,16 +60,11 @@ def compile_execution(
             "unsupported_execution_capability",
             "The selected provider does not support the required sandbox mode",
         )
-    requested_permission = (
-        "bypassPermissions"
-        if requirements.workspace_mode == "full_access"
-        else "acceptEdits"
-    )
-    permission_mode = requested_permission if capabilities.permission_modes else ""
+    permission_mode = requirements.permission_mode.strip()
     if permission_mode and permission_mode not in capabilities.permission_modes:
         raise ExecutionContractError(
             "unsupported_execution_capability",
-            "The selected provider does not support the required permission mode",
+            "The selected provider does not support the persona permission mode",
         )
 
     if requirements.workspace_mode != "isolated":
