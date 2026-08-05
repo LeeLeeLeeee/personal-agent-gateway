@@ -81,7 +81,7 @@ def test_delete_entry_reopens_the_request_the_published_document_fulfilled(tmp_p
     document used to leave a fulfilled request with no supporting document."""
     archive, personas = archive_service(tmp_path)
     persona = personas.create_persona("Researcher", "Reference checking", "Checks sources.", [], [])
-    request = archive.create_request(
+    request = archive.create_knowledge_request(
         title="Deployment rollback checklist",
         reason="Reusable guidance is missing.",
         suggested_outline=["Rollback", "Verification"],
@@ -112,7 +112,7 @@ def test_delete_entry_reopens_the_request_the_published_document_fulfilled(tmp_p
 def test_delete_entry_still_reopens_an_in_progress_draft_origin(tmp_path: Path) -> None:
     """Regression: the draft-origin path must keep working exactly as before."""
     archive, _personas = archive_service(tmp_path)
-    request = archive.create_request(
+    request = archive.create_knowledge_request(
         title="Rollback guidance",
         reason="Missing.",
         suggested_outline=[],
@@ -167,7 +167,7 @@ def test_delete_entry_rejects_an_unknown_id(tmp_path: Path) -> None:
         archive.delete_entry("nope")
 ```
 
-> `save_draft` 의 `origin_request_id` 인자명과 `create_request` 의 인자는 이 파일의 기존 테스트에서 쓰이는 그대로다. `get_entry` 는 없는 문서에 `KeyError` 를 던진다(확인함: `archive.py:410-414`).
+> `save_draft` 의 `origin_request_id` 인자명과 `create_knowledge_request` 의 인자는 이 파일의 기존 테스트에서 쓰이는 그대로다. `get_entry` 는 없는 문서에 `KeyError` 를 던진다(확인함: `archive.py:410-414`).
 
 - [ ] **Step 2: 테스트가 실패하는지 확인**
 
