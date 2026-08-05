@@ -80,6 +80,15 @@ export function ArtifactsView({ artifacts = [], onChange }) {
                   })} />
                   <span className="artifact-card-title">{a.title}</span>
                   <span className="mono artifact-card-meta">{fmtSize(a.size_bytes)} · 만료됨</span>
+                  <button type="button" className="btn btn-sm" onClick={async (event) => {
+                    event.preventDefault();
+                    const result = await api.updateArtifactRetention(a.id, { retention_class: "pinned" });
+                    if (!result) { toast("보관에 실패했습니다", "error"); return; }
+                    setCleanupIds((current) => { const next = new Set(current); next.delete(a.id); return next; });
+                    setCleanupPreview(await api.artifactCleanupPreview());
+                    toast("보관했습니다", "success");
+                    onChange?.();
+                  }}>보관</button>
                 </label>
               ) : (
               <button
