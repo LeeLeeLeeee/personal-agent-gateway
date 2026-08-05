@@ -88,18 +88,28 @@ async def test_publish_stamps_operation_and_step_when_given() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scope_numbers_steps_independently_per_operation() -> None:
+async def test_scope_publish_carries_operation_id_and_no_step_index() -> None:
+    bus = EventBus()
+    scope = bus.scope("op-1")
+
+    published = await scope.publish({"type": "runtime.started"})
+
+    assert published["operation_id"] == "op-1"
+    assert "step_index" not in published
+
+
+@pytest.mark.asyncio
+async def test_scope_counts_steps_independently_per_operation() -> None:
     bus = EventBus()
     first = bus.scope("op-1")
     second = bus.scope("op-2")
 
-    a = await first.publish({"type": "runtime.started"})
-    b = await first.publish({"type": "item.completed"}, advance_step=True)
-    c = await second.publish({"type": "runtime.started"})
+    await first.publish({"type": "runtime.started"})
+    await first.publish({"type": "item.completed"}, advance_step=True)
+    await second.publish({"type": "runtime.started"})
 
-    assert (a["operation_id"], a["step_index"]) == ("op-1", 0)
-    assert (b["operation_id"], b["step_index"]) == ("op-1", 1)
-    assert (c["operation_id"], c["step_index"]) == ("op-2", 0)
+    assert first.step_index == 1
+    assert second.step_index == 0
 
 
 @pytest.mark.asyncio

@@ -62,6 +62,7 @@ class AgentRuntime:
 
     def attach_event_bus(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
+        self._scopes.clear()
 
     def for_session(self, session_id: str) -> "AgentRuntime":
         return AgentRuntime(
@@ -336,7 +337,9 @@ class AgentRuntime:
         session_id = payload.get("session_id")
         redacted = _redact_payload(payload)
         if isinstance(session_id, str) and session_id:
-            scope = self._scopes.setdefault(session_id, self._event_bus.scope(session_id))
+            if session_id not in self._scopes:
+                self._scopes[session_id] = self._event_bus.scope(session_id)
+            scope = self._scopes[session_id]
             await scope.publish({"type": event_type, **redacted})
             return
         await self._event_bus.publish({"type": event_type, **redacted})

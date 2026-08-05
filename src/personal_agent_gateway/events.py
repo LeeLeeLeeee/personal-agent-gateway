@@ -1,6 +1,6 @@
 import asyncio
 from collections import deque
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 
@@ -20,10 +20,15 @@ class EventBus:
     ) -> dict[str, Any]:
         """Publish one event.
 
-        ``operation_id`` identifies the run the event belongs to and
-        ``step_index`` its position inside that run. Both are omitted from the
-        payload when absent, so callers that have not been converted yet keep
-        producing exactly the frames they produced before.
+        ``operation_id`` and ``step_index`` are stamped onto the payload when
+        given, and omitted otherwise, so callers that pass neither keep
+        producing exactly the frames they produced before. As wired today,
+        ``operation_id`` is always the session id (``runtime.py`` uses
+        ``session_id`` as the scope key), and every frame that gets stamped
+        already carried ``session_id`` on its own — so the key adds no new
+        information yet. It also only reaches three lifecycle frames per run;
+        the token-level ``model.event`` stream published by
+        ``runtime_factory.py`` goes straight to the bus and is never stamped.
         """
         published = {
             **event,
@@ -60,15 +65,33 @@ class EventBus:
         return list(self._history)
 
 
+class _PublishTarget(Protocol):
+    async def publish(
+        self,
+        event: dict[str, object],
+        *,
+        operation_id: str | None = None,
+        step_index: int | None = None,
+    ) -> dict[str, Any]: ...
+
+
 class EventScope:
-    """Publishes events for one run, stamping operation id and step index.
+    """Publishes events for one run, stamping the operation id.
 
     The step counter is per-scope, so two runs streaming at the same time
     number their steps independently — a global counter could not tell a
-    consumer which run a step belonged to.
+    consumer which run a step belonged to. Step numbering is deferred,
+    though: the counter is maintained here but deliberately not emitted
+    into the published payload until a stepping policy exists.
+
+    As wired today, ``operation_id`` is the session id, which every
+    stamped frame already carried before scoping existed, and only three
+    lifecycle frames per run go through a scope at all — the token-level
+    ``model.event`` stream published by ``runtime_factory.py`` bypasses
+    scoping entirely.
     """
 
-    def __init__(self, bus: EventBus, operation_id: str) -> None:
+    def __init__(self, bus: _PublishTarget, operation_id: str) -> None:
         self._bus = bus
         self._operation_id = operation_id
         self._step_index = 0
@@ -89,11 +112,7 @@ class EventScope:
     ) -> dict[str, Any]:
         if advance_step:
             self._step_index += 1
-        return await self._bus.publish(
-            event,
-            operation_id=self._operation_id,
-            step_index=self._step_index,
-        )
+        return await self._bus.publish(event, operation_id=self._operation_id)
 
 
 def _parse_event_id(value: int | str | None) -> int | None:

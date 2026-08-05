@@ -301,7 +301,7 @@ def test_session_activity_publisher_unscoped_publish_omits_operation_keys(tmp_pa
     assert "step_index" not in published
 
 
-def test_session_activity_publisher_scope_stamps_operation_and_step(tmp_path: Path) -> None:
+def test_session_activity_publisher_scope_stamps_operation_and_no_step_index(tmp_path: Path) -> None:
     db = Database(tmp_path / "app.db")
     db.initialize()
     service = SessionActivityService(db)
@@ -320,7 +320,7 @@ def test_session_activity_publisher_scope_stamps_operation_and_step(tmp_path: Pa
     )
 
     assert published["operation_id"] == "session-a"
-    assert published["step_index"] == 0
+    assert "step_index" not in published
 
 
 def test_session_activity_publisher_scoped_publish_still_persists_and_normalizes(

@@ -214,7 +214,7 @@ class HttpModelClient:
                     self._upstream_session_id = sid
             if kind == "message.delta":
                 partial_content += str(event.get("text", ""))
-            elif kind == "message.completed":
+            elif kind in ("message.snapshot", "message.completed"):
                 partial_content = str(event.get("text", ""))
             if kind in _TERMINAL_KINDS:
                 terminal_partial = event.get("partial_content")

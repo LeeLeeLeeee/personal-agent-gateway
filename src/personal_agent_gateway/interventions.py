@@ -4,6 +4,8 @@ Shell-command approval (:mod:`personal_agent_gateway.approval`) stays separate:
 its payload is a command string with its own API and UI, and folding it into a
 generic shape would only add risk. This module covers the two cases that had no
 representation at all — asking for free text, and asking to pick from options.
+
+The store is in place ahead of the route and runtime wiring that will call it.
 """
 
 from dataclasses import dataclass, replace
