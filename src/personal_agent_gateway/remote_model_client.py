@@ -16,9 +16,15 @@ _EVENT_KINDS = {
     "run.started",
     "session.updated",
     "message.delta",
+    # 전체 텍스트 스냅샷. 누적이 아니라 교체 의미 (LMG Task 8).
+    "message.snapshot",
     "reasoning.delta",
     "tool.activity",
     "message.completed",
+    # 사용자에게 보일 출력은 끝났고 종료 정리만 남은 경계 (LMG Task 8).
+    "output.completed",
+    # 상류 재시도 대기 중 (LMG Task 8).
+    "run.retrying",
     "run.completed",
     "run.failed",
     "run.aborted",
@@ -26,6 +32,9 @@ _EVENT_KINDS = {
 _TERMINAL_KINDS = {"run.completed", "run.failed", "run.aborted"}
 _FAILURE_CODES = {
     "provider_unavailable",
+    "provider_not_ready",
+    "provider_auth_required",
+    "provider_rate_limited",
     "provider_protocol_error",
     "provider_process_failed",
 }
