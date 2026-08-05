@@ -64,3 +64,64 @@ async def test_event_bus_owns_stream_and_event_identity_fields() -> None:
 
     assert published["stream_id"] == bus.stream_id
     assert published["id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_publish_without_scope_keeps_legacy_payload() -> None:
+    bus = EventBus()
+
+    published = await bus.publish({"type": "runtime.started"})
+
+    assert published == {"stream_id": bus.stream_id, "id": 1, "type": "runtime.started"}
+
+
+@pytest.mark.asyncio
+async def test_publish_stamps_operation_and_step_when_given() -> None:
+    bus = EventBus()
+
+    published = await bus.publish(
+        {"type": "runtime.started"}, operation_id="op-1", step_index=3
+    )
+
+    assert published["operation_id"] == "op-1"
+    assert published["step_index"] == 3
+
+
+@pytest.mark.asyncio
+async def test_scope_publish_carries_operation_id_and_no_step_index() -> None:
+    bus = EventBus()
+    scope = bus.scope("op-1")
+
+    published = await scope.publish({"type": "runtime.started"})
+
+    assert published["operation_id"] == "op-1"
+    assert "step_index" not in published
+
+
+@pytest.mark.asyncio
+async def test_scope_counts_steps_independently_per_operation() -> None:
+    bus = EventBus()
+    first = bus.scope("op-1")
+    second = bus.scope("op-2")
+
+    await first.publish({"type": "runtime.started"})
+    await first.publish({"type": "item.completed"}, advance_step=True)
+    await second.publish({"type": "runtime.started"})
+
+    assert first.step_index == 1
+    assert second.step_index == 0
+
+
+@pytest.mark.asyncio
+async def test_scope_events_still_reach_subscribers_and_history() -> None:
+    bus = EventBus()
+    subscriber = bus.subscribe()
+    scope = bus.scope("op-1")
+
+    try:
+        published = await scope.publish({"type": "runtime.started"})
+
+        assert await asyncio.wait_for(subscriber.get(), timeout=1) == published
+        assert bus.recent() == [published]
+    finally:
+        bus.unsubscribe(subscriber)

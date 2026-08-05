@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from personal_agent_gateway.archive import ArchiveService
-from personal_agent_gateway.events import EventBus
+from personal_agent_gateway.events import EventBus, EventScope
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ModelClient, ToolCall
 from personal_agent_gateway.redaction import is_sensitive_key, redact_text
@@ -59,9 +59,11 @@ class AgentRuntime:
         self._archive_service = archive_service
         self._persona_id = persona_id
         self._active_chat_turn_id: str | None = None
+        self._scopes: dict[str, EventScope] = {}
 
     def attach_event_bus(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
+        self._scopes.clear()
 
     def set_chat_turn_id(self, chat_turn_id: str) -> None:
         self._active_chat_turn_id = chat_turn_id
@@ -340,7 +342,15 @@ class AgentRuntime:
     async def _publish(self, event_type: str, payload: dict[str, object]) -> None:
         if self._event_bus is None:
             return
-        await self._event_bus.publish({"type": event_type, **_redact_payload(payload)})
+        session_id = payload.get("session_id")
+        redacted = _redact_payload(payload)
+        if isinstance(session_id, str) and session_id:
+            if session_id not in self._scopes:
+                self._scopes[session_id] = self._event_bus.scope(session_id)
+            scope = self._scopes[session_id]
+            await scope.publish({"type": event_type, **redacted})
+            return
+        await self._event_bus.publish({"type": event_type, **redacted})
 
 
 def _events_to_messages(
