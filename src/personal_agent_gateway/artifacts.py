@@ -555,24 +555,56 @@ class ArtifactStore:
         item_label = artifact.origin_item_label_snapshot or artifact.title
         if source_kind != "team":
             return group_label, item_label
-        if artifact.source_team_run_id:
-            run = self._db.fetchone(
-                "select goal from team_runs where id = ?", (artifact.source_team_run_id,)
-            )
-            if run and run["goal"]:
-                group_label = run["goal"]
-        if artifact.source_team_task_id:
-            task = self._db.fetchone(
-                "select title from team_tasks where id = ?", (artifact.source_team_task_id,)
-            )
-            if task and task["title"]:
-                item_label = task["title"]
+        breadcrumbs = self._team_breadcrumbs(artifact)
+        if breadcrumbs:
+            group_label = breadcrumbs[0].label
+            item_label = breadcrumbs[-1].label
         return group_label, item_label
+
+    def _team_breadcrumbs(self, artifact: Artifact) -> tuple[ArtifactBreadcrumb, ...]:
+        if not artifact.source_team_run_id:
+            return ()
+        row = self._db.fetchone(
+            """
+            select run.id as run_id, run.goal as run_goal, team.id as team_id,
+                   team.name as team_name, cycle.id as cycle_id, cycle.sequence as cycle_sequence,
+                   task.id as task_id, task.title as task_title
+            from team_runs run
+            left join teams team on team.id = run.team_id
+            left join team_run_cycles cycle on cycle.id = ? and cycle.team_run_id = run.id
+            left join team_tasks task on task.id = ? and task.team_run_id = run.id
+            where run.id = ?
+            """,
+            (artifact.source_cycle_id, artifact.source_team_task_id, artifact.source_team_run_id),
+        )
+        if row is None:
+            return ()
+        breadcrumbs: list[ArtifactBreadcrumb] = []
+        if row["team_id"] and row["team_name"]:
+            breadcrumbs.append(ArtifactBreadcrumb("team", row["team_id"], row["team_name"]))
+        breadcrumbs.append(ArtifactBreadcrumb("team_run", row["run_id"], row["run_goal"]))
+        if row["cycle_id"] and row["cycle_sequence"] is not None:
+            breadcrumbs.append(
+                ArtifactBreadcrumb("team_cycle", row["cycle_id"], f"Cycle {row['cycle_sequence']}")
+            )
+        if row["task_id"] and row["task_title"]:
+            breadcrumbs.append(ArtifactBreadcrumb("team_task", row["task_id"], row["task_title"]))
+        return tuple(breadcrumbs)
 
     def _browser_item(
         self, artifact: Artifact, group_label: str, item_label: str
     ) -> ArtifactBrowserItem:
         source_kind = _artifact_source_kind(artifact)
+        if source_kind == "team":
+            team_breadcrumbs = self._team_breadcrumbs(artifact)
+            if team_breadcrumbs:
+                return ArtifactBrowserItem(
+                    artifact=artifact,
+                    role=artifact.artifact_role,
+                    source_kind=source_kind,
+                    breadcrumbs=team_breadcrumbs,
+                    deletion_allowed=not self._is_referenced(artifact.id),
+                )
         group_id = (
             artifact.source_team_run_id
             or artifact.source_session_id

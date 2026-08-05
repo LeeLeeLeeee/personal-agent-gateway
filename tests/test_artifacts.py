@@ -291,12 +291,27 @@ def test_browser_prefers_live_team_goal_and_task_title_for_breadcrumbs(tmp_path:
     with db.connection() as connection:
         connection.execute(
             """
+            insert into teams (id, name, leader_persona_id, created_at, updated_at)
+            values (?, ?, ?, ?, ?)
+            """,
+            ("team-1", "Documentation team", "leader-1", "now", "now"),
+        )
+        connection.execute(
+            """
             insert into team_runs (id, goal, status, run_mode, lifecycle_mode, max_workers,
-                                   rounds_budget, workspace_root, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   rounds_budget, workspace_root, team_id, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             ("run-1", "Design system review", "completed", "manual", "standard", 1,
-             1, "workspace", "now", "now"),
+             1, "workspace", "team-1", "now", "now"),
+        )
+        connection.execute(
+            """
+            insert into team_run_cycles (id, team_run_id, sequence, source_type, source_id,
+                                         status, rounds_budget, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("cycle-1", "run-1", 3, "manual", "source-1", "completed", 1, "now", "now"),
         )
         connection.execute(
             """
@@ -307,14 +322,15 @@ def test_browser_prefers_live_team_goal_and_task_title_for_breadcrumbs(tmp_path:
         )
     artifact = store.register_bytes(
         "markdown", "chart-notes.md", "files/chart-notes.md", b"# Notes", "text/markdown",
-        origin_kind="team_task_output", source_team_run_id="run-1", source_team_task_id="task-1",
+        origin_kind="team_task_output", source_team_run_id="run-1", source_cycle_id="cycle-1",
+        source_team_task_id="task-1",
     )
 
     item = store.browser_page(segment="saved").items[0]
 
     assert item.artifact.id == artifact.id
     assert [crumb.label for crumb in item.breadcrumbs] == [
-        "Design system review", "Verify chart examples"
+        "Documentation team", "Design system review", "Cycle 3", "Verify chart examples"
     ]
 
 

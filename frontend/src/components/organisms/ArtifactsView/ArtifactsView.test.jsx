@@ -76,7 +76,9 @@ describe("ArtifactsView", () => {
         source_kind: "team_task_output",
         role: { code: "deliverable", label: "Deliverable" },
         breadcrumbs: [
+          { kind: "team", id: "team-1", label: "Documentation team" },
           { kind: "team_run", id: "run-1", label: "Design system review" },
+          { kind: "team_cycle", id: "cycle-3", label: "Cycle 3" },
           { kind: "team_task", id: "task-1", label: "Write verification checklist" }
         ],
         deletion: { allowed: true }
@@ -88,8 +90,8 @@ describe("ArtifactsView", () => {
 
     renderView();
     await userEvent.click(screen.getByRole("button", { name: /최근 산출물/i }));
-    expect(await screen.findByRole("heading", { name: "Design system review" })).toBeInTheDocument();
-    expect(screen.getByText("Write verification checklist")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Documentation team" })).toBeInTheDocument();
+    expect(screen.getByText("Design system review · Cycle 3 · Write verification checklist")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /선택 삭제/i }));
     await userEvent.click(screen.getByLabelText(/run.log 선택/i));
