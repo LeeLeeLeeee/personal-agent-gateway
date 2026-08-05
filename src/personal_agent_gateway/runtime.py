@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from personal_agent_gateway.archive import ArchiveService
-from personal_agent_gateway.events import EventBus
+from personal_agent_gateway.events import EventBus, EventScope
 from personal_agent_gateway.jobs import JobService
 from personal_agent_gateway.model_client import ModelClient, ToolCall
 from personal_agent_gateway.redaction import is_sensitive_key, redact_text
@@ -58,6 +58,7 @@ class AgentRuntime:
         self._system_prompt = system_prompt
         self._archive_service = archive_service
         self._persona_id = persona_id
+        self._scopes: dict[str, EventScope] = {}
 
     def attach_event_bus(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
@@ -332,7 +333,16 @@ class AgentRuntime:
     async def _publish(self, event_type: str, payload: dict[str, object]) -> None:
         if self._event_bus is None:
             return
-        await self._event_bus.publish({"type": event_type, **_redact_payload(payload)})
+        session_id = payload.get("session_id")
+        redacted = _redact_payload(payload)
+        # Callers may attach a publisher (e.g. SessionActivityPublisher) that only
+        # implements plain publish() and predates scoping — fall back for those
+        # instead of breaking every run through them.
+        if isinstance(session_id, str) and session_id and hasattr(self._event_bus, "scope"):
+            scope = self._scopes.setdefault(session_id, self._event_bus.scope(session_id))
+            await scope.publish({"type": event_type, **redacted})
+            return
+        await self._event_bus.publish({"type": event_type, **redacted})
 
 
 def _events_to_messages(
