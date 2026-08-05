@@ -21,6 +21,7 @@ export function ArtifactsView({ artifacts = [], onChange }) {
   const [cleanupPreview, setCleanupPreview] = useState(null);
   const [cleanupIds, setCleanupIds] = useState(new Set());
   const [type, setType] = useState("all");
+  const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const confirm = useConfirm();
   const toast = useToast();
@@ -28,7 +29,10 @@ export function ArtifactsView({ artifacts = [], onChange }) {
   const grid = (segment === "cleanup" ? (cleanupPreview?.artifacts || []) : artifacts).filter((a) => {
     const isTemporary = a.retention_class === "temporary";
     const inSegment = segment === "cleanup" || (segment === "saved" ? !isTemporary : isTemporary);
-    return inSegment && (type === "all" || a.type === type);
+    const haystack = [a.title, a.metadata?.team_run_id, a.metadata?.task_id, a.metadata?.cycle_id]
+      .filter(Boolean).join(" ").toLowerCase();
+    return inSegment && (type === "all" || a.type === type)
+      && haystack.includes(query.trim().toLowerCase());
   });
   const groups = grid.reduce((current, artifact) => {
     const runId = artifact.metadata?.team_run_id;
@@ -46,6 +50,7 @@ export function ArtifactsView({ artifacts = [], onChange }) {
       <div className="artifacts-main">
         <h1 className="headline">Artifacts</h1>
         <div className="artifacts-sub mono">{grid.length} shown · ./data/artifacts</div>
+        <label className="mono">SEARCH <input className="input-field" aria-label="Search artifacts" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
 
         <div className="artifacts-filters" aria-label="Artifact retention">
           <button type="button" className={`chip${segment === "saved" ? " chip-active" : ""}`} aria-pressed={segment === "saved"} onClick={() => setSegment("saved")}>보관됨</button>
