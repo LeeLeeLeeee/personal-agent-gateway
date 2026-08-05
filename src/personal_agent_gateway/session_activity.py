@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from personal_agent_gateway.db import Database
-from personal_agent_gateway.events import EventBus
+from personal_agent_gateway.events import EventBus, EventScope
 from personal_agent_gateway.pagination import decode_cursor, encode_cursor
 
 
@@ -140,11 +140,19 @@ class SessionActivityPublisher:
         self._service = service
         self._event_bus = event_bus
 
-    async def publish(self, event: dict[str, object]) -> dict[str, object]:
+    async def publish(
+        self,
+        event: dict[str, object],
+        *,
+        operation_id: str | None = None,
+        step_index: int | None = None,
+    ) -> dict[str, object]:
         event_type = str(event.get("type", ""))
         session_id = event.get("session_id")
         if not isinstance(session_id, str) or event_type.startswith("team."):
-            return await self._event_bus.publish(event)
+            return await self._event_bus.publish(
+                event, operation_id=operation_id, step_index=step_index
+            )
 
         payload = {
             key: value
@@ -162,7 +170,18 @@ class SessionActivityPublisher:
         activity_id = normalized.pop("id")
         normalized["activity_id"] = activity_id
         legacy = {key: value for key, value in payload.items() if key not in {"payload"}}
-        return await self._event_bus.publish({**normalized, **legacy})
+        return await self._event_bus.publish(
+            {**normalized, **legacy}, operation_id=operation_id, step_index=step_index
+        )
+
+    def scope(self, operation_id: str) -> "EventScope":
+        """Return a per-run publisher that numbers its own steps.
+
+        Delegates to the shared ``EventScope`` — the operation/step stamping
+        is identical regardless of whether the target persists activity rows
+        first, as this publisher does, or hands straight to the bus.
+        """
+        return EventScope(self, operation_id)
 
 
 def _event_from_row(row: Any) -> SessionActivityEvent:

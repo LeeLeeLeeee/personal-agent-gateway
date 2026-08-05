@@ -335,10 +335,7 @@ class AgentRuntime:
             return
         session_id = payload.get("session_id")
         redacted = _redact_payload(payload)
-        # Callers may attach a publisher (e.g. SessionActivityPublisher) that only
-        # implements plain publish() and predates scoping — fall back for those
-        # instead of breaking every run through them.
-        if isinstance(session_id, str) and session_id and hasattr(self._event_bus, "scope"):
+        if isinstance(session_id, str) and session_id:
             scope = self._scopes.setdefault(session_id, self._event_bus.scope(session_id))
             await scope.publish({"type": event_type, **redacted})
             return
