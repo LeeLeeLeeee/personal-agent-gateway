@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ArtifactsView } from "./index.jsx";
+import { api } from "../../../api/client.js";
 import { UiProvider } from "../../providers/UiProvider/index.jsx";
 
 const artifacts = [
@@ -21,6 +22,17 @@ describe("ArtifactsView", () => {
     await userEvent.click(screen.getByRole("button", { name: /최근 산출물/i }));
     expect(screen.getByText("run.log")).toBeInTheDocument();
     expect(screen.getByText(/TEAM RUN run-1 · TASK task-1/i)).toBeInTheDocument();
+  });
+
+  it("loads cleanup candidates unchecked for review", async () => {
+    vi.spyOn(api, "artifactCleanupPreview").mockResolvedValue({
+      artifacts: [{ ...artifacts[1], expires_at: "2026-07-01T00:00:00Z" }],
+      total_size_bytes: 3000
+    });
+    renderView();
+    await userEvent.click(screen.getByRole("button", { name: /정리 후보/i }));
+    expect(await screen.findByLabelText(/run.log 정리 선택/i)).not.toBeChecked();
+    expect(screen.getByText(/정리 후보는 선택한 항목만 삭제/i)).toBeInTheDocument();
   });
 
   it("opens a viewer drawer with provenance and copy path", async () => {
