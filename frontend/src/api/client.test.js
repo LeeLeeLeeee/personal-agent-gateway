@@ -84,10 +84,10 @@ describe("api client", () => {
     }));
   });
 
-  it("deletes a private Archive draft", async () => {
+  it("deletes an Archive entry in any state", async () => {
     fetch.mockResolvedValueOnce({ ok: true });
 
-    await expect(api.deleteArchiveDraft("draft 1")).resolves.toBe(true);
+    await expect(api.deleteArchiveEntry("draft 1")).resolves.toBe(true);
 
     expect(fetch).toHaveBeenCalledWith("/api/archive/entries/draft%201", { method: "DELETE" });
   });
