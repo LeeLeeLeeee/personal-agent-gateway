@@ -222,3 +222,48 @@ def test_collect_omits_invalid_ready_lmg_limits(invalid_limit):
     codex = report.providers[0]
     assert codex.rate_limits == []
     assert codex.usage_status == "unconfirmed"
+
+
+def test_collect_preserves_model_scope_so_scoped_windows_stay_distinguishable():
+    """LMG reports per-model scoped windows alongside account-wide ones.
+
+    A scoped window can be exhausted while the account-wide window of the same
+    length still has headroom, so dropping `scope` would leave two 7-day rows
+    that a reader cannot tell apart.
+    """
+    registry = _FakeRegistry([make_descriptor("claude")])
+    ready_usage = LmgQueryResult(
+        data={
+            "collected_at": "2026-08-05T00:00:00Z",
+            "providers": [
+                {
+                    "provider": "claude",
+                    "status": "ok",
+                    "rate_limits": [
+                        {
+                            "window_minutes": 10080,
+                            "used_percent": 4,
+                            "resets_at": "2026-08-12T09:00:00Z",
+                        },
+                        {
+                            "window_minutes": 10080,
+                            "used_percent": 100,
+                            "resets_at": "2026-08-12T09:00:00Z",
+                            "scope": "Opus",
+                        },
+                    ],
+                }
+            ],
+        },
+        status="ready",
+    )
+
+    report = collect_local_agent_usage(
+        registry,
+        reader=lambda _: {},
+        lmg_reader=lambda: ready_usage,
+    )
+
+    limits = report.providers[0].rate_limits
+    assert [limit.scope for limit in limits] == ["", "Opus"]
+    assert [limit.used_percent for limit in limits] == [4, 100]
