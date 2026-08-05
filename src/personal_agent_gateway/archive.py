@@ -413,6 +413,34 @@ class ArchiveService:
             raise KeyError(f"Archive entry not found: {entry_id}")
         return self._entry_from_row(row)
 
+    def delete_draft(self, entry_id: str) -> None:
+        with self._db.connection() as connection:
+            row = connection.execute(
+                "select status from archive_entries where id = ?", (entry_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Archive entry not found: {entry_id}")
+            if row["status"] != "draft":
+                raise ValueError("Only private Archive drafts can be deleted")
+            origin = connection.execute(
+                "select knowledge_request_id from archive_draft_origins where entry_id = ?",
+                (entry_id,),
+            ).fetchone()
+            if origin is not None and origin["knowledge_request_id"]:
+                connection.execute(
+                    """
+                    update knowledge_requests
+                    set status = 'open', assigned_team_run_id = null, updated_at = ?
+                    where id = ? and status = 'in_progress'
+                    """,
+                    (_now(), origin["knowledge_request_id"]),
+                )
+            connection.execute("delete from archive_entries_fts where entry_id = ?", (entry_id,))
+            connection.execute("delete from archive_bindings where entry_id = ?", (entry_id,))
+            connection.execute("delete from archive_revisions where entry_id = ?", (entry_id,))
+            connection.execute("delete from archive_draft_origins where entry_id = ?", (entry_id,))
+            connection.execute("delete from archive_entries where id = ?", (entry_id,))
+
     def list_entries(
         self,
         *,

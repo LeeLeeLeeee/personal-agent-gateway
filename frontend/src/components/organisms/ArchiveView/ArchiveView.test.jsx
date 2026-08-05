@@ -134,7 +134,8 @@ function makeClient() {
     setKnowledgeRequestStatus: vi.fn().mockResolvedValue({
       ...request,
       status: "in_progress"
-    })
+    }),
+    deleteArchiveDraft: vi.fn().mockResolvedValue(true)
   };
 }
 
@@ -410,6 +411,21 @@ describe("ArchiveView", () => {
         content_markdown: draft.content_markdown
       })
     ));
+  });
+
+  it("lets the user delete a private Team draft after confirmation", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const client = makeClient();
+    render(<ArchiveView client={client} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: /Drafts/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Review Rollback checklist draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+
+    await waitFor(() => expect(client.deleteArchiveDraft).toHaveBeenCalledWith("draft-1"));
+    expect(screen.getByRole("heading", { name: "Select a team draft" })).toBeInTheDocument();
+    confirmSpy.mockRestore();
   });
 
   it("delegates an active knowledge request to a triggered documentation team", async () => {

@@ -264,6 +264,10 @@ export const api = {
     }));
     return body?.entry || null;
   },
+  async deleteArchiveDraft(id) {
+    const response = await fetch(`/api/archive/entries/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return response.ok;
+  },
   async archiveEntryRevisions(id) {
     return jsonList(
       await fetch(`/api/archive/entries/${encodeURIComponent(id)}/revisions`),

@@ -34,6 +34,28 @@ def test_archive_api_requires_authentication(tmp_path: Path) -> None:
     assert response.status_code == 401
 
 
+def test_delete_draft_removes_only_private_team_draft(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    draft = client.app.state.archive_service.save_draft(
+        actor_type="team",
+        origin_source_type="hook",
+        origin_source_id="hook-1",
+        kind="reference",
+        title="Discard me",
+        summary="",
+        content_markdown="# Draft",
+        tags=[],
+        source_urls=[],
+        persona_ids=[],
+    )
+
+    response = client.delete(f"/api/archive/entries/{draft.id}")
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted_id": draft.id}
+    assert client.get("/api/archive/entries", params={"status": "draft"}).json()["entries"] == []
+
+
 def test_library_publish_search_revision_and_map_api(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     persona = client.post(

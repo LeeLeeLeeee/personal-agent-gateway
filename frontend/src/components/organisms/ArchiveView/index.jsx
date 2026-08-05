@@ -845,6 +845,27 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
     }
   }
 
+  async function deleteDraft() {
+    if (!editingDraft) return;
+    if (!window.confirm(`Delete the private draft "${editingDraft.title}"?`)) return;
+    setSaving(true);
+    setError(null);
+    try {
+      if (!await client.deleteArchiveDraft(editingDraft.id)) {
+        throw new Error("The draft could not be deleted.");
+      }
+      setEditingId(null);
+      setForm(EMPTY_FORM);
+      setRevisions([]);
+      setNotice("Draft deleted. Its linked Knowledge Request can be worked again.");
+      await loadData();
+    } catch (nextError) {
+      setError(nextError);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function togglePersona(personaId) {
     setForm((current) => {
       const selected = current.personaIds.includes(personaId);
@@ -1272,6 +1293,7 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
                   ? "Publishing accepts this team draft as a canonical user-approved revision. Until then, it stays outside persona context."
                   : "Saving publishes a canonical revision immediately. Draft outlines are never injected into persona context."}
               </p>
+              {editingDraft ? <Button type="button" variant="destructive" disabled={saving} onClick={deleteDraft}>Delete draft</Button> : null}
               <Button type="submit" variant="primary" disabled={saving}>
                 {saving
                   ? "Publishing…"

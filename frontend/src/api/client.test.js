@@ -84,6 +84,14 @@ describe("api client", () => {
     }));
   });
 
+  it("deletes a private Archive draft", async () => {
+    fetch.mockResolvedValueOnce({ ok: true });
+
+    await expect(api.deleteArchiveDraft("draft 1")).resolves.toBe(true);
+
+    expect(fetch).toHaveBeenCalledWith("/api/archive/entries/draft%201", { method: "DELETE" });
+  });
+
   it("loads browser results with server-side filters and deletes a selected batch", async () => {
     fetch
       .mockResolvedValueOnce(jsonResponse({ items: [{ artifact: { id: "a1" } }], counts: { saved: 4 } }))

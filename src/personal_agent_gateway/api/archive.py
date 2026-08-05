@@ -219,6 +219,29 @@ def archive_entry(
     return {"entry": _entry_payload(entry)}
 
 
+@router.delete("/entries/{entry_id}")
+def delete_draft(
+    request: Request,
+    entry_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, str]:
+    try:
+        request.app.state.archive_service.delete_draft(entry_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Archive draft not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_domain_audit(
+        request,
+        principal,
+        event_type="archive.draft_deleted",
+        action="archive.delete_draft",
+        resource_type="archive_entry",
+        resource_id=entry_id,
+    )
+    return {"deleted_id": entry_id}
+
+
 @router.get("/entries/{entry_id}/revisions")
 def list_revisions(
     request: Request,
