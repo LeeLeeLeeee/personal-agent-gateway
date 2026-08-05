@@ -85,6 +85,8 @@ class InterventionStore:
 
     def cancel(self, intervention_id: str) -> Intervention:
         item = self.get(intervention_id)
+        if item.status != "pending":
+            raise ValueError(f"intervention {intervention_id} is already {item.status}")
         cancelled = replace(item, status="cancelled")
         self._items[intervention_id] = cancelled
         return cancelled

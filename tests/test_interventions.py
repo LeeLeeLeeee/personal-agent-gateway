@@ -98,6 +98,28 @@ def test_cancel_marks_cancelled_and_blocks_answers() -> None:
         store.answer(created.id, ["main"])
 
 
+def test_cancelling_an_answered_intervention_is_rejected() -> None:
+    store = InterventionStore()
+    created = store.create_prompt("브랜치?")
+    answered = store.answer(created.id, ["main"])
+
+    with pytest.raises(ValueError):
+        store.cancel(created.id)
+
+    assert store.get(created.id) == answered
+    assert store.get(created.id).status == "answered"
+    assert store.get(created.id).answers == ("main",)
+
+
+def test_cancelling_twice_is_rejected() -> None:
+    store = InterventionStore()
+    created = store.create_prompt("브랜치?")
+    store.cancel(created.id)
+
+    with pytest.raises(ValueError):
+        store.cancel(created.id)
+
+
 def test_pending_lists_only_open_interventions() -> None:
     store = InterventionStore()
     open_one = store.create_prompt("첫 번째")
