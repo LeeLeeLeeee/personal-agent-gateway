@@ -500,3 +500,118 @@ def test_clear_and_redelegation_remove_the_recorded_failure(tmp_path: Path) -> N
     assert reassigned.status == "in_progress"
     assert reassigned.last_draft_error_code is None
     assert reassigned.last_draft_failed_at is None
+
+
+def test_delete_entry_removes_published_document_and_its_traces(tmp_path: Path) -> None:
+    archive, personas = archive_service(tmp_path)
+    persona = personas.create_persona("Researcher", "Reference checking", "Checks sources.", [], [])
+    entry = archive.publish_entry(
+        actor_type="user",
+        kind="reference",
+        title="Rollback checklist",
+        summary="A verified rollback sequence.",
+        content_markdown="- Roll back\n- Verify",
+        tags=["deployment"],
+        source_urls=[],
+        persona_ids=[persona.id],
+    )
+
+    status = archive.delete_entry(entry.id)
+
+    assert status == "published"
+    assert archive.list_entries(status="published") == []
+    assert archive.list_entries(query="rollback", status="published") == []
+    with pytest.raises(KeyError):
+        archive.get_entry(entry.id)
+
+
+def test_delete_entry_reopens_the_request_the_published_document_fulfilled(tmp_path: Path) -> None:
+    """The fulfilled link lives on knowledge_requests.fulfilled_by_entry_id, not on
+    archive_draft_origins — the pre-existing delete path never touched it, so a deleted
+    document used to leave a fulfilled request with no supporting document."""
+    archive, personas = archive_service(tmp_path)
+    persona = personas.create_persona("Researcher", "Reference checking", "Checks sources.", [], [])
+    request = archive.create_knowledge_request(
+        title="Deployment rollback checklist",
+        reason="Reusable guidance is missing.",
+        suggested_outline=["Rollback", "Verification"],
+        source_hints=[],
+        requested_by_persona_id=persona.id,
+    )
+    entry = archive.publish_entry(
+        actor_type="user",
+        kind="checklist",
+        title=request.title,
+        summary="A verified rollback sequence.",
+        content_markdown="- Roll back\n- Verify",
+        tags=[],
+        source_urls=[],
+        persona_ids=[persona.id],
+        request_id=request.id,
+    )
+    assert archive.get_request(request.id).status == "fulfilled"
+
+    archive.delete_entry(entry.id)
+
+    reopened = archive.get_request(request.id)
+    assert reopened.status == "open"
+    assert reopened.fulfilled_by_entry_id is None
+    assert reopened.assigned_team_run_id is None
+
+
+def test_delete_entry_still_reopens_an_in_progress_draft_origin(tmp_path: Path) -> None:
+    """Regression: the draft-origin path must keep working exactly as before."""
+    archive, _personas = archive_service(tmp_path)
+    request = archive.create_knowledge_request(
+        title="Rollback guidance",
+        reason="Missing.",
+        suggested_outline=[],
+        source_hints=[],
+        requested_by_persona_id=None,
+    )
+    draft = archive.save_draft(
+        actor_type="team",
+        origin_source_type="hook",
+        origin_source_id="hook-1",
+        kind="reference",
+        title="Draft",
+        summary="",
+        content_markdown="# Draft",
+        tags=[],
+        source_urls=[],
+        persona_ids=[],
+        origin_request_id=request.id,
+    )
+
+    status = archive.delete_entry(draft.id)
+
+    assert status == "draft"
+    assert archive.get_request(request.id).status == "open"
+
+
+def test_delete_entry_removes_an_archived_document(tmp_path: Path) -> None:
+    archive, _personas = archive_service(tmp_path)
+    entry = archive.publish_entry(
+        actor_type="user",
+        kind="reference",
+        title="Old guidance",
+        summary="Superseded.",
+        content_markdown="# Old",
+        tags=[],
+        source_urls=[],
+        persona_ids=[],
+    )
+    archive.archive_entry(entry.id)
+
+    status = archive.delete_entry(entry.id)
+
+    assert status == "archived"
+    with pytest.raises(KeyError):
+        archive.get_entry(entry.id)
+
+
+def test_delete_entry_rejects_an_unknown_id(tmp_path: Path) -> None:
+    archive, _personas = archive_service(tmp_path)
+
+    with pytest.raises(KeyError):
+        archive.delete_entry("nope")

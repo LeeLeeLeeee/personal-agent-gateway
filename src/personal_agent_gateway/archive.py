@@ -413,15 +413,25 @@ class ArchiveService:
             raise KeyError(f"Archive entry not found: {entry_id}")
         return self._entry_from_row(row)
 
-    def delete_draft(self, entry_id: str) -> None:
+    def delete_entry(self, entry_id: str) -> str:
+        """Hard-delete an Archive entry in any state and return the status it had.
+
+        Returning the prior status lets the route split its audit event without a
+        second query.
+        """
         with self._db.connection() as connection:
             row = connection.execute(
                 "select status from archive_entries where id = ?", (entry_id,)
             ).fetchone()
             if row is None:
                 raise KeyError(f"Archive entry not found: {entry_id}")
-            if row["status"] != "draft":
-                raise ValueError("Only private Archive drafts can be deleted")
+            status = str(row["status"])
+            now = _now()
+
+            # A document reaches a knowledge request through two unrelated links, and a
+            # single document can hold both: a draft records its origin request, while a
+            # published document is recorded as the request's fulfiller. Reset both —
+            # deleting the document makes that knowledge need open again either way.
             origin = connection.execute(
                 "select knowledge_request_id from archive_draft_origins where entry_id = ?",
                 (entry_id,),
@@ -433,13 +443,27 @@ class ArchiveService:
                     set status = 'open', assigned_team_run_id = null, updated_at = ?
                     where id = ? and status = 'in_progress'
                     """,
-                    (_now(), origin["knowledge_request_id"]),
+                    (now, origin["knowledge_request_id"]),
                 )
+            # Must run before the entry row is deleted: the foreign key is
+            # `on delete set null`, so deleting first would erase the link.
+            connection.execute(
+                """
+                update knowledge_requests
+                set status = 'open',
+                    fulfilled_by_entry_id = null,
+                    assigned_team_run_id = null,
+                    updated_at = ?
+                where fulfilled_by_entry_id = ? and status = 'fulfilled'
+                """,
+                (now, entry_id),
+            )
             connection.execute("delete from archive_entries_fts where entry_id = ?", (entry_id,))
             connection.execute("delete from archive_bindings where entry_id = ?", (entry_id,))
             connection.execute("delete from archive_revisions where entry_id = ?", (entry_id,))
             connection.execute("delete from archive_draft_origins where entry_id = ?", (entry_id,))
             connection.execute("delete from archive_entries where id = ?", (entry_id,))
+            return status
 
     def list_entries(
         self,
