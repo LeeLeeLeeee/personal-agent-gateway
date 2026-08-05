@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ArtifactsView } from "./index.jsx";
@@ -21,7 +21,8 @@ describe("ArtifactsView", () => {
     expect(screen.queryByText("run.log")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /최근 산출물/i }));
     expect(screen.getByText("run.log")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /TEAM RUN run-1 · TASK task-1/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /TEAM RUN run-1/i })).toBeInTheDocument();
+    expect(screen.getByText("TASK task-1")).toBeInTheDocument();
   });
 
   it("loads cleanup candidates unchecked for review", async () => {
@@ -31,8 +32,8 @@ describe("ArtifactsView", () => {
     });
     renderView();
     await userEvent.click(screen.getByRole("button", { name: /정리 후보/i }));
-    expect(await screen.findByLabelText(/run.log 정리 선택/i)).not.toBeChecked();
-    expect(screen.getByText(/정리 후보는 선택한 항목만 삭제/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/run.log 선택/i)).not.toBeChecked();
+    expect(screen.getByRole("heading", { name: "Cleanup candidates" })).toBeInTheDocument();
   });
 
   it("opens a viewer drawer with provenance and copy path", async () => {
@@ -53,12 +54,11 @@ describe("ArtifactsView", () => {
     expect(screen.getByRole("button", { name: "Open spec.pdf" })).toBeInTheDocument();
   });
 
-  it("renders an image thumbnail in the grid card", () => {
+  it("renders an image type glyph in the compact result row", () => {
     render(<ArtifactsView artifacts={[
       { id: "i1", type: "image", title: "cat.png", relative_path: "files/x/cat.png", mime_type: "image/png", size_bytes: 2048, created_at: "2026-07-10T00:00:00Z" }
     ]} />);
-    const img = screen.getByAltText("cat.png");
-    expect(img).toHaveAttribute("src", "/api/artifacts/i1/content");
+    expect(screen.getByRole("button", { name: "Open cat.png" })).toHaveTextContent("▦");
   });
 
   it("opens a centered modal (dialog) when a card is clicked", () => {
@@ -67,5 +67,39 @@ describe("ArtifactsView", () => {
     ]} />);
     fireEvent.click(screen.getByRole("button", { name: "Open cat.png" }));
     expect(screen.getByRole("dialog", { name: "cat.png" })).toBeInTheDocument();
+  });
+
+  it("uses grouped browser results for search and exposes selection deletion", async () => {
+    const browser = vi.spyOn(api, "artifactBrowser").mockResolvedValue({
+      items: [{
+        artifact: artifacts[1],
+        source_kind: "team_task_output",
+        role: { code: "deliverable", label: "Deliverable" },
+        breadcrumbs: [
+          { kind: "team_run", id: "run-1", label: "Design system review" },
+          { kind: "team_task", id: "task-1", label: "Write verification checklist" }
+        ],
+        deletion: { allowed: true }
+      }],
+      counts: { saved: 1, recent: 1, cleanup: 0 }
+    });
+    const remove = vi.spyOn(api, "deleteArtifacts").mockResolvedValue({ deleted_ids: ["a2"], blocked: [], missing_ids: [] });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderView();
+    await userEvent.click(screen.getByRole("button", { name: /최근 산출물/i }));
+    expect(await screen.findByRole("heading", { name: "Design system review" })).toBeInTheDocument();
+    expect(screen.getByText("Write verification checklist")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /선택 삭제/i }));
+    await userEvent.click(screen.getByLabelText(/run.log 선택/i));
+    await userEvent.click(screen.getByRole("button", { name: /선택 1개 삭제/i }));
+    await userEvent.click(screen.getByRole("button", { name: "삭제" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(["a2"]));
+    expect(browser).toHaveBeenCalledWith(expect.objectContaining({ segment: "recent" }));
+
+    browser.mockRestore();
+    remove.mockRestore();
+    confirmSpy.mockRestore();
   });
 });

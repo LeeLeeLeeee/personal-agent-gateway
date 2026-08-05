@@ -265,7 +265,7 @@ class ArtifactStore:
             for name in ("saved", "recent", "cleanup")
         }
         terms = [term for term in query.lower().split() if term]
-        filtered: list[Artifact] = []
+        filtered: list[tuple[Artifact, str, str]] = []
         for artifact in all_artifacts:
             if not self._in_browser_segment(artifact, segment, now):
                 continue
@@ -274,13 +274,14 @@ class ArtifactStore:
                 continue
             if source_kind and resolved_source_kind != source_kind:
                 continue
+            group_label, item_label = self._browser_labels(artifact, resolved_source_kind)
             haystack = " ".join(
                 (
                     artifact.title,
                     artifact.relative_path,
                     artifact.artifact_role,
-                    artifact.origin_group_label_snapshot,
-                    artifact.origin_item_label_snapshot,
+                    group_label,
+                    item_label,
                     artifact.source_job_id or "",
                     artifact.source_session_id or "",
                     artifact.source_chat_turn_id or "",
@@ -290,24 +291,27 @@ class ArtifactStore:
                 )
             ).lower()
             if all(term in haystack for term in terms):
-                filtered.append(artifact)
+                filtered.append((artifact, group_label, item_label))
         if cursor:
             created_at, artifact_id = decode_cursor(cursor, 2)
             if not isinstance(created_at, str) or not isinstance(artifact_id, str):
                 raise ValueError("Invalid cursor")
             filtered = [
                 artifact
-                for artifact in filtered
+                for artifact, group_label, item_label in filtered
                 if artifact.created_at.isoformat() < created_at
                 or (artifact.created_at.isoformat() == created_at and artifact.id < artifact_id)
             ]
         selected = filtered[:normalized_limit]
         next_cursor = None
         if len(filtered) > normalized_limit:
-            last = selected[-1]
+            last = selected[-1][0]
             next_cursor = encode_cursor(last.created_at.isoformat(), last.id)
         return ArtifactBrowserPage(
-            items=tuple(self._browser_item(artifact) for artifact in selected),
+            items=tuple(
+                self._browser_item(artifact, group_label, item_label)
+                for artifact, group_label, item_label in selected
+            ),
             counts=counts,
             next_cursor=next_cursor,
         )
@@ -546,10 +550,29 @@ class ArtifactStore:
             )
         return artifact.retention_class != "temporary"
 
-    def _browser_item(self, artifact: Artifact) -> ArtifactBrowserItem:
-        source_kind = _artifact_source_kind(artifact)
+    def _browser_labels(self, artifact: Artifact, source_kind: str) -> tuple[str, str]:
         group_label = artifact.origin_group_label_snapshot or _default_group_label(source_kind)
         item_label = artifact.origin_item_label_snapshot or artifact.title
+        if source_kind != "team":
+            return group_label, item_label
+        if artifact.source_team_run_id:
+            run = self._db.fetchone(
+                "select goal from team_runs where id = ?", (artifact.source_team_run_id,)
+            )
+            if run and run["goal"]:
+                group_label = run["goal"]
+        if artifact.source_team_task_id:
+            task = self._db.fetchone(
+                "select title from team_tasks where id = ?", (artifact.source_team_task_id,)
+            )
+            if task and task["title"]:
+                item_label = task["title"]
+        return group_label, item_label
+
+    def _browser_item(
+        self, artifact: Artifact, group_label: str, item_label: str
+    ) -> ArtifactBrowserItem:
+        source_kind = _artifact_source_kind(artifact)
         group_id = (
             artifact.source_team_run_id
             or artifact.source_session_id

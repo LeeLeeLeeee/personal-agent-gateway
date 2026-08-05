@@ -84,6 +84,21 @@ describe("api client", () => {
     }));
   });
 
+  it("loads browser results with server-side filters and deletes a selected batch", async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ items: [{ artifact: { id: "a1" } }], counts: { saved: 4 } }))
+      .mockResolvedValueOnce(jsonResponse({ deleted_ids: ["a1"], blocked: [], missing_ids: [] }));
+
+    await expect(api.artifactBrowser({ segment: "recent", query: "design note", fileKind: "report" }))
+      .resolves.toMatchObject({ items: [{ artifact: { id: "a1" } }], counts: { saved: 4 } });
+    await expect(api.deleteArtifacts(["a1"])).resolves.toMatchObject({ deleted_ids: ["a1"] });
+
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/artifacts/browser?segment=recent&limit=100&q=design+note&file_kind=report");
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/artifacts/delete", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ artifact_ids: ["a1"] })
+    }));
+  });
+
   it("supports job retry and schedule detail endpoints", async () => {
     fetch
       .mockResolvedValueOnce(jsonResponse({ job: { id: "j2", source_job_id: "j1" } }))

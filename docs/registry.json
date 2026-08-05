@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 201,
+  "document_count": 202,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -9431,6 +9431,64 @@
         }
       ],
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-05-artifact-browser-provenance-search-delete.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Artifact Browser Provenance, Search, and Safe Deletion Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global constraints"
+        },
+        {
+          "level": 2,
+          "text": "File structure"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: Persist Chat turns and origin fields"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: Propagate Chat and Team producer identity"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: Add browser query and server-side search"
+        },
+        {
+          "level": 2,
+          "text": "Task 4: Add structured safe deletion"
+        },
+        {
+          "level": 2,
+          "text": "Task 5: Build the compact Artifact browser"
+        },
+        {
+          "level": 2,
+          "text": "Task 6: Improve preview and responsive details"
+        },
+        {
+          "level": 2,
+          "text": "Task 7: Integrate and verify"
+        },
+        {
+          "level": 2,
+          "text": "Plan self-review"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking."
     },
     {
       "path": "docs/superpowers/plans/2026-08-05-artifact-retention-cleanup.md",

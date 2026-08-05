@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -876,6 +877,47 @@ def _migration_26_artifact_browser_origins(
     )
 
 
+def _migration_27_backfill_artifact_origins(
+    connection: sqlite3.Connection,
+) -> None:
+    rows = connection.execute(
+        """
+        select id, metadata_json, source_job_id, source_session_id, origin_kind,
+               source_team_task_id, source_team_run_id, source_cycle_id
+        from artifacts
+        """
+    ).fetchall()
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata_json"])
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        run_id = metadata.get("team_run_id") if isinstance(metadata.get("team_run_id"), str) else None
+        task_id = metadata.get("task_id") if isinstance(metadata.get("task_id"), str) else None
+        cycle_id = metadata.get("cycle_id") if isinstance(metadata.get("cycle_id"), str) else None
+        if run_id or task_id:
+            origin_kind = "team_task_output"
+        elif row["source_job_id"]:
+            origin_kind = "job_output"
+        elif row["source_session_id"]:
+            origin_kind = "chat_upload"
+        else:
+            origin_kind = row["origin_kind"]
+        connection.execute(
+            """
+            update artifacts
+            set origin_kind = ?,
+                source_team_task_id = coalesce(source_team_task_id, ?),
+                source_team_run_id = coalesce(source_team_run_id, ?),
+                source_cycle_id = coalesce(source_cycle_id, ?)
+            where id = ?
+            """,
+            (origin_kind, task_id, run_id, cycle_id, row["id"]),
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -903,6 +945,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (24, "team-task-dependencies", _migration_24_team_task_dependencies),
     (25, "artifact-retention-cleanup", _migration_25_artifact_retention_cleanup),
     (26, "artifact-browser-origins", _migration_26_artifact_browser_origins),
+    (27, "backfill-artifact-origins", _migration_27_backfill_artifact_origins),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

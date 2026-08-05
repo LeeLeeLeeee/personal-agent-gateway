@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../api/client.js";
 import { useConfirm, useToast } from "../../providers/UiProvider/index.jsx";
 import { GLYPH, fmtSize } from "../../../lib/artifactFormat.js";
+import { MarkdownContent } from "../MarkdownContent/index.jsx";
 
 function ImageViewer({ src, alt }) {
   const [scale, setScale] = useState(1);
@@ -60,21 +61,31 @@ function ImageViewer({ src, alt }) {
   );
 }
 
+function isMarkdown(artifact) {
+  return artifact.mime_type === "text/markdown" || /\.md(?:own)?$/i.test(artifact.title || "");
+}
+
+function isReadableText(artifact) {
+  return isMarkdown(artifact) || artifact.mime_type?.startsWith("text/") || ["log", "report"].includes(artifact.type);
+}
+
 function Preview({ artifact }) {
   const contentUrl = api.artifactContentUrl(artifact.id);
   const [text, setText] = useState("");
 
   useEffect(() => {
-    if (artifact.type !== "log" && artifact.type !== "report") return undefined;
+    if (!isReadableText(artifact)) return undefined;
     let alive = true;
-    api.artifactText(artifact.id).then((v) => { if (alive) setText(v); });
+    setText("");
+    api.artifactText(artifact.id).then((v) => { if (alive) setText(v); }).catch(() => { if (alive) setText(""); });
     return () => { alive = false; };
-  }, [artifact.id, artifact.type]);
+  }, [artifact]);
 
   if (artifact.type === "image") return <ImageViewer src={contentUrl} alt={artifact.title} />;
   if (artifact.type === "video") return <video className="modal-media" controls src={contentUrl} />;
   if (artifact.type === "audio") return <audio className="modal-media" controls src={contentUrl} />;
-  if (artifact.type === "log" || artifact.type === "report") return <pre className="mono modal-text">{text}</pre>;
+  if (isMarkdown(artifact)) return <div className="modal-markdown"><MarkdownContent source={text} pathRegistration={false} /></div>;
+  if (isReadableText(artifact)) return <pre className="mono modal-text">{text}</pre>;
   if (artifact.type === "document" && artifact.mime_type === "application/pdf") {
     return <iframe className="modal-doc" src={contentUrl} title={artifact.title} />;
   }
@@ -86,7 +97,7 @@ function Preview({ artifact }) {
   );
 }
 
-export function ArtifactModal({ artifact, onClose, onDeleted }) {
+export function ArtifactModal({ artifact, breadcrumbs = [], role = null, presentation = "modal", onClose, onDeleted }) {
   const toast = useToast();
   const confirm = useConfirm();
   const contentUrl = api.artifactContentUrl(artifact.id);
@@ -98,6 +109,7 @@ export function ArtifactModal({ artifact, onClose, onDeleted }) {
   }, [onClose]);
 
   async function handleCopyPath() {
+    if (!navigator.clipboard?.writeText) { toast("경로 복사를 지원하지 않는 환경입니다", "error"); return; }
     await navigator.clipboard.writeText(artifact.relative_path);
     toast("경로가 복사되었습니다", "success");
   }
@@ -120,19 +132,21 @@ export function ArtifactModal({ artifact, onClose, onDeleted }) {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" role="dialog" aria-modal="true" aria-label={artifact.title} onClick={(e) => e.stopPropagation()}>
+    <div className={`modal-backdrop${presentation === "inspector" ? " modal-inspector" : ""}`} onClick={onClose}>
+      <div className={`modal-card${presentation === "inspector" ? " modal-card-inspector" : ""}`} role="dialog" aria-modal="true" aria-label={artifact.title} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span className="mono">ARTIFACT · {artifact.type}</span>
           <button type="button" className="modal-close" aria-label="Close" onClick={onClose}>✕</button>
         </div>
         <div className="modal-preview"><Preview artifact={artifact} /></div>
         <div className="modal-title">{artifact.title}</div>
-        <div className="settings-block modal-provenance">
+        {breadcrumbs.length ? <div className="modal-breadcrumbs mono">{breadcrumbs.map((crumb) => crumb.label).join(" / ")}{role?.label ? ` · ${role.label}` : ""}</div> : null}
+        <details className="settings-block modal-provenance">
+          <summary className="mono">기술 정보</summary>
           <div className="settings-row"><span className="settings-k mono">PATH</span><span className="settings-v mono modal-v">{artifact.relative_path}</span></div>
           <div className="settings-row"><span className="settings-k mono">SIZE</span><span className="settings-v mono modal-v">{fmtSize(artifact.size_bytes)} · {artifact.mime_type}</span></div>
           <div className="settings-row"><span className="settings-k mono">SESSION</span><span className="settings-v mono modal-v">{artifact.source_session_id || "-"}</span></div>
-        </div>
+        </details>
         <div className="modal-actions">
           <a className="btn btn-primary btn-sm" href={contentUrl} download>Download</a>
           <button type="button" className="btn btn-sm" onClick={handleCopyPath}>Copy path</button>

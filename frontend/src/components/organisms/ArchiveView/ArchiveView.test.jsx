@@ -151,12 +151,12 @@ describe("ArchiveView", () => {
     );
   });
 
-  it("keeps Team artifact groups full-width and grids only their child cards", () => {
+  it("keeps Team artifact groups full-width and lists files in aligned rows", () => {
     expect(styles).toMatch(
-      /\.artifact-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/
+      /\.artifact-groups\s*\{\s*display:\s*grid;\s*gap:\s*18px;/
     );
     expect(styles).toMatch(
-      /\.artifact-group\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill, minmax\(180px, 220px\)\);/
+      /\.artifact-row-open\s*\{[^}]*grid-template-columns:\s*38px minmax\(0, 1fr\) 150px;/
     );
   });
 

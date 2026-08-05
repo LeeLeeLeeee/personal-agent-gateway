@@ -5,6 +5,7 @@ import pytest
 
 from personal_agent_gateway.artifacts import ArtifactPathError, ArtifactStore
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.migrations import _migration_27_backfill_artifact_origins
 
 
 def test_artifact_store_registers_file_under_root(tmp_path: Path) -> None:
@@ -79,6 +80,33 @@ def test_artifact_schema_creates_durable_chat_turn_table(tmp_path: Path) -> None
     }
 
     assert "chat_turns" in tables
+
+
+def test_origin_backfill_recovers_team_references_from_legacy_metadata(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+    artifact = store.register_bytes(
+        "markdown", "legacy.md", "files/legacy.md", b"# Legacy", "text/markdown",
+        metadata={"team_run_id": "run-1", "task_id": "task-1", "cycle_id": "cycle-1"},
+    )
+    with db.connection() as connection:
+        connection.execute(
+            """
+            update artifacts set origin_kind = 'legacy', source_team_run_id = null,
+                                 source_team_task_id = null, source_cycle_id = null
+            where id = ?
+            """,
+            (artifact.id,),
+        )
+        _migration_27_backfill_artifact_origins(connection)
+
+    restored = store.get(artifact.id)
+
+    assert restored.origin_kind == "team_task_output"
+    assert (restored.source_team_run_id, restored.source_team_task_id, restored.source_cycle_id) == (
+        "run-1", "task-1", "cycle-1"
+    )
 
 
 def test_cleanup_preview_excludes_referenced_temporary_artifacts(tmp_path: Path) -> None:
@@ -253,6 +281,40 @@ def test_browser_search_matches_resolved_origin_label(tmp_path: Path) -> None:
     assert [crumb.label for crumb in page.items[0].breadcrumbs] == [
         "D3 guide research",
         "Verify chart examples",
+    ]
+
+
+def test_browser_prefers_live_team_goal_and_task_title_for_breadcrumbs(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+    with db.connection() as connection:
+        connection.execute(
+            """
+            insert into team_runs (id, goal, status, run_mode, lifecycle_mode, max_workers,
+                                   rounds_budget, workspace_root, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("run-1", "Design system review", "completed", "manual", "standard", 1,
+             1, "workspace", "now", "now"),
+        )
+        connection.execute(
+            """
+            insert into team_tasks (id, team_run_id, title, description, status, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("task-1", "run-1", "Verify chart examples", "description", "completed", "now", "now"),
+        )
+    artifact = store.register_bytes(
+        "markdown", "chart-notes.md", "files/chart-notes.md", b"# Notes", "text/markdown",
+        origin_kind="team_task_output", source_team_run_id="run-1", source_team_task_id="task-1",
+    )
+
+    item = store.browser_page(segment="saved").items[0]
+
+    assert item.artifact.id == artifact.id
+    assert [crumb.label for crumb in item.breadcrumbs] == [
+        "Design system review", "Verify chart examples"
     ]
 
 

@@ -13,6 +13,14 @@ const artifact = {
   source_session_id: "s1"
 };
 
+const markdownArtifact = {
+  ...artifact,
+  id: "m1",
+  type: "document",
+  title: "review.md",
+  mime_type: "text/markdown"
+};
+
 describe("ArtifactModal delete flow", () => {
   it("confirms, deletes, notifies onDeleted, then closes", async () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -45,5 +53,14 @@ describe("ArtifactModal delete flow", () => {
 
     confirmSpy.mockRestore();
     delSpy.mockRestore();
+  });
+
+  it("renders markdown content and keeps technical metadata collapsed", async () => {
+    vi.spyOn(api, "artifactText").mockResolvedValue("# Review\n\n- ready");
+    render(<ArtifactModal artifact={markdownArtifact} onClose={() => {}} />);
+
+    expect(await screen.findByRole("heading", { name: "Review" })).toBeInTheDocument();
+    expect(screen.getByText("기술 정보")).toBeInTheDocument();
+    expect(screen.getByText("files/x/doc.zip")).not.toBeVisible();
   });
 });

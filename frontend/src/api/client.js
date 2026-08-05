@@ -185,6 +185,14 @@ export const api = {
   async artifacts() {
     return jsonList(await fetch("/api/artifacts"), "artifacts");
   },
+  async artifactBrowser({ segment = "saved", query = "", fileKind = "", sourceKind = "", limit = 100, cursor = "" } = {}) {
+    const params = new URLSearchParams({ segment, limit: String(limit) });
+    if (query.trim()) params.set("q", query.trim());
+    if (fileKind) params.set("file_kind", fileKind);
+    if (sourceKind) params.set("source_kind", sourceKind);
+    if (cursor) params.set("cursor", cursor);
+    return jsonOrNull(await fetch(`/api/artifacts/browser?${params.toString()}`));
+  },
   async artifactCleanupPreview() {
     return jsonOrNull(await fetch("/api/artifacts/cleanup-preview"));
   },
@@ -224,6 +232,13 @@ export const api = {
   async deleteArtifact(id) {
     const res = await fetch(`/api/artifacts/${encodeURIComponent(id)}`, { method: "DELETE" });
     return res.ok;
+  },
+  async deleteArtifacts(artifactIds) {
+    return jsonOrNull(await fetch("/api/artifacts/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ artifact_ids: artifactIds })
+    }));
   },
   async archiveEntries({ query = "", kind = "", status = "published" } = {}) {
     const params = new URLSearchParams();
