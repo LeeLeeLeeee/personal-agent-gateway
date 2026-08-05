@@ -220,22 +220,27 @@ def archive_entry(
 
 
 @router.delete("/entries/{entry_id}")
-def delete_draft(
+def delete_entry(
     request: Request,
     entry_id: str,
     principal: SessionPrincipal = session_dependency,
 ) -> dict[str, str]:
     try:
-        request.app.state.archive_service.delete_draft(entry_id)
+        status = request.app.state.archive_service.delete_entry(entry_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Archive draft not found") from exc
+        raise HTTPException(status_code=404, detail="Archive entry not found") from exc
     except ValueError as exc:
+        # No condition raises this today. Kept so a future refusal returns 409
+        # rather than a 500.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # Draft deletion keeps its original event name so existing audit history stays
+    # continuous; deleting a shared Library document is recorded separately.
+    draft = status == "draft"
     record_domain_audit(
         request,
         principal,
-        event_type="archive.draft_deleted",
-        action="archive.delete_draft",
+        event_type="archive.draft_deleted" if draft else "archive.entry_deleted",
+        action="archive.delete_draft" if draft else "archive.delete_entry",
         resource_type="archive_entry",
         resource_id=entry_id,
     )

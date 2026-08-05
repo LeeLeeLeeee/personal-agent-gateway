@@ -298,3 +298,71 @@ def test_requests_api_exposes_the_last_draft_failure(tmp_path: Path) -> None:
     )
     assert item["last_draft_cycle_id"] == "cycle-1"
     assert item["last_draft_failed_at"]
+
+
+def test_delete_removes_a_published_library_document(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    entry = client.app.state.archive_service.publish_entry(
+        actor_type="user",
+        kind="reference",
+        title="Library doc",
+        summary="Shared guidance.",
+        content_markdown="# Doc",
+        tags=[],
+        source_urls=[],
+        persona_ids=[],
+    )
+
+    response = client.delete(f"/api/archive/entries/{entry.id}")
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted_id": entry.id}
+    assert client.get("/api/archive/entries", params={"status": "published"}).json()["entries"] == []
+
+
+def test_delete_audits_a_library_document_apart_from_a_draft(tmp_path: Path) -> None:
+    """The two events must stay distinguishable: a shared Library document being
+    deleted is a different act from discarding a private draft."""
+    client = authenticated_client(tmp_path)
+    service = client.app.state.archive_service
+    published = service.publish_entry(
+        actor_type="user",
+        kind="reference",
+        title="Library doc",
+        summary="Shared.",
+        content_markdown="# Doc",
+        tags=[],
+        source_urls=[],
+        persona_ids=[],
+    )
+    draft = service.save_draft(
+        actor_type="team",
+        origin_source_type="hook",
+        origin_source_id="hook-1",
+        kind="reference",
+        title="Private draft",
+        summary="",
+        content_markdown="# Draft",
+        tags=[],
+        source_urls=[],
+        persona_ids=[],
+    )
+
+    assert client.delete(f"/api/archive/entries/{published.id}").status_code == 200
+    assert client.delete(f"/api/archive/entries/{draft.id}").status_code == 200
+
+    def resource_ids(event_type: str) -> list[str]:
+        response = client.get("/api/audit/events", params={"event_type": event_type})
+        assert response.status_code == 200
+        return [event["resource_id"] for event in response.json()["events"]]
+
+    assert resource_ids("archive.entry_deleted") == [published.id]
+    assert resource_ids("archive.draft_deleted") == [draft.id]
+
+
+def test_delete_unknown_entry_returns_404(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+
+    response = client.delete("/api/archive/entries/nope")
+
+    assert response.status_code == 404
