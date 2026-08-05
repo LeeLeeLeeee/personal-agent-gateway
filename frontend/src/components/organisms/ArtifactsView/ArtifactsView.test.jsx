@@ -21,7 +21,7 @@ describe("ArtifactsView", () => {
     expect(screen.queryByText("run.log")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /최근 산출물/i }));
     expect(screen.getByText("run.log")).toBeInTheDocument();
-    expect(screen.getByText(/TEAM RUN run-1 · TASK task-1/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /TEAM RUN run-1 · TASK task-1/i })).toBeInTheDocument();
   });
 
   it("loads cleanup candidates unchecked for review", async () => {

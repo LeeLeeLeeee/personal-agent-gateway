@@ -30,6 +30,15 @@ export function ArtifactsView({ artifacts = [], onChange }) {
     const inSegment = segment === "cleanup" || (segment === "saved" ? !isTemporary : isTemporary);
     return inSegment && (type === "all" || a.type === type);
   });
+  const groups = grid.reduce((current, artifact) => {
+    const runId = artifact.metadata?.team_run_id;
+    const taskId = artifact.metadata?.task_id;
+    const label = runId
+      ? `TEAM RUN ${runId}${taskId ? ` · TASK ${taskId}` : ""}`
+      : "LOCAL / USER ARTIFACTS";
+    current.set(label, [...(current.get(label) || []), artifact]);
+    return current;
+  }, new Map());
   const selected = artifacts.find((a) => a.id === selectedId) || null;
 
   return (
@@ -72,7 +81,10 @@ export function ArtifactsView({ artifacts = [], onChange }) {
 
         {grid.length ? (
           <div className="artifact-grid">
-            {grid.map((a) => (
+            {[...groups.entries()].map(([group, groupArtifacts]) => (
+              <section key={group} className="artifact-group">
+                <h2 className="mono">{group}</h2>
+                {groupArtifacts.map((a) => (
               segment === "cleanup" ? (
                 <label key={a.id} className="artifact-card">
                   <input type="checkbox" aria-label={`${a.title} 정리 선택`} checked={cleanupIds.has(a.id)} onChange={() => setCleanupIds((current) => {
@@ -120,6 +132,8 @@ export function ArtifactsView({ artifacts = [], onChange }) {
                 </div>
               </button>
               )
+                ))}
+              </section>
             ))}
           </div>
         ) : (
