@@ -264,7 +264,7 @@ export const api = {
     }));
     return body?.entry || null;
   },
-  async deleteArchiveDraft(id) {
+  async deleteArchiveEntry(id) {
     const response = await fetch(`/api/archive/entries/${encodeURIComponent(id)}`, { method: "DELETE" });
     return response.ok;
   },

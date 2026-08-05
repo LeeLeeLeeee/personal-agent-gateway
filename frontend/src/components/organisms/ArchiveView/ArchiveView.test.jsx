@@ -135,7 +135,7 @@ function makeClient() {
       ...request,
       status: "in_progress"
     }),
-    deleteArchiveDraft: vi.fn().mockResolvedValue(true)
+    deleteArchiveEntry: vi.fn().mockResolvedValue(true)
   };
 }
 
@@ -423,7 +423,7 @@ describe("ArchiveView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Review Rollback checklist draft" }));
     await userEvent.click(screen.getByRole("button", { name: "Delete draft" }));
 
-    await waitFor(() => expect(client.deleteArchiveDraft).toHaveBeenCalledWith("draft-1"));
+    await waitFor(() => expect(client.deleteArchiveEntry).toHaveBeenCalledWith("draft-1"));
     expect(screen.getByRole("heading", { name: "Select a team draft" })).toBeInTheDocument();
     confirmSpy.mockRestore();
   });
@@ -532,4 +532,32 @@ describe("ArchiveView", () => {
       })
     ));
   });
+
+  it("lets the user delete a published Library document after confirmation", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const client = makeClient();
+    render(<ArchiveView client={client} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("button", { name: /Deployment reference/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete document" }));
+
+    await waitFor(() => expect(client.deleteArchiveEntry).toHaveBeenCalledWith("entry-1"));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("cannot be undone"));
+    confirmSpy.mockRestore();
+  });
+
+  it("leaves a published Library document alone when the confirmation is declined", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const client = makeClient();
+    render(<ArchiveView client={client} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("button", { name: /Deployment reference/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete document" }));
+
+    expect(client.deleteArchiveEntry).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
 });

@@ -742,6 +742,9 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
       && run.status !== "canceled"
   )), [teamRuns]);
   const editingDraft = drafts.find((entry) => entry.id === editingId) || null;
+  // The editor already opens published documents (Open in Library -> reviseArchiveEntry);
+  // only the delete button was still scoped to drafts.
+  const editingEntry = [...entries, ...drafts].find((entry) => entry.id === editingId) || null;
   const visibleEntries = tab === "drafts" ? drafts : entries;
 
   function updateForm(field, value) {
@@ -845,19 +848,27 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
     }
   }
 
-  async function deleteDraft() {
-    if (!editingDraft) return;
-    if (!window.confirm(`Delete the private draft "${editingDraft.title}"?`)) return;
+  async function deleteEntry() {
+    if (!editingEntry) return;
+    const isDraft = editingEntry.status === "draft";
+    const confirmMessage = isDraft
+      ? `Delete the private draft "${editingEntry.title}"?`
+      : `Permanently delete the Library document "${editingEntry.title}"? This cannot be undone.`;
+    if (!window.confirm(confirmMessage)) return;
     setSaving(true);
     setError(null);
     try {
-      if (!await client.deleteArchiveDraft(editingDraft.id)) {
-        throw new Error("The draft could not be deleted.");
+      if (!await client.deleteArchiveEntry(editingEntry.id)) {
+        throw new Error(isDraft ? "The draft could not be deleted." : "The document could not be deleted.");
       }
       setEditingId(null);
       setForm(EMPTY_FORM);
       setRevisions([]);
-      setNotice("Draft deleted. Its linked Knowledge Request can be worked again.");
+      setNotice(
+        isDraft
+          ? "Draft deleted. Its linked Knowledge Request can be worked again."
+          : "Document deleted. Any linked Knowledge Request can be worked again."
+      );
       await loadData();
     } catch (nextError) {
       setError(nextError);
@@ -1293,7 +1304,11 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
                   ? "Publishing accepts this team draft as a canonical user-approved revision. Until then, it stays outside persona context."
                   : "Saving publishes a canonical revision immediately. Draft outlines are never injected into persona context."}
               </p>
-              {editingDraft ? <Button type="button" variant="destructive" disabled={saving} onClick={deleteDraft}>Delete draft</Button> : null}
+              {editingEntry ? (
+                <Button type="button" variant="destructive" disabled={saving} onClick={deleteEntry}>
+                  {editingEntry.status === "draft" ? "Delete draft" : "Delete document"}
+                </Button>
+              ) : null}
               <Button type="submit" variant="primary" disabled={saving}>
                 {saving
                   ? "Publishing…"
