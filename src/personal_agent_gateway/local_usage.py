@@ -41,6 +41,11 @@ class RateLimit(BaseModel):
     window_minutes: int
     used_percent: float
     resets_at: str | None = None
+    # Names the model a per-model window applies to; empty for account-wide
+    # windows. A scoped window can be exhausted while the account-wide window
+    # of the same length still has headroom, so the two must stay tellable
+    # apart — dropping this left two identical-looking 7-day rows.
+    scope: str = ""
 
 
 UsageReader = Callable[[AgentDescriptor], dict[str, object]]

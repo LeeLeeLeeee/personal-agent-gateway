@@ -336,4 +336,42 @@ describe("DashboardView", () => {
     expect(screen.queryByText("로컬 세션 없음")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
   });
+
+  it("distinguishes a model-scoped window from the account-wide window of the same length", async () => {
+    // LMG reports a per-model scoped window alongside the account-wide one.
+    // Both are 7-day windows resetting at the same instant, so without the
+    // scope they render as two identical rows — and previously collided on the
+    // React key as well.
+    fetch
+      .mockResolvedValueOnce(await jsonResponse({
+        detected_at: "2026-08-05T00:00:00Z",
+        providers: [
+          {
+            provider: "claude",
+            label: "Claude",
+            available: true,
+            availability_error: null,
+            version: "2.1.0",
+            model: "claude-opus",
+            usage_status: "ok",
+            note: null,
+            rate_limits: [
+              { window_minutes: 10080, used_percent: 4, resets_at: "2026-08-12T09:00:00Z", scope: "" },
+              { window_minutes: 10080, used_percent: 100, resets_at: "2026-08-12T09:00:00Z", scope: "Opus" }
+            ]
+          }
+        ]
+      }))
+      .mockResolvedValueOnce(await jsonResponse(readySessions()))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload));
+
+    render(<DashboardView />);
+
+    const accountWide = await screen.findByRole("progressbar", { name: "Claude 7일 한도" });
+    expect(accountWide).toHaveAttribute("aria-valuenow", "4");
+
+    const scoped = screen.getByRole("progressbar", { name: "Claude 7일 · Opus 한도" });
+    expect(scoped).toHaveAttribute("aria-valuenow", "100");
+  });
+
 });

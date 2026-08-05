@@ -126,6 +126,8 @@ def test_dashboard_usage_reads_lmg_limits_with_app_config(tmp_path: Path, monkey
             "window_minutes": 300,
             "used_percent": 25.0,
             "resets_at": "2026-07-27T04:00:00Z",
+            # Empty for an account-wide window; a per-model window names its model.
+            "scope": "",
         }
     ]
 

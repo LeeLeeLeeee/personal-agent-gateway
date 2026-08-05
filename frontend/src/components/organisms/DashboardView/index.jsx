@@ -36,7 +36,11 @@ function rateLimitWindowLabel(windowMinutes) {
 function RateLimitGauge({ providerLabel, rateLimit }) {
   if (!isNumber(rateLimit?.used_percent)) return null;
   const percent = Math.min(Math.max(rateLimit.used_percent, 0), 100);
-  const windowLabel = rateLimitWindowLabel(rateLimit.window_minutes);
+  // A per-model scoped window and the account-wide window of the same length
+  // are otherwise indistinguishable — same duration, often the same reset.
+  const windowLabel = rateLimit.scope
+    ? `${rateLimitWindowLabel(rateLimit.window_minutes)} · ${rateLimit.scope}`
+    : rateLimitWindowLabel(rateLimit.window_minutes);
 
   return (
     <div className="dashboard-usage-gauge-wrap">
@@ -91,7 +95,7 @@ function ProviderUsageCard({ usage }) {
           {collectedRateLimits.length ? (
             collectedRateLimits.map((rateLimit) => (
               <RateLimitGauge
-                key={`${rateLimit.window_minutes}-${rateLimit.resets_at || ""}`}
+                key={`${rateLimit.window_minutes}-${rateLimit.scope || ""}-${rateLimit.resets_at || ""}`}
                 providerLabel={label}
                 rateLimit={rateLimit}
               />
