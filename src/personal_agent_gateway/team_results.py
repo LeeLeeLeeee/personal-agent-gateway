@@ -41,6 +41,14 @@ _VERIFICATION_WORDS = {
 }
 
 
+def _package_role(name: str) -> str:
+    return {
+        "run-result.json": "run_result",
+        "file-manifest.json": "manifest",
+        "verification.md": "verification",
+    }.get(name, "attachment")
+
+
 def _workspace_files(root: Path):
     yield from iter_safe_files(root)
 
@@ -149,6 +157,12 @@ class TeamRunResultPackager:
                     },
                     retention_class="temporary",
                     expires_at=expiry,
+                    origin_kind="team_run_package",
+                    artifact_role=_package_role(name),
+                    source_team_run_id=current.id,
+                    source_cycle_id=cycle_id,
+                    origin_group_label_snapshot=current.goal,
+                    origin_item_label_snapshot=title,
                 )
             )
         return registered

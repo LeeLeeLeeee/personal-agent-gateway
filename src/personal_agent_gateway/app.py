@@ -47,6 +47,7 @@ from personal_agent_gateway.auth_sessions import AuthSessionService
 from personal_agent_gateway.auth_store import AuthStore
 from personal_agent_gateway.backup import BackupService
 from personal_agent_gateway.capabilities import CapabilityRegistry
+from personal_agent_gateway.chat_turns import ChatTurnService
 from personal_agent_gateway.config import AppConfig, load_config
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.emergency_stop import EmergencyStopService
@@ -335,6 +336,7 @@ def create_app(
             activity_service=app.state.session_activity_service,
             activity_publisher=app.state.session_activity_publisher,
             intake_gate=app.state.intake_gate,
+            chat_turns=app.state.chat_turn_service,
         )
     )
 
@@ -503,6 +505,7 @@ def _attach_local_services(
     job_service = JobService(db, registry)
     schedule_service = ScheduleService(db, registry)
     artifact_store = ArtifactStore(db, config.artifact_root)
+    chat_turn_service = ChatTurnService(db)
     team_result_packager = TeamRunResultPackager(team_run_service, artifact_store)
     effective_agent_registry = agent_registry or AgentRegistry(config)
     execution_contexts = ExecutionContextFactory()
@@ -586,6 +589,7 @@ def _attach_local_services(
     app.state.job_service = job_service
     app.state.schedule_service = schedule_service
     app.state.artifact_store = artifact_store
+    app.state.chat_turn_service = chat_turn_service
     app.state.team_result_packager = team_result_packager
     app.state.job_worker = job_worker
     app.state.scheduler_loop = scheduler_loop

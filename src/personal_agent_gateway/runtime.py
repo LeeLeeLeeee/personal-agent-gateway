@@ -58,9 +58,16 @@ class AgentRuntime:
         self._system_prompt = system_prompt
         self._archive_service = archive_service
         self._persona_id = persona_id
+        self._active_chat_turn_id: str | None = None
 
     def attach_event_bus(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
+
+    def set_chat_turn_id(self, chat_turn_id: str) -> None:
+        self._active_chat_turn_id = chat_turn_id
+
+    def clear_chat_turn_id(self) -> None:
+        self._active_chat_turn_id = None
 
     def for_session(self, session_id: str) -> "AgentRuntime":
         return AgentRuntime(
@@ -266,6 +273,7 @@ class AgentRuntime:
             title="Shell command",
             input_json={"command": command},
             source_session_id=session_id,
+            source_chat_turn_id=self._active_chat_turn_id,
             command_preview=command,
         )
 

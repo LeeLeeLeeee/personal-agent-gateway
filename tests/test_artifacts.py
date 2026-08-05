@@ -229,3 +229,71 @@ def test_artifacts_cursor_pages_are_stable(tmp_path: Path) -> None:
     assert set(ids) == {artifact.id for artifact in created}
     assert len(ids) == len(set(ids))
     assert final_cursor is None
+
+
+def test_browser_search_matches_resolved_origin_label(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+    artifact = store.register_bytes(
+        artifact_type="markdown",
+        title="chart-notes.md",
+        relative_path="files/chart-notes.md",
+        content=b"# Notes",
+        mime_type="text/markdown",
+        origin_kind="team_task_output",
+        artifact_role="deliverable",
+        origin_group_label_snapshot="D3 guide research",
+        origin_item_label_snapshot="Verify chart examples",
+    )
+
+    page = store.browser_page(segment="saved", query="verify chart", limit=20)
+
+    assert [item.artifact.id for item in page.items] == [artifact.id]
+    assert [crumb.label for crumb in page.items[0].breadcrumbs] == [
+        "D3 guide research",
+        "Verify chart examples",
+    ]
+
+
+def test_browser_search_uses_complete_catalog_before_pagination(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+    for index in range(205):
+        store.register_bytes(
+            artifact_type="text",
+            title="needle.txt" if index == 204 else f"file-{index}.txt",
+            relative_path=f"files/{index}.txt",
+            content=b"content",
+            mime_type="text/plain",
+        )
+
+    page = store.browser_page(segment="saved", query="needle", limit=20)
+
+    assert [item.artifact.title for item in page.items] == ["needle.txt"]
+
+
+def test_batch_delete_keeps_referenced_artifact_and_reports_usage(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+    free = store.register_bytes("text", "free.txt", "files/free.txt", b"free", "text/plain")
+    used = store.register_bytes("text", "used.txt", "files/used.txt", b"used", "text/plain")
+    with db.connection() as connection:
+        connection.execute("pragma foreign_keys = off")
+        connection.execute(
+            """
+            insert into team_task_input_artifacts (
+                task_id, artifact_id, relative_path, sha256, size_bytes, staged_path, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("task-1", used.id, "used.txt", "digest", used.size_bytes, "inputs/used.txt", "now"),
+        )
+
+    result = store.delete_many([free.id, used.id])
+
+    assert result.deleted_ids == (free.id,)
+    assert result.blocked[0].artifact_id == used.id
+    assert result.blocked[0].references[0].kind == "team_task_input"
+    assert store.get(used.id).id == used.id

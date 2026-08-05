@@ -135,6 +135,7 @@ class JobWorker:
             return
 
     def _register_artifact(self, job_id: str, artifact_path: Path) -> None:
+        job = self._jobs.get_job(job_id)
         self._artifacts.register_existing_file(
             artifact_type=_artifact_type(artifact_path),
             title=artifact_path.name,
@@ -142,6 +143,11 @@ class JobWorker:
             relative_path=f"files/{artifact_path.name}",
             mime_type=_mime_type(artifact_path),
             source_job_id=job_id,
+            source_session_id=job.source_session_id,
+            origin_kind="job_output",
+            artifact_role="job_output",
+            origin_group_label_snapshot=job.title,
+            origin_item_label_snapshot=artifact_path.name,
         )
 
 

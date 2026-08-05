@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from personal_agent_gateway.agent_session_link import AgentSessionLinkService
 from personal_agent_gateway.api.dependencies import record_domain_audit, session_dependency
+from personal_agent_gateway.chat_turns import ChatTurnService
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.intake import IntakeClosedError, IntakeGate
@@ -54,6 +55,7 @@ class ChatSessionContext:
     activity_service: SessionActivityService
     activity_publisher: SessionActivityPublisher
     intake_gate: IntakeGate
+    chat_turns: ChatTurnService
 
 
 def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
@@ -84,8 +86,15 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
         if not started:
             raise HTTPException(status_code=404, detail="Session not found")
         context.run_registry.attach_task(session_id, request_id, asyncio.current_task())
+        context.chat_turns.create(request_id, session_id, message[:240])
+        runtime: AgentRuntime | None = None
+        turn_status = "failed"
         try:
-            result = await context.runtime_for_session(session_id).handle_user_message(message)
+            runtime = context.runtime_for_session(session_id)
+            if hasattr(runtime, "set_chat_turn_id"):
+                runtime.set_chat_turn_id(request_id)
+            result = await runtime.handle_user_message(message)
+            turn_status = "completed" if result.termination == "completed" else result.termination
             return {
                 **_runtime_response(result),
                 "session_id": session_id,
@@ -103,6 +112,7 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
                 },
             ) from exc
         except asyncio.CancelledError:
+            turn_status = "cancelled"
             await context.activity_publisher.publish(
                 {"type": "runtime.interrupted", "session_id": session_id}
             )
@@ -118,6 +128,9 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
                 "interrupted": True,
             }
         finally:
+            context.chat_turns.finish(request_id, turn_status)
+            if runtime is not None and hasattr(runtime, "clear_chat_turn_id"):
+                runtime.clear_chat_turn_id()
             context.run_registry.finish(session_id, request_id)
 
     @router.get("/api/history")

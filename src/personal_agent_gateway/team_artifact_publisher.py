@@ -56,6 +56,13 @@ class TeamArtifactPublisher:
                     },
                     retention_class="temporary",
                     expires_at=expiry,
+                    origin_kind="team_task_output",
+                    artifact_role="deliverable",
+                    source_team_task_id=task.id,
+                    source_team_run_id=run_id,
+                    source_cycle_id=cycle_id,
+                    origin_group_label_snapshot="Team output",
+                    origin_item_label_snapshot=task.title,
                 )
                 published.append(artifact)
         except Exception as exc:

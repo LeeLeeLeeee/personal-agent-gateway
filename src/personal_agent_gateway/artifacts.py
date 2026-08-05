@@ -33,6 +33,49 @@ class ArtifactCleanupResult:
 
 
 @dataclass(frozen=True)
+class ArtifactBreadcrumb:
+    kind: str
+    id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class ArtifactBrowserItem:
+    artifact: Artifact
+    role: str
+    source_kind: str
+    breadcrumbs: tuple[ArtifactBreadcrumb, ...]
+    deletion_allowed: bool
+
+
+@dataclass(frozen=True)
+class ArtifactBrowserPage:
+    items: tuple[ArtifactBrowserItem, ...]
+    counts: dict[str, int]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class ArtifactUsage:
+    kind: str
+    id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class ArtifactDeleteBlocked:
+    artifact_id: str
+    references: tuple[ArtifactUsage, ...]
+
+
+@dataclass(frozen=True)
+class ArtifactDeleteResult:
+    deleted_ids: tuple[str, ...]
+    blocked: tuple[ArtifactDeleteBlocked, ...]
+    missing_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Artifact:
     id: str
     type: str
@@ -200,6 +243,75 @@ class ArtifactStore:
             next_cursor = encode_cursor(last["created_at"], last["id"])
         return artifacts, next_cursor
 
+    def browser_page(
+        self,
+        *,
+        segment: str = "saved",
+        query: str = "",
+        file_kind: str | None = None,
+        source_kind: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ArtifactBrowserPage:
+        if segment not in {"saved", "recent", "cleanup"}:
+            raise ValueError("Invalid artifact segment")
+        normalized_limit = max(1, min(limit, 200))
+        now = datetime.now(timezone.utc)
+        all_artifacts = self.list()
+        counts = {
+            name: sum(
+                1 for artifact in all_artifacts if self._in_browser_segment(artifact, name, now)
+            )
+            for name in ("saved", "recent", "cleanup")
+        }
+        terms = [term for term in query.lower().split() if term]
+        filtered: list[Artifact] = []
+        for artifact in all_artifacts:
+            if not self._in_browser_segment(artifact, segment, now):
+                continue
+            resolved_source_kind = _artifact_source_kind(artifact)
+            if file_kind and artifact.type != file_kind:
+                continue
+            if source_kind and resolved_source_kind != source_kind:
+                continue
+            haystack = " ".join(
+                (
+                    artifact.title,
+                    artifact.relative_path,
+                    artifact.artifact_role,
+                    artifact.origin_group_label_snapshot,
+                    artifact.origin_item_label_snapshot,
+                    artifact.source_job_id or "",
+                    artifact.source_session_id or "",
+                    artifact.source_chat_turn_id or "",
+                    artifact.source_team_task_id or "",
+                    artifact.source_team_run_id or "",
+                    " ".join(artifact.tags),
+                )
+            ).lower()
+            if all(term in haystack for term in terms):
+                filtered.append(artifact)
+        if cursor:
+            created_at, artifact_id = decode_cursor(cursor, 2)
+            if not isinstance(created_at, str) or not isinstance(artifact_id, str):
+                raise ValueError("Invalid cursor")
+            filtered = [
+                artifact
+                for artifact in filtered
+                if artifact.created_at.isoformat() < created_at
+                or (artifact.created_at.isoformat() == created_at and artifact.id < artifact_id)
+            ]
+        selected = filtered[:normalized_limit]
+        next_cursor = None
+        if len(filtered) > normalized_limit:
+            last = selected[-1]
+            next_cursor = encode_cursor(last.created_at.isoformat(), last.id)
+        return ArtifactBrowserPage(
+            items=tuple(self._browser_item(artifact) for artifact in selected),
+            counts=counts,
+            next_cursor=next_cursor,
+        )
+
     def find_by_source_path(self, source_path: str) -> Artifact | None:
         for artifact in self.list():
             if artifact.metadata.get("source_path") == source_path:
@@ -219,6 +331,54 @@ class ArtifactStore:
                 continue
             stored.unlink(missing_ok=True)
         self._db.execute("delete from artifacts where id = ?", (artifact_id,))
+
+    def delete_many(self, artifact_ids: list[str]) -> ArtifactDeleteResult:
+        deleted_ids: list[str] = []
+        blocked: list[ArtifactDeleteBlocked] = []
+        missing_ids: list[str] = []
+        for artifact_id in artifact_ids:
+            try:
+                self.get(artifact_id)
+            except KeyError:
+                missing_ids.append(artifact_id)
+                continue
+            references = self.references(artifact_id)
+            if references:
+                blocked.append(ArtifactDeleteBlocked(artifact_id, references))
+                continue
+            self.delete(artifact_id)
+            deleted_ids.append(artifact_id)
+        return ArtifactDeleteResult(
+            tuple(deleted_ids), tuple(blocked), tuple(missing_ids)
+        )
+
+    def references(self, artifact_id: str) -> tuple[ArtifactUsage, ...]:
+        rows = self._db.fetchall(
+            """
+            select 'team_cycle_request_input' as kind, input.cycle_request_id as id,
+                   coalesce(request.instruction, input.cycle_request_id) as label
+            from team_cycle_request_input_artifacts input
+            left join team_cycle_requests request on request.id = input.cycle_request_id
+            where input.artifact_id = ?
+            union all
+            select 'team_cycle_input' as kind, input.cycle_id as id,
+                   coalesce(cycle.summary, cycle.source_id, input.cycle_id) as label
+            from team_cycle_input_artifacts input
+            left join team_run_cycles cycle on cycle.id = input.cycle_id
+            where input.artifact_id = ?
+            union all
+            select 'team_task_input' as kind, input.task_id as id,
+                   coalesce(task.title, input.task_id) as label
+            from team_task_input_artifacts input
+            left join team_tasks task on task.id = input.task_id
+            where input.artifact_id = ?
+            """,
+            (artifact_id, artifact_id, artifact_id),
+        )
+        return tuple(
+            ArtifactUsage(kind=row["kind"], id=row["id"], label=row["label"])
+            for row in rows
+        )
 
     def set_retention(
         self,
@@ -374,20 +534,54 @@ class ArtifactStore:
             and not self._is_referenced(artifact.id)
         )
 
-    def _is_referenced(self, artifact_id: str) -> bool:
-        row = self._db.fetchone(
-            """
-            select 1 where exists (
-                select 1 from team_cycle_request_input_artifacts where artifact_id = ?
-            ) or exists (
-                select 1 from team_cycle_input_artifacts where artifact_id = ?
-            ) or exists (
-                select 1 from team_task_input_artifacts where artifact_id = ?
+    def _in_browser_segment(
+        self, artifact: Artifact, segment: str, evaluated_at: datetime
+    ) -> bool:
+        if segment == "cleanup":
+            return self._is_cleanup_eligible(artifact, evaluated_at)
+        if segment == "recent":
+            return (
+                artifact.retention_class == "temporary"
+                and (artifact.expires_at is None or artifact.expires_at > evaluated_at)
             )
-            """,
-            (artifact_id, artifact_id, artifact_id),
+        return artifact.retention_class != "temporary"
+
+    def _browser_item(self, artifact: Artifact) -> ArtifactBrowserItem:
+        source_kind = _artifact_source_kind(artifact)
+        group_label = artifact.origin_group_label_snapshot or _default_group_label(source_kind)
+        item_label = artifact.origin_item_label_snapshot or artifact.title
+        group_id = (
+            artifact.source_team_run_id
+            or artifact.source_session_id
+            or artifact.source_job_id
+            or artifact.id
         )
-        return row is not None
+        item_id = (
+            artifact.source_team_task_id
+            or artifact.source_chat_turn_id
+            or artifact.source_cycle_id
+            or artifact.id
+        )
+        group_kind = {
+            "team": "team_run",
+            "chat": "chat_session",
+            "job": "job",
+            "schedule": "schedule",
+        }.get(source_kind, source_kind)
+        breadcrumbs = [ArtifactBreadcrumb(group_kind, group_id, group_label)]
+        if item_id != group_id or item_label != group_label:
+            item_kind = "team_task" if source_kind == "team" else "chat_turn"
+            breadcrumbs.append(ArtifactBreadcrumb(item_kind, item_id, item_label))
+        return ArtifactBrowserItem(
+            artifact=artifact,
+            role=artifact.artifact_role,
+            source_kind=source_kind,
+            breadcrumbs=tuple(breadcrumbs),
+            deletion_allowed=not self._is_referenced(artifact.id),
+        )
+
+    def _is_referenced(self, artifact_id: str) -> bool:
+        return bool(self.references(artifact_id))
 
     @staticmethod
     def _validate_retention(
@@ -427,3 +621,25 @@ def _artifact_from_row(row: object) -> Artifact:
         tags=json.loads(row["tags_json"]),
         metadata=json.loads(row["metadata_json"]),
     )
+
+
+def _artifact_source_kind(artifact: Artifact) -> str:
+    if artifact.origin_kind.startswith("team_"):
+        return "team"
+    if artifact.origin_kind == "job_output":
+        return "job"
+    if artifact.origin_kind == "chat_upload":
+        return "chat"
+    if artifact.origin_kind == "manual_upload":
+        return "manual"
+    return "legacy"
+
+
+def _default_group_label(source_kind: str) -> str:
+    return {
+        "team": "Team output",
+        "chat": "Chat files",
+        "job": "Job output",
+        "schedule": "Scheduled output",
+        "manual": "Local files",
+    }.get(source_kind, "Legacy files")

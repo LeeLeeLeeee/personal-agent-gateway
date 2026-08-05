@@ -47,6 +47,36 @@ def test_artifact_payload_includes_created_at_and_thumbnail_path(tmp_path: Path)
     assert payload["thumbnail_path"] is None
 
 
+def test_artifact_browser_returns_resolved_breadcrumbs(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    artifact = client.app.state.artifact_store.register_bytes(
+        artifact_type="markdown",
+        title="draft.md",
+        relative_path="files/draft.md",
+        content=b"# Draft",
+        mime_type="text/markdown",
+        origin_kind="chat_upload",
+        artifact_role="attachment",
+        origin_group_label_snapshot="Release discussion",
+        origin_item_label_snapshot="Please draft release notes",
+    )
+
+    response = client.get("/api/artifacts/browser", params={"q": "release notes"})
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["artifact"]["id"] == artifact.id
+    assert item["breadcrumbs"][0]["label"] == "Release discussion"
+
+
+def test_batch_delete_rejects_duplicate_artifact_ids(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+
+    response = client.post("/api/artifacts/delete", json={"artifact_ids": ["a1", "a1"]})
+
+    assert response.status_code == 422
+
+
 def test_cleanup_preview_reports_expired_temporary_artifact_without_deleting_it(
     tmp_path: Path,
 ) -> None:

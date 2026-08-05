@@ -32,6 +32,10 @@ class CleanupArtifactsRequest(BaseModel):
     artifact_ids: list[str] = Field(min_length=1)
 
 
+class DeleteArtifactsRequest(BaseModel):
+    artifact_ids: list[str] = Field(min_length=1, max_length=200)
+
+
 class UpdateArtifactRetentionRequest(BaseModel):
     retention_class: str
     expires_at: str | None = None
@@ -67,6 +71,86 @@ def cleanup_preview(
         "artifact_ids": [item.id for item in preview.artifacts],
         "total_size_bytes": preview.total_size_bytes,
         "evaluated_at": preview.evaluated_at.isoformat(),
+    }
+
+
+@router.get("/browser")
+def browser_artifacts(
+    request: Request,
+    segment: str = "saved",
+    q: str = "",
+    file_kind: str | None = None,
+    source_kind: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    cursor: str | None = None,
+    _session: None = session_dependency,
+) -> dict[str, object]:
+    try:
+        page = request.app.state.artifact_store.browser_page(
+            segment=segment,
+            query=q,
+            file_kind=file_kind,
+            source_kind=source_kind,
+            limit=limit,
+            cursor=cursor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "items": [
+            {
+                "artifact": _artifact_payload(item.artifact),
+                "role": {
+                    "code": item.role,
+                    "label": item.role.replace("_", " ").title(),
+                },
+                "source_kind": item.source_kind,
+                "breadcrumbs": [
+                    {"kind": crumb.kind, "id": crumb.id, "label": crumb.label}
+                    for crumb in item.breadcrumbs
+                ],
+                "deletion": {"allowed": item.deletion_allowed},
+            }
+            for item in page.items
+        ],
+        "counts": page.counts,
+        "next_cursor": page.next_cursor,
+    }
+
+
+@router.post("/delete")
+def delete_artifacts(
+    request: Request,
+    payload: DeleteArtifactsRequest,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    if len(set(payload.artifact_ids)) != len(payload.artifact_ids):
+        raise HTTPException(status_code=422, detail="Artifact IDs must be unique")
+    result = request.app.state.artifact_store.delete_many(payload.artifact_ids)
+    for artifact_id in result.deleted_ids:
+        record_domain_audit(
+            request,
+            principal,
+            event_type="artifact.deleted",
+            action="artifact.delete",
+            resource_type="artifact",
+            resource_id=artifact_id,
+            artifact_id=artifact_id,
+        )
+    return {
+        "deleted_ids": list(result.deleted_ids),
+        "blocked": [
+            {
+                "artifact_id": item.artifact_id,
+                "code": "artifact_in_use",
+                "references": [
+                    {"kind": reference.kind, "id": reference.id, "label": reference.label}
+                    for reference in item.references
+                ],
+            }
+            for item in result.blocked
+        ],
+        "missing_ids": list(result.missing_ids),
     }
 
 
@@ -129,6 +213,10 @@ def register_artifact(
         mime_type=mime_type_for(candidate.name),
         source_session_id=payload.session_id,
         metadata={"source_path": source_path, "original_path": payload.path},
+        origin_kind="chat_upload" if payload.session_id else "manual_upload",
+        artifact_role="attachment",
+        origin_group_label_snapshot="Chat files" if payload.session_id else "Local files",
+        origin_item_label_snapshot=payload.title or candidate.name,
     )
     if outside_workspace:
         request.app.state.audit_service.record(
