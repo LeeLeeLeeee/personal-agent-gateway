@@ -36,6 +36,7 @@ class Job:
     command_preview: str | None
     approval_id: str | None
     source_session_id: str | None = None
+    source_chat_turn_id: str | None = None
     source_schedule_id: str | None = None
     source_job_id: str | None = None
     created_at: str | None = None
@@ -64,6 +65,7 @@ class JobService:
         title: str,
         input_json: dict[str, object],
         source_session_id: str | None = None,
+        source_chat_turn_id: str | None = None,
         source_schedule_id: str | None = None,
         source_job_id: str | None = None,
         command_preview: str | None = None,
@@ -78,18 +80,19 @@ class JobService:
         self._db.execute(
             """
             insert into jobs (
-                id, capability_id, source, source_session_id, source_schedule_id,
+                id, capability_id, source, source_session_id, source_chat_turn_id, source_schedule_id,
                 source_job_id,
                 title, status, input_json, command_preview, approval_id,
                 created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
                 capability_id,
                 source,
                 source_session_id,
+                source_chat_turn_id,
                 source_schedule_id,
                 source_job_id,
                 title,
@@ -281,6 +284,7 @@ class JobService:
             title=job.title,
             input_json=json.loads(json.dumps(job.input_json)),
             source_session_id=job.source_session_id,
+            source_chat_turn_id=job.source_chat_turn_id,
             source_schedule_id=job.source_schedule_id,
             source_job_id=job.source_job_id or job.id,
             command_preview=job.command_preview,
@@ -392,6 +396,7 @@ def _job_from_row(row: object) -> Job:
         capability_id=row["capability_id"],
         source=row["source"],
         source_session_id=row["source_session_id"],
+        source_chat_turn_id=row["source_chat_turn_id"],
         source_schedule_id=row["source_schedule_id"],
         source_job_id=row["source_job_id"],
         title=row["title"],

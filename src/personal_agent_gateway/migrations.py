@@ -825,6 +825,57 @@ def _migration_25_artifact_retention_cleanup(
     )
 
 
+def _migration_26_artifact_browser_origins(
+    connection: sqlite3.Connection,
+) -> None:
+    connection.executescript(
+        """
+        create table if not exists chat_turns (
+            id text primary key,
+            session_id text not null,
+            user_event_id text,
+            prompt_excerpt text not null,
+            status text not null,
+            created_at text not null,
+            finished_at text
+        );
+        create index if not exists idx_chat_turns_session_created
+        on chat_turns(session_id, created_at desc, id desc);
+        """
+    )
+    job_columns = _columns(connection, "jobs")
+    if "source_chat_turn_id" not in job_columns:
+        connection.execute("alter table jobs add column source_chat_turn_id text")
+    artifact_columns = _columns(connection, "artifacts")
+    for column in (
+        "origin_kind text not null default 'legacy'",
+        "artifact_role text not null default 'attachment'",
+        "source_chat_turn_id text",
+        "source_team_task_id text",
+        "source_team_run_id text",
+        "source_cycle_id text",
+        "origin_group_label_snapshot text not null default ''",
+        "origin_item_label_snapshot text not null default ''",
+    ):
+        name = column.split(" ", 1)[0]
+        if name not in artifact_columns:
+            connection.execute(f"alter table artifacts add column {column}")
+    connection.executescript(
+        """
+        create index if not exists idx_jobs_source_chat_turn
+        on jobs(source_chat_turn_id);
+        create index if not exists idx_artifacts_origin_created
+        on artifacts(origin_kind, created_at desc, id desc);
+        create index if not exists idx_artifacts_source_team_task
+        on artifacts(source_team_task_id);
+        create index if not exists idx_artifacts_source_team_run
+        on artifacts(source_team_run_id);
+        create index if not exists idx_artifacts_source_chat_turn
+        on artifacts(source_chat_turn_id);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -851,6 +902,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (23, "team-task-input-bindings", _migration_23_team_task_input_bindings),
     (24, "team-task-dependencies", _migration_24_team_task_dependencies),
     (25, "artifact-retention-cleanup", _migration_25_artifact_retention_cleanup),
+    (26, "artifact-browser-origins", _migration_26_artifact_browser_origins),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

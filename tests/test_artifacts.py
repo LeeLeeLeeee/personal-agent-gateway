@@ -46,6 +46,41 @@ def test_artifact_store_records_explicit_temporary_retention(tmp_path: Path) -> 
     assert artifact.expires_at == expiry
 
 
+def test_artifact_schema_persists_explicit_origin_columns(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+
+    artifact = store.register_bytes(
+        artifact_type="markdown",
+        title="draft.md",
+        relative_path="files/draft.md",
+        content=b"# Draft",
+        mime_type="text/markdown",
+        origin_kind="manual_upload",
+        artifact_role="attachment",
+        origin_group_label_snapshot="Local files",
+        origin_item_label_snapshot="draft.md",
+    )
+
+    assert artifact.origin_kind == "manual_upload"
+    assert artifact.artifact_role == "attachment"
+    assert artifact.origin_group_label_snapshot == "Local files"
+    assert artifact.origin_item_label_snapshot == "draft.md"
+
+
+def test_artifact_schema_creates_durable_chat_turn_table(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+
+    tables = {
+        row["name"]
+        for row in db.fetchall("select name from sqlite_master where type = 'table'")
+    }
+
+    assert "chat_turns" in tables
+
+
 def test_cleanup_preview_excludes_referenced_temporary_artifacts(tmp_path: Path) -> None:
     db = Database(tmp_path / "app.sqlite")
     db.initialize()

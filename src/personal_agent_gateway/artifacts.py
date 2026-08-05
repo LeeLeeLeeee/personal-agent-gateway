@@ -44,6 +44,14 @@ class Artifact:
     thumbnail_path: Path | None
     source_job_id: str | None
     source_session_id: str | None
+    origin_kind: str
+    artifact_role: str
+    source_chat_turn_id: str | None
+    source_team_task_id: str | None
+    source_team_run_id: str | None
+    source_cycle_id: str | None
+    origin_group_label_snapshot: str
+    origin_item_label_snapshot: str
     created_at: datetime
     retention_class: str
     expires_at: datetime | None
@@ -69,6 +77,14 @@ class ArtifactStore:
         metadata: dict[str, object] | None = None,
         retention_class: str = "durable",
         expires_at: datetime | None = None,
+        origin_kind: str = "manual_upload",
+        artifact_role: str = "attachment",
+        source_chat_turn_id: str | None = None,
+        source_team_task_id: str | None = None,
+        source_team_run_id: str | None = None,
+        source_cycle_id: str | None = None,
+        origin_group_label_snapshot: str = "",
+        origin_item_label_snapshot: str = "",
     ) -> Artifact:
         destination = self._resolve_artifact_path(relative_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +101,14 @@ class ArtifactStore:
             metadata=metadata or {},
             retention_class=retention_class,
             expires_at=expires_at,
+            origin_kind=origin_kind,
+            artifact_role=artifact_role,
+            source_chat_turn_id=source_chat_turn_id,
+            source_team_task_id=source_team_task_id,
+            source_team_run_id=source_team_run_id,
+            source_cycle_id=source_cycle_id,
+            origin_group_label_snapshot=origin_group_label_snapshot,
+            origin_item_label_snapshot=origin_item_label_snapshot,
         )
 
     def register_existing_file(
@@ -100,6 +124,14 @@ class ArtifactStore:
         metadata: dict[str, object] | None = None,
         retention_class: str = "durable",
         expires_at: datetime | None = None,
+        origin_kind: str = "manual_upload",
+        artifact_role: str = "attachment",
+        source_chat_turn_id: str | None = None,
+        source_team_task_id: str | None = None,
+        source_team_run_id: str | None = None,
+        source_cycle_id: str | None = None,
+        origin_group_label_snapshot: str = "",
+        origin_item_label_snapshot: str = "",
     ) -> Artifact:
         destination = self._resolve_artifact_path(relative_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -117,6 +149,14 @@ class ArtifactStore:
                 metadata=metadata or {},
                 retention_class=retention_class,
                 expires_at=expires_at,
+                origin_kind=origin_kind,
+                artifact_role=artifact_role,
+                source_chat_turn_id=source_chat_turn_id,
+                source_team_task_id=source_team_task_id,
+                source_team_run_id=source_team_run_id,
+                source_cycle_id=source_cycle_id,
+                origin_group_label_snapshot=origin_group_label_snapshot,
+                origin_item_label_snapshot=origin_item_label_snapshot,
             )
         except Exception:
             destination.unlink(missing_ok=True)
@@ -266,6 +306,14 @@ class ArtifactStore:
         metadata: dict[str, object],
         retention_class: str,
         expires_at: datetime | None,
+        origin_kind: str,
+        artifact_role: str,
+        source_chat_turn_id: str | None,
+        source_team_task_id: str | None,
+        source_team_run_id: str | None,
+        source_cycle_id: str | None,
+        origin_group_label_snapshot: str,
+        origin_item_label_snapshot: str,
     ) -> Artifact:
         self._validate_retention(retention_class, expires_at)
         artifact_id = uuid4().hex
@@ -275,9 +323,12 @@ class ArtifactStore:
             insert into artifacts (
                 id, type, title, file_path, relative_path, mime_type, size_bytes,
                 thumbnail_path, source_job_id, source_session_id, created_at,
-                tags_json, metadata_json, retention_class, expires_at
+                tags_json, metadata_json, retention_class, expires_at, origin_kind,
+                artifact_role, source_chat_turn_id, source_team_task_id,
+                source_team_run_id, source_cycle_id, origin_group_label_snapshot,
+                origin_item_label_snapshot
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 artifact_id,
@@ -295,6 +346,14 @@ class ArtifactStore:
                 json.dumps(metadata, sort_keys=True),
                 retention_class,
                 expires_at.isoformat() if expires_at else None,
+                origin_kind,
+                artifact_role,
+                source_chat_turn_id,
+                source_team_task_id,
+                source_team_run_id,
+                source_cycle_id,
+                origin_group_label_snapshot,
+                origin_item_label_snapshot,
             ),
         )
         return self.get(artifact_id)
@@ -353,6 +412,14 @@ def _artifact_from_row(row: object) -> Artifact:
         thumbnail_path=Path(thumbnail_path) if thumbnail_path else None,
         source_job_id=row["source_job_id"],
         source_session_id=row["source_session_id"],
+        origin_kind=row["origin_kind"],
+        artifact_role=row["artifact_role"],
+        source_chat_turn_id=row["source_chat_turn_id"],
+        source_team_task_id=row["source_team_task_id"],
+        source_team_run_id=row["source_team_run_id"],
+        source_cycle_id=row["source_cycle_id"],
+        origin_group_label_snapshot=row["origin_group_label_snapshot"],
+        origin_item_label_snapshot=row["origin_item_label_snapshot"],
         created_at=datetime.fromisoformat(row["created_at"]),
         retention_class=row["retention_class"],
         expires_at=(datetime.fromisoformat(row["expires_at"])

@@ -28,6 +28,21 @@ def test_create_low_risk_job_queues_immediately(tmp_path: Path) -> None:
     assert job.approval_id is None
 
 
+def test_job_records_source_chat_turn(tmp_path: Path) -> None:
+    service = make_service(tmp_path)
+
+    job = service.create_job(
+        capability_id="ffmpeg.inspect",
+        source="chat",
+        title="Inspect chat attachment",
+        input_json={"source_file": "demo.mov"},
+        source_session_id="session-1",
+        source_chat_turn_id="turn-1",
+    )
+
+    assert job.source_chat_turn_id == "turn-1"
+
+
 def test_create_medium_risk_job_waits_for_approval(tmp_path: Path) -> None:
     service = make_service(tmp_path)
 
