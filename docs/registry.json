@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 214,
+  "document_count": 215,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -3253,29 +3253,6 @@
       "excerpt": "- Root: `frontend/src/components/organisms/HooksView/index.jsx` - Modes: `understand`, `refactor`, `test`, `remove` - Verdict: Email Hook의 Library draft 제어는 `HookForm`과 목록 summary에만 표시되지만,   같은 속성이 API·서비스·runner에도 전파..."
     },
     {
-      "path": "docs/component-inspector/index.md",
-      "title": "Component Inspector Reports",
-      "type": "report",
-      "domain": "component",
-      "feature": "component-inspector",
-      "status": "active",
-      "aliases": [
-        "component analysis reports"
-      ],
-      "tags": [
-        "component",
-        "analysis"
-      ],
-      "updated_at": "2026-08-06",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Component Inspector Reports"
-        }
-      ],
-      "excerpt": "- [ArchiveView Map 구조 및 제거 가능성 분석 — 2026-08-06 16:51](./ArchiveView/2026-08-06-1651.md) - [ArtifactsView 통합 브라우저 분석 — 2026-08-05 09:48](./ArtifactsView/2026-08-05-0948.md) - [ChatView Working Indicator Layout Analysis..."
-    },
-    {
       "path": "docs/component-inspector/JobsView/2026-07-15-1057.md",
       "title": "JobsView Retry and Lineage Analysis",
       "type": "report",
@@ -5047,6 +5024,29 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/TeamsView/index.jsx` - Modes: `understand`, `style`, `test` - Verdict: `personas` prop에 이미 `avatar`, `name`, `role`이 있으므로 API 변경 없이 현재 이름 버튼을 프로필 선택 카드로 바꾸는 것이 안전하다. 로컬 state..."
+    },
+    {
+      "path": "docs/component-inspector/index.md",
+      "title": "Component Inspector Reports",
+      "type": "report",
+      "domain": "component",
+      "feature": "component-inspector",
+      "status": "active",
+      "aliases": [
+        "component analysis reports"
+      ],
+      "tags": [
+        "component",
+        "analysis"
+      ],
+      "updated_at": "2026-08-06",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Component Inspector Reports"
+        }
+      ],
+      "excerpt": "- [ArchiveView Map 구조 및 제거 가능성 분석 — 2026-08-06 16:51](./ArchiveView/2026-08-06-1651.md) - [ArtifactsView 통합 브라우저 분석 — 2026-08-05 09:48](./ArtifactsView/2026-08-05-0948.md) - [ChatView Working Indicator Layout Analysis..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -9943,6 +9943,68 @@
         {
           "level": 2,
           "text": "Out of scope"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-07-archive-map-removal-and-lazy-team-loading.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Archive Map Removal and Lazy Documentation Team Loading Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Remove the frontend Map and lazy-load documentation Team Runs"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Remove the frontend Archive Map client contract"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Remove the backend Map route and graph read model"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Run full verification and record the implementation"
+        },
+        {
+          "level": 1,
+          "text": "Archive Map 제거 및 Documentation Team 지연 조회 구현 결과"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Changes"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        },
+        {
+          "level": 2,
+          "text": "Plan Self-Review Checklist"
         }
       ],
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
