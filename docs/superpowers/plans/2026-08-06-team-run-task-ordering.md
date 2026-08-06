@@ -11,9 +11,14 @@
 ## Global Constraints
 
 - Design source: `docs/superpowers/specs/2026-08-06-team-run-task-ordering-design.md`.
-- Backend tests run from the repo root: `.\.venv\Scripts\python.exe -m pytest <path> -q`.
+- Work happens in the git worktree `C:\Users\Administrator\playground\personal-agent-gateway\.claude\worktrees\team-run-task-ordering` on branch `worktree-team-run-task-ordering`. It has its own `.venv` (editable install of this worktree's `src/`) and its own `frontend/node_modules`, both already provisioned. Never run the parent checkout's `.venv` — it resolves `personal_agent_gateway` to the parent's `src/` and would test the wrong code.
+- Backend tests run from the worktree root: `.\.venv\Scripts\python.exe -m pytest <path> -q`.
 - Frontend tests run from `frontend/`: `npm test -- <path>`.
-- `main` already carries roughly 32 backend test failures and 227 ruff findings. Completion is judged by **delta**: no test that passed before may fail after.
+- Measured baseline in this worktree (commit `28af25f`, worktree venv, pytest 9.1.1):
+  - Full backend suite: **43 failed, 1327 passed, 2 skipped**. All 43 pre-existing failures live in files this plan does not touch (`test_runtime_factory_headless.py`, `test_schedules.py`, `test_team_cycle_recovery.py`, and others).
+  - The five files this plan does touch — `tests/test_teams.py`, `tests/test_team_model_effects.py`, `tests/test_team_runtime.py`, `tests/test_team_acceptance.py`, `tests/test_db_agent_teams_schema.py` — are **fully green (341 passed, 1 skipped)**. They must stay green.
+  - Frontend: **40 files, 355 tests, all passing**. Must stay green.
+  - Completion is judged by **delta**: no test that passed before may fail after.
 - Migrations are append-only. The new migration is number 28; never renumber or edit an existing migration.
 - SQLite `cycle_id` is nullable. Always compare it with `is ?`, never `= ?`.
 - Do not touch `src/personal_agent_gateway/frontend_dist/**`. It is a build artifact and already has uncommitted changes that are not part of this work.
