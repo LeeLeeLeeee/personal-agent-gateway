@@ -1912,17 +1912,40 @@ def test_reset_agents_for_new_cycle_only_clears_terminal_agents(tmp_path) -> Non
         if candidate.id != run.leader_agent_id
     )
 
+    task_one = teams.create_task(run.id, "Task One", "Task One")
+    teams.start_task(task_one.id, leader.id)
     teams.set_agent_status(leader.id, "completed")
+    teams._db.execute(  # Simulate a stale task assignment carried over from the previous cycle.
+        "update team_agents set current_task_id = ? where id = ?",
+        (task_one.id, leader.id),
+    )
     teams.set_agent_status(worker.id, "running")
+    before_reset = teams.get_agent(leader.id)
+    assert before_reset.current_task_id == task_one.id
+    assert before_reset.finished_at is not None
+
     teams.reset_agents_for_new_cycle(run.id)
     by_id = {agent.id: agent for agent in teams.list_agents(run.id)}
     assert by_id[leader.id].status == "pending"
     assert by_id[leader.id].current_task_id is None
+    assert by_id[leader.id].finished_at is None
     assert by_id[worker.id].status == "running"
 
+    task_two = teams.create_task(run.id, "Task Two", "Task Two")
+    teams.start_task(task_two.id, leader.id)
     teams.set_agent_status(leader.id, "failed")
+    teams._db.execute(  # Simulate a stale task assignment carried over from the previous cycle.
+        "update team_agents set current_task_id = ? where id = ?",
+        (task_two.id, leader.id),
+    )
     teams.set_agent_status(worker.id, "waiting")
+    before_reset = teams.get_agent(leader.id)
+    assert before_reset.current_task_id == task_two.id
+    assert before_reset.finished_at is not None
+
     teams.reset_agents_for_new_cycle(run.id)
     by_id = {agent.id: agent for agent in teams.list_agents(run.id)}
     assert by_id[leader.id].status == "pending"
+    assert by_id[leader.id].current_task_id is None
+    assert by_id[leader.id].finished_at is None
     assert by_id[worker.id].status == "waiting"
