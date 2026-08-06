@@ -190,6 +190,7 @@ async def test_runtime_attaches_file_changes_and_builds_result_package(
     plan = json.dumps(
         [
             {
+                "plan_task_id": "implement-api",
                 "title": "Implement API",
                 "description": "Create the endpoint",
                 "owner_agent_id": worker.id,

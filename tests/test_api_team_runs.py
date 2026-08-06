@@ -416,6 +416,7 @@ async def test_explicit_add_work_resume_runs_production_path_without_collision(
                 json.dumps(
                     [
                         {
+                            "plan_task_id": "research",
                             "title": "Research",
                             "description": "Research the request.",
                             "owner_agent_id": worker_agent.id,
@@ -1372,6 +1373,7 @@ class GatedModel:
             content = json.dumps(
                 [
                     {
+                        "plan_task_id": "t",
                         "title": "T",
                         "description": "D",
                         "owner_agent_id": None,
