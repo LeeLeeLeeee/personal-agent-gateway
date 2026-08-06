@@ -1428,7 +1428,10 @@ class TeamRuntime:
                 terminal_status = acceptance.status
                 if (
                     not acceptance.accepted
-                    and is_recoverable_acceptance_failure(acceptance.reason_code)
+                    and is_recoverable_acceptance_failure(
+                        acceptance.reason_code,
+                        worker_declared=outcome.status != "completed",
+                    )
                     and task.acceptance_recovery_attempts
                     >= ACCEPTANCE_RECOVERY_CAP
                 ):

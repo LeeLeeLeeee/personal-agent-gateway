@@ -1743,7 +1743,10 @@ class TeamModelEffectService:
                 (now, now, agent.id),
             )
         elif (
-            is_recoverable_acceptance_failure(acceptance.reason_code)
+            is_recoverable_acceptance_failure(
+                acceptance.reason_code,
+                worker_declared=outcome.status != "completed",
+            )
             and task.acceptance_recovery_attempts < ACCEPTANCE_RECOVERY_CAP
         ):
             next_stage = "acceptance_lead"
@@ -1751,18 +1754,24 @@ class TeamModelEffectService:
             connection.execute(
                 """
                 update team_tasks
-                set status = 'failed', result = null, error_message = ?,
+                set status = ?, result = null, error_message = ?,
                     finished_at = ?, updated_at = ? where id = ?
                 """,
-                (acceptance.reason_code or outcome.reason_code, now, now, task.id),
+                (
+                    acceptance.status,
+                    acceptance.reason_code or outcome.reason_code,
+                    now,
+                    now,
+                    task.id,
+                ),
             )
             connection.execute(
                 """
                 update team_agents
-                set status = 'failed', current_task_id = null,
+                set status = ?, current_task_id = null,
                     finished_at = ?, updated_at = ? where id = ?
                 """,
-                (now, now, agent.id),
+                ("failed" if acceptance.status == "failed" else "waiting", now, now, agent.id),
             )
         return WorkerEffectResult(
             task=self._teams._task_from_connection(connection, task.id),
@@ -1880,6 +1889,7 @@ class TeamModelEffectService:
         expected_next_stage, task_status, agent_status = _expected_worker_state(
             acceptance,
             task.acceptance_recovery_attempts,
+            outcome.status != "completed",
         )
         expected_outcome = _json_object(asdict(outcome))
         expected_message_metadata = {
@@ -2549,10 +2559,11 @@ def _persisted_worker_input_digest(
 def _expected_worker_state(
     acceptance: dict[str, object] | None,
     acceptance_recovery_attempts: int,
+    worker_declared: bool,
 ) -> tuple[
     Literal["acceptance_lead"] | None,
-    Literal["in_progress", "completed", "failed"],
-    Literal["running", "completed", "failed"],
+    Literal["in_progress", "completed", "failed", "blocked"],
+    Literal["running", "completed", "failed", "waiting"],
 ]:
     if (
         not isinstance(acceptance, dict)
@@ -2572,10 +2583,14 @@ def _expected_worker_state(
     if not isinstance(reason_code, str) or not reason_code:
         raise OperationConflict("Applied rejected result is invalid")
     if (
-        is_recoverable_acceptance_failure(reason_code)
+        is_recoverable_acceptance_failure(
+            reason_code, worker_declared=worker_declared
+        )
         and acceptance_recovery_attempts < ACCEPTANCE_RECOVERY_CAP
     ):
         return "acceptance_lead", "in_progress", "running"
+    if acceptance["status"] == "blocked":
+        return None, "blocked", "waiting"
     return None, "failed", "failed"
 
 

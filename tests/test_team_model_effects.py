@@ -1341,6 +1341,35 @@ def test_nonrecoverable_worker_rejection_finishes_failed_atomically(tmp_path):
     assert services.operations.get(services.operation.id).status == "applied"
 
 
+def test_worker_blocked_with_novel_reason_routes_to_leader_review(tmp_path):
+    services = make_completed_worker_operation(
+        tmp_path,
+        outcome=TaskOutcome(
+            status="blocked",
+            summary="draft is byte-identical to the previous round",
+            reason_code="draft-unmodified",
+            deliverables=(),
+            verifications=(),
+        ),
+    )
+    acceptance = AcceptanceResult(
+        accepted=False,
+        status="blocked",
+        reason_code="draft-unmodified",
+        evidence={},
+    )
+
+    result = services.effects.apply_worker_outcome(
+        services.operation.id,
+        acceptance,
+        workspace_changes={"created": [], "modified": [], "deleted": []},
+    )
+
+    assert result.next_stage == "acceptance_lead"
+    assert result.task.status == "in_progress"
+    assert services.teams.get_agent(services.worker.id).status == "running"
+
+
 def test_worker_user_decision_is_atomic_and_duplicate_apply_is_idempotent(
     tmp_path,
 ):

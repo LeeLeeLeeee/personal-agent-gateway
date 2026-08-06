@@ -46,6 +46,16 @@ def test_infrastructure_acceptance_failures_are_not_recoverable(
     assert not is_recoverable_acceptance_failure(reason_code)
 
 
+def test_worker_declared_outcome_is_recoverable_regardless_of_reason_code() -> None:
+    assert is_recoverable_acceptance_failure("draft-unmodified", worker_declared=True)
+    assert is_recoverable_acceptance_failure("anything-novel", worker_declared=True)
+
+
+def test_server_detected_failure_still_follows_the_allowlist() -> None:
+    assert not is_recoverable_acceptance_failure("artifact_publication_failed")
+    assert is_recoverable_acceptance_failure("required_output_missing")
+
+
 def _task(
     *,
     outputs=("outputs/report.md",),

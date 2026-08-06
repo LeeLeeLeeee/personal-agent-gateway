@@ -36,8 +36,12 @@ class AcceptanceResult:
     evidence: dict[str, object]
 
 
-def is_recoverable_acceptance_failure(reason_code: str | None) -> bool:
-    return reason_code in RECOVERABLE_ACCEPTANCE_REASONS
+def is_recoverable_acceptance_failure(
+    reason_code: str | None,
+    *,
+    worker_declared: bool = False,
+) -> bool:
+    return worker_declared or reason_code in RECOVERABLE_ACCEPTANCE_REASONS
 
 
 class TeamAcceptanceService:
