@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../api/client.js";
 import { ArtifactsView } from "../ArtifactsView/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
@@ -97,579 +97,6 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
-const MAP_COLUMNS = {
-  source: 40,
-  request: 350,
-  team: 660,
-  knowledge: 970
-};
-
-const MAP_SECTIONS = [
-  { id: "shared", label: "SHARED KNOWLEDGE", ariaLabel: "Shared knowledge" },
-  { id: "persona", label: "PERSONA-SPECIFIC", ariaLabel: "Persona-specific knowledge" },
-  { id: "automation", label: "AUTOMATION", ariaLabel: "Automation knowledge" }
-];
-
-function isSourceNode(node) {
-  return ["scope", "persona", "hook"].includes(node?.kind);
-}
-
-function isKnowledgeNode(node) {
-  return ["entry", "draft"].includes(node?.kind);
-}
-
-function uniqueNodes(nodes) {
-  return [...new Map(nodes.filter(Boolean).map((node) => [node.id, node])).values()];
-}
-
-function knowledgeLaneSection(sources) {
-  if (sources.some((node) => node.kind === "hook")) return "automation";
-  if (sources.some((node) => node.kind === "persona")) return "persona";
-  return "shared";
-}
-
-function buildKnowledgeLaneLayout(nodes, edges) {
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const incoming = new Map();
-  const outgoing = new Map();
-
-  for (const edge of edges) {
-    if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) continue;
-    incoming.set(edge.target, [...(incoming.get(edge.target) || []), edge]);
-    outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge]);
-  }
-
-  const incomingEdges = (nodeId) => incoming.get(nodeId) || [];
-  const outgoingEdges = (nodeId) => outgoing.get(nodeId) || [];
-  const sourcesFor = (nodeId) => incomingEdges(nodeId)
-    .map((edge) => nodeById.get(edge.source))
-    .filter(isSourceNode);
-  const resultsFor = (nodeId) => outgoingEdges(nodeId)
-    .map((edge) => nodeById.get(edge.target))
-    .filter(isKnowledgeNode);
-  const teamsFor = (nodeId) => outgoingEdges(nodeId)
-    .map((edge) => nodeById.get(edge.target))
-    .filter((node) => node?.kind === "team_run");
-  const lanes = [];
-  const representedResultIds = new Set();
-
-  for (const request of nodes.filter((node) => node.kind === "request")) {
-    const teams = uniqueNodes(teamsFor(request.id));
-    const results = uniqueNodes([
-      ...resultsFor(request.id),
-      ...teams.flatMap((team) => resultsFor(team.id))
-    ]);
-    const sources = uniqueNodes([
-      ...sourcesFor(request.id),
-      ...teams.flatMap((team) => sourcesFor(team.id)),
-      ...results.flatMap((result) => sourcesFor(result.id))
-    ]);
-    results.forEach((result) => representedResultIds.add(result.id));
-    const memberIds = new Set([
-      ...sources.map((node) => node.id),
-      request.id,
-      ...teams.map((node) => node.id),
-      ...results.map((node) => node.id)
-    ]);
-    lanes.push({
-      id: `lane:${request.id}`,
-      label: request.label,
-      section: knowledgeLaneSection(sources),
-      sources,
-      request,
-      teams,
-      results,
-      edges: edges.filter((edge) => (
-        memberIds.has(edge.source) && memberIds.has(edge.target)
-      ))
-    });
-  }
-
-  for (const result of nodes.filter(isKnowledgeNode)) {
-    if (representedResultIds.has(result.id)) continue;
-    const teams = uniqueNodes(
-      incomingEdges(result.id)
-        .map((edge) => nodeById.get(edge.source))
-        .filter((node) => node?.kind === "team_run")
-    );
-    const sources = uniqueNodes([
-      ...sourcesFor(result.id),
-      ...teams.flatMap((team) => sourcesFor(team.id))
-    ]);
-    const memberIds = new Set([
-      ...sources.map((node) => node.id),
-      ...teams.map((node) => node.id),
-      result.id
-    ]);
-    lanes.push({
-      id: `lane:${result.id}`,
-      label: result.label,
-      section: knowledgeLaneSection(sources),
-      sources,
-      request: null,
-      teams,
-      results: [result],
-      edges: edges.filter((edge) => (
-        memberIds.has(edge.source) && memberIds.has(edge.target)
-      ))
-    });
-  }
-
-  let cursorY = 62;
-  const sections = MAP_SECTIONS.flatMap((section) => {
-    const sectionLanes = lanes.filter((lane) => lane.section === section.id);
-    if (!sectionLanes.length) return [];
-
-    const headerY = cursorY;
-    cursorY += 32;
-    const positionedLanes = sectionLanes.map((lane) => {
-      const contentHeight = Math.max(
-        68,
-        lane.sources.length ? (lane.sources.length * 30) - 6 : 0,
-        lane.teams.length ? (lane.teams.length * 76) - 8 : 0,
-        lane.results.length ? (lane.results.length * 76) - 8 : 0
-      );
-      const height = contentHeight + 20;
-      const y = cursorY;
-      const positions = new Map();
-
-      lane.sources.forEach((node, index) => {
-        positions.set(node.id, {
-          x: MAP_COLUMNS.source,
-          y: y + 10 + (index * 30),
-          width: 240,
-          height: 24,
-          compact: true
-        });
-      });
-      if (lane.request) {
-        positions.set(lane.request.id, {
-          x: MAP_COLUMNS.request,
-          y: y + 10,
-          width: 260,
-          height: 68
-        });
-      }
-      lane.teams.forEach((node, index) => {
-        positions.set(node.id, {
-          x: MAP_COLUMNS.team,
-          y: y + 10 + (index * 76),
-          width: 260,
-          height: 68
-        });
-      });
-      lane.results.forEach((node, index) => {
-        positions.set(node.id, {
-          x: MAP_COLUMNS.knowledge,
-          y: y + 10 + (index * 76),
-          width: 260,
-          height: 68
-        });
-      });
-
-      cursorY += height + 12;
-      return { ...lane, y, height, positions };
-    });
-    cursorY += 22;
-    return [{ ...section, headerY, lanes: positionedLanes }];
-  });
-
-  return {
-    sections,
-    height: Math.max(188, cursorY + 18)
-  };
-}
-
-function knowledgeMapItemCount(nodes = []) {
-  return nodes.filter((node) => (
-    node.kind === "request" || node.kind === "entry" || node.kind === "draft"
-  )).length;
-}
-
-function edgePath(source, target) {
-  const sourceX = source.x + source.width;
-  const sourceY = source.y + (source.height / 2);
-  const targetX = target.x;
-  const targetY = target.y + (target.height / 2);
-  const middleX = sourceX + ((targetX - sourceX) / 2);
-  return `M ${sourceX} ${sourceY} C ${middleX} ${sourceY}, ${middleX} ${targetY}, ${targetX} ${targetY}`;
-}
-
-function edgePresentation(edge, targetNode) {
-  if (["needs", "requested"].includes(edge.kind)) {
-    return { kind: "needs", label: "GAP" };
-  }
-  if (edge.kind === "delegates") {
-    return { kind: "delegates", label: "DELEGATED" };
-  }
-  if (targetNode?.kind === "draft") {
-    return { kind: "produced", label: "DRAFT" };
-  }
-  return { kind: "uses", label: "PUBLISHED" };
-}
-
-function edgeLabelPosition(source, target) {
-  return {
-    x: ((source.x + source.width) + target.x) / 2,
-    y: ((source.y + (source.height / 2)) + (target.y + (target.height / 2))) / 2
-  };
-}
-
-function ArchiveMap({
-  graph,
-  entries,
-  drafts,
-  requests,
-  selectedNodeId,
-  onSelect,
-  onEditEntry,
-  onWriteRequest
-}) {
-  const nodes = graph?.nodes || [];
-  const edges = graph?.edges || [];
-  const layout = useMemo(() => buildKnowledgeLaneLayout(nodes, edges), [nodes, edges]);
-  const nodeById = useMemo(
-    () => new Map(nodes.map((node) => [node.id, node])),
-    [nodes]
-  );
-  const selected = nodes.find((node) => node.id === selectedNodeId) || null;
-  const selectedEntry = ["entry", "draft"].includes(selected?.kind)
-    ? [...entries, ...drafts].find((entry) => entry.id === selected.entity_id)
-    : null;
-  const selectedRequest = selected?.kind === "request"
-    ? requests.find((request) => request.id === selected.entity_id)
-    : null;
-  const publishedCount = nodes.filter((node) => node.kind === "entry").length;
-  const draftCount = nodes.filter((node) => node.kind === "draft").length;
-  const requestCount = nodes.filter((node) => node.kind === "request").length;
-  const knowledgeNodeCount = knowledgeMapItemCount(nodes);
-  const [viewport, setViewport] = useState({
-    scale: 1,
-    x: 0,
-    y: 0,
-    fitted: false
-  });
-  const canvasRef = useRef(null);
-  const dragRef = useRef(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return undefined;
-
-    function handleWheel(event) {
-      event.preventDefault();
-      if (!event.deltaY) return;
-
-      const amount = event.deltaY < 0 ? 0.2 : -0.2;
-      const rect = canvas.getBoundingClientRect();
-      const point = rect.width && rect.height
-        ? {
-            x: ((event.clientX - rect.left) / rect.width) * 1270,
-            y: ((event.clientY - rect.top) / rect.height) * 680
-          }
-        : null;
-
-      setViewport((current) => {
-        const scale = Math.min(
-          2.4,
-          Math.max(0.25, Number((current.scale + amount).toFixed(2)))
-        );
-        if (!point || scale === current.scale) {
-          return { ...current, scale, fitted: false };
-        }
-        const ratio = scale / current.scale;
-        return {
-          scale,
-          x: point.x - ((point.x - current.x) * ratio),
-          y: point.y - ((point.y - current.y) * ratio),
-          fitted: false
-        };
-      });
-    }
-
-    canvas.addEventListener("wheel", handleWheel, { passive: false });
-    return () => canvas.removeEventListener("wheel", handleWheel);
-  }, [knowledgeNodeCount]);
-
-  function zoomBy(amount) {
-    setViewport((current) => ({
-      ...current,
-      scale: Math.min(2.4, Math.max(0.25, Number((current.scale + amount).toFixed(2)))),
-      fitted: false
-    }));
-  }
-
-  function fitMap() {
-    const scale = Math.max(0.25, Math.min(1, 590 / layout.height));
-    setViewport({
-      scale,
-      x: (1270 - (1270 * scale)) / 2,
-      y: 36,
-      fitted: true
-    });
-  }
-
-  function beginPan(event) {
-    if (event.target.closest?.(".archive-map-node, .archive-map-source-badge")) return;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    dragRef.current = {
-      pointerId: event.pointerId,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      x: viewport.x,
-      y: viewport.y
-    };
-  }
-
-  function movePan(event) {
-    const start = dragRef.current;
-    if (!start || start.pointerId !== event.pointerId) return;
-    setViewport((current) => ({
-      ...current,
-      x: start.x + (event.clientX - start.clientX),
-      y: start.y + (event.clientY - start.clientY),
-      fitted: false
-    }));
-  }
-
-  function endPan(event) {
-    if (dragRef.current?.pointerId !== event.pointerId) return;
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-    dragRef.current = null;
-  }
-
-  function renderNode(node, position, key) {
-    const selectedClass = selectedNodeId === node.id ? " is-selected" : "";
-    return (
-      <foreignObject
-        key={key}
-        x={position.x}
-        y={position.y}
-        width={position.width}
-        height={position.height}
-      >
-        <div xmlns="http://www.w3.org/1999/xhtml" className="archive-map-node-wrap">
-          <button
-            type="button"
-            className={`archive-map-node archive-map-node-${node.kind}${selectedClass}`}
-            aria-label={`${node.label} ${node.kind} node`}
-            aria-pressed={selectedNodeId === node.id}
-            onClick={() => onSelect(node.id)}
-          >
-            <span className="archive-map-node-kind">{node.kind}</span>
-            <span className="archive-map-node-title">{node.label}</span>
-            <span className="archive-map-node-meta">{node.meta || "—"}</span>
-          </button>
-        </div>
-      </foreignObject>
-    );
-  }
-
-  return (
-    <div className="archive-map-layout">
-      <div className="archive-map-intro">
-        <div>
-          <div className="archive-map-intro-k mono">HOW TO READ THIS MAP</div>
-          <h2>Follow a knowledge gap to published guidance</h2>
-        </div>
-        <p>
-          Each row is one knowledge flow. Shared guidance, persona-specific needs, and automation
-          outputs are separated into sections; only sources connected to a request or document
-          appear. Artifacts remain separate and do not appear on this map.
-        </p>
-      </div>
-      <div className="archive-map-toolbar">
-        <div className="archive-map-legend" aria-label="Map legend">
-          <span><i className="archive-legend-line" />PUBLISHED KNOWLEDGE</span>
-          <span><i className="archive-legend-line archive-legend-line-needs" />KNOWLEDGE GAP</span>
-          <span><i className="archive-legend-line archive-legend-line-delegates" />DELEGATED TO TEAM</span>
-          <span><i className="archive-legend-line archive-legend-line-produced" />PRIVATE DRAFT OUTPUT</span>
-        </div>
-        <div className="archive-map-controls" aria-label="Map controls">
-          <button type="button" aria-label="Zoom out" onClick={() => zoomBy(-0.2)}>−</button>
-          <span className="mono">{Math.round(viewport.scale * 100)}%</span>
-          <button type="button" aria-label="Zoom in" onClick={() => zoomBy(0.2)}>+</button>
-          <button type="button" aria-label="Fit map" onClick={fitMap}>FIT</button>
-        </div>
-        <span className="mono archive-map-count">
-          {publishedCount} DOCS · {draftCount} DRAFTS · {requestCount} GAPS
-        </span>
-      </div>
-
-      <div className="archive-map-scroll">
-        {knowledgeNodeCount ? (
-          <svg
-            ref={canvasRef}
-            className="archive-map-canvas"
-            viewBox="0 0 1270 680"
-            role="group"
-            aria-label="Archive knowledge map"
-            aria-describedby="archive-map-description"
-            onPointerDown={beginPan}
-            onPointerMove={movePan}
-            onPointerUp={endPan}
-            onPointerCancel={endPan}
-            onPointerLeave={endPan}
-          >
-            <title id="archive-map-title">Archive knowledge map</title>
-            <desc id="archive-map-description">
-              Connected sources are grouped into shared, persona-specific, and automation
-              knowledge lanes leading to requests, documentation teams, drafts, or Library entries.
-            </desc>
-            <g
-              className="archive-map-viewport"
-              transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`}
-              data-fitted={viewport.fitted ? "true" : "false"}
-            >
-              <text className="archive-map-column-label" x="40" y="38">SOURCE</text>
-              <text className="archive-map-column-label" x="350" y="38">KNOWLEDGE REQUEST</text>
-              <text className="archive-map-column-label" x="660" y="38">DOCUMENTATION TEAM</text>
-              <text className="archive-map-column-label" x="970" y="38">DRAFT / LIBRARY</text>
-              {layout.sections.map((section) => (
-                <g
-                  key={section.id}
-                  role="group"
-                  aria-label={section.ariaLabel}
-                  className={`archive-map-section archive-map-section-${section.id}`}
-                >
-                  <text className="archive-map-section-label" x="40" y={section.headerY}>
-                    {section.label}
-                  </text>
-                  <line
-                    className="archive-map-section-rule"
-                    x1="220"
-                    y1={section.headerY - 4}
-                    x2="1230"
-                    y2={section.headerY - 4}
-                  />
-                  {section.lanes.map((lane) => (
-                    <g
-                      key={lane.id}
-                      role="group"
-                      aria-label={`${lane.label} knowledge lane`}
-                      className="archive-map-lane"
-                    >
-                      <rect
-                        className="archive-map-lane-bg"
-                        x="24"
-                        y={lane.y}
-                        width="1222"
-                        height={lane.height}
-                      />
-                      {lane.edges.map((edge) => {
-                        const source = lane.positions.get(edge.source);
-                        const target = lane.positions.get(edge.target);
-                        if (!source || !target) return null;
-                        const targetNode = nodeById.get(edge.target);
-                        const presentation = edgePresentation(edge, targetNode);
-                        const labelPosition = edgeLabelPosition(source, target);
-                        return (
-                          <g key={`${lane.id}:${edge.id}`}>
-                            <path
-                              d={edgePath(source, target)}
-                              className={`archive-map-edge archive-map-edge-${presentation.kind}`}
-                            />
-                            <text
-                              className={`archive-map-edge-label archive-map-edge-label-${presentation.kind}`}
-                              x={labelPosition.x}
-                              y={labelPosition.y}
-                            >
-                              {presentation.label}
-                            </text>
-                          </g>
-                        );
-                      })}
-                      {lane.sources.map((node) => {
-                        const position = lane.positions.get(node.id);
-                        const selectedClass = selectedNodeId === node.id ? " is-selected" : "";
-                        return (
-                          <foreignObject
-                            key={`${lane.id}:${node.id}`}
-                            x={position.x}
-                            y={position.y}
-                            width={position.width}
-                            height={position.height}
-                          >
-                            <div
-                              xmlns="http://www.w3.org/1999/xhtml"
-                              className="archive-map-source-wrap"
-                            >
-                              <button
-                                type="button"
-                                className={`archive-map-source-badge${selectedClass}`}
-                                aria-label={`${node.label} ${node.kind} source`}
-                                aria-pressed={selectedNodeId === node.id}
-                                onClick={() => onSelect(node.id)}
-                              >
-                                <span className="archive-map-source-kind">{node.kind}</span>
-                                <span className="archive-map-source-title">{node.label}</span>
-                              </button>
-                            </div>
-                          </foreignObject>
-                        );
-                      })}
-                      {lane.request
-                        ? renderNode(
-                            lane.request,
-                            lane.positions.get(lane.request.id),
-                            `${lane.id}:${lane.request.id}`
-                          )
-                        : null}
-                      {lane.teams.map((node) => renderNode(
-                        node,
-                        lane.positions.get(node.id),
-                        `${lane.id}:${node.id}`
-                      ))}
-                      {lane.results.map((node) => renderNode(
-                        node,
-                        lane.positions.get(node.id),
-                        `${lane.id}:${node.id}`
-                      ))}
-                    </g>
-                  ))}
-                </g>
-              ))}
-            </g>
-          </svg>
-        ) : (
-          <div className="archive-empty archive-map-empty">
-            Publish a Library entry or wait for a persona knowledge request to build the map.
-          </div>
-        )}
-      </div>
-
-      <aside className="archive-map-detail" aria-live="polite">
-        {selected ? (
-          <>
-            <div className="archive-map-detail-k mono">{selected.kind.toUpperCase()} · {selected.meta}</div>
-            <h2>{selected.label}</h2>
-            <p>{selected.summary || "Select a connected document or gap to inspect it."}</p>
-            {selectedEntry ? (
-              <Button size="btn-sm" onClick={() => onEditEntry(selectedEntry)}>
-                {selectedEntry.status === "draft" ? "Review draft" : "Open in Library"}
-              </Button>
-            ) : null}
-            {selectedRequest ? (
-              <Button
-                size="btn-sm"
-                variant="primary"
-                onClick={() => onWriteRequest(selectedRequest)}
-              >
-                Write in Library
-              </Button>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <div className="archive-map-detail-k mono">MAP INSPECTOR</div>
-            <p>Select a node to inspect its scope, document, or unresolved knowledge gap.</p>
-          </>
-        )}
-      </aside>
-    </div>
-  );
-}
-
 export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) {
   const [tab, setTab] = useState("library");
   const [entries, setEntries] = useState([]);
@@ -677,8 +104,8 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
   const [personas, setPersonas] = useState([]);
   const [requests, setRequests] = useState([]);
   const [teamRuns, setTeamRuns] = useState([]);
+  const [teamRunsStatus, setTeamRunsStatus] = useState("idle");
   const [selectedTeams, setSelectedTeams] = useState({});
-  const [graph, setGraph] = useState({ nodes: [], edges: [] });
   const [loading, setLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -691,7 +118,6 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [revisions, setRevisions] = useState([]);
-  const [selectedNodeId, setSelectedNodeId] = useState(null);
 
   const loadData = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -701,23 +127,17 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
         nextEntries,
         nextDrafts,
         nextPersonas,
-        nextRequests,
-        nextTeamRuns,
-        nextGraph
+        nextRequests
       ] = await Promise.all([
         client.archiveEntries(),
         client.archiveEntries({ status: "draft" }),
         client.personas(),
-        client.knowledgeRequests(),
-        client.teamRuns(),
-        client.archiveMap()
+        client.knowledgeRequests()
       ]);
       setEntries(nextEntries);
       setDrafts(nextDrafts);
       setPersonas(nextPersonas);
       setRequests(nextRequests);
-      setTeamRuns(nextTeamRuns);
-      setGraph(nextGraph || { nodes: [], edges: [] });
     } catch (nextError) {
       setError(nextError);
     } finally {
@@ -728,6 +148,30 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
   useEffect(() => {
     loadData(true);
   }, [loadData]);
+
+  const loadDocumentationTeams = useCallback(async () => {
+    if (["loading", "ready"].includes(teamRunsStatus)) return;
+    setTeamRunsStatus("loading");
+    setError(null);
+    try {
+      setTeamRuns(await client.teamRuns());
+      setTeamRunsStatus("ready");
+    } catch (nextError) {
+      setTeamRunsStatus("error");
+      setError(nextError);
+    }
+  }, [client, teamRunsStatus]);
+
+  useEffect(() => {
+    setTeamRuns([]);
+    setTeamRunsStatus("idle");
+  }, [client]);
+
+  useEffect(() => {
+    if (tab === "requests" && teamRunsStatus === "idle") {
+      void loadDocumentationTeams();
+    }
+  }, [loadDocumentationTeams, tab, teamRunsStatus]);
 
   const activeRequestCount = requests.filter((item) => (
     ACTIVE_REQUEST_STATUSES.has(item.status)
@@ -741,6 +185,7 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
       && run.execution_policy === "triggered"
       && run.status !== "canceled"
   )), [teamRuns]);
+  const documentationTeamsReady = teamRunsStatus === "ready";
   const editingDraft = drafts.find((entry) => entry.id === editingId) || null;
   // The editor already opens published documents (Open in Library -> reviseArchiveEntry);
   // only the delete button was still scoped to drafts.
@@ -788,12 +233,6 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
       setRequests((current) => current.map((request) => (
         request.id === updated.id ? updated : request
       )));
-      setGraph((current) => ({
-        ...current,
-        nodes: current.nodes.map((node) => (
-          node.id === `request:${updated.id}` ? { ...node, meta: updated.status } : node
-        ))
-      }));
     } catch (nextError) {
       setError(nextError);
     }
@@ -1010,16 +449,6 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
           onClick={() => setTab("artifacts")}
         >
           ARTIFACTS <span>{artifacts.length}</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-label="Map"
-          aria-selected={tab === "map"}
-          className={tab === "map" ? "active" : ""}
-          onClick={() => setTab("map")}
-        >
-          MAP <span>{knowledgeMapItemCount(graph.nodes)}</span>
         </button>
         <button
           type="button"
@@ -1338,21 +767,6 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
         </div>
       ) : null}
 
-      {!loading && tab === "map" ? (
-        <div role="tabpanel">
-          <ArchiveMap
-            graph={graph}
-            entries={entries}
-            drafts={drafts}
-            requests={requests}
-            selectedNodeId={selectedNodeId}
-            onSelect={setSelectedNodeId}
-            onEditEntry={editEntry}
-            onWriteRequest={beginRequestDraft}
-          />
-        </div>
-      ) : null}
-
       {!loading && tab === "requests" ? (
         <div className="archive-requests" role="tabpanel">
           <div className="archive-requests-head">
@@ -1363,6 +777,11 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
                 Team output returns as a private review draft.
               </p>
             </div>
+            {teamRunsStatus === "error" ? (
+              <Button size="btn-sm" onClick={loadDocumentationTeams}>
+                Retry team loading
+              </Button>
+            ) : null}
             <label>
               <span className="archive-field-label mono">SHOW</span>
               <select
@@ -1456,14 +875,20 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
                             className="input-field"
                             aria-label={`Documentation team for ${item.title}`}
                             value={selectedTeamId}
-                            disabled={busy || !documentationTeams.length}
+                            disabled={busy || !documentationTeamsReady || !documentationTeams.length}
                             onChange={(event) => setSelectedTeams((current) => ({
                               ...current,
                               [item.id]: event.target.value
                             }))}
                           >
                             {!documentationTeams.length ? (
-                              <option value="">No triggered team available</option>
+                              <option value="">
+                                {teamRunsStatus === "loading"
+                                  ? "Loading documentation teams…"
+                                  : teamRunsStatus === "error"
+                                    ? "Documentation teams unavailable"
+                                    : "No triggered team available"}
+                              </option>
                             ) : documentationTeams.map((run) => (
                               <option key={run.id} value={run.id}>
                                 {run.team_name || run.goal}
@@ -1473,9 +898,9 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
                         </label>
                       ) : null}
                       {active && !delegated ? (
-                        <Button
-                          size="btn-sm"
-                          disabled={busy || !selectedTeamId}
+                          <Button
+                            size="btn-sm"
+                            disabled={busy || !documentationTeamsReady || !selectedTeamId}
                           aria-label={`Send ${item.title} to documentation team`}
                           onClick={() => delegateRequest(item)}
                         >

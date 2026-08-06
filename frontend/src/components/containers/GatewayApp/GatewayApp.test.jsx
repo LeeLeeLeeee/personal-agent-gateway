@@ -149,7 +149,6 @@ describe("GatewayApp", () => {
       "GET /api/archive/entries?status=published": { entries: [] },
       "GET /api/personas": { personas: [] },
       "GET /api/archive/requests": { requests: [] },
-      "GET /api/archive/map": { nodes: [], edges: [] },
       "GET /api/artifacts": { artifacts: [artifact] }
     });
 
@@ -158,6 +157,7 @@ describe("GatewayApp", () => {
 
     expect(await screen.findByRole("heading", { name: "Archive" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute("aria-selected", "true");
+    expect(fetch).not.toHaveBeenCalledWith("/api/archive/map");
 
     await userEvent.click(await screen.findByRole("tab", { name: /Artifacts/ }));
 
