@@ -918,6 +918,27 @@ def _migration_27_backfill_artifact_origins(
         )
 
 
+def _migration_28_team_task_plan_ordinal(
+    connection: sqlite3.Connection,
+) -> None:
+    if "plan_ordinal" not in _columns(connection, "team_tasks"):
+        connection.execute(
+            "alter table team_tasks add column plan_ordinal integer not null default 0"
+        )
+    connection.execute(
+        """
+        update team_tasks
+        set plan_ordinal = (
+            select count(*)
+            from team_tasks earlier
+            where earlier.team_run_id = team_tasks.team_run_id
+              and earlier.cycle_id is team_tasks.cycle_id
+              and earlier.rowid < team_tasks.rowid
+        )
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -946,6 +967,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (25, "artifact-retention-cleanup", _migration_25_artifact_retention_cleanup),
     (26, "artifact-browser-origins", _migration_26_artifact_browser_origins),
     (27, "backfill-artifact-origins", _migration_27_backfill_artifact_origins),
+    (28, "team-task-plan-ordinal", _migration_28_team_task_plan_ordinal),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

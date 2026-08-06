@@ -2191,3 +2191,25 @@ def test_worker_replay_rejects_rows_that_no_longer_match_input_digest(
             acceptance,
             workspace_changes=changes,
         )
+
+
+def test_dependency_ready_tasks_follow_plan_order_not_uuid(tmp_path):
+    for index in range(40):
+        fix = valid_task_spec("Fix", None)
+        fix.update({"plan_task_id": "fix", "depends_on_task_ids": []})
+        qa = valid_task_spec("Qa", None)
+        qa.update({"plan_task_id": "qa", "depends_on_task_ids": []})
+        services = make_completed_operation(
+            tmp_path / f"trial{index}",
+            stage="cycle_planning",
+            result=ValidatedOperationResult("task_plan", {"tasks": [fix, qa]}),
+        )
+
+        created = services.effects.apply_plan(services.operation.id)
+        ready = services.teams.list_dependency_ready_tasks(
+            services.run.id, services.cycle.id
+        )
+
+        assert [task.title for task in created] == ["Fix", "Qa"]
+        assert [task.plan_ordinal for task in created] == [0, 1]
+        assert ready[0].title == "Fix", f"trial {index} scheduled Qa first"

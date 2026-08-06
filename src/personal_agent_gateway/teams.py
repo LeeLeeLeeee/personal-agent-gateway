@@ -215,6 +215,7 @@ class TeamTask:
     cycle_id: str | None = None
     retry_of_task_id: str | None = None
     acceptance_recovery_attempts: int = 0
+    plan_ordinal: int = 0
 
 
 @dataclass(frozen=True)
@@ -1752,9 +1753,17 @@ class TeamRunService:
             insert into team_tasks (
                 id, team_run_id, cycle_id, title, description, owner_agent_id, status,
                 required, acceptance_json, outcome_json, acceptance_result_json,
-                result, error_message, created_at, updated_at, started_at, finished_at
+                result, error_message, created_at, updated_at, started_at, finished_at,
+                plan_ordinal
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?, ?, ?, ?, ?)
+            values (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?, ?, ?, ?, ?,
+                (
+                    select coalesce(max(existing.plan_ordinal), -1) + 1
+                    from team_tasks existing
+                    where existing.team_run_id = ? and existing.cycle_id is ?
+                )
+            )
             """,
             (
                 task_id,
@@ -1772,6 +1781,8 @@ class TeamRunService:
                 now,
                 None,
                 None,
+                team_run_id,
+                cycle_id,
             ),
         )
         return self._get_task(task_id)
@@ -1789,7 +1800,8 @@ class TeamRunService:
         return [
             _team_task_from_row(row)
             for row in self._db.fetchall(
-                f"select * from team_tasks where {where} order by created_at asc, id asc",
+                f"select * from team_tasks where {where} "
+                "order by plan_ordinal asc, created_at asc, id asc",
                 parameters,
             )
         ]
@@ -1864,7 +1876,7 @@ class TeamRunService:
                   where dependency.task_id = task.id
                     and prerequisite.status != 'completed'
               )
-            order by task.created_at asc, task.id asc
+            order by task.plan_ordinal asc, task.created_at asc, task.id asc
             """,
             (team_run_id, cycle_id),
         )
@@ -3376,6 +3388,11 @@ def _team_task_from_row(row: object) -> TeamTask:
         acceptance_recovery_attempts=(
             int(row["acceptance_recovery_attempts"])
             if "acceptance_recovery_attempts" in row.keys()
+            else 0
+        ),
+        plan_ordinal=(
+            int(row["plan_ordinal"])
+            if "plan_ordinal" in row.keys() and row["plan_ordinal"] is not None
             else 0
         ),
     )

@@ -1884,3 +1884,20 @@ def test_failed_prerequisite_blocks_transitive_dependents(tmp_path) -> None:
 
     assert [task.id for task in blocked] == [draft.id, qa.id]
     assert teams.get_task(draft.id).error_message == "blocked_by_dependency"
+
+
+def test_create_task_assigns_increasing_plan_ordinals(tmp_path) -> None:
+    _db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, _cycles, run)
+
+    first = teams.create_task(run.id, "First", "First", cycle_id=cycle.id)
+    second = teams.create_task(run.id, "Second", "Second", cycle_id=cycle.id)
+    other_cycle_task = teams.create_task(run.id, "Loose", "Loose")
+
+    assert first.plan_ordinal == 0
+    assert second.plan_ordinal == 1
+    assert other_cycle_task.plan_ordinal == 0
+    assert [task.title for task in teams.list_tasks(run.id, cycle.id)] == [
+        "First",
+        "Second",
+    ]

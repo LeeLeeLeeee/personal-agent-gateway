@@ -117,8 +117,8 @@ class TeamModelEffectService:
 
             specs = _plan_specs(operation)
             tasks = [
-                self._create_task(connection, operation, spec, now)
-                for spec in specs
+                self._create_task(connection, operation, spec, now, ordinal)
+                for ordinal, spec in enumerate(specs)
             ]
             self._persist_plan_dependencies(connection, specs, tasks)
             message_id = uuid4().hex
@@ -2048,6 +2048,7 @@ class TeamModelEffectService:
         operation: TeamModelOperation,
         spec: dict[str, object],
         now: str,
+        ordinal: int,
     ) -> TeamTask:
         owner_agent_id = spec["owner_agent_id"]
         if owner_agent_id is not None:
@@ -2095,9 +2096,9 @@ class TeamModelEffectService:
                 id, team_run_id, cycle_id, title, description, owner_agent_id,
                 status, required, acceptance_json, outcome_json,
                 acceptance_result_json, result, error_message, created_at,
-                updated_at, started_at, finished_at
+                updated_at, started_at, finished_at, plan_ordinal
             ) values (?, ?, ?, ?, ?, ?, 'pending', ?, ?, null, null, null, null,
-                      ?, ?, null, null)
+                      ?, ?, null, null, ?)
             """,
             (
                 task_id,
@@ -2110,6 +2111,7 @@ class TeamModelEffectService:
                 _task_acceptance_json(acceptance),
                 now,
                 now,
+                ordinal,
             ),
         )
         for artifact_id in input_artifact_ids:

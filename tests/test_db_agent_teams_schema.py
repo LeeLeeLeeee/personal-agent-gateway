@@ -70,3 +70,14 @@ def test_migration_adds_columns_to_existing_team_runs(tmp_path):
     run_cols = _columns(db, "team_runs")
     assert "team_id" in run_cols
     assert "rules_snapshot_json" in run_cols
+
+
+def test_team_tasks_has_plan_ordinal_column(tmp_path) -> None:
+    database = Database(tmp_path / "app.sqlite")
+    database.initialize()
+    with database.connection() as connection:
+        columns = {
+            row["name"]
+            for row in connection.execute("pragma table_info(team_tasks)")
+        }
+    assert "plan_ordinal" in columns
