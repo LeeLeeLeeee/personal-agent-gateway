@@ -45,6 +45,8 @@ def valid_task_spec(title, owner_agent_id):
         "description": f"{title} description",
         "owner_agent_id": owner_agent_id,
         "required": True,
+        "plan_task_id": title.lower().replace(" ", "-"),
+        "depends_on_task_ids": [],
         "acceptance": {
             "required_outputs": [f"{title.lower()}.md"],
             "required_verifications": [],

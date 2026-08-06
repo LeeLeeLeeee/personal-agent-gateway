@@ -133,7 +133,7 @@ def _complete_plan_fixture(value):
         for item in parsed
     ):
         return value
-    for item in parsed:
+    for index, item in enumerate(parsed):
         item.setdefault("owner_agent_id", None)
         item.setdefault("required", True)
         item.setdefault(
@@ -143,6 +143,8 @@ def _complete_plan_fixture(value):
                 "required_verifications": ["worker-result"],
             },
         )
+        item.setdefault("plan_task_id", f"task-{index}")
+        item.setdefault("depends_on_task_ids", [])
     return json.dumps(parsed)
 
 
@@ -379,6 +381,8 @@ def valid_plan_json(owner_agent_id=None, verification="review"):
                 "description": "Research the request.",
                 "owner_agent_id": owner_agent_id,
                 "required": True,
+                "plan_task_id": "research",
+                "depends_on_task_ids": [],
                 "acceptance": {
                     "required_outputs": [],
                     "required_verifications": [verification],
@@ -3939,6 +3943,7 @@ def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
                     "description": "Write the integrated guide.",
                     "owner_agent_id": "worker-1",
                     "required": True,
+                    "plan_task_id": "create-d3-guide",
                     "acceptance": {
                         "required_outputs": ["outputs/d3-guide.md"],
                         "required_verifications": ["markdown-link-check"],
@@ -3955,7 +3960,7 @@ def test_task_plan_requires_and_returns_immutable_acceptance() -> None:
                 "owner_agent_id": "worker-1",
                 "required": True,
                 "input_artifact_ids": [],
-                "plan_task_id": None,
+                "plan_task_id": "create-d3-guide",
                 "depends_on_task_ids": [],
                 "acceptance": TaskAcceptance(
                 required_outputs=("outputs/d3-guide.md",),
@@ -3986,12 +3991,58 @@ def test_task_plan_rejects_dependency_cycle() -> None:
         _parse_task_plan(json.dumps(payload))
 
 
+def test_task_plan_requires_plan_task_id() -> None:
+    task = {
+        "title": "Research",
+        "description": "Research the source.",
+        "owner_agent_id": None,
+        "required": True,
+        "input_artifact_ids": [],
+        "acceptance": {
+            "required_outputs": ["research.md"],
+            "required_verifications": [],
+        },
+    }
+
+    with pytest.raises(ValueError, match="plan_task_id"):
+        _parse_task_plan(json.dumps([{**task, "depends_on_task_ids": []}]))
+
+    with pytest.raises(ValueError, match="plan_task_id"):
+        _parse_task_plan(
+            json.dumps([{**task, "plan_task_id": None, "depends_on_task_ids": []}])
+        )
+
+
+def test_task_plan_accepts_declared_dependency() -> None:
+    task = {
+        "title": "Research",
+        "description": "Research the source.",
+        "owner_agent_id": None,
+        "required": True,
+        "input_artifact_ids": [],
+        "acceptance": {
+            "required_outputs": ["research.md"],
+            "required_verifications": [],
+        },
+    }
+    payload = [
+        {**task, "plan_task_id": "fix", "depends_on_task_ids": []},
+        {**task, "plan_task_id": "qa", "depends_on_task_ids": ["fix"]},
+    ]
+
+    parsed = _parse_task_plan(json.dumps(payload))
+
+    assert [item["plan_task_id"] for item in parsed] == ["fix", "qa"]
+    assert parsed[1]["depends_on_task_ids"] == ["fix"]
+
+
 def test_task_plan_rejects_input_not_selected_for_cycle() -> None:
     task = {
         "title": "Review",
         "description": "Review the source.",
         "owner_agent_id": None,
         "required": True,
+        "plan_task_id": "review",
         "input_artifact_ids": ["outside"],
         "acceptance": {
             "required_outputs": ["outputs/review.md"],
@@ -4380,6 +4431,7 @@ def test_task_plan_accepts_one_outer_json_fence() -> None:
   "description": "Write the integrated guide.",
   "owner_agent_id": null,
   "required": true,
+  "plan_task_id": "create-d3-guide",
   "acceptance": {
     "required_outputs": ["outputs/d3-guide.md"],
     "required_verifications": ["markdown-link-check"]
@@ -5511,6 +5563,7 @@ async def test_continuous_cycle_with_fenced_plan_creates_tasks_and_resumes(
   "description": "Produce the requested result.",
   "owner_agent_id": null,
   "required": true,
+  "plan_task_id": "process-request",
   "acceptance": {
     "required_outputs": [],
     "required_verifications": ["worker-result"]

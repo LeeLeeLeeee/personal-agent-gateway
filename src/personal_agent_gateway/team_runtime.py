@@ -100,9 +100,11 @@ Return ONLY one of:
    Use null only when no member is available. Do not assign by list order or
    previous completion status. Every task needs at least one required output or
    verification. input_artifact_ids must list only IDs from ALLOWED TASK INPUT
-   ARTIFACTS below; use [] when the task needs none. plan_task_id must be unique
-   in this plan. depends_on_task_ids may reference only plan_task_id values in
-   this response; use [] when the task has no prerequisite.
+   ARTIFACTS below; use [] when the task needs none. plan_task_id is required
+   and must be unique in this plan. depends_on_task_ids may reference only
+   plan_task_id values in this response. A task that reads, revises, or
+   verifies another task's required_outputs MUST list that task in its
+   depends_on_task_ids; use [] only when the task truly has no prerequisite.
 2. {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why planning cannot safely continue","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 Use ask_user only when the choice materially changes the plan and cannot be inferred safely."""
 
@@ -3710,10 +3712,8 @@ def _parse_task_plan(
         if not isinstance(required, bool):
             raise ValueError("Planner task required must be a boolean")
         plan_task_id = item.get("plan_task_id")
-        if plan_task_id is not None and (
-            not isinstance(plan_task_id, str) or not plan_task_id.strip()
-        ):
-            raise ValueError("Planner task plan_task_id must be a string")
+        if not isinstance(plan_task_id, str) or not plan_task_id.strip():
+            raise ValueError("Planner task plan_task_id must be a non-empty string")
         depends_on_task_ids = item.get("depends_on_task_ids", [])
         if not isinstance(depends_on_task_ids, list) or any(
             not isinstance(dependency, str) or not dependency.strip()
@@ -3723,8 +3723,6 @@ def _parse_task_plan(
         depends_on_task_ids = [dependency.strip() for dependency in depends_on_task_ids]
         if len(set(depends_on_task_ids)) != len(depends_on_task_ids):
             raise ValueError("Planner task has duplicate dependencies")
-        if depends_on_task_ids and plan_task_id is None:
-            raise ValueError("Planner task dependencies require plan_task_id")
         input_artifact_ids = item.get("input_artifact_ids", [])
         if not isinstance(input_artifact_ids, list) or any(
             not isinstance(artifact_id, str) or not artifact_id.strip()
@@ -3769,7 +3767,7 @@ def _parse_task_plan(
                 ),
                 "required": required,
                 "input_artifact_ids": input_artifact_ids,
-                "plan_task_id": plan_task_id.strip() if plan_task_id else None,
+                "plan_task_id": plan_task_id.strip(),
                 "depends_on_task_ids": depends_on_task_ids,
                 "acceptance": TaskAcceptance(
                     required_outputs=tuple(required_outputs),
