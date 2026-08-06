@@ -25,3 +25,10 @@ export function fmtElapsed(seconds) {
   const safe = Math.floor(Math.max(0, seconds));
   return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
 }
+
+export function elapsedSeconds(startedAt, nowMs) {
+  if (!startedAt) return null;
+  const started = Date.parse(startedAt);
+  if (Number.isNaN(started)) return null;
+  return Math.max(0, Math.floor((nowMs - started) / 1000));
+}

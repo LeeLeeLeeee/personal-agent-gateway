@@ -5,7 +5,7 @@ import { LoaderCube } from "../../molecules/LoaderCube/index.jsx";
 import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
 import { DocumentPreview } from "../DocumentPreview/index.jsx";
 import { MarkdownContent } from "../MarkdownContent/index.jsx";
-import { fmtDateTime } from "../../../lib/time.js";
+import { elapsedSeconds, fmtDateTime, fmtElapsed } from "../../../lib/time.js";
 
 const TEAM_TASK_COLUMNS = ["pending", "in_progress", "blocked", "completed", "failed"];
 const TERMINAL_STATUSES = [
@@ -98,13 +98,13 @@ function buildHandoffs(messages) {
     });
 }
 
-function currentWork(agent, task, runStatus) {
-  if (task) return task.title;
-  if (agent.role !== "leader") return "No active task";
-  if (runStatus === "planning") return "Planning tasks";
-  if (runStatus === "running") return "Coordinating agents";
-  if (runStatus === "summarizing") return "Summarizing results";
-  return "No active task";
+export function currentWork(agent, task, runStatus) {
+  if (task) return { title: task.title, startedAt: task.started_at || null };
+  if (agent.role !== "leader") return { title: "No active task", startedAt: null };
+  if (runStatus === "planning") return { title: "Planning tasks", startedAt: null };
+  if (runStatus === "running") return { title: "Coordinating agents", startedAt: null };
+  if (runStatus === "summarizing") return { title: "Summarizing results", startedAt: null };
+  return { title: "No active task", startedAt: null };
 }
 
 function groupReportsByTask(messages) {
@@ -783,6 +783,15 @@ export function TeamRunDetail({
     };
   }, [nextRunAt]);
 
+  const hasRunningAgent = (detail?.agents || []).some((agent) => agent.status === "running");
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!hasRunningAgent) return undefined;
+    setNowMs(Date.now());
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasRunningAgent]);
+
   if (loading) {
     return (
       <div className="team-run-empty" role="status" aria-live="polite">
@@ -1256,7 +1265,20 @@ export function TeamRunDetail({
                       <StatusBadge kind={agent.status} />
                       {agent.status === "running" ? <span className="mono team-lane-live">LIVE</span> : null}
                     </div>
-                    <div className="team-lane-task">{currentWork(agent, currentTask, run.status)}</div>
+                    {(() => {
+                      const work = currentWork(agent, currentTask, run.status);
+                      const seconds = elapsedSeconds(work.startedAt, nowMs);
+                      return (
+                        <div className="team-lane-task">
+                          <span>{work.title}</span>
+                          {seconds === null ? null : (
+                            <span className="mono team-lane-elapsed">
+                              {fmtElapsed(seconds)} 경과
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <details className="team-lane-runtime">
                       <summary className="mono">RUNTIME</summary>
                       <div className="mono team-lane-snapshot">{agent.backend}/{agent.model}</div>

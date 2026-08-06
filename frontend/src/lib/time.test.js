@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtDateTime, nowDateTime } from "./time.js";
+import { elapsedSeconds, fmtDateTime, nowDateTime } from "./time.js";
 
 describe("fmtDateTime", () => {
   const reference = new Date(2026, 6, 14, 18, 0, 0);
@@ -20,5 +20,24 @@ describe("fmtDateTime", () => {
 
   it("formats the current time with seconds", () => {
     expect(nowDateTime()).toMatch(/^\d{2}시 \d{2}분 \d{2}초$/);
+  });
+});
+
+describe("elapsedSeconds", () => {
+  it("returns whole seconds between the start and now", () => {
+    const start = "2026-08-06T04:07:12.000Z";
+    const now = Date.parse("2026-08-06T04:10:24.000Z");
+    expect(elapsedSeconds(start, now)).toBe(192);
+  });
+
+  it("returns null for a missing or unparseable start", () => {
+    expect(elapsedSeconds(null, Date.now())).toBeNull();
+    expect(elapsedSeconds("not-a-date", Date.now())).toBeNull();
+  });
+
+  it("clamps a start in the future to zero", () => {
+    const start = "2026-08-06T04:10:00.000Z";
+    const now = Date.parse("2026-08-06T04:07:00.000Z");
+    expect(elapsedSeconds(start, now)).toBe(0);
   });
 });

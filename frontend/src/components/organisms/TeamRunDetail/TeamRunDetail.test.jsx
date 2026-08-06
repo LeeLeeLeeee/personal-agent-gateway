@@ -1219,4 +1219,48 @@ describe("TeamRunDetail", () => {
     expect(onContinueDelivery).toHaveBeenCalledTimes(1);
     expect(onCancelDeliveryConflicts).toHaveBeenCalledTimes(1);
   });
+
+  it("shows the running agent's task title with elapsed time that ticks", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-06T04:10:24.000Z"));
+    try {
+      render(
+        <TeamRunDetail
+          detail={{
+            run: { id: "r1", goal: "D3 규약", status: "running", run_mode: "plan_and_execute" },
+            agents: [
+              {
+                id: "a1",
+                name: "Tech Lead",
+                role: "member",
+                status: "running",
+                current_task_id: "t1"
+              }
+            ],
+            tasks: [
+              {
+                id: "t1",
+                title: "잔여 P3 7건 수정",
+                description: "fix",
+                status: "in_progress",
+                started_at: "2026-08-06T04:07:12.000Z"
+              }
+            ],
+            messages: []
+          }}
+        />
+      );
+
+      expect(screen.getByText(/잔여 P3 7건 수정/)).toBeInTheDocument();
+      expect(screen.getByText(/03:12 경과/)).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      expect(screen.getByText(/03:13 경과/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
