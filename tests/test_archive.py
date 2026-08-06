@@ -90,12 +90,6 @@ def test_persona_request_is_a_gap_not_retrievable_knowledge(tmp_path: Path) -> N
 
     assert request.status == "open"
     assert archive.search_entries("rollback", persona_id=persona.id) == []
-    graph = archive.graph()
-    assert any(node["id"] == f"request:{request.id}" and node["kind"] == "request" for node in graph["nodes"])
-    assert not any(
-        node["id"] == f"entry:{request.id}" and node["kind"] == "entry"
-        for node in graph["nodes"]
-    )
 
 
 def test_publishing_from_request_fulfills_it_without_changing_authorship(tmp_path: Path) -> None:
@@ -216,69 +210,6 @@ def test_team_draft_is_idempotent_and_not_searchable_until_user_publish(
         "user",
         "team",
     ]
-
-
-def test_graph_connects_knowledge_request_team_and_review_draft(tmp_path: Path) -> None:
-    db = Database(tmp_path / "gateway.db")
-    db.initialize()
-    archive = ArchiveService(db)
-    personas = PersonaService(db)
-    teams = TeamRunService(db, personas, tmp_path / "workspace")
-    leader = personas.create_persona("Library Lead", "Editor", "", [], [])
-    team_run = teams.create_team_run(
-        "Prepare reviewed Library drafts",
-        leader.id,
-        [],
-        "plan_and_execute",
-        1,
-        lifecycle_mode="continuous",
-        execution_policy="triggered",
-    )
-    request = archive.create_knowledge_request(
-        title="Rollback checklist",
-        reason="Reusable rollback guidance is missing.",
-        suggested_outline=["Signals", "Steps"],
-        source_hints=["provider documentation"],
-        requested_by_persona_id=leader.id,
-    )
-    archive.assign_request_team(request.id, team_run.id)
-    draft = archive.save_draft(
-        actor_type="team",
-        origin_source_type="knowledge_request",
-        origin_source_id=request.id,
-        origin_team_run_id=team_run.id,
-        origin_request_id=request.id,
-        kind="checklist",
-        title=request.title,
-        summary="Team-prepared rollback sequence.",
-        content_markdown="- Check signals\n- Roll back\n- Verify",
-        tags=["rollback"],
-        source_urls=[],
-        persona_ids=[leader.id],
-    )
-
-    graph = archive.graph()
-
-    assert any(
-        node["id"] == f"team_run:{team_run.id}" and node["kind"] == "team_run"
-        for node in graph["nodes"]
-    )
-    assert any(
-        node["id"] == f"draft:{draft.id}" and node["kind"] == "draft"
-        for node in graph["nodes"]
-    )
-    assert any(
-        edge["source"] == f"request:{request.id}"
-        and edge["target"] == f"team_run:{team_run.id}"
-        and edge["kind"] == "delegates"
-        for edge in graph["edges"]
-    )
-    assert any(
-        edge["source"] == f"team_run:{team_run.id}"
-        and edge["target"] == f"draft:{draft.id}"
-        and edge["kind"] == "produced"
-        for edge in graph["edges"]
-    )
 
 
 def _documentation_team_run(tmp_path: Path, db: Database, personas: PersonaService):

@@ -175,14 +175,6 @@ async def delegate_request(
     }
 
 
-@router.get("/map")
-def archive_map(
-    request: Request,
-    _session: None = session_dependency,
-) -> dict[str, list[dict[str, object]]]:
-    return request.app.state.archive_service.graph()
-
-
 @router.get("/entries/{entry_id}")
 def get_entry(
     request: Request,

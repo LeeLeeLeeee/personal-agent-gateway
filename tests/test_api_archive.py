@@ -56,7 +56,7 @@ def test_delete_draft_removes_only_private_team_draft(tmp_path: Path) -> None:
     assert client.get("/api/archive/entries", params={"status": "draft"}).json()["entries"] == []
 
 
-def test_library_publish_search_revision_and_map_api(tmp_path: Path) -> None:
+def test_library_publish_search_and_revision_api(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     persona = client.post(
         "/api/personas",
@@ -102,13 +102,14 @@ def test_library_publish_search_revision_and_map_api(tmp_path: Path) -> None:
     ).json()["revisions"]
     assert [revision["revision"] for revision in revisions] == [2, 1]
 
-    graph = client.get("/api/archive/map").json()
-    assert any(node["id"] == f"entry:{created['id']}" for node in graph["nodes"])
-    assert any(
-        edge["source"] == f"persona:{persona['id']}"
-        and edge["target"] == f"entry:{created['id']}"
-        for edge in graph["edges"]
-    )
+
+
+def test_archive_map_api_is_removed(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+
+    response = client.get("/api/archive/map")
+
+    assert response.status_code == 404
 
 
 def test_request_workflow_is_user_fulfilled_from_library(tmp_path: Path) -> None:
