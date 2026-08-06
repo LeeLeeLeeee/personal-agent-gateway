@@ -572,7 +572,9 @@ describe("api client", () => {
     expect(fetch).toHaveBeenNthCalledWith(6, "/api/hooks/test-connection", expect.objectContaining({ method: "POST" }));
   });
 
-  it("supports Archive Library, revision, request, and map endpoints", async () => {
+  it("supports Archive Library, revision, and request endpoints", async () => {
+    expect(api).not.toHaveProperty("archiveMap");
+
     const entryPayload = {
       kind: "reference",
       title: "Release sources",
@@ -590,8 +592,7 @@ describe("api client", () => {
       .mockResolvedValueOnce(jsonResponse({ entry: { id: "entry-1", current_revision: 2 } }))
       .mockResolvedValueOnce(jsonResponse({ revisions: [{ id: "revision-1" }] }))
       .mockResolvedValueOnce(jsonResponse({ requests: [{ id: "request-1", status: "open" }] }))
-      .mockResolvedValueOnce(jsonResponse({ request: { id: "request-1", status: "deferred" } }))
-      .mockResolvedValueOnce(jsonResponse({ nodes: [], edges: [] }));
+      .mockResolvedValueOnce(jsonResponse({ request: { id: "request-1", status: "deferred" } }));
 
     await expect(api.archiveEntries({
       query: "release notes",
@@ -613,8 +614,6 @@ describe("api client", () => {
       id: "request-1",
       status: "deferred"
     });
-    await expect(api.archiveMap()).resolves.toEqual({ nodes: [], edges: [] });
-
     expect(fetch).toHaveBeenNthCalledWith(
       1,
       "/api/archive/entries?q=release+notes&kind=reference&status=published"
@@ -633,6 +632,5 @@ describe("api client", () => {
       method: "PATCH",
       body: JSON.stringify({ status: "deferred" })
     }));
-    expect(fetch).toHaveBeenNthCalledWith(7, "/api/archive/map");
   });
 });

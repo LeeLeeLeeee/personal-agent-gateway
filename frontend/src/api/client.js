@@ -296,9 +296,6 @@ export const api = {
       }
     ));
   },
-  async archiveMap() {
-    return jsonOrNull(await fetch("/api/archive/map"));
-  },
   async settings() {
     const body = await jsonOrNull(await fetch("/api/settings"));
     return body?.settings || null;
