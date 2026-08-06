@@ -3088,6 +3088,7 @@ class TeamRuntime:
         cycle = self._teams.get_cycle(cycle_id)
         if cycle.status == "queued":
             self._teams.reset_agent_reinvocations(cycle.team_run_id)
+            self._teams.reset_agents_for_new_cycle(cycle.team_run_id)
         self._teams.set_cycle_status(cycle_id, "running")
 
     async def _publish(self, event: dict[str, object]) -> None:

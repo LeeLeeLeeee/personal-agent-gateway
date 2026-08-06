@@ -1723,6 +1723,19 @@ class TeamRunService:
             (_now(), team_run_id),
         )
 
+    def reset_agents_for_new_cycle(self, team_run_id: str) -> None:
+        self.get_team_run(team_run_id)
+        self._db.execute(
+            """
+            update team_agents
+            set status = 'pending', current_task_id = null,
+                finished_at = null, updated_at = ?
+            where team_run_id = ?
+              and status in ('completed', 'failed', 'canceled')
+            """,
+            (_now(), team_run_id),
+        )
+
     def increment_rounds_used(self, team_run_id: str) -> TeamRun:
         self.get_team_run(team_run_id)
         self._db.execute(

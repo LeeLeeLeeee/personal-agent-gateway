@@ -1901,3 +1901,28 @@ def test_create_task_assigns_increasing_plan_ordinals(tmp_path) -> None:
         "First",
         "Second",
     ]
+
+
+def test_reset_agents_for_new_cycle_only_clears_terminal_agents(tmp_path) -> None:
+    _db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
+    leader = teams.get_agent(run.leader_agent_id)
+    worker = next(
+        candidate
+        for candidate in teams.list_agents(run.id)
+        if candidate.id != run.leader_agent_id
+    )
+
+    teams.set_agent_status(leader.id, "completed")
+    teams.set_agent_status(worker.id, "running")
+    teams.reset_agents_for_new_cycle(run.id)
+    by_id = {agent.id: agent for agent in teams.list_agents(run.id)}
+    assert by_id[leader.id].status == "pending"
+    assert by_id[leader.id].current_task_id is None
+    assert by_id[worker.id].status == "running"
+
+    teams.set_agent_status(leader.id, "failed")
+    teams.set_agent_status(worker.id, "waiting")
+    teams.reset_agents_for_new_cycle(run.id)
+    by_id = {agent.id: agent for agent in teams.list_agents(run.id)}
+    assert by_id[leader.id].status == "pending"
+    assert by_id[worker.id].status == "waiting"
