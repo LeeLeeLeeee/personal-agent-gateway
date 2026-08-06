@@ -1270,11 +1270,12 @@ export function TeamRunDetail({
                       const seconds = elapsedSeconds(work.startedAt, nowMs);
                       return (
                         <div className="team-lane-task">
-                          <span>{work.title}</span>
+                          <span className="team-lane-task-title">{work.title}</span>
                           {seconds === null ? null : (
-                            <span className="mono team-lane-elapsed">
-                              {fmtElapsed(seconds)} 경과
-                            </span>
+                            <>
+                              {" "}
+                              <span className="mono team-lane-elapsed">{fmtElapsed(seconds)} 경과</span>
+                            </>
                           )}
                         </div>
                       );

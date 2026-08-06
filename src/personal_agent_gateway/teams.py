@@ -1724,6 +1724,9 @@ class TeamRunService:
         )
 
     def reset_agents_for_new_cycle(self, team_run_id: str) -> None:
+        # "waiting" is terminal for an agent whose task ended blocked, so it has
+        # to be cleared here too; "blocked" is an illegal status that pre-fix
+        # rows may still carry. Only "pending"/"running" survive a new cycle.
         self.get_team_run(team_run_id)
         self._db.execute(
             """
@@ -1731,7 +1734,9 @@ class TeamRunService:
             set status = 'pending', current_task_id = null,
                 finished_at = null, updated_at = ?
             where team_run_id = ?
-              and status in ('completed', 'failed', 'canceled')
+              and status in (
+                  'completed', 'failed', 'canceled', 'waiting', 'blocked'
+              )
             """,
             (_now(), team_run_id),
         )
@@ -1814,7 +1819,7 @@ class TeamRunService:
             _team_task_from_row(row)
             for row in self._db.fetchall(
                 f"select * from team_tasks where {where} "
-                "order by plan_ordinal asc, created_at asc, id asc",
+                "order by created_at asc, plan_ordinal asc, id asc",
                 parameters,
             )
         ]
@@ -1889,7 +1894,7 @@ class TeamRunService:
                   where dependency.task_id = task.id
                     and prerequisite.status != 'completed'
               )
-            order by task.plan_ordinal asc, task.created_at asc, task.id asc
+            order by task.created_at asc, task.plan_ordinal asc, task.id asc
             """,
             (team_run_id, cycle_id),
         )
@@ -1916,7 +1921,7 @@ class TeamRunService:
                           where dependency.task_id = task.id
                             and prerequisite.status in ('failed', 'blocked', 'canceled')
                       )
-                    order by task.created_at asc, task.id asc
+                    order by task.created_at asc, task.plan_ordinal asc, task.id asc
                     """,
                     (team_run_id, cycle_id),
                 ).fetchall()

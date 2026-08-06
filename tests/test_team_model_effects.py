@@ -2244,3 +2244,50 @@ def test_dependency_ready_tasks_follow_plan_order_not_uuid(tmp_path):
         assert [task.title for task in created] == ["Fix", "Qa"]
         assert [task.plan_ordinal for task in created] == [0, 1]
         assert ready[0].title == "Fix", f"trial {index} scheduled Qa first"
+
+
+def test_add_work_plan_does_not_outrank_pending_tasks_of_the_same_cycle(tmp_path):
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_planning",
+        result=ValidatedOperationResult(
+            "task_plan",
+            {"tasks": [valid_task_spec("Fix", None), valid_task_spec("Qa", None)]},
+        ),
+    )
+    fix, _qa = services.effects.apply_plan(services.operation.id)
+    services.teams.finish_task(fix.id, services.actor.id, "completed", "done")
+
+    reserved = services.operations.reserve(
+        OperationSpec(
+            operation_key=f"{services.cycle.id}:cycle_add_work:1",
+            team_run_id=services.run.id,
+            cycle_id=services.cycle.id,
+            task_id=None,
+            agent_id=services.actor.id,
+            provider=services.actor.backend,
+            stage="cycle_add_work",
+            stage_ordinal=1,
+            request_digest=REQUEST_DIGEST,
+        )
+    )
+    invoking = services.operations.begin_attempt(reserved.id, "consumer-2")
+    add_work = services.operations.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult(
+            "task_plan",
+            {"tasks": [valid_task_spec("Extra", None)]},
+        ),
+        upstream_session_id="lead-session",
+    )
+    services.effects.apply_plan(add_work.id)
+
+    ready = services.teams.list_dependency_ready_tasks(
+        services.run.id,
+        services.cycle.id,
+    )
+    listed = services.teams.list_tasks(services.run.id, services.cycle.id)
+
+    assert [task.title for task in ready] == ["Qa", "Extra"]
+    assert [task.title for task in listed] == ["Fix", "Qa", "Extra"]

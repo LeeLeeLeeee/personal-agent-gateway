@@ -1920,6 +1920,67 @@ def test_create_task_assigns_increasing_plan_ordinals(tmp_path) -> None:
     ]
 
 
+def test_run_wide_task_list_stays_chronological_across_cycles(tmp_path) -> None:
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    first_cycle = make_queued_cycle(teams, cycles, run)
+    teams.create_task(run.id, "C1 First", "d", cycle_id=first_cycle.id)
+    teams.create_task(run.id, "C1 Second", "d", cycle_id=first_cycle.id)
+    teams.set_cycle_status(first_cycle.id, "completed")
+    cycles.settle_cycle(first_cycle.id)
+    request = cycles.enqueue_request(
+        run.id, "manual", "second-cycle", "work", previous_cycle_id=None
+    )
+    claimed = cycles.claim_next(run.id)
+    assert claimed is not None and claimed.id == request.id
+    second_cycle = teams.create_cycle(
+        run.id, claimed.source_type, claimed.source_id, request_id=claimed.id
+    )
+    teams.create_task(run.id, "C2 First", "d", cycle_id=second_cycle.id)
+    teams.create_task(run.id, "C2 Second", "d", cycle_id=second_cycle.id)
+
+    assert [task.title for task in teams.list_tasks(run.id)] == [
+        "C1 First",
+        "C1 Second",
+        "C2 First",
+        "C2 Second",
+    ]
+    # The detail API truncates with tasks[-limit:], so the tail must be the
+    # newest tasks rather than the highest ordinals.
+    assert [task.title for task in teams.list_tasks(run.id)[-2:]] == [
+        "C2 First",
+        "C2 Second",
+    ]
+
+
+def test_reset_agents_for_new_cycle_clears_waiting_and_legacy_blocked(
+    tmp_path,
+) -> None:
+    _db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
+    leader = teams.get_agent(run.leader_agent_id)
+    worker = next(
+        candidate
+        for candidate in teams.list_agents(run.id)
+        if candidate.id != run.leader_agent_id
+    )
+    task = teams.create_task(run.id, "Blocked", "Blocked")
+    teams.start_task(task.id, worker.id)
+    teams.finish_task(task.id, worker.id, "blocked", error_message="need input")
+    assert teams.get_agent(worker.id).status == "waiting"
+    teams._db.execute(  # Pre-fix rows persisted an illegal 'blocked' agent status.
+        "update team_agents set status = 'blocked', finished_at = ? where id = ?",
+        ("2026-08-06T00:00:00+00:00", leader.id),
+    )
+
+    teams.reset_agents_for_new_cycle(run.id)
+
+    by_id = {agent.id: agent for agent in teams.list_agents(run.id)}
+    assert by_id[worker.id].status == "pending"
+    assert by_id[worker.id].current_task_id is None
+    assert by_id[worker.id].finished_at is None
+    assert by_id[leader.id].status == "pending"
+    assert by_id[leader.id].finished_at is None
+
+
 def test_reset_agents_for_new_cycle_only_clears_terminal_agents(tmp_path) -> None:
     _db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
     leader = teams.get_agent(run.leader_agent_id)
@@ -1955,6 +2016,8 @@ def test_reset_agents_for_new_cycle_only_clears_terminal_agents(tmp_path) -> Non
         "update team_agents set current_task_id = ? where id = ?",
         (task_two.id, leader.id),
     )
+    # "waiting" is a terminal parking state for an agent whose task ended
+    # blocked, so a new cycle must clear it as well.
     teams.set_agent_status(worker.id, "waiting")
     before_reset = teams.get_agent(leader.id)
     assert before_reset.current_task_id == task_two.id
@@ -1965,4 +2028,4 @@ def test_reset_agents_for_new_cycle_only_clears_terminal_agents(tmp_path) -> Non
     assert by_id[leader.id].status == "pending"
     assert by_id[leader.id].current_task_id is None
     assert by_id[leader.id].finished_at is None
-    assert by_id[worker.id].status == "waiting"
+    assert by_id[worker.id].status == "pending"

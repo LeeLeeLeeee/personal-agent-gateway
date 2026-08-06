@@ -1224,7 +1224,7 @@ describe("TeamRunDetail", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-06T04:10:24.000Z"));
     try {
-      render(
+      const { container } = render(
         <TeamRunDetail
           detail={{
             run: { id: "r1", goal: "D3 규약", status: "running", run_mode: "plan_and_execute" },
@@ -1251,14 +1251,20 @@ describe("TeamRunDetail", () => {
         />
       );
 
-      expect(screen.getByText(/잔여 P3 7건 수정/)).toBeInTheDocument();
+      const lane = container.querySelector(".team-lane-task");
+      expect(lane).not.toBeNull();
+      // The title and the elapsed time are separate spans; assert on the
+      // combined text so a missing separator cannot slip through.
+      expect(lane.textContent).toBe("잔여 P3 7건 수정 03:12 경과");
       expect(screen.getByText(/03:12 경과/)).toBeInTheDocument();
 
       await act(async () => {
         vi.advanceTimersByTime(1000);
       });
 
-      expect(screen.getByText(/03:13 경과/)).toBeInTheDocument();
+      expect(container.querySelector(".team-lane-task").textContent).toBe(
+        "잔여 P3 7건 수정 03:13 경과"
+      );
     } finally {
       vi.useRealTimers();
     }

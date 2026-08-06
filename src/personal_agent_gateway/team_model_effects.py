@@ -118,9 +118,21 @@ class TeamModelEffectService:
                 )
 
             specs = _plan_specs(operation)
+            # Continue the cycle's ordinal sequence instead of restarting at 0:
+            # add-work plans land on a cycle that already holds tasks, and
+            # TeamRunService.create_task numbers the same way.
+            ordinal_base = int(
+                connection.execute(
+                    """
+                    select coalesce(max(plan_ordinal), -1) + 1 from team_tasks
+                    where team_run_id = ? and cycle_id is ?
+                    """,
+                    (operation.team_run_id, operation.cycle_id),
+                ).fetchone()[0]
+            )
             tasks = [
-                self._create_task(connection, operation, spec, now, ordinal)
-                for ordinal, spec in enumerate(specs)
+                self._create_task(connection, operation, spec, now, ordinal_base + index)
+                for index, spec in enumerate(specs)
             ]
             self._persist_plan_dependencies(connection, specs, tasks)
             message_id = uuid4().hex
