@@ -1,5 +1,10 @@
 # Deterministic Team run task ordering, persona cycle reset, and in-progress visibility
 
+> **IMPLEMENTED** — merged to `main` at `b86eab7` on 2026-08-06.
+> Section C's design was wrong and was corrected during implementation; section A's ordering
+> clause was also revised. **The shipped code is the source of truth.** The full errata live in
+> `docs/superpowers/plans/2026-08-06-team-run-task-ordering.md`.
+
 ## Goal
 
 Make a Team run cycle execute its tasks in the order the leader planned, stop a
@@ -75,8 +80,15 @@ Add `team_tasks.plan_ordinal integer` in migration 28.
 | `teams.py:198` `TeamTask` | Add `plan_ordinal: int = 0`; map it in `_team_task_from_row`. |
 | `team_model_effects.py:2045` `_create_task` | Accept an `ordinal` argument and persist the task's index within the plan array. |
 | `teams.py:1733` `create_task` | Default to `max(plan_ordinal) + 1` for the same `(team_run_id, cycle_id)`. `cycle_id` may be NULL, so compare with `is`. |
-| `teams.py:1867` `list_dependency_ready_tasks` | `order by plan_ordinal asc, created_at asc, id asc` |
+| `teams.py:1867` `list_dependency_ready_tasks` | `order by plan_ordinal asc, created_at asc, id asc` — ⚠️ WRONG, see below |
 | `teams.py:1792` `list_tasks` | Same ordering, so the board and `_collect_outputs` follow plan order too. |
+
+> **⚠️ The ordering clause above is wrong.** Shipped code uses
+> `created_at asc, plan_ordinal asc, id asc`, and applies it to
+> `block_pending_dependency_failures` as well. `plan_ordinal` restarts at 0 for every plan and
+> every cycle, so sorting on it first lets an `add_work` plan preempt pending planned tasks —
+> the same inversion class this design exists to fix — and makes run-wide `list_tasks` interleave
+> cycles, which breaks the API's `tasks[-limit:]` truncation. See errata E2 and E3 in the plan.
 
 With `max_workers = 1`, `ready_tasks[0]` becomes the lowest pending ordinal, so
 a cycle executes in the order the leader wrote.
@@ -100,6 +112,25 @@ dependents are marked `blocked_by_dependency` instead of running against stale
 inputs.
 
 ## C. Worker-declared outcomes
+
+> **⚠️ This section's design is WRONG and was corrected during implementation.** Shipped in
+> `main` at `b86eab7`; see errata E8 and E9 in
+> `docs/superpowers/plans/2026-08-06-team-run-task-ordering.md`.
+>
+> `outcome.status != "completed"` is not a valid signal for "the worker declared this".
+> `TeamRuntime._task_outcome` **synthesizes** `status="blocked", reason_code="invalid_task_outcome"`
+> when a worker's response fails to parse — a server-detected failure the worker never declared.
+> Treating it as worker-declared turns a dead run into one that looks like it is waiting for
+> something that will never come. It surfaced as a regression in
+> `test_worker_prose_cannot_complete_team_run`.
+>
+> Shipped code introduces `is_worker_declared_outcome()` and `terminal_rejected_status()` in
+> `team_acceptance.py`, and routes all four call sites — ledger apply, ledger replay, legacy gate,
+> legacy terminal — through them so the rule cannot drift between paths.
+>
+> This section also names only `team_runtime.py:1429` for the legacy path. That changes the
+> terminal status but not the gate that decides whether the legacy flow reaches leader review at
+> all, which is `team_runtime.py:2231` in `_recover_task_outcome`. Both needed the signal.
 
 ```python
 # team_acceptance.py

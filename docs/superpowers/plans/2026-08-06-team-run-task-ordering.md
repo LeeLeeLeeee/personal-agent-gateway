@@ -19,10 +19,136 @@
   - The five files this plan does touch — `tests/test_teams.py`, `tests/test_team_model_effects.py`, `tests/test_team_runtime.py`, `tests/test_team_acceptance.py`, `tests/test_db_agent_teams_schema.py` — are **fully green (341 passed, 1 skipped)**. They must stay green.
   - Frontend: **40 files, 355 tests, all passing**. Must stay green.
   - Completion is judged by **delta**: no test that passed before may fail after.
+  - ⚠️ ERRATUM E10: this five-file scope is too narrow and let six regressions through. Gate on the full suite, and record the baseline's **per-file** distribution, not just a total.
 - Migrations are append-only. The new migration is number 28; never renumber or edit an existing migration.
 - SQLite `cycle_id` is nullable. Always compare it with `is ?`, never `= ?`.
 - Do not touch `src/personal_agent_gateway/frontend_dist/**`. It is a build artifact and already has uncommitted changes that are not part of this work.
 - Task execution order is **1 → 2 → 3 → 4 → 5**. Each task commits independently.
+
+---
+
+## EXECUTED — read the errata before trusting any step below
+
+This plan was executed on 2026-08-06 and merged to `main` at `b86eab7` (10 commits,
+`5bb054d..b86eab7`). **The shipped code is the source of truth, not this document.**
+
+Execution found ten defects in the plan itself, plus a design error inherited from the spec (E8).
+Each was corrected in code and reviewed; the steps below still carry the original wording so the
+record of what was wrong survives. Every affected step is marked `⚠️ ERRATUM Ex` inline.
+
+Final state: backend 43 failed / 1342 passed / 2 skipped against a 43 / 1327 / 2 baseline —
+zero regressions, and the 15 extra passes are exactly this plan's new tests. Frontend 359
+passing against 355.
+
+### Errata
+
+**E1 — Task 1 Step 3: the schema test asserts against nothing.**
+The snippet calls `database.connection()` without `database.initialize()` first. `connection()`
+opens a raw connection and never runs `SCHEMA_SQL` or the migrations, so `pragma table_info`
+returns an empty set and the assertion can never pass. Add `database.initialize()`, matching the
+style of the other tests in that file.
+
+**E2 — Task 1 Step 9: the ordering clause is wrong and creates a new inversion.**
+The plan prescribes `plan_ordinal asc, created_at asc, id asc`. Shipped code uses
+**`created_at asc, plan_ordinal asc, id asc`** in `list_tasks`, `list_dependency_ready_tasks`,
+and `block_pending_dependency_failures`.
+
+Why the plan's order is wrong: `plan_ordinal` restarts at 0 for every plan and every cycle.
+Sorting on it first means (a) an `add_work` plan applied to a cycle that already holds tasks
+preempts the pending planned tasks — the same inversion class this plan exists to fix — and
+(b) run-wide `list_tasks` interleaves cycles, so the API's `tasks[-limit:]` truncation hides the
+*first* task of every plan instead of the oldest tasks. Putting `created_at` first restores
+chronology across plans while preserving the fix within a plan, because `apply_plan` stamps one
+shared `created_at` on a whole plan so `plan_ordinal` still decides there.
+
+**E3 — Task 1 Step 8: `enumerate(specs)` numbers ordinals per operation, not per cycle.**
+That disagrees with `create_task`, which numbers from `max+1` per `(team_run_id, cycle_id)`.
+Shipped `apply_plan` computes an `ordinal_base` the same way `create_task` does and offsets from
+it. E2's read-side fix alone was judged insufficient because `_now()` is only microsecond-
+resolution, so two plans in one cycle could tie on `created_at`.
+
+Consequence for readers: `plan_ordinal` means **sequence within the cycle**, not index within
+the plan. Nothing reads it positionally today.
+
+**E4 — Task 2 Step 1: the test does not prove what it claims.**
+`set_agent_status` already nulls `current_task_id` and sets `finished_at` on any terminal
+transition, so the post-reset `current_task_id is None` assertion passes even if the SQL clause
+were removed, and `finished_at` is never asserted at all. The shipped test gives the agent a
+genuinely non-null `current_task_id` first and asserts `finished_at` non-null before and null
+after, in both phases.
+
+**E5 — Task 2 Step 3: the reset status list is incomplete.**
+The plan resets `('completed','failed','canceled')`. Shipped code resets
+`('completed','failed','canceled','waiting','blocked')`. Task 5 made `waiting` a terminal parking
+state for an agent whose task ended `blocked`, so excluding it left persona lanes pulsing
+"WAITING" forever — the exact stale-lane symptom this task exists to remove. `'blocked'` covers
+legacy rows that a pre-existing `finish_task` bug persisted as an illegal `AgentStatus`.
+
+**E6 — Task 3 Step 6: the prescribed hook placement violates the Rules of Hooks.**
+The plan says to add the `useState`/`useEffect` after `const agents = detail.agents || [];`,
+which sits *after* three early returns (`loading`, `loadError`, `!run`). `GatewayApp` mounts
+`TeamRunDetail` without a `key` and flips `loading` to false on the same instance, so React would
+see two extra hooks appear between renders and throw "Rendered more hooks than during the
+previous render". Shipped code puts both hooks above the early returns, beside the existing
+`countdownNow` effect, using the same `detail?.` optional-chaining style.
+
+Step 6 also under-specifies the render: two sibling `<span>`s separated only by JSX whitespace
+produce no space, so the lane rendered `잔여 P3 7건 수정03:12 경과`. Shipped code inserts an
+explicit `{" "}` and adds a `.team-lane-elapsed` rule to
+`src/personal_agent_gateway/static/styles.css`. The plan's test could not catch this because
+`getByText` matches per text node; the shipped test asserts on the container's combined
+`textContent`.
+
+**E7 — Task 4 Step 4: the instruction contradicts this plan's own Step 1 test.**
+Adding `"plan_task_id"` to `required_fields` makes an absent key raise the generic
+"missing or unknown fields" message, which fails Step 1's
+`pytest.raises(ValueError, match="plan_task_id")`. Shipped code leaves the key in the
+allowed-extras set and enforces it with the standalone strict check alone. Review enumerated all
+five input cases and confirmed the two versions accept and reject an identical input set — only
+the error message for the absent-key case differs, and the shipped one is more useful.
+
+**E8 — Task 5: the prescribed worker-declared signal is wrong. This came from the spec, not just the plan.**
+Both the spec and Step 5/7 use `worker_declared = outcome.status != "completed"`. That is false
+for a case neither document considered: `TeamRuntime._task_outcome` **synthesizes**
+`status="blocked", reason_code="invalid_task_outcome"` when a worker's response fails to parse.
+That is a server-detected failure the worker never declared, and recording it verbatim turns a
+dead run into one that looks like it is waiting for something that will never come. It surfaced
+as a baseline regression in `test_worker_prose_cannot_complete_team_run`.
+
+Shipped code introduces `is_worker_declared_outcome()` and `terminal_rejected_status()` in
+`team_acceptance.py` and routes all four call sites — ledger apply, ledger replay, legacy gate,
+legacy terminal — through them, so the rule cannot drift between paths. Review verified by
+enumerating every `TaskOutcome` producer in `src/` that `invalid_task_outcome` is the only
+synthesized one.
+
+**E9 — Task 5 Step 2: the test raises before it asserts, and Step 7 fixes only half the legacy path.**
+`workspace_changes={}` raises `ValueError` inside `_workspace_changes` before any assertion runs;
+use the three-key empty form every other call in that file uses. And Step 7's change at
+`team_runtime.py:1427` only affects the terminal status computed *afterwards*. The gate that
+actually decides whether the legacy flow reaches leader review is
+`team_runtime.py:2231` inside `_recover_task_outcome`, which the plan never names. Without it the
+legacy path still hard-returned for worker-declared novel reason codes, leaving the two paths
+divergent on exactly the behavior this task targets. Shipped code fixes both, and also aligns the
+at-cap terminal state so ledger and legacy agree on task status *and* agent status.
+
+**E10 — Global Constraints: the five-file test scope is too narrow.**
+Gating each task on `test_teams`, `test_team_model_effects`, `test_team_runtime`,
+`test_team_acceptance`, and `test_db_agent_teams_schema` let six regressions through: fake
+task-plan JSON also lives in `test_api_team_runs.py` (4) and `test_team_results.py` (1), and
+`test_migrations.py` (1) pins the schema version. A plan that tightens a parser must gate on the
+full suite, and its baseline must record the **per-file** failure distribution — a total alone
+cannot distinguish "we broke six" from "we broke six and six others got fixed". The cheap way to
+isolate a regression is `git worktree add /tmp/x <base>` and re-run only the currently-failing
+files there.
+
+**E11 — Final verification: the live-database step is wrong and unnecessary.** See that step for
+detail. `Database()` takes a `Path` and needs `.initialize()`; migrations apply automatically on
+backend restart via `app.py:480`; and verification was done against a copy rather than production.
+
+**Not defects, recorded for completeness:** three Low findings were parked rather than fixed —
+a `team-lane-task-title` class with no CSS rule; no test pinning E3's write-side change (E2's
+read-side fix independently prevents the failure); and a comment at `teams.py:1727` calling
+`waiting` terminal when it is actually overloaded with the transient provider-wait state.
 
 ---
 
@@ -95,7 +221,7 @@ def test_create_task_assigns_increasing_plan_ordinals(tmp_path) -> None:
     ]
 ```
 
-- [ ] **Step 3: Write the failing schema test**
+- [ ] **Step 3: Write the failing schema test** — ⚠️ ERRATUM E1: the snippet below is missing `database.initialize()` and asserts against an always-empty set.
 
 Add to `tests/test_db_agent_teams_schema.py`, matching that file's existing style for column assertions.
 
@@ -214,7 +340,7 @@ Replace the insert statement and its parameter tuple with:
         )
 ```
 
-- [ ] **Step 8: Assign the ordinal in the ledger path**
+- [ ] **Step 8: Assign the ordinal in the ledger path** — ⚠️ ERRATUM E3: `enumerate(specs)` numbers per operation, not per cycle. Shipped code offsets from an `ordinal_base` computed like `create_task`'s.
 
 In `src/personal_agent_gateway/team_model_effects.py`, change the `apply_plan` task loop (line 119):
 
@@ -268,7 +394,7 @@ Change its insert (line 2092) to carry the ordinal explicitly:
         )
 ```
 
-- [ ] **Step 9: Sort by the ordinal**
+- [ ] **Step 9: Sort by the ordinal** — ⚠️ ERRATUM E2: the clause below is WRONG. Shipped code uses `created_at asc, plan_ordinal asc, id asc`, and applies it to `block_pending_dependency_failures` too.
 
 In `src/personal_agent_gateway/teams.py`, change both query orderings.
 
@@ -331,6 +457,9 @@ Agents carry the previous cycle's `completed`/`failed` badge into the next cycle
 
 - [ ] **Step 1: Write the failing test**
 
+⚠️ ERRATUM E4 — this test does not prove the `current_task_id`/`finished_at` clauses; see the errata for the shipped version.
+⚠️ ERRATUM E5 — the `waiting` half of the claim below is wrong. Task 5 makes `waiting` a terminal parking state, so the shipped reset DOES include it (and `blocked`). Only `running` must survive.
+
 Add to `tests/test_teams.py`. The assertion that `running` and `waiting` agents are untouched is the important half — operation replay guards (`team_model_effects.py:189, 253, 1147, 1902`) assert exact agent states and would break if those were reset.
 
 `make_cycle_services` creates exactly two agents (one leader, one worker), so the test covers the four statuses in two phases.
@@ -369,7 +498,7 @@ def test_reset_agents_for_new_cycle_only_clears_terminal_agents(tmp_path) -> Non
 
 Expected: FAIL with `AttributeError: 'TeamRunService' object has no attribute 'reset_agents_for_new_cycle'`.
 
-- [ ] **Step 3: Add the service method**
+- [ ] **Step 3: Add the service method** — ⚠️ ERRATUM E5: the shipped status list is `('completed','failed','canceled','waiting','blocked')`, not the three below.
 
 In `src/personal_agent_gateway/teams.py`, directly after `reset_agent_reinvocations` (which ends at line 1723):
 
@@ -556,7 +685,7 @@ export function currentWork(agent, task, runStatus) {
 }
 ```
 
-- [ ] **Step 6: Add the tick and render the elapsed time**
+- [ ] **Step 6: Add the tick and render the elapsed time** — ⚠️ ERRATUM E6: the prescribed hook placement violates the Rules of Hooks and crashes, and the render below produces run-together text with no CSS rule. See the errata.
 
 Add the import at the top of the same file, merging into the existing `frontend/src/lib/time.js` import if one is already present:
 
@@ -718,7 +847,7 @@ def test_failed_prerequisite_blocks_dependent_instead_of_running(tmp_path) -> No
 
 Expected: the three parser tests FAIL (a null or missing `plan_task_id` is currently accepted). The blocked-dependent test may already pass — that is fine, it is a regression guard for machinery Task 4 puts into real use.
 
-- [ ] **Step 4: Make `plan_task_id` required in the parser**
+- [ ] **Step 4: Make `plan_task_id` required in the parser** — ⚠️ ERRATUM E7: adding the key to `required_fields` breaks this plan's own Step 1 test. Shipped code enforces the field with the standalone strict check alone.
 
 In `src/personal_agent_gateway/team_runtime.py`, add `"plan_task_id"` to `required_fields` (the set ending at line 3688) and remove it from the optional set at line 3691:
 
@@ -831,7 +960,7 @@ def test_server_detected_failure_still_follows_the_allowlist() -> None:
     assert is_recoverable_acceptance_failure("required_output_missing")
 ```
 
-- [ ] **Step 2: Write the failing effect test**
+- [ ] **Step 2: Write the failing effect test** — ⚠️ ERRATUM E9: `workspace_changes={}` raises `ValueError` before any assertion runs. Use the three-key empty form the rest of that file uses.
 
 Add to `tests/test_team_model_effects.py`, using the file's existing `make_completed_worker_operation` helper (line 133), which already leaves the task `in_progress` and its agent `running`.
 
@@ -873,7 +1002,7 @@ def test_worker_blocked_with_novel_reason_routes_to_leader_review(tmp_path):
 
 Expected: FAIL. `is_recoverable_acceptance_failure` takes no `worker_declared` keyword, and the effect writes `status = 'failed'`.
 
-- [ ] **Step 4: Widen the predicate**
+- [ ] **Step 4: Widen the predicate** — ⚠️ ERRATUM E8: the `worker_declared` signal prescribed here and in Steps 5-7 is wrong — a synthesized `invalid_task_outcome` is not worker-declared. Shipped code uses `is_worker_declared_outcome()` / `terminal_rejected_status()` in `team_acceptance.py`.
 
 In `src/personal_agent_gateway/team_acceptance.py`, replace lines 39-40:
 
@@ -969,7 +1098,7 @@ Update the call site at line 1880, where `outcome` is already bound on line 1878
         )
 ```
 
-- [ ] **Step 7: Apply the same rule to the legacy path**
+- [ ] **Step 7: Apply the same rule to the legacy path** — ⚠️ ERRATUM E9: this fixes only the terminal status. The gate that decides whether the legacy flow reaches leader review is `team_runtime.py:2231` in `_recover_task_outcome`, which this plan never names.
 
 In `src/personal_agent_gateway/team_runtime.py`, change lines 1427-1433:
 
@@ -1033,15 +1162,24 @@ Expected: all pass.
 
 - [ ] **Confirm the migration applies to the real database**
 
-Back up first, since this writes to live data:
+⚠️ ERRATUM E11 — this step's snippets are wrong in two ways, and the step as written is riskier than it needs to be.
+
+- `Database('data/app.sqlite')` takes a `Path`, not a `str`, and constructing it does not run migrations. `Database(Path(...)).initialize()` is what runs them.
+- There is no manual step to perform at all. `app.py:480` calls `db.initialize()` on startup, so **migration 28 applies automatically when the backend restarts**.
+- Do not run this against live data to verify it. Run it against a copy — a verification step should not mutate production.
+
+What was actually done, against a copy (original untouched):
 
 ```bash
-cp data/app.sqlite data/app.sqlite.before-plan-ordinal.bak
-.\.venv\Scripts\python.exe -c "from personal_agent_gateway.db import Database; Database('data/app.sqlite')"
-.\.venv\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect('data/app.sqlite'); c.row_factory=sqlite3.Row; print([(r['title'][:24], r['plan_ordinal']) for r in c.execute(\"select title, plan_ordinal from team_tasks where cycle_id='d16e7748da31481ba64b6bf493d9fb66' order by plan_ordinal\")])"
+cp data/app.sqlite /tmp/app-migration-test.sqlite
+# then, in python: Database(Path("/tmp/app-migration-test.sqlite")).initialize()
 ```
 
-Expected: the backfill puts `잔여 P3 7건 수정` at ordinal 0 and `잔여 P3 수정본 QA 재검증` at ordinal 1 — the order the leader planned and the run failed to execute.
+Result: `schema_version` 27 → 28; the incident cycle `d16e7748` backfilled to ordinal 0 =
+`잔여 P3 7건 수정`, ordinal 1 = `잔여 P3 수정본 QA 재검증` — the order the leader planned and the
+run failed to execute. Across all 24 task rows: zero duplicate `(cycle, ordinal)` pairs, every
+cycle contiguous `0..n-1`. The live database held no illegal agent statuses, so E5's `'blocked'`
+cleanup is precautionary rather than corrective.
 
 ## Out of scope
 
