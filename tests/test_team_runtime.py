@@ -3402,6 +3402,121 @@ async def test_nonrecoverable_acceptance_skips_lead_review(tmp_path) -> None:
     assert model_calls == 0
 
 
+def _blocked_outcome_json(
+    summary: str = "The draft is byte-identical to the previous round.",
+    reason_code: str = "draft-unmodified",
+) -> str:
+    return json.dumps(
+        {
+            "status": "blocked",
+            "summary": summary,
+            "reason_code": reason_code,
+            "deliverables": [],
+            "verifications": [],
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_declared_novel_reason_reaches_lead_review_on_legacy_path(
+    tmp_path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    leader_agent, worker_agent = teams.list_agents(run.id)
+    task = teams.create_task(run.id, "T", "D")
+    task, worker_agent = teams.start_task(task.id, worker_agent.id)
+    fail = json.dumps(
+        {
+            "resolution": {
+                "kind": "fail",
+                "reason_code": "frozen_rule_conflict",
+                "summary": "The task conflicts with frozen rules.",
+            }
+        }
+    )
+    runtime = TeamRuntime(teams, _factory_by_role([fail], ["unused"]))
+    # The Worker itself declared "blocked" with a reason code that is not in
+    # RECOVERABLE_ACCEPTANCE_REASONS. Before this fix the legacy path returned
+    # immediately and hard-failed the task without ever consulting the Lead.
+    outcome = TaskOutcome(
+        status="blocked",
+        summary="The draft is byte-identical to the previous round.",
+        reason_code="draft-unmodified",
+        deliverables=(),
+        verifications=(),
+    )
+    acceptance = AcceptanceResult(
+        accepted=False,
+        status="blocked",
+        reason_code="draft-unmodified",
+        evidence={},
+    )
+    working_root = Path(run.working_root)
+
+    recovered = await runtime._recover_task_outcome(
+        run,
+        leader_agent,
+        worker_agent,
+        task,
+        outcome,
+        acceptance,
+        working_root,
+        workspace_snapshot(working_root),
+        None,
+    )
+
+    _, _, resolved = recovered
+    assert resolved.reason_code == "frozen_rule_conflict"
+    assert [
+        message.kind for message in teams.list_messages(run.id)
+    ].count("acceptance_review") == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_worker_declared_block_at_cap_matches_ledger_terminal_state(
+    tmp_path,
+) -> None:
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal", leader.id, [worker.id], "plan_and_execute", 1
+    )
+    plan = '[{"title":"T","description":"D"}]'
+    runtime = TeamRuntime(
+        teams,
+        _factory_by_role(
+            [plan, _retry_review()],
+            [_blocked_outcome_json()],
+        ),
+    )
+
+    await runtime.start(run.id)
+
+    task = teams.list_tasks(run.id)[0]
+    worker_agent = next(
+        agent for agent in teams.list_agents(run.id) if agent.role != "leader"
+    )
+    assert task.acceptance_recovery_attempts == 2
+    # Same triple the ledger path records for this input, proven by
+    # test_worker_blocked_with_novel_reason_routes_to_leader_review plus the
+    # apply/replay matrix in the task report: task "blocked", agent "waiting".
+    assert task.status == "blocked"
+    assert task.error_message == "draft-unmodified"
+    assert worker_agent.status == "waiting"
+
+
 @pytest.mark.asyncio
 async def test_artifact_publication_failure_skips_lead_review(tmp_path) -> None:
     db = Database(tmp_path / "app.db")

@@ -14,7 +14,9 @@ from personal_agent_gateway.db import Database
 from personal_agent_gateway.team_acceptance import (
     AcceptanceResult,
     is_recoverable_acceptance_failure,
+    is_worker_declared_outcome,
     rejected_verification_names,
+    terminal_rejected_status,
 )
 from personal_agent_gateway.team_model_operations import (
     OperationConflict,
@@ -1745,12 +1747,16 @@ class TeamModelEffectService:
         elif (
             is_recoverable_acceptance_failure(
                 acceptance.reason_code,
-                worker_declared=outcome.status != "completed",
+                worker_declared=is_worker_declared_outcome(outcome),
             )
             and task.acceptance_recovery_attempts < ACCEPTANCE_RECOVERY_CAP
         ):
             next_stage = "acceptance_lead"
         else:
+            terminal_status = terminal_rejected_status(
+                acceptance.status,
+                worker_declared=is_worker_declared_outcome(outcome),
+            )
             connection.execute(
                 """
                 update team_tasks
@@ -1758,7 +1764,7 @@ class TeamModelEffectService:
                     finished_at = ?, updated_at = ? where id = ?
                 """,
                 (
-                    acceptance.status,
+                    terminal_status,
                     acceptance.reason_code or outcome.reason_code,
                     now,
                     now,
@@ -1771,7 +1777,12 @@ class TeamModelEffectService:
                 set status = ?, current_task_id = null,
                     finished_at = ?, updated_at = ? where id = ?
                 """,
-                ("failed" if acceptance.status == "failed" else "waiting", now, now, agent.id),
+                (
+                    "waiting" if terminal_status == "blocked" else "failed",
+                    now,
+                    now,
+                    agent.id,
+                ),
             )
         return WorkerEffectResult(
             task=self._teams._task_from_connection(connection, task.id),
@@ -1889,7 +1900,7 @@ class TeamModelEffectService:
         expected_next_stage, task_status, agent_status = _expected_worker_state(
             acceptance,
             task.acceptance_recovery_attempts,
-            outcome.status != "completed",
+            is_worker_declared_outcome(outcome),
         )
         expected_outcome = _json_object(asdict(outcome))
         expected_message_metadata = {
@@ -2589,7 +2600,12 @@ def _expected_worker_state(
         and acceptance_recovery_attempts < ACCEPTANCE_RECOVERY_CAP
     ):
         return "acceptance_lead", "in_progress", "running"
-    if acceptance["status"] == "blocked":
+    if (
+        terminal_rejected_status(
+            str(acceptance["status"]), worker_declared=worker_declared
+        )
+        == "blocked"
+    ):
         return None, "blocked", "waiting"
     return None, "failed", "failed"
 

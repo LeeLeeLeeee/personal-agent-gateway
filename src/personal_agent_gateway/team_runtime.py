@@ -15,7 +15,9 @@ from personal_agent_gateway.team_acceptance import (
     AcceptanceResult,
     TeamAcceptanceService,
     is_recoverable_acceptance_failure,
+    is_worker_declared_outcome,
     rejected_verification_names,
+    terminal_rejected_status,
 )
 from personal_agent_gateway.team_artifact_publisher import (
     ArtifactPublicationError,
@@ -1425,17 +1427,14 @@ class TeamRuntime:
                     asdict(outcome),
                     asdict(acceptance),
                 )
-                terminal_status = acceptance.status
-                if (
-                    not acceptance.accepted
-                    and is_recoverable_acceptance_failure(
-                        acceptance.reason_code,
-                        worker_declared=outcome.status != "completed",
+                terminal_status = (
+                    acceptance.status
+                    if acceptance.accepted
+                    else terminal_rejected_status(
+                        acceptance.status,
+                        worker_declared=is_worker_declared_outcome(outcome),
                     )
-                    and task.acceptance_recovery_attempts
-                    >= ACCEPTANCE_RECOVERY_CAP
-                ):
-                    terminal_status = "failed"
+                )
                 task, worker = self._teams.finish_task(
                     task.id,
                     worker.id,
@@ -2231,7 +2230,10 @@ class TeamRuntime:
                 asdict(acceptance),
             )
             task = self._teams.get_task(task.id)
-            if not is_recoverable_acceptance_failure(acceptance.reason_code):
+            if not is_recoverable_acceptance_failure(
+                acceptance.reason_code,
+                worker_declared=is_worker_declared_outcome(outcome),
+            ):
                 return task, outcome, acceptance
             if task.acceptance_recovery_attempts >= ACCEPTANCE_RECOVERY_CAP:
                 return task, outcome, acceptance

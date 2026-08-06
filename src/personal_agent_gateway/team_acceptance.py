@@ -44,6 +44,32 @@ def is_recoverable_acceptance_failure(
     return worker_declared or reason_code in RECOVERABLE_ACCEPTANCE_REASONS
 
 
+def is_worker_declared_outcome(outcome: TaskOutcome) -> bool:
+    """Did the Worker itself declare this non-completed outcome?
+
+    `TeamRuntime._task_outcome` synthesizes ``status="blocked"`` with
+    ``reason_code="invalid_task_outcome"`` when a Worker response cannot be
+    parsed. That is a server-detected failure, not something the Worker
+    declared, so it must not earn the worker-declared recovery path.
+    """
+    return (
+        outcome.status != "completed"
+        and outcome.reason_code != "invalid_task_outcome"
+    )
+
+
+def terminal_rejected_status(
+    status: str,
+    *,
+    worker_declared: bool,
+) -> Literal["blocked", "failed"]:
+    """Terminal task status for a rejected outcome that cannot recover further.
+
+    A `blocked` the Worker declared stays `blocked`; anything else ends `failed`.
+    """
+    return "blocked" if status == "blocked" and worker_declared else "failed"
+
+
 class TeamAcceptanceService:
     def __init__(self, stager: SourceStager | None = None) -> None:
         self._stager = stager or SourceStager()

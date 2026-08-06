@@ -2279,13 +2279,16 @@ class TeamRunService:
                 """,
                 (status, result, error_message, now, now, task_id),
             )
+            # "blocked" is a task status, not an agent status. Park the agent as
+            # "waiting", matching how a blocked task's agent is recorded elsewhere.
+            agent_status: AgentStatus = "waiting" if status == "blocked" else status
             connection.execute(
                 """
                 update team_agents
                 set status = ?, current_task_id = null, finished_at = ?, updated_at = ?
                 where id = ?
                 """,
-                (status, now, now, agent_id),
+                (agent_status, now, now, agent_id),
             )
         return self._get_task(task_id), self._get_agent(agent_id)
 
