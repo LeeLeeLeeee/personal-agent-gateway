@@ -9,11 +9,12 @@ aliases:
 tags:
   - component
   - analysis
-updated_at: 2026-08-05
+updated_at: 2026-08-06
 ---
 
 # Component Inspector Reports
 
+- [ArchiveView Map 구조 및 제거 가능성 분석 — 2026-08-06 16:51](./ArchiveView/2026-08-06-1651.md)
 - [ArtifactsView 통합 브라우저 분석 — 2026-08-05 09:48](./ArtifactsView/2026-08-05-0948.md)
 - [ChatView Working Indicator Layout Analysis — 2026-07-30 14:06](./ChatView/2026-07-30-1406.md)
 - [TeamRunDetail Internal Acceptance Review Analysis — 2026-07-30 10:14](./TeamRunDetail/2026-07-30-1014.md)

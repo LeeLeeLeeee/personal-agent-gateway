@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 202,
+  "document_count": 214,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -1333,6 +1333,112 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/ArchiveView/index.jsx` - Modes: `understand`, `refactor` - Verdict: Archive 데이터와 사용자 액션은 `ArchiveView`가 계속 소유하고, 그래프 해석·viewport 상호작용·SVG 렌더링은 같은 파일의 `ArchiveMap`이 맡는 현재 경계를 ..."
+    },
+    {
+      "path": "docs/component-inspector/ArchiveView/2026-08-06-1651.md",
+      "title": "ArchiveView Map 구조 및 제거 가능성 분석",
+      "type": "report",
+      "domain": "component",
+      "feature": "archive-map-scope-audit",
+      "status": "active",
+      "aliases": [
+        "Archive Map 구조 개선",
+        "Archive Map 제거 검토"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "archive",
+        "knowledge-map"
+      ],
+      "updated_at": "2026-08-06",
+      "headings": [
+        {
+          "level": 1,
+          "text": "ArchiveView Map 구조 및 제거 가능성 분석"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "분석 범위"
+        },
+        {
+          "level": 2,
+          "text": "현재 컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props와 상태 흐름"
+        },
+        {
+          "level": 2,
+          "text": "ArchiveView 전체 props, 상태 및 API 경계"
+        },
+        {
+          "level": 3,
+          "text": "React와 외부 primitive"
+        },
+        {
+          "level": 2,
+          "text": "현재 상호작용"
+        },
+        {
+          "level": 2,
+          "text": "구조가 이상하게 느껴지는 이유"
+        },
+        {
+          "level": 3,
+          "text": "1. 그래프처럼 보이지만 실제 모델은 고정 pipeline이다"
+        },
+        {
+          "level": 3,
+          "text": "2. edge 의미가 실제 사실보다 강하다"
+        },
+        {
+          "level": 3,
+          "text": "3. 동일 상태를 두 번 파생한다"
+        },
+        {
+          "level": 3,
+          "text": "4. 데이터 증가 계약이 불완전하다"
+        },
+        {
+          "level": 3,
+          "text": "5. 표시 비용에 비해 고유 가치가 작다"
+        },
+        {
+          "level": 2,
+          "text": "제거 영향 분석"
+        },
+        {
+          "level": 2,
+          "text": "대체 구조"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 2,
+          "text": "검증 및 테스트 영향"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "독립 리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/ArchiveView/index.jsx` - Modes: `understand`, `refactor`, `remove`, `api-state` - Verdict: 현재 Map은 유지·확장보다 **Archive의 기본 제품 흐름에서 제거하는 편이 낫다.** Map은 별도 지식이나 관계를 소유하지 않고 Librar..."
     },
     {
       "path": "docs/component-inspector/ArtifactsView/2026-08-05-0948.md",
@@ -3147,6 +3253,29 @@
       "excerpt": "- Root: `frontend/src/components/organisms/HooksView/index.jsx` - Modes: `understand`, `refactor`, `test`, `remove` - Verdict: Email Hook의 Library draft 제어는 `HookForm`과 목록 summary에만 표시되지만,   같은 속성이 API·서비스·runner에도 전파..."
     },
     {
+      "path": "docs/component-inspector/index.md",
+      "title": "Component Inspector Reports",
+      "type": "report",
+      "domain": "component",
+      "feature": "component-inspector",
+      "status": "active",
+      "aliases": [
+        "component analysis reports"
+      ],
+      "tags": [
+        "component",
+        "analysis"
+      ],
+      "updated_at": "2026-08-06",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Component Inspector Reports"
+        }
+      ],
+      "excerpt": "- [ArchiveView Map 구조 및 제거 가능성 분석 — 2026-08-06 16:51](./ArchiveView/2026-08-06-1651.md) - [ArtifactsView 통합 브라우저 분석 — 2026-08-05 09:48](./ArtifactsView/2026-08-05-0948.md) - [ChatView Working Indicator Layout Analysis..."
+    },
+    {
       "path": "docs/component-inspector/JobsView/2026-07-15-1057.md",
       "title": "JobsView Retry and Lineage Analysis",
       "type": "report",
@@ -4918,29 +5047,6 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/TeamsView/index.jsx` - Modes: `understand`, `style`, `test` - Verdict: `personas` prop에 이미 `avatar`, `name`, `role`이 있으므로 API 변경 없이 현재 이름 버튼을 프로필 선택 카드로 바꾸는 것이 안전하다. 로컬 state..."
-    },
-    {
-      "path": "docs/component-inspector/index.md",
-      "title": "Component Inspector Reports",
-      "type": "report",
-      "domain": "component",
-      "feature": "component-inspector",
-      "status": "active",
-      "aliases": [
-        "component analysis reports"
-      ],
-      "tags": [
-        "component",
-        "analysis"
-      ],
-      "updated_at": "2026-08-05",
-      "headings": [
-        {
-          "level": 1,
-          "text": "Component Inspector Reports"
-        }
-      ],
-      "excerpt": "- [ArtifactsView 통합 브라우저 분석 — 2026-08-05 09:48](./ArtifactsView/2026-08-05-0948.md) - [ChatView Working Indicator Layout Analysis — 2026-07-30 14:06](./ChatView/2026-07-30-1406.md) - [TeamRunDetail Internal Acceptance..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -6871,6 +6977,105 @@
         }
       ],
       "excerpt": "1차 대시보드 확장은 구현 및 targeted 검증을 완료했다. 기존 사용량 위젯은 유지하고, 같은 `DashboardView`에서 기존 `/api/operations`를 독립적으로 읽어 운영 현황을 읽기 전용으로 표시한다. backend endpoint·production schema·migration은 추가하지 않았다."
+    },
+    {
+      "path": "docs/reports/2026-08-06-pag-feature-scope-audit.md",
+      "title": "Personal Agent Gateway 기능 범위 및 화면 통합 진단",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "product-scope-audit",
+      "status": "active",
+      "aliases": [
+        "PAG 불필요 기능 진단",
+        "PAG 화면 통합 제안",
+        "PAG 기능 다이어트"
+      ],
+      "tags": [
+        "product-scope",
+        "information-architecture",
+        "maintainability",
+        "archive"
+      ],
+      "updated_at": "2026-08-06",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Personal Agent Gateway 기능 범위 및 화면 통합 진단"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "현재 정보 구조"
+        },
+        {
+          "level": 2,
+          "text": "기능별 판단"
+        },
+        {
+          "level": 2,
+          "text": "가장 먼저 줄일 것"
+        },
+        {
+          "level": 3,
+          "text": "P0 — Archive Map 제거"
+        },
+        {
+          "level": 3,
+          "text": "P1 — Automations로 통합"
+        },
+        {
+          "level": 3,
+          "text": "P1 — Policies로 통합"
+        },
+        {
+          "level": 3,
+          "text": "P1 — Archive의 개념 분리"
+        },
+        {
+          "level": 2,
+          "text": "유지해야 할 기능"
+        },
+        {
+          "level": 2,
+          "text": "조건부 축소 후보: Hooks"
+        },
+        {
+          "level": 2,
+          "text": "제안 정보 구조"
+        },
+        {
+          "level": 2,
+          "text": "구조상 함께 고칠 부분"
+        },
+        {
+          "level": 3,
+          "text": "GatewayApp 집중"
+        },
+        {
+          "level": 3,
+          "text": "eager fetch와 중복 조회"
+        },
+        {
+          "level": 2,
+          "text": "실행 순서 제안"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "PAG에는 당장 backend 기능을 대거 삭제해야 하는 문제보다 **하나의 사용자 여정을 너무 많은 독립 화면으로 노출한 문제**가 더 크다. 사이드바는 13개 화면이며, 실행 정의·실행 이력·정책·운영 상태가 각각 별도 메뉴로 갈라져 있다."
     },
     {
       "path": "docs/specs/2026-07-08-observability-audit-log-spec.md",
@@ -9315,6 +9520,86 @@
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
     },
     {
+      "path": "docs/superpowers/plans/2026-08-04-persona-permission-inheritance.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Persona Permission Inheritance Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Preserve permission mode in the execution contract"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Forward persona permission through the Team Run factory"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-04-provider-wait-recovery.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Provider Waiting Recovery Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 2,
+          "text": "Task 1: Make persisted provider waits recoverable"
+        },
+        {
+          "level": 2,
+          "text": "Task 2: Schedule provider recovery from the cycle loop"
+        },
+        {
+          "level": 2,
+          "text": "Task 3: Repair the Codex sandbox state and verify the affected Team Run"
+        },
+        {
+          "level": 2,
+          "text": "Final Verification"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
       "path": "docs/superpowers/plans/2026-08-04-team-task-dependencies.md",
       "title": "",
       "type": "",
@@ -9393,6 +9678,48 @@
         }
       ],
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (\\`- [ ]\\`) syntax for tr..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-05-archive-library-entry-deletion.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Archive Library 문서 삭제 Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "File Structure"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: 서비스 레이어 — 상태 제약 제거와 되돌리기 두 갈래"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: API 레이어 — 라우트 이름과 감사 이벤트 분기"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: 프런트엔드 — 삭제 버튼 노출 조건과 문구"
+        },
+        {
+          "level": 2,
+          "text": "Self-Review"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
     },
     {
       "path": "docs/superpowers/plans/2026-08-05-artifact-archive-preview-ux.md",
@@ -9524,6 +9851,98 @@
         {
           "level": 3,
           "text": "Task 4: Verify the complete retention boundary"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-05-artifact-team-cycle-context.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Artifact Team/Cycle Context Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Resolve Team/Cycle browser breadcrumbs"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Surface the hierarchy in Archive rows"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-06-team-run-task-ordering.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Deterministic Team Run Task Ordering Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 2,
+          "text": "EXECUTED — read the errata before trusting any step below"
+        },
+        {
+          "level": 3,
+          "text": "Errata"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Persist plan order and schedule by it"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Reset persona status when a new cycle starts"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Show elapsed time for the task a running agent is on"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Require `plan_task_id` so the planner can declare dependencies"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Route worker-declared outcomes to leader review"
+        },
+        {
+          "level": 2,
+          "text": "Final verification"
+        },
+        {
+          "level": 1,
+          "text": "then, in python: Database(Path(\"/tmp/app-migration-test.sqlite\")).initialize()"
+        },
+        {
+          "level": 2,
+          "text": "Out of scope"
         }
       ],
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
@@ -12442,6 +12861,52 @@
       "excerpt": "Make a Team Run actually satisfy the output contract its caller set, and make task acceptance check what a task produced instead of trusting what the worker said about it."
     },
     {
+      "path": "docs/superpowers/specs/2026-08-04-persona-permission-inheritance-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Persona Permission Inheritance Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Current Problem"
+        },
+        {
+          "level": 2,
+          "text": "Decision"
+        },
+        {
+          "level": 2,
+          "text": "Data Flow"
+        },
+        {
+          "level": 2,
+          "text": "Error Handling"
+        },
+        {
+          "level": 2,
+          "text": "Testing"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        }
+      ],
+      "excerpt": "Team Run 실행은 페르소나의 `default_options.permission_mode`를 유효 권한의 단일 원천으로 사용한다. 실행 계약은 이 값을 다른 권한으로 낮추거나 바꾸지 않는다."
+    },
+    {
       "path": "docs/superpowers/specs/2026-08-04-provider-wait-recovery-and-sandbox-state-repair-design.md",
       "title": "",
       "type": "",
@@ -12570,6 +13035,80 @@
         }
       ],
       "excerpt": "A Team Run task currently carries only prose. A planner or a prior task report can name an artifact from another run, but that artifact is not a declared input and is not staged into the current isolated workspace. Pr..."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-05-archive-library-entry-deletion-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Archive Library 문서 삭제 설계"
+        },
+        {
+          "level": 2,
+          "text": "문제"
+        },
+        {
+          "level": 1,
+          "text": "src/personal_agent_gateway/archive.py, delete_draft()"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "하지 않는 것"
+        },
+        {
+          "level": 2,
+          "text": "접근"
+        },
+        {
+          "level": 2,
+          "text": "변경 사항"
+        },
+        {
+          "level": 3,
+          "text": "1. `src/personal_agent_gateway/archive.py`"
+        },
+        {
+          "level": 3,
+          "text": "2. `src/personal_agent_gateway/api/archive.py`"
+        },
+        {
+          "level": 3,
+          "text": "3. `frontend/src/api/client.js`"
+        },
+        {
+          "level": 3,
+          "text": "4. `frontend/src/components/organisms/ArchiveView/index.jsx`"
+        },
+        {
+          "level": 2,
+          "text": "삭제가 남기는 것과 지우는 것"
+        },
+        {
+          "level": 2,
+          "text": "오류 처리"
+        },
+        {
+          "level": 2,
+          "text": "테스트"
+        },
+        {
+          "level": 2,
+          "text": "영향 범위"
+        }
+      ],
+      "excerpt": "Archive의 문서는 `draft` → `published` → `archived` 상태를 거친다. 삭제는 `draft`만 가능하다:"
     },
     {
       "path": "docs/superpowers/specs/2026-08-05-artifact-archive-preview-ux-design.md",
@@ -12807,6 +13346,208 @@
         }
       ],
       "excerpt": "Keep the artifact archive usable as Team runs accumulate outputs, without automatically deleting a user's work or breaking artifacts that a Team cycle or task still needs as input."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-05-artifact-team-cycle-context-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Artifact Team/Cycle Context Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Chosen design"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        }
+      ],
+      "excerpt": "Make a Team-generated artifact explain which Team, Team Run, Cycle, and Task produced it without duplicating those labels into artifact storage."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-06-team-run-task-ordering-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Deterministic Team run task ordering, persona cycle reset, and in-progress visibility"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Motivating incident"
+        },
+        {
+          "level": 2,
+          "text": "Root cause"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 2,
+          "text": "A. Plan ordinal"
+        },
+        {
+          "level": 2,
+          "text": "B. Planner-declared dependencies"
+        },
+        {
+          "level": 2,
+          "text": "C. Worker-declared outcomes"
+        },
+        {
+          "level": 1,
+          "text": "team_acceptance.py"
+        },
+        {
+          "level": 2,
+          "text": "D. Persona reset on a new cycle"
+        },
+        {
+          "level": 2,
+          "text": "E. In-progress visibility"
+        },
+        {
+          "level": 2,
+          "text": "Testing"
+        },
+        {
+          "level": 2,
+          "text": "Sequencing"
+        }
+      ],
+      "excerpt": "> **IMPLEMENTED** — merged to `main` at `b86eab7` on 2026-08-06. > Section C's design was wrong and was corrected during implementation; section A's ordering > clause was also revised. **The shipped code is the source..."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-07-archive-map-removal-and-lazy-team-loading-design.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Archive Map Removal and Lazy Documentation Team Loading Design"
+        },
+        {
+          "level": 2,
+          "text": "Goal"
+        },
+        {
+          "level": 2,
+          "text": "Context"
+        },
+        {
+          "level": 2,
+          "text": "Scope"
+        },
+        {
+          "level": 3,
+          "text": "In scope"
+        },
+        {
+          "level": 3,
+          "text": "Out of scope"
+        },
+        {
+          "level": 2,
+          "text": "Architecture"
+        },
+        {
+          "level": 3,
+          "text": "Frontend ownership"
+        },
+        {
+          "level": 3,
+          "text": "Requests-only Team Run loading"
+        },
+        {
+          "level": 3,
+          "text": "Backend removal"
+        },
+        {
+          "level": 3,
+          "text": "Removed frontend dependencies"
+        },
+        {
+          "level": 2,
+          "text": "Data flow"
+        },
+        {
+          "level": 3,
+          "text": "Archive entry"
+        },
+        {
+          "level": 3,
+          "text": "Requests entry"
+        },
+        {
+          "level": 3,
+          "text": "Request mutations"
+        },
+        {
+          "level": 2,
+          "text": "Loading and error behavior"
+        },
+        {
+          "level": 2,
+          "text": "Testing strategy"
+        },
+        {
+          "level": 3,
+          "text": "Frontend component tests"
+        },
+        {
+          "level": 3,
+          "text": "Frontend client and container tests"
+        },
+        {
+          "level": 3,
+          "text": "Backend tests"
+        },
+        {
+          "level": 3,
+          "text": "Static and full verification"
+        },
+        {
+          "level": 2,
+          "text": "Rollout and rollback"
+        },
+        {
+          "level": 2,
+          "text": "Follow-up project sequence"
+        }
+      ],
+      "excerpt": "Remove the Archive Map across frontend and backend, then stop loading Team Runs until the user opens the Requests tab. Preserve every Library, Draft, Artifact, and Knowledge Request mutation workflow."
     },
     {
       "path": "docs/superpowers/specs/completed_2026-07-06-otp-setup-ui-design.md",
