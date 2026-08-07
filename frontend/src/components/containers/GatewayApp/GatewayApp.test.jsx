@@ -182,6 +182,34 @@ describe("GatewayApp", () => {
     expect(fetch).not.toHaveBeenCalledWith("/api/archive/entries?status=published");
   });
 
+  it("refreshes the Outputs fallback list after an Artifact is deleted", async () => {
+    let artifactListReads = 0;
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": { items: [], counts: {} },
+      "GET /api/artifacts": () => {
+        artifactListReads += 1;
+        return response({ artifacts: artifactListReads === 1 ? [artifact] : [] });
+      },
+      "DELETE /api/artifacts/artifact-1": {}
+    });
+
+    await renderGatewayApp({ openChat: false });
+    await userEvent.click(await screen.findByRole("button", { name: "Outputs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open release-report.md" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(artifactListReads).toBe(2));
+    confirmSpy.mockRestore();
+  });
+
   it("opens an operations dashboard item through the existing target navigation handler", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
