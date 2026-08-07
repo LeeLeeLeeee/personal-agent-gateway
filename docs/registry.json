@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 218,
+  "document_count": 219,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -10175,6 +10175,68 @@
       "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
     },
     {
+      "path": "docs/superpowers/plans/2026-08-07-library-outputs-navigation-separation.md",
+      "title": "",
+      "type": "",
+      "domain": "",
+      "feature": "",
+      "status": "",
+      "aliases": [],
+      "tags": [],
+      "updated_at": "",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Library and Outputs Navigation Separation Implementation Plan"
+        },
+        {
+          "level": 2,
+          "text": "Global Constraints"
+        },
+        {
+          "level": 3,
+          "text": "Task 1: Split top-level screen ownership"
+        },
+        {
+          "level": 3,
+          "text": "Task 2: Make Library and Outputs user-facing structure coherent"
+        },
+        {
+          "level": 3,
+          "text": "Task 3: Guard Outputs mutation refresh at the new caller boundary"
+        },
+        {
+          "level": 3,
+          "text": "Task 4: Run full frontend verification and refresh production assets"
+        },
+        {
+          "level": 3,
+          "text": "Task 5: Record the verified implementation"
+        },
+        {
+          "level": 1,
+          "text": "Library와 Outputs navigation 분리 구현 결과"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Changes"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for trac..."
+    },
+    {
       "path": "docs/superpowers/plans/archived_2026-07-07-live-status-sse-backlog.md",
       "title": "",
       "type": "",
@@ -13782,7 +13844,7 @@
       "type": "adr",
       "domain": "personal-agent-gateway",
       "feature": "library-outputs-separation",
-      "status": "draft",
+      "status": "active",
       "aliases": [
         "Archive Library Outputs 분리",
         "Library Outputs 정보 구조",

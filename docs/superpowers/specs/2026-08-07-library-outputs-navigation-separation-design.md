@@ -3,7 +3,7 @@ title: Library와 Outputs navigation 분리 설계
 type: adr
 domain: personal-agent-gateway
 feature: library-outputs-separation
-status: draft
+status: active
 aliases:
   - Archive Library Outputs 분리
   - Library Outputs 정보 구조
