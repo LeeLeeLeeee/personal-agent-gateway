@@ -381,6 +381,86 @@ describe("GatewayApp", () => {
     confirmSpy.mockRestore();
   });
 
+  it("does not start emergency stop when its confirm is accepted after leaving Operations", async () => {
+    let emergencyStopCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": {
+        intake_open: true,
+        diagnostics: { workspace_writable: true },
+        health: [],
+        items: []
+      },
+      "POST /api/operations/emergency-stop": () => {
+        emergencyStopCalls += 1;
+        return Promise.reject(new Error("stale emergency stop started"));
+      },
+      "GET /api/archive/entries?status=published": { entries: [] },
+      "GET /api/archive/entries?status=draft": { entries: [] },
+      "GET /api/personas": { personas: [] },
+      "GET /api/archive/requests": { requests: [] }
+    });
+
+    await renderGatewayApp({ openChat: false, uiProvider: true });
+    await userEvent.click(await screen.findByRole("button", { name: "Operations" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Emergency stop" }));
+    expect(await screen.findByRole("dialog", { name: "EMERGENCY STOP" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Library" }));
+    expect(await screen.findByRole("heading", { name: "Library" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Stop all execution" }));
+
+    expect(emergencyStopCalls).toBe(0);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("runs and refreshes emergency stop when its confirm stays on Operations", async () => {
+    let emergencyStopCalls = 0;
+    let operationsReads = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": () => {
+        operationsReads += 1;
+        return response({
+          intake_open: emergencyStopCalls === 0,
+          diagnostics: { workspace_writable: true },
+          health: [],
+          items: []
+        });
+      },
+      "POST /api/operations/emergency-stop": () => {
+        emergencyStopCalls += 1;
+        return response({ stopped: true });
+      },
+      "GET /api/jobs": { jobs: [] },
+      "GET /api/schedules": { schedules: [] },
+      "GET /api/team-runs": { team_runs: [] },
+      "GET /api/settings": { settings: {} }
+    });
+
+    await renderGatewayApp({ openChat: false, uiProvider: true });
+    await userEvent.click(await screen.findByRole("button", { name: "Operations" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Emergency stop" }));
+    const readsBeforeConfirm = operationsReads;
+    await userEvent.click(await screen.findByRole("button", { name: "Stop all execution" }));
+
+    await waitFor(() => expect(emergencyStopCalls).toBe(1));
+    await waitFor(() => expect(operationsReads).toBeGreaterThan(readsBeforeConfirm));
+    expect(await screen.findByText("모든 실행 intake를 중단했습니다")).toBeInTheDocument();
+  });
+
   it("opens an operations dashboard item through the existing target navigation handler", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },

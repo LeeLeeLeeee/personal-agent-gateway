@@ -661,8 +661,8 @@ export function GatewayApp() {
     await loadOperations(ownerGeneration);
   }
 
-  async function handleEmergencyStop() {
-    const ownerGeneration = screenGenerationRef.current;
+  async function handleEmergencyStop(ownerGeneration) {
+    if (screenGenerationRef.current !== ownerGeneration) return;
     try {
       await api.emergencyStop();
       await refreshOperationsDomains(ownerGeneration);
@@ -672,8 +672,8 @@ export function GatewayApp() {
     }
   }
 
-  async function handleResumeIntake() {
-    const ownerGeneration = screenGenerationRef.current;
+  async function handleResumeIntake(ownerGeneration) {
+    if (screenGenerationRef.current !== ownerGeneration) return;
     try {
       await api.resumeIntake();
       await loadOperations(ownerGeneration);
@@ -683,8 +683,8 @@ export function GatewayApp() {
     }
   }
 
-  async function handleCreateBackup() {
-    const ownerGeneration = screenGenerationRef.current;
+  async function handleCreateBackup(ownerGeneration) {
+    if (screenGenerationRef.current !== ownerGeneration) return;
     try {
       await api.createBackup();
       await loadOperations(ownerGeneration);
@@ -694,8 +694,8 @@ export function GatewayApp() {
     }
   }
 
-  async function handleVerifyBackup(id) {
-    const ownerGeneration = screenGenerationRef.current;
+  async function handleVerifyBackup(ownerGeneration, id) {
+    if (screenGenerationRef.current !== ownerGeneration) return;
     try {
       await api.verifyBackup(id);
       await loadOperations(ownerGeneration);
@@ -718,8 +718,8 @@ export function GatewayApp() {
     transitionScreen(target.screen);
   }
 
-  async function handleResumeOperationItem(item) {
-    const ownerGeneration = screenGenerationRef.current;
+  async function handleResumeOperationItem(ownerGeneration, item) {
+    if (screenGenerationRef.current !== ownerGeneration) return;
     try {
       if (item.domain === "team_run") {
         await api.resumeTeamRun(item.id);
@@ -732,8 +732,8 @@ export function GatewayApp() {
     }
   }
 
-  async function handleRetryOperationItem(item) {
-    const ownerGeneration = screenGenerationRef.current;
+  async function handleRetryOperationItem(ownerGeneration, item) {
+    if (screenGenerationRef.current !== ownerGeneration) return;
     const retried = await handleRetryJob(item.id);
     if (retried) await loadOperations(ownerGeneration);
   }
@@ -1047,13 +1047,13 @@ export function GatewayApp() {
           loading={operationsLoading}
           error={operationsError}
           onRefresh={refreshOperations}
-          onEmergencyStop={handleEmergencyStop}
-          onResumeIntake={handleResumeIntake}
-          onCreateBackup={handleCreateBackup}
-          onVerifyBackup={handleVerifyBackup}
+          onEmergencyStop={() => handleEmergencyStop(renderedScreenGeneration)}
+          onResumeIntake={() => handleResumeIntake(renderedScreenGeneration)}
+          onCreateBackup={() => handleCreateBackup(renderedScreenGeneration)}
+          onVerifyBackup={(id) => handleVerifyBackup(renderedScreenGeneration, id)}
           onOpenTarget={handleOpenOperationTarget}
-          onResumeItem={handleResumeOperationItem}
-          onRetryItem={handleRetryOperationItem}
+          onResumeItem={(item) => handleResumeOperationItem(renderedScreenGeneration, item)}
+          onRetryItem={(item) => handleRetryOperationItem(renderedScreenGeneration, item)}
           onRelogin={handleOperationsRelogin}
         />
       ) : screen === "library" ? (
