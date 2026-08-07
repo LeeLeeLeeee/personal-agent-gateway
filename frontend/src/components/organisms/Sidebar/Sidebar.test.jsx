@@ -10,7 +10,6 @@ describe("Sidebar", () => {
     expect(screen.getByText("Personas")).toBeInTheDocument();
     expect(screen.getByText("Rules")).toBeInTheDocument();
     expect(screen.getByText("Operations")).toBeInTheDocument();
-    expect(screen.getByText("Archive")).toBeInTheDocument();
   });
 
   it("renders a Dashboard nav item before Chat and marks it active", () => {
@@ -22,11 +21,11 @@ describe("Sidebar", () => {
     expect(navButtons.indexOf("Dashboard")).toBeLessThan(navButtons.findIndex((text) => text.startsWith("Chat")));
   });
 
-  it("does not render an independent Artifacts navigation item", () => {
-    render(<Sidebar screen="archive" onScreenChange={vi.fn()} />);
+  it("renders independent Library and Outputs navigation items", () => {
+    render(<Sidebar screen="library" onScreenChange={vi.fn()} />);
 
-    expect(screen.queryByRole("button", { name: "Artifacts" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Archive" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Library" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Outputs" })).toBeInTheDocument();
   });
 
   it("renders a Hooks nav item with a badge when hooksBadge > 0", () => {
