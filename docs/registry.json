@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 219,
+  "document_count": 220,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -7241,6 +7241,47 @@
         }
       ],
       "excerpt": "Archive Map UI, frontend client, API route, backend graph read model과 전용 스타일을 제거했다. Archive 기본 조회에서 Team Runs를 제외하고 Requests 최초 진입 시 조회하며, 성공 결과는 컴포넌트가 유지되는 동안 재사용하고 실패 후에는 명시적으로 재시도하도록 변경했다."
+    },
+    {
+      "path": "docs/reports/2026-08-07-library-outputs-navigation-separation-implementation.md",
+      "title": "Library와 Outputs navigation 분리 구현 결과",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "library-outputs-separation",
+      "status": "done",
+      "aliases": [
+        "Library Outputs 분리 결과",
+        "Archive 2단계 개편 결과"
+      ],
+      "tags": [
+        "archive",
+        "artifacts",
+        "navigation"
+      ],
+      "updated_at": "2026-08-07",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Library와 Outputs navigation 분리 구현 결과"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Changes"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "사용자용 Archive 진입점을 Library와 Outputs로 분리했다. Library는 Published, Drafts, Requests Knowledge workflow만 소유하고, Outputs는 기존 Artifact browser를 독립 top-level 화면으로 제공한다. Archive/Artifact backend 계약은 변경하지 않았다."
     },
     {
       "path": "docs/specs/2026-07-08-observability-audit-log-spec.md",
