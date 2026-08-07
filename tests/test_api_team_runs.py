@@ -884,7 +884,9 @@ def test_create_auto_run_enqueues_first_cycle_and_manual_trigger_snapshots_previ
     cycle_request = response.json()["cycle_request"]
     assert cycle_request["source_type"] == "manual"
     assert cycle_request["source_id"] == "ui-1"
-    assert cycle_request["previous_summary_text"] == "previous"
+    assert cycle_request["previous_summary_text"] == (
+        "STATUS: COMPLETED\n\nSUMMARY\nprevious"
+    )
     assert response.json()["queue_position"] == 1
 
 

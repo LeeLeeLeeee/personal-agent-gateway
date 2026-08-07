@@ -205,7 +205,7 @@ class HookRunner:
             raise ValueError(
                 "Hook target must be a continuous plan_and_execute TRIGGERED Team Run"
             )
-        previous = self._team_cycles.latest_settled_cycle(hook.target_team_run_id)
+        previous = self._team_cycles.latest_final_cycle(hook.target_team_run_id)
         request = self._team_cycles.enqueue_request(
             hook.target_team_run_id,
             "hook",

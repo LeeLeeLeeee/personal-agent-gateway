@@ -265,7 +265,9 @@ def test_retry_preserves_failed_slots_previous_cycle_snapshot(
     cycles.settle_cycle(first_cycle.id, now=dt("2026-07-20T00:01:00+00:00"))
     second = cycles.enqueue_due_auto_requests(now=dt("2026-07-20T00:06:00+00:00"))[0]
     assert second.previous_cycle_id == first_cycle.id
-    assert second.previous_summary_text == "slot one snapshot"
+    assert second.previous_summary_text == (
+        "STATUS: COMPLETED\n\nSUMMARY\nslot one snapshot"
+    )
 
     second = cycles.claim_next(run.id)
     second_cycle = teams.create_cycle(run.id, "auto", second.source_id, request_id=second.id)
@@ -281,6 +283,37 @@ def test_retry_preserves_failed_slots_previous_cycle_snapshot(
 
     assert retry.previous_cycle_id == second.previous_cycle_id
     assert retry.previous_summary_text == second.previous_summary_text
+
+
+def test_auto_continue_passes_failed_cycle_context_to_next_slot(
+    tmp_path: Path,
+) -> None:
+    _db, teams, cycles, run = make_auto_run(tmp_path)
+    series = cycles.get_active_series(run.id)
+    first = cycles.claim_next(run.id)
+    assert first is not None
+    failed_cycle = teams.create_cycle(
+        run.id,
+        "auto",
+        first.source_id,
+        request_id=first.id,
+    )
+    teams.set_cycle_status(
+        failed_cycle.id,
+        "failed",
+        error_message="Required task failed",
+    )
+    cycles.settle_cycle(failed_cycle.id, now=dt("2026-07-20T00:01:00+00:00"))
+    cycles.continue_failed(run.id, series.id, now=dt("2026-07-20T00:02:00+00:00"))
+
+    next_request = cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-20T00:07:00+00:00")
+    )[0]
+
+    assert next_request.previous_cycle_id == failed_cycle.id
+    assert next_request.previous_summary_text == (
+        "STATUS: FAILED\n\nERROR\nRequired task failed"
+    )
 
 
 @pytest.mark.parametrize("status", ["completed", "completed_with_failures"])
@@ -333,14 +366,117 @@ def test_request_policy_and_lineage_validation_snapshots_previous_cycle(
     )
 
     assert request.previous_cycle_id == previous.id
-    assert request.previous_summary_text == "previous result"
-    assert cycles.latest_settled_cycle(run.id).id == previous.id
+    assert request.previous_summary_text == (
+        "STATUS: COMPLETED\n\nSUMMARY\nprevious result"
+    )
+    assert cycles.latest_final_cycle(run.id).id == previous.id
     with pytest.raises(ValueError, match="AUTO"):
         cycles.enqueue_request(run.id, "auto", "wrong-policy", "work", previous_cycle_id=None)
 
     db, teams, cycles, run = make_auto_run(tmp_path / "auto")
     with pytest.raises(ValueError, match="series"):
         cycles.enqueue_request(run.id, "auto", "missing-series", "work", previous_cycle_id=None)
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["completed", "completed_with_failures", "failed", "blocked", "canceled"],
+)
+def test_final_cycle_can_be_snapshotted_as_previous_context(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    _db, teams, cycles, run = make_triggered_run(tmp_path)
+    previous = teams.create_cycle(run.id, "manual", f"previous-{status}")
+    teams.set_cycle_status(previous.id, status, summary="previous result")
+
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        f"client-{status}",
+        "next",
+        previous_cycle_id=previous.id,
+    )
+
+    assert request.previous_cycle_id == previous.id
+    assert request.previous_summary_text is not None
+    assert f"STATUS: {status.upper()}" in request.previous_summary_text
+    assert "previous result" in request.previous_summary_text
+
+
+def test_failed_previous_cycle_snapshots_error_and_task_results(
+    tmp_path: Path,
+) -> None:
+    _db, teams, cycles, run = make_triggered_run(tmp_path)
+    previous = teams.create_cycle(run.id, "manual", "previous-failed")
+    fixed = teams.create_task(
+        run.id,
+        "Fix P3 findings",
+        "Fix them",
+        cycle_id=previous.id,
+    )
+    teams.set_task_status(
+        fixed.id,
+        "completed",
+        result="Applied the remaining fixes",
+    )
+    qa = teams.create_task(
+        run.id,
+        "Run QA",
+        "Verify them",
+        cycle_id=previous.id,
+    )
+    teams.record_task_outcome(
+        qa.id,
+        {
+            "status": "blocked",
+            "summary": "Draft was unchanged",
+            "reason_code": "draft-unmodified",
+        },
+        {
+            "accepted": False,
+            "status": "blocked",
+            "reason_code": "draft-unmodified",
+        },
+    )
+    teams.set_task_status(qa.id, "failed", error_message="QA task failed")
+    teams.set_cycle_status(
+        previous.id,
+        "failed",
+        error_message="Required task failed",
+    )
+
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "client-failed",
+        "next",
+        previous_cycle_id=previous.id,
+    )
+
+    assert request.previous_summary_text is not None
+    assert "STATUS: FAILED" in request.previous_summary_text
+    assert "ERROR\nRequired task failed" in request.previous_summary_text
+    assert "- [COMPLETED] Fix P3 findings" in request.previous_summary_text
+    assert "RESULT: Applied the remaining fixes" in request.previous_summary_text
+    assert "- [FAILED] Run QA" in request.previous_summary_text
+    assert "RESULT: Draft was unchanged" in request.previous_summary_text
+    assert "ERROR: QA task failed" in request.previous_summary_text
+
+
+def test_nonfinal_cycle_cannot_be_previous_context(tmp_path: Path) -> None:
+    _db, teams, cycles, run = make_triggered_run(tmp_path)
+    previous = teams.create_cycle(run.id, "manual", "running-cycle")
+    teams.set_cycle_status(previous.id, "running")
+
+    with pytest.raises(ValueError, match="final cycle"):
+        cycles.enqueue_request(
+            run.id,
+            "manual",
+            "client-running",
+            "next",
+            previous_cycle_id=previous.id,
+        )
 
 
 def test_public_auto_enqueue_rejects_invalid_slot_retry_and_inactive_series(

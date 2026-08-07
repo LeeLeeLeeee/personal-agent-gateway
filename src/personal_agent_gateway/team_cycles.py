@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -33,6 +34,13 @@ _ACTIVE_SERIES_STATUSES = {
     "paused_interrupted",
 }
 _SETTLED_CYCLE_STATUSES = {"completed", "completed_with_failures"}
+_PREVIOUS_CONTEXT_CYCLE_STATUSES = {
+    "completed",
+    "completed_with_failures",
+    "failed",
+    "blocked",
+    "canceled",
+}
 _TERMINAL_CYCLE_STATUSES = {
     "completed",
     "completed_with_failures",
@@ -61,6 +69,45 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _previous_cycle_context(
+    connection: sqlite3.Connection,
+    cycle: sqlite3.Row,
+) -> str:
+    lines = [f"STATUS: {str(cycle['status']).upper()}"]
+
+    summary = str(cycle["summary"] or "").strip()
+    if summary:
+        lines.extend(("", "SUMMARY", summary))
+    error = str(cycle["error_message"] or "").strip()
+    if error:
+        lines.extend(("", "ERROR", error))
+
+    tasks = connection.execute(
+        """
+        select title, status, result, outcome_json, error_message
+        from team_tasks
+        where cycle_id = ?
+        order by created_at asc, plan_ordinal asc, id asc
+        """,
+        (cycle["id"],),
+    ).fetchall()
+    if tasks:
+        lines.extend(("", "TASKS"))
+    for task in tasks:
+        lines.append(f"- [{str(task['status']).upper()}] {task['title']}")
+        result = str(task["result"] or "").strip()
+        if not result and task["outcome_json"]:
+            outcome = json.loads(task["outcome_json"])
+            result = str(outcome.get("summary") or "").strip()
+        if result:
+            lines.append(f"  RESULT: {result}")
+        task_error = str(task["error_message"] or "").strip()
+        if task_error and task_error != result:
+            lines.append(f"  ERROR: {task_error}")
+
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -629,13 +676,16 @@ class TeamCycleService:
                 timestamp,
             )
 
-    def latest_settled_cycle(self, team_run_id: str) -> TeamRunCycle | None:
+    def latest_final_cycle(self, team_run_id: str) -> TeamRunCycle | None:
         self._require_run_read(team_run_id)
         row = self._db.fetchone(
             """
             select * from team_run_cycles
             where team_run_id = ?
-              and status in ('completed', 'completed_with_failures')
+              and status in (
+                  'completed', 'completed_with_failures', 'failed', 'blocked',
+                  'canceled'
+              )
             order by sequence desc limit 1
             """,
             (team_run_id,),
@@ -769,7 +819,10 @@ class TeamCycleService:
                     """
                     select * from team_run_cycles
                     where team_run_id = ?
-                      and status in ('completed', 'completed_with_failures')
+                      and status in (
+                          'completed', 'completed_with_failures', 'failed',
+                          'blocked', 'canceled'
+                      )
                     order by sequence desc limit 1
                     """,
                     (series.team_run_id,),
@@ -1225,13 +1278,13 @@ class TeamCycleService:
                 "select * from team_run_cycles where id = ?", (previous_cycle_id,)
             ).fetchone()
             if previous is None:
-                raise ValueError("Previous cycle is not a settled cycle for this team run")
+                raise ValueError("Previous cycle is not a final cycle for this team run")
             if (
                 previous["team_run_id"] != team_run_id
-                or previous["status"] not in _SETTLED_CYCLE_STATUSES
+                or previous["status"] not in _PREVIOUS_CONTEXT_CYCLE_STATUSES
             ):
-                raise ValueError("Previous cycle is not a settled cycle for this team run")
-            previous_summary = previous["summary"]
+                raise ValueError("Previous cycle is not a final cycle for this team run")
+            previous_summary = _previous_cycle_context(connection, previous)
         else:
             previous_summary = None
         if auto_series_id is not None:

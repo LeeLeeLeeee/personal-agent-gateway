@@ -118,7 +118,7 @@ async def delegate_request(
                     "Knowledge Request is already assigned to another Team Run"
                 )
             raise ValueError("Knowledge Request is already assigned to this Team Run")
-        previous = request.app.state.team_cycle_service.latest_settled_cycle(
+        previous = request.app.state.team_cycle_service.latest_final_cycle(
             payload.team_run_id
         )
         cycle_request = request.app.state.team_cycle_service.enqueue_knowledge_request(
