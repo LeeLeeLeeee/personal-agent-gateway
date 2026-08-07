@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 216,
+  "document_count": 218,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -1439,6 +1439,130 @@
         }
       ],
       "excerpt": "- Root: `frontend/src/components/organisms/ArchiveView/index.jsx` - Modes: `understand`, `refactor`, `remove`, `api-state` - Verdict: 현재 Map은 유지·확장보다 **Archive의 기본 제품 흐름에서 제거하는 편이 낫다.** Map은 별도 지식이나 관계를 소유하지 않고 Librar..."
+    },
+    {
+      "path": "docs/component-inspector/ArchiveView/2026-08-07-0956.md",
+      "title": "ArchiveView Knowledge와 Outputs 경계 분석",
+      "type": "report",
+      "domain": "component",
+      "feature": "archive-outputs-boundary",
+      "status": "done",
+      "aliases": [
+        "Archive Knowledge Outputs 분리",
+        "ArchiveView Artifacts 분리 분석",
+        "Library Outputs 정보 구조"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "archive",
+        "artifacts",
+        "information-architecture"
+      ],
+      "updated_at": "2026-08-07",
+      "headings": [
+        {
+          "level": 1,
+          "text": "ArchiveView Knowledge와 Outputs 경계 분석"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "컴포넌트 트리"
+        },
+        {
+          "level": 2,
+          "text": "Props 흐름"
+        },
+        {
+          "level": 2,
+          "text": "상태와 Effect"
+        },
+        {
+          "level": 3,
+          "text": "ArchiveView"
+        },
+        {
+          "level": 3,
+          "text": "ArtifactsView"
+        },
+        {
+          "level": 2,
+          "text": "외부 의존성과 이 컴포넌트에서의 역할"
+        },
+        {
+          "level": 2,
+          "text": "주요 상호작용 흐름"
+        },
+        {
+          "level": 3,
+          "text": "Knowledge entry lifecycle"
+        },
+        {
+          "level": 3,
+          "text": "Knowledge Request delegation"
+        },
+        {
+          "level": 3,
+          "text": "Artifact browsing과 mutation"
+        },
+        {
+          "level": 3,
+          "text": "나머지 Knowledge trigger와 실패·취소 분기"
+        },
+        {
+          "level": 2,
+          "text": "API와 데이터 소유권"
+        },
+        {
+          "level": 2,
+          "text": "테스트와 누락된 RED 사례"
+        },
+        {
+          "level": 3,
+          "text": "기존 coverage"
+        },
+        {
+          "level": 3,
+          "text": "구현 전 필요한 RED 사례"
+        },
+        {
+          "level": 2,
+          "text": "리팩터링 판단"
+        },
+        {
+          "level": 3,
+          "text": "책임과 ownership"
+        },
+        {
+          "level": 3,
+          "text": "실제 render body 코드 수준 검사"
+        },
+        {
+          "level": 2,
+          "text": "권장 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/organisms/ArchiveView/index.jsx` - Related component: `frontend/src/components/organisms/ArtifactsView/index.jsx` - Modes: `understand`, `refactor`, `api-state`, `test` - Verdict: `Arc..."
     },
     {
       "path": "docs/component-inspector/ArtifactsView/2026-08-05-0948.md",
@@ -5039,14 +5163,14 @@
         "component",
         "analysis"
       ],
-      "updated_at": "2026-08-06",
+      "updated_at": "2026-08-07",
       "headings": [
         {
           "level": 1,
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [ArchiveView Map 구조 및 제거 가능성 분석 — 2026-08-06 16:51](./ArchiveView/2026-08-06-1651.md) - [ArtifactsView 통합 브라우저 분석 — 2026-08-05 09:48](./ArtifactsView/2026-08-05-0948.md) - [ChatView Working Indicator Layout Analysis..."
+      "excerpt": "- [ArchiveView Knowledge와 Outputs 경계 분석 — 2026-08-07 09:56](./ArchiveView/2026-08-07-0956.md) - [ArchiveView Map 구조 및 제거 가능성 분석 — 2026-08-06 16:51](./ArchiveView/2026-08-06-1651.md) - [ArtifactsView 통합 브라우저 분석 — 2026-..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",
@@ -13651,6 +13775,141 @@
         }
       ],
       "excerpt": "Remove the Archive Map across frontend and backend, then stop loading Team Runs until the user opens the Requests tab. Preserve every Library, Draft, Artifact, and Knowledge Request mutation workflow."
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-07-library-outputs-navigation-separation-design.md",
+      "title": "Library와 Outputs navigation 분리 설계",
+      "type": "adr",
+      "domain": "personal-agent-gateway",
+      "feature": "library-outputs-separation",
+      "status": "draft",
+      "aliases": [
+        "Archive Library Outputs 분리",
+        "Library Outputs 정보 구조",
+        "Archive 2단계 개편"
+      ],
+      "tags": [
+        "archive",
+        "artifacts",
+        "information-architecture",
+        "navigation"
+      ],
+      "updated_at": "2026-08-07",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Library와 Outputs navigation 분리 설계"
+        },
+        {
+          "level": 2,
+          "text": "목표"
+        },
+        {
+          "level": 2,
+          "text": "배경"
+        },
+        {
+          "level": 2,
+          "text": "결정"
+        },
+        {
+          "level": 3,
+          "text": "사용자 정보 구조"
+        },
+        {
+          "level": 3,
+          "text": "frontend screen key"
+        },
+        {
+          "level": 3,
+          "text": "내부 이름 유지"
+        },
+        {
+          "level": 2,
+          "text": "frontend architecture"
+        },
+        {
+          "level": 3,
+          "text": "GatewayApp"
+        },
+        {
+          "level": 3,
+          "text": "ArchiveView"
+        },
+        {
+          "level": 3,
+          "text": "ArtifactsView"
+        },
+        {
+          "level": 2,
+          "text": "데이터 흐름"
+        },
+        {
+          "level": 3,
+          "text": "Library 진입"
+        },
+        {
+          "level": 3,
+          "text": "Requests 진입"
+        },
+        {
+          "level": 3,
+          "text": "Outputs 진입"
+        },
+        {
+          "level": 2,
+          "text": "loading과 error behavior"
+        },
+        {
+          "level": 2,
+          "text": "style 제거와 유지"
+        },
+        {
+          "level": 2,
+          "text": "제거 범위"
+        },
+        {
+          "level": 3,
+          "text": "production"
+        },
+        {
+          "level": 3,
+          "text": "tests"
+        },
+        {
+          "level": 2,
+          "text": "범위 밖"
+        },
+        {
+          "level": 2,
+          "text": "테스트 전략"
+        },
+        {
+          "level": 3,
+          "text": "RED"
+        },
+        {
+          "level": 3,
+          "text": "회귀"
+        },
+        {
+          "level": 3,
+          "text": "최종 검증"
+        },
+        {
+          "level": 2,
+          "text": "성공 기준"
+        },
+        {
+          "level": 2,
+          "text": "rollout과 rollback"
+        },
+        {
+          "level": 2,
+          "text": "후속 단계"
+        }
+      ],
+      "excerpt": "사용자용 `Archive` 화면을 재사용 지식인 `Library`와 작업 결과 파일인 `Outputs`로 분리한다. Library에는 `Published → Drafts → Requests`의 Knowledge workflow만 남기고, Outputs는 기존 Artifact browser를 독립된 top-level 화면으로 제공한다."
     },
     {
       "path": "docs/superpowers/specs/completed_2026-07-06-otp-setup-ui-design.md",
