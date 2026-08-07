@@ -25,6 +25,7 @@ import { RulesView } from "../../organisms/RulesView/index.jsx";
 import { SpacesView } from "../../organisms/SpacesView/index.jsx";
 import { SettingsView } from "../../organisms/SettingsView/index.jsx";
 import { ArchiveView } from "../../organisms/ArchiveView/index.jsx";
+import { ArtifactsView } from "../../organisms/ArtifactsView/index.jsx";
 import { JobsView } from "../../organisms/JobsView/index.jsx";
 import { SchedulesView } from "../../organisms/SchedulesView/index.jsx";
 import { OperationsView } from "../../organisms/OperationsView/index.jsx";
@@ -294,7 +295,7 @@ export function GatewayApp() {
     } else if (screen === "settings") {
       load(api.settings(), setSettings);
       load(api.authSessions(), setAuthSessions);
-    } else if (screen === "archive") {
+    } else if (screen === "outputs") {
       load(api.artifacts(), setArtifacts);
     } else if (screen === "chat") {
       load(api.artifacts(), setArtifacts);
@@ -983,11 +984,15 @@ export function GatewayApp() {
           onRetryItem={handleRetryOperationItem}
           onRelogin={handleOperationsRelogin}
         />
-      ) : screen === "archive" ? (
+      ) : screen === "library" ? (
         <div className="screen">
-          <ArchiveView
+          <ArchiveView />
+        </div>
+      ) : screen === "outputs" ? (
+        <div className="screen">
+          <ArtifactsView
             artifacts={artifacts}
-            onArtifactChange={() => api.artifacts().then(setArtifacts).catch(setScreenError)}
+            onChange={() => api.artifacts().then(setArtifacts).catch(setScreenError)}
           />
         </div>
       ) : screen === "jobs" ? (

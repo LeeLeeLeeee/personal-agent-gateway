@@ -136,7 +136,7 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("AGENT IDLE")).toBeInTheDocument();
   });
 
-  it("opens the Archive workspace from the primary navigation", async () => {
+  it("opens Library without loading Outputs data", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
       "GET /api/status": status,
@@ -147,23 +147,39 @@ describe("GatewayApp", () => {
       "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
       "GET /api/operations": { items: [], counts: {} },
       "GET /api/archive/entries?status=published": { entries: [] },
+      "GET /api/archive/entries?status=draft": { entries: [] },
       "GET /api/personas": { personas: [] },
-      "GET /api/archive/requests": { requests: [] },
+      "GET /api/archive/requests": { requests: [] }
+    });
+
+    await renderGatewayApp({ openChat: false });
+    await userEvent.click(await screen.findByRole("button", { name: "Library" }));
+
+    expect(await screen.findByRole("heading", { name: "Archive" })).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith("/api/archive/entries?status=published");
+    expect(fetch).not.toHaveBeenCalledWith("/api/artifacts");
+  });
+
+  it("opens Outputs without loading Library data", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": { items: [], counts: {} },
       "GET /api/artifacts": { artifacts: [artifact] }
     });
 
     await renderGatewayApp({ openChat: false });
-    await userEvent.click(await screen.findByRole("button", { name: "Archive" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Outputs" }));
 
-    expect(await screen.findByRole("heading", { name: "Archive" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute("aria-selected", "true");
-    expect(fetch).not.toHaveBeenCalledWith("/api/archive/map");
-
-    await userEvent.click(await screen.findByRole("tab", { name: /Artifacts/ }));
-
+    expect(await screen.findByRole("heading", { name: "Artifacts" })).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith("/api/artifacts");
-    expect(screen.getByText("release-report.md")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Artifacts" })).not.toBeInTheDocument();
+    expect(await screen.findByText("release-report.md")).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalledWith("/api/archive/entries?status=published");
   });
 
   it("opens an operations dashboard item through the existing target navigation handler", async () => {
