@@ -18,7 +18,7 @@
 - Keep Chat's existing Artifact fallback load and registered-path behavior.
 - Preserve the dirty main checkout; build only inside this isolated worktree and do not copy files from the main checkout.
 - Do not launch PAG, LMG, or `scripts/start_local_runtime.ps1` from a Codex-managed command on Windows.
-- Follow RED → verify RED → minimal GREEN → verify GREEN for behavior changes.
+- Follow RED → verify RED → minimal GREEN → verify GREEN for behavior changes. A characterization test that locks behavior already implemented by an earlier task must start GREEN and must not force a temporary regression solely to manufacture RED.
 - Stage and commit only the files named by the current task.
 
 ---
@@ -384,7 +384,7 @@ git commit -m "refactor(library): separate reusable knowledge from Outputs"
 - Consumes: Task 1's direct `ArtifactsView` render and `onChange={() => api.artifacts().then(setArtifacts).catch(setScreenError)}` callback.
 - Produces: an integration test proving single Artifact deletion refreshes the Outputs fallback collection through `GatewayApp`.
 
-- [ ] **Step 1: Add the failing refresh integration test**
+- [ ] **Step 1: Add the refresh characterization test**
 
 Add this test next to the Outputs navigation test in `GatewayApp.test.jsx`:
 
@@ -418,7 +418,7 @@ it("refreshes the Outputs fallback list after an Artifact is deleted", async () 
 });
 ```
 
-- [ ] **Step 2: Run the integration test and observe its result before changing production**
+- [ ] **Step 2: Run the characterization test before changing production**
 
 Run:
 
