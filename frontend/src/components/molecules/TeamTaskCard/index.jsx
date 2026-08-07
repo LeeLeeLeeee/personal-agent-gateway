@@ -39,6 +39,11 @@ export function TeamTaskCard({ task, owner, fileCount = 0, reportCount = 0, onOp
         </span>
       </div>
       {task.result ? <div className="team-task-result">{task.result}</div> : null}
+      {noteText ? (
+        <div className={`team-task-diagnostic mono team-task-note-${task.status === "failed" ? "danger" : "warning"}`}>
+          {noteText}
+        </div>
+      ) : null}
       <div className="team-task-meta">
         <span className="team-task-owner-profile" title={owner?.name || "UNASSIGNED"}>
           {avatar ? (
@@ -48,11 +53,6 @@ export function TeamTaskCard({ task, owner, fileCount = 0, reportCount = 0, onOp
           ) : null}
           <span className="team-task-owner-name mono">{owner?.name || "UNASSIGNED"}</span>
         </span>
-        {noteText ? (
-          <span className={`team-task-note mono team-task-note-${task.status === "failed" ? "danger" : "warning"}`}>
-            {noteText}
-          </span>
-        ) : null}
         {reasonCode ? (
           <span className="team-task-note mono team-task-note-warning">
             {reasonCode}

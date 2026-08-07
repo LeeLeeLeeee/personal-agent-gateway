@@ -62,4 +62,22 @@ describe("TeamTaskCard", () => {
     expect(screen.getByText(/Input snapshot changed/)).toBeInTheDocument();
     expect(screen.queryByText("COMPLETED")).not.toBeInTheDocument();
   });
+
+  it("keeps a long failure diagnostic outside compact metadata", () => {
+    const diagnostic = "Required task failed: " + "a-very-long-path/".repeat(20);
+    const { container } = render(
+      <TeamTaskCard
+        task={{ ...task, status: "failed", error_message: diagnostic }}
+        owner={{ name: "QA Reviewer", persona_snapshot: {} }}
+        reportCount={1}
+        onOpen={vi.fn()}
+      />
+    );
+
+    const diagnosticNode = screen.getByText(diagnostic);
+    expect(diagnosticNode).toHaveClass("team-task-diagnostic");
+    expect(diagnosticNode.closest(".team-task-meta")).toBeNull();
+    expect(container.querySelector(".team-task-meta")).toHaveTextContent("FILES 0");
+    expect(container.querySelector(".team-task-meta")).toHaveTextContent("REPORTS 1");
+  });
 });
