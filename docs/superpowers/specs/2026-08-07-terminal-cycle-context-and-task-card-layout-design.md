@@ -73,4 +73,3 @@ clip inside the card instead of widening the grid column.
   full task detail remains available.
 - Focused backend and frontend tests, followed by the frontend production build,
   verify the change.
-
