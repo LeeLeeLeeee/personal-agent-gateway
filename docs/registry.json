@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 220,
+  "document_count": 221,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -2996,6 +2996,72 @@
       "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Modes: `api-state,test` - Verdict: hook의 login 결과를 GatewayApp에서 받아 성공할 때만 `screen`을 `dashboard`로 변경하는 것이 기존 ownership에 맞다."
     },
     {
+      "path": "docs/component-inspector/GatewayApp/2026-08-07-1150.md",
+      "title": "GatewayApp 화면 오류 소유권 분석",
+      "type": "report",
+      "domain": "component",
+      "feature": "library-outputs-error-ownership",
+      "status": "done",
+      "aliases": [
+        "GatewayApp screen error ownership",
+        "Library Outputs 오류 격리"
+      ],
+      "tags": [
+        "component",
+        "analysis",
+        "navigation",
+        "async-state"
+      ],
+      "updated_at": "2026-08-07",
+      "headings": [
+        {
+          "level": 1,
+          "text": "GatewayApp 화면 오류 소유권 분석"
+        },
+        {
+          "level": 2,
+          "text": "요약"
+        },
+        {
+          "level": 2,
+          "text": "범위"
+        },
+        {
+          "level": 2,
+          "text": "API / 상태 추적"
+        },
+        {
+          "level": 3,
+          "text": "수정 전 root cause"
+        },
+        {
+          "level": 3,
+          "text": "구현된 owner 경계"
+        },
+        {
+          "level": 2,
+          "text": "테스트 현황과 필요한 RED 사례"
+        },
+        {
+          "level": 2,
+          "text": "구현 결과와 후속 작업"
+        },
+        {
+          "level": 2,
+          "text": "스킬 핸드오프"
+        },
+        {
+          "level": 2,
+          "text": "리뷰"
+        },
+        {
+          "level": 2,
+          "text": "근거"
+        }
+      ],
+      "excerpt": "- Root: `frontend/src/components/containers/GatewayApp/index.jsx` - Related component: `frontend/src/components/organisms/ArchiveView/index.jsx` - Modes: `api-state`, `test` - Verdict: 분석 당시 `screenError`와 `ArchiveVie..."
+    },
+    {
       "path": "docs/component-inspector/HooksView/2026-07-20-1037.md",
       "title": "HooksView Create Form Disclosure Analysis",
       "type": "report",
@@ -5170,7 +5236,7 @@
           "text": "Component Inspector Reports"
         }
       ],
-      "excerpt": "- [ArchiveView Knowledge와 Outputs 경계 분석 — 2026-08-07 09:56](./ArchiveView/2026-08-07-0956.md) - [ArchiveView Map 구조 및 제거 가능성 분석 — 2026-08-06 16:51](./ArchiveView/2026-08-06-1651.md) - [ArtifactsView 통합 브라우저 분석 — 2026-..."
+      "excerpt": "- [GatewayApp 화면 오류 소유권 분석 — 2026-08-07 11:50](./GatewayApp/2026-08-07-1150.md) - [ArchiveView Knowledge와 Outputs 경계 분석 — 2026-08-07 09:56](./ArchiveView/2026-08-07-0956.md) - [ArchiveView Map 구조 및 제거 가능성 분석 — 2026-08..."
     },
     {
       "path": "docs/design/2026-07-06-personal-agent-gateway-uiux-brief.md",

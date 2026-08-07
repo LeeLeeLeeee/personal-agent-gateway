@@ -14,6 +14,7 @@ updated_at: 2026-08-07
 
 # Component Inspector Reports
 
+- [GatewayApp 화면 오류 소유권 분석 — 2026-08-07 11:50](./GatewayApp/2026-08-07-1150.md)
 - [ArchiveView Knowledge와 Outputs 경계 분석 — 2026-08-07 09:56](./ArchiveView/2026-08-07-0956.md)
 - [ArchiveView Map 구조 및 제거 가능성 분석 — 2026-08-06 16:51](./ArchiveView/2026-08-06-1651.md)
 - [ArtifactsView 통합 브라우저 분석 — 2026-08-05 09:48](./ArtifactsView/2026-08-05-0948.md)
