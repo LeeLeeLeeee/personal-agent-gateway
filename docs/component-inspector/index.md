@@ -14,6 +14,7 @@ updated_at: 2026-08-07
 
 # Component Inspector Reports
 
+- [TeamTaskCard 실패 진단 레이아웃 분석 — 2026-08-07 14:49](./TeamTaskCard/2026-08-07-1449.md)
 - [GatewayApp 화면 오류 소유권 분석 — 2026-08-07 11:50](./GatewayApp/2026-08-07-1150.md)
 - [ArchiveView Knowledge와 Outputs 경계 분석 — 2026-08-07 09:56](./ArchiveView/2026-08-07-0956.md)
 - [ArchiveView Map 구조 및 제거 가능성 분석 — 2026-08-06 16:51](./ArchiveView/2026-08-06-1651.md)
