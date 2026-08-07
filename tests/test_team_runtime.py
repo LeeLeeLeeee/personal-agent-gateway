@@ -2654,6 +2654,13 @@ def test_planning_prompts_teach_the_check_vocabulary() -> None:
         assert "exactly the fields shown" in prompt
 
 
+def test_planning_prompts_require_task_identity_and_dependency_fields() -> None:
+    for prompt in (PLANNING_PROMPT, ADD_WORK_PROMPT):
+        assert '"plan_task_id"' in prompt
+        assert '"depends_on_task_ids"' in prompt
+        assert '"input_artifact_ids"' in prompt
+
+
 def test_worker_prompt_uses_cycle_space_instead_of_run_space(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
     db.initialize()

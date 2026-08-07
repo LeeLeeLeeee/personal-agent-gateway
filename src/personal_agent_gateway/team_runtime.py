@@ -208,8 +208,9 @@ Use ask_user only when the user must decide. Prefer task scope; use run scope on
 ADD_WORK_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
 The user is adding work to an in-flight run. Break the request into concrete tasks.
 Return ONLY a JSON array of task objects using the same exact schema:
-{{"title":"...", "description":"...", "owner_agent_id":"member-id or null",
-"required":true, "acceptance":{{"required_outputs":["relative/path"],
+{{"plan_task_id":"stable-key", "title":"...", "description":"...", "owner_agent_id":"member-id or null",
+"required":true, "depends_on_task_ids":["stable-key"], "input_artifact_ids":[],
+"acceptance":{{"required_outputs":["relative/path"],
 "required_verifications":[{{"name":"verification-name","check":null}}]}}}}
 A verification may carry a check the server runs itself. Prefer one whenever a
 file can decide the question; use "check":null only for something no file can
@@ -221,6 +222,11 @@ each with a workspace-relative "path":
 {{"type":"file_matches","path":"relative/path","pattern":"regex, at most 200 characters"}}
 {{"type":"json_parses","path":"relative/path"}}
 A check you supply decides the outcome; your own claim about it is ignored.
+plan_task_id is required and must be unique in this response.
+depends_on_task_ids may reference only plan_task_id values in this response.
+A task that reads, revises, or verifies another task's required_outputs MUST list
+that task in depends_on_task_ids; use [] only when it has no prerequisite.
+Use [] for input_artifact_ids because add-work planning has no input artifact catalog.
 Run context:
 {goal}
 Existing tasks: {existing_titles}
