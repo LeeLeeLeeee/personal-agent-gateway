@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 215,
+  "document_count": 216,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -7076,6 +7076,47 @@
         }
       ],
       "excerpt": "PAG에는 당장 backend 기능을 대거 삭제해야 하는 문제보다 **하나의 사용자 여정을 너무 많은 독립 화면으로 노출한 문제**가 더 크다. 사이드바는 13개 화면이며, 실행 정의·실행 이력·정책·운영 상태가 각각 별도 메뉴로 갈라져 있다."
+    },
+    {
+      "path": "docs/reports/2026-08-07-archive-map-removal-and-lazy-team-loading-implementation.md",
+      "title": "Archive Map 제거 및 Documentation Team 지연 조회 구현 결과",
+      "type": "report",
+      "domain": "personal-agent-gateway",
+      "feature": "archive-map-removal",
+      "status": "done",
+      "aliases": [
+        "Archive Map 제거 결과",
+        "Archive Team Runs 지연 조회"
+      ],
+      "tags": [
+        "archive",
+        "performance",
+        "cleanup"
+      ],
+      "updated_at": "2026-08-07",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Archive Map 제거 및 Documentation Team 지연 조회 구현 결과"
+        },
+        {
+          "level": 2,
+          "text": "Summary"
+        },
+        {
+          "level": 2,
+          "text": "Changes"
+        },
+        {
+          "level": 2,
+          "text": "Verification"
+        },
+        {
+          "level": 2,
+          "text": "Follow-ups"
+        }
+      ],
+      "excerpt": "Archive Map UI, frontend client, API route, backend graph read model과 전용 스타일을 제거했다. Archive 기본 조회에서 Team Runs를 제외하고 Requests 최초 진입 시 조회하며, 성공 결과는 컴포넌트가 유지되는 동안 재사용하고 실패 후에는 명시적으로 재시도하도록 변경했다."
     },
     {
       "path": "docs/specs/2026-07-08-observability-audit-log-spec.md",
