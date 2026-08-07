@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { api } from "../../../api/client.js";
 import { ArchiveView } from "./index.jsx";
 
 const styles = readFileSync(
@@ -70,16 +69,6 @@ const documentationTeam = {
   execution_policy: "triggered"
 };
 
-const artifact = {
-  id: "artifact-1",
-  type: "report",
-  title: "release-report.md",
-  relative_path: "reports/release-report.md",
-  mime_type: "text/markdown",
-  size_bytes: 512,
-  created_at: "2026-07-27T00:00:00Z"
-};
-
 function makeClient() {
   return {
     archiveEntries: vi.fn().mockImplementation(({ status = "published" } = {}) => (
@@ -124,89 +113,33 @@ function makeClient() {
 }
 
 describe("ArchiveView", () => {
-  it("adds inner spacing around embedded artifact contents", () => {
-    expect(styles).toMatch(
-      /\.archive-artifacts\s*>\s*\.artifacts-view\s*\{[^}]*padding:\s*20px;/
-    );
-  });
-
-  it("keeps artifact metadata on one line so cards stay equal height", () => {
-    expect(styles).toMatch(
-      /\.artifact-card-meta\s*\{[^}]*white-space:\s*nowrap;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;/
-    );
-  });
-
-  it("keeps Team artifact groups full-width and lists files in aligned rows", () => {
-    expect(styles).toMatch(
-      /\.artifact-groups\s*\{\s*display:\s*grid;\s*gap:\s*18px;/
-    );
-    expect(styles).toMatch(
-      /\.artifact-row-open\s*\{[^}]*grid-template-columns:\s*38px minmax\(0, 1fr\) 150px;/
-    );
-  });
-
   it("makes the draft failure banner conspicuous with a warning border", () => {
     expect(styles).toMatch(
       /\.archive-request-failure\s*\{[^}]*border:\s*2px solid var\(--c-warn\);/
     );
   });
 
-  it("explains the knowledge lifecycle separately from work artifacts", async () => {
-    render(<ArchiveView client={makeClient()} artifacts={[artifact]} />);
+  it("presents the knowledge lifecycle as Published, Drafts, and Requests", async () => {
+    render(<ArchiveView client={makeClient()} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
-
+    expect(await screen.findByRole("heading", { name: "Library" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Published/ })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+    expect(screen.getByRole("tab", { name: /Drafts/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Requests/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Artifacts/ })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Knowledge lifecycle" }))
       .toHaveTextContent(/Requests.*Drafts.*Library/i);
-    expect(screen.getByRole("region", { name: "Work outputs" }))
-      .toHaveTextContent(/Artifacts.*separate/i);
-  });
-
-  it("shows managed artifacts and the Library boundary inside Archive", async () => {
-    render(<ArchiveView client={makeClient()} artifacts={[artifact]} onArtifactChange={vi.fn()} />);
-
-    await screen.findByRole("heading", { name: "Archive" });
-    await userEvent.click(screen.getByRole("tab", { name: /Artifacts/ }));
-
-    expect(screen.getByText("release-report.md")).toBeInTheDocument();
-    expect(screen.getByText(/not automatically included in Library or Persona context/i)).toBeInTheDocument();
-  });
-
-  it("refreshes Archive artifacts after an embedded artifact is deleted", async () => {
-    const onArtifactChange = vi.fn();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const deleteSpy = vi.spyOn(api, "deleteArtifact").mockResolvedValue(true);
-    const deletedArtifact = {
-      ...artifact,
-      type: "document",
-      mime_type: "application/zip"
-    };
-
-    render(
-      <ArchiveView
-        client={makeClient()}
-        artifacts={[deletedArtifact]}
-        onArtifactChange={onArtifactChange}
-      />
-    );
-
-    await screen.findByRole("heading", { name: "Archive" });
-    await userEvent.click(screen.getByRole("tab", { name: /Artifacts/ }));
-    await userEvent.click(screen.getByRole("button", { name: "Open release-report.md" }));
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
-
-    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith("artifact-1"));
-    await waitFor(() => expect(onArtifactChange).toHaveBeenCalledOnce());
-
-    confirmSpy.mockRestore();
-    deleteSpy.mockRestore();
+    expect(screen.queryByRole("region", { name: "Work outputs" })).not.toBeInTheDocument();
   });
 
   it("removes Map and loads documentation teams only once on Requests", async () => {
     const client = makeClient();
     render(<ArchiveView client={client} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
 
     expect(screen.queryByRole("tab", { name: "Map" })).not.toBeInTheDocument();
     expect(client.teamRuns).not.toHaveBeenCalled();
@@ -214,7 +147,7 @@ describe("ArchiveView", () => {
     await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
     await waitFor(() => expect(client.teamRuns).toHaveBeenCalledOnce());
 
-    await userEvent.click(screen.getByRole("tab", { name: "Library" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Published" }));
     await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
     expect(client.teamRuns).toHaveBeenCalledOnce();
   });
@@ -228,7 +161,7 @@ describe("ArchiveView", () => {
 
     render(<ArchiveView client={client} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
     await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
 
     const retry = await screen.findByRole("button", { name: "Retry team loading" });
@@ -272,7 +205,7 @@ describe("ArchiveView", () => {
 
     const { rerender } = render(<ArchiveView client={firstClient} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
     await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
     await waitFor(() => expect(firstClient.teamRuns).toHaveBeenCalledOnce());
 
@@ -299,7 +232,7 @@ describe("ArchiveView", () => {
     const client = makeClient();
     render(<ArchiveView client={client} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
     await userEvent.click(screen.getByRole("tab", { name: /Drafts/ }));
     await userEvent.click(screen.getByRole("button", {
       name: "Review Rollback checklist draft"
@@ -326,7 +259,7 @@ describe("ArchiveView", () => {
     const client = makeClient();
     render(<ArchiveView client={client} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
     await userEvent.click(screen.getByRole("tab", { name: /Drafts/ }));
     await userEvent.click(screen.getByRole("button", { name: "Review Rollback checklist draft" }));
     await userEvent.click(screen.getByRole("button", { name: "Delete draft" }));
@@ -340,7 +273,7 @@ describe("ArchiveView", () => {
     const client = makeClient();
     render(<ArchiveView client={client} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
     await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
     const send = screen.getByRole("button", {
       name: "Send Rollback checklist to documentation team"
@@ -377,9 +310,9 @@ describe("ArchiveView", () => {
       }
     ]);
 
-    render(<ArchiveView client={client} artifacts={[]} />);
+    render(<ArchiveView client={client} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
     await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
 
     expect(screen.getByText(/DRAFT FAILED/)).toHaveTextContent(
@@ -401,9 +334,9 @@ describe("ArchiveView", () => {
   });
 
   it("shows no failure banner when the request has never failed", async () => {
-    render(<ArchiveView client={makeClient()} artifacts={[]} />);
+    render(<ArchiveView client={makeClient()} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
     await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
 
     expect(screen.queryByText(/DRAFT FAILED/)).not.toBeInTheDocument();
@@ -413,7 +346,7 @@ describe("ArchiveView", () => {
     const client = makeClient();
     render(<ArchiveView client={client} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
     await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
     await userEvent.click(screen.getByRole("button", {
       name: "Write Rollback checklist in Library"
@@ -450,7 +383,7 @@ describe("ArchiveView", () => {
     const client = makeClient();
     render(<ArchiveView client={client} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
     await userEvent.click(screen.getByRole("button", { name: /Deployment reference/ }));
     await userEvent.click(screen.getByRole("button", { name: "Delete document" }));
 
@@ -464,7 +397,7 @@ describe("ArchiveView", () => {
     const client = makeClient();
     render(<ArchiveView client={client} />);
 
-    await screen.findByRole("heading", { name: "Archive" });
+    await screen.findByRole("heading", { name: "Library" });
     await userEvent.click(screen.getByRole("button", { name: /Deployment reference/ }));
     await userEvent.click(screen.getByRole("button", { name: "Delete document" }));
 

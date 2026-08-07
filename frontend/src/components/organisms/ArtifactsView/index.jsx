@@ -132,7 +132,7 @@ export function ArtifactsView({ artifacts = [], onChange }) {
     <div className="artifacts-view">
       <div className="artifacts-main">
         <div className="artifacts-heading-row">
-          <div><h1 className="headline">Artifacts</h1><div className="artifacts-sub mono">{visibleItems.length} shown · {counts.saved || 0} saved · {counts.recent || 0} recent</div></div>
+          <div><h1 className="headline">Outputs</h1><div className="artifacts-sub mono">{visibleItems.length} shown · {counts.saved || 0} saved · {counts.recent || 0} recent</div></div>
           {segment !== "cleanup" ? <button type="button" className={`btn btn-sm${selectionMode ? " btn-danger" : ""}`} onClick={() => { setSelectionMode((value) => !value); setSelectedIds(new Set()); }}>{selectionMode ? "선택 취소" : "선택 삭제"}</button> : null}
         </div>
         <label className="artifact-search mono">SEARCH <input className="input-field" aria-label="Search artifacts" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="제목, 채팅, Team Run, Task 검색" /></label>

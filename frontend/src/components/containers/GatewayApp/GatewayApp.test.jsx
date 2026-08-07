@@ -155,7 +155,7 @@ describe("GatewayApp", () => {
     await renderGatewayApp({ openChat: false });
     await userEvent.click(await screen.findByRole("button", { name: "Library" }));
 
-    expect(await screen.findByRole("heading", { name: "Archive" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Library" })).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith("/api/archive/entries?status=published");
     expect(fetch).not.toHaveBeenCalledWith("/api/artifacts");
   });
@@ -176,7 +176,7 @@ describe("GatewayApp", () => {
     await renderGatewayApp({ openChat: false });
     await userEvent.click(await screen.findByRole("button", { name: "Outputs" }));
 
-    expect(await screen.findByRole("heading", { name: "Artifacts" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Outputs" })).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith("/api/artifacts");
     expect(await screen.findByText("release-report.md")).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalledWith("/api/archive/entries?status=published");

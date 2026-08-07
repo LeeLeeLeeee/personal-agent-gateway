@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../api/client.js";
-import { ArtifactsView } from "../ArtifactsView/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 
 const ENTRY_KINDS = [
@@ -97,8 +96,8 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
-export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) {
-  const [tab, setTab] = useState("library");
+export function ArchiveView({ client = api }) {
+  const [tab, setTab] = useState("published");
   const [entries, setEntries] = useState([]);
   const [drafts, setDrafts] = useState([]);
   const [personas, setPersonas] = useState([]);
@@ -211,7 +210,7 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
     setRevisions([]);
     setError(null);
     setNotice("");
-    setTab("library");
+    setTab("published");
   }
 
   async function editEntry(entry) {
@@ -220,7 +219,7 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
     setRevisions([]);
     setError(null);
     setNotice("");
-    setTab(entry.status === "draft" ? "drafts" : "library");
+    setTab(entry.status === "draft" ? "drafts" : "published");
     try {
       setRevisions(await client.archiveEntryRevisions(entry.id));
     } catch (nextError) {
@@ -234,7 +233,7 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
     setRevisions([]);
     setError(null);
     setNotice("This is an unpublished outline. Personas cannot use it until you publish.");
-    setTab("library");
+    setTab("published");
     if (item.status === "in_progress") return;
     try {
       const updated = await client.setKnowledgeRequestStatus(item.id, "in_progress");
@@ -395,7 +394,7 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
       <header className="archive-head">
         <div>
           <div className="archive-eyebrow mono">PERSONA KNOWLEDGE SYSTEM</div>
-          <h1 className="headline">Archive</h1>
+          <h1 className="headline">Library</h1>
           <p>
             User-published procedures, search methods, patterns, and references.
             Personas request missing knowledge; documentation teams prepare private drafts;
@@ -418,26 +417,18 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
             only your review publishes them to Library for personas to use.
           </p>
         </section>
-        <section className="archive-guide-card archive-guide-card-artifacts" aria-label="Work outputs">
-          <span className="archive-guide-k mono">WORK OUTPUTS</span>
-          <strong>Artifacts stay separate</strong>
-          <p>
-            Artifacts are files produced during work. Browse or download them here; they never become
-            Library knowledge automatically.
-          </p>
-        </section>
       </div>
 
       <div className="archive-tabs" role="tablist" aria-label="Archive sections">
         <button
           type="button"
           role="tab"
-          aria-label="Library"
-          aria-selected={tab === "library"}
-          className={tab === "library" ? "active" : ""}
-          onClick={() => setTab("library")}
+          aria-label="Published"
+          aria-selected={tab === "published"}
+          className={tab === "published" ? "active" : ""}
+          onClick={() => setTab("published")}
         >
-          LIBRARY <span>{entries.length}</span>
+          PUBLISHED <span>{entries.length}</span>
         </button>
         <button
           type="button"
@@ -448,16 +439,6 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
           onClick={() => setTab("drafts")}
         >
           DRAFTS <span>{drafts.length}</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-label="Artifacts"
-          aria-selected={tab === "artifacts"}
-          className={tab === "artifacts" ? "active" : ""}
-          onClick={() => setTab("artifacts")}
-        >
-          ARTIFACTS <span>{artifacts.length}</span>
         </button>
         <button
           type="button"
@@ -478,10 +459,10 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
         <div className="archive-loading mono" role="status">LOADING ARCHIVE…</div>
       ) : null}
 
-      {!loading && ["library", "drafts"].includes(tab) ? (
+      {!loading && ["published", "drafts"].includes(tab) ? (
         <div className="archive-library" role="tabpanel">
           <aside className="archive-library-list">
-            {tab === "library" ? (
+            {tab === "published" ? (
               <form className="archive-search" onSubmit={searchLibrary}>
                 <label>
                   <span className="archive-field-label mono">SEARCH PUBLISHED LIBRARY</span>
@@ -519,7 +500,7 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
               <span className="mono">
                 {tab === "drafts" ? "TEAM DRAFTS" : "PUBLISHED ENTRIES"}
               </span>
-              {tab === "library" ? (
+              {tab === "published" ? (
                 <Button size="btn-sm" onClick={startNewEntry}>New entry</Button>
               ) : null}
             </div>
@@ -759,20 +740,6 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
             </div>
           </form>
           )}
-        </div>
-      ) : null}
-
-      {!loading && tab === "artifacts" ? (
-        <div className="archive-artifacts" role="tabpanel">
-          <div className="archive-artifacts-boundary" role="note">
-            <strong className="mono">SOURCE ARTIFACTS</strong>
-            <p>
-              Artifacts are a separate collection of original files and outputs created during work.
-              Archive Library contains reviewed, published reusable knowledge. Artifacts are not
-              automatically included in Library or Persona context.
-            </p>
-          </div>
-          <ArtifactsView artifacts={artifacts} onChange={onArtifactChange} />
         </div>
       ) : null}
 

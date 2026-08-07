@@ -1,9 +1,16 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ArtifactsView } from "./index.jsx";
 import { api } from "../../../api/client.js";
 import { UiProvider } from "../../providers/UiProvider/index.jsx";
+
+const styles = readFileSync(
+  resolve(process.cwd(), "../src/personal_agent_gateway/static/styles.css"),
+  "utf8"
+);
 
 const artifacts = [
   { id: "a1", type: "image", title: "snap.png", relative_path: "captures/snap.png", mime_type: "image/png", size_bytes: 1400000, created_at: "2026-07-08T00:00:00Z", source_job_id: "j1", source_session_id: "s1", retention_class: "durable" },
@@ -15,6 +22,23 @@ function renderView() {
 }
 
 describe("ArtifactsView", () => {
+  it("presents the standalone workspace as Outputs", async () => {
+    renderView();
+    expect(screen.getByRole("heading", { name: "Outputs" })).toBeInTheDocument();
+  });
+
+  it("keeps Artifact metadata and grouped rows compact", () => {
+    expect(styles).toMatch(
+      /\.artifact-card-meta\s*\{[^}]*white-space:\s*nowrap;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;/
+    );
+    expect(styles).toMatch(
+      /\.artifact-groups\s*\{\s*display:\s*grid;\s*gap:\s*18px;/
+    );
+    expect(styles).toMatch(
+      /\.artifact-row-open\s*\{[^}]*grid-template-columns:\s*38px minmax\(0, 1fr\) 150px;/
+    );
+  });
+
   it("defaults to saved artifacts and exposes recent team outputs", async () => {
     renderView();
     expect(screen.getByText("snap.png")).toBeInTheDocument();

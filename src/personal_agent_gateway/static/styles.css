@@ -4783,30 +4783,6 @@ p {
     color: var(--c-grey);
     letter-spacing: 1px;
 }
-.archive-artifacts {
-    border: var(--bd);
-    background: var(--c-white);
-}
-.archive-artifacts > .artifacts-view {
-    padding: 20px;
-}
-.archive-artifacts-boundary {
-    display: grid;
-    gap: 5px;
-    border-bottom: var(--bd-sm);
-    padding: 14px;
-    background: #eef5ff;
-    color: #173f91;
-    font-size: 12px;
-    line-height: 1.5;
-}
-.archive-artifacts-boundary strong {
-    font-size: 10px;
-    letter-spacing: 1px;
-}
-.archive-artifacts-boundary p {
-    max-width: 780px;
-}
 .archive-library {
     display: grid;
     grid-template-columns: minmax(280px, 0.72fr) minmax(480px, 1.55fr);
@@ -5105,7 +5081,7 @@ p {
 }
 .archive-guide {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
     margin: 20px 0;
 }
@@ -5117,10 +5093,6 @@ p {
     border-left-width: 6px;
     padding: 13px 15px;
     background: var(--c-panel);
-}
-.archive-guide-card-artifacts {
-    border-left-color: var(--c-grey);
-    background: var(--c-white);
 }
 .archive-guide-k {
     grid-row: 1 / 3;
