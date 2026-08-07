@@ -24,10 +24,12 @@ function response(body, ok = true) {
 
 function deferredResponse() {
   let resolve;
-  const promise = new Promise((settle) => {
+  let reject;
+  const promise = new Promise((settle, fail) => {
     resolve = (body, ok = true) => settle({ ok, json: () => Promise.resolve(body) });
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function installFetch(routes) {
@@ -182,6 +184,38 @@ describe("GatewayApp", () => {
     expect(fetch).not.toHaveBeenCalledWith("/api/archive/entries?status=published");
   });
 
+  it("ignores an Outputs load failure after navigating to Library", async () => {
+    const artifactLoad = deferredResponse();
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": { items: [], counts: {} },
+      "GET /api/artifacts": () => artifactLoad.promise,
+      "GET /api/archive/entries?status=published": { entries: [] },
+      "GET /api/archive/entries?status=draft": { entries: [] },
+      "GET /api/personas": { personas: [] },
+      "GET /api/archive/requests": { requests: [] }
+    });
+
+    await renderGatewayApp({ openChat: false });
+    await userEvent.click(await screen.findByRole("button", { name: "Outputs" }));
+    expect(await screen.findByRole("heading", { name: "Outputs" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Library" }));
+    expect(await screen.findByRole("heading", { name: "Library" })).toBeInTheDocument();
+
+    await act(async () => {
+      artifactLoad.reject(new Error("Outputs request failed"));
+      await artifactLoad.promise.catch(() => {});
+    });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("refreshes the Outputs fallback list after an Artifact is deleted", async () => {
     let artifactListReads = 0;
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -207,6 +241,49 @@ describe("GatewayApp", () => {
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(artifactListReads).toBe(2));
+    confirmSpy.mockRestore();
+  });
+
+  it("ignores an Outputs mutation refresh failure after navigating to Library", async () => {
+    let artifactListReads = 0;
+    const artifactRefresh = deferredResponse();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": { items: [], counts: {} },
+      "GET /api/artifacts": () => {
+        artifactListReads += 1;
+        return artifactListReads === 1
+          ? response({ artifacts: [artifact] })
+          : artifactRefresh.promise;
+      },
+      "DELETE /api/artifacts/artifact-1": {},
+      "GET /api/archive/entries?status=published": { entries: [] },
+      "GET /api/archive/entries?status=draft": { entries: [] },
+      "GET /api/personas": { personas: [] },
+      "GET /api/archive/requests": { requests: [] }
+    });
+
+    await renderGatewayApp({ openChat: false });
+    await userEvent.click(await screen.findByRole("button", { name: "Outputs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open release-report.md" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(artifactListReads).toBe(2));
+
+    await userEvent.click(screen.getByRole("button", { name: "Library" }));
+    expect(await screen.findByRole("heading", { name: "Library" })).toBeInTheDocument();
+    await act(async () => {
+      artifactRefresh.reject(new Error("Outputs refresh failed"));
+      await artifactRefresh.promise.catch(() => {});
+    });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     confirmSpy.mockRestore();
   });
 

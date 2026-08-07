@@ -104,6 +104,7 @@ export function ArchiveView({ client = api }) {
   const [requests, setRequests] = useState([]);
   const [teamRuns, setTeamRuns] = useState([]);
   const [teamRunsStatus, setTeamRunsStatus] = useState("idle");
+  const [teamRunsError, setTeamRunsError] = useState(null);
   const teamRunsRequestGeneration = useRef(0);
   const [selectedTeams, setSelectedTeams] = useState({});
   const [loading, setLoading] = useState(true);
@@ -153,7 +154,7 @@ export function ArchiveView({ client = api }) {
     if (["loading", "ready"].includes(teamRunsStatus)) return;
     const requestGeneration = ++teamRunsRequestGeneration.current;
     setTeamRunsStatus("loading");
-    setError(null);
+    setTeamRunsError(null);
     try {
       const nextTeamRuns = await client.teamRuns();
       if (requestGeneration !== teamRunsRequestGeneration.current) return;
@@ -162,7 +163,7 @@ export function ArchiveView({ client = api }) {
     } catch (nextError) {
       if (requestGeneration !== teamRunsRequestGeneration.current) return;
       setTeamRunsStatus("error");
-      setError(nextError);
+      setTeamRunsError(nextError);
     }
   }, [client, teamRunsStatus]);
 
@@ -170,6 +171,7 @@ export function ArchiveView({ client = api }) {
     teamRunsRequestGeneration.current += 1;
     setTeamRuns([]);
     setTeamRunsStatus("idle");
+    setTeamRunsError(null);
     return () => {
       teamRunsRequestGeneration.current += 1;
     };
@@ -390,7 +392,7 @@ export function ArchiveView({ client = api }) {
   }
 
   return (
-    <section className="archive-view" aria-label="Archive">
+    <section className="archive-view" aria-label="Library">
       <header className="archive-head">
         <div>
           <div className="archive-eyebrow mono">PERSONA KNOWLEDGE SYSTEM</div>
@@ -401,14 +403,14 @@ export function ArchiveView({ client = api }) {
             only you can publish them.
           </p>
         </div>
-        <div className="archive-head-counts mono" aria-label="Archive totals">
+        <div className="archive-head-counts mono" aria-label="Library totals">
           <span>{entries.length}<small>PUBLISHED</small></span>
           <span>{drafts.length}<small>TO REVIEW</small></span>
           <span>{activeRequestCount}<small>OPEN GAPS</small></span>
         </div>
       </header>
 
-      <div className="archive-guide" aria-label="How Archive works">
+      <div className="archive-guide" aria-label="How Library works">
         <section className="archive-guide-card" aria-label="Knowledge lifecycle">
           <span className="archive-guide-k mono">KNOWLEDGE LIFECYCLE</span>
           <strong>Requests → Drafts → Library</strong>
@@ -419,7 +421,7 @@ export function ArchiveView({ client = api }) {
         </section>
       </div>
 
-      <div className="archive-tabs" role="tablist" aria-label="Archive sections">
+      <div className="archive-tabs" role="tablist" aria-label="Library sections">
         <button
           type="button"
           role="tab"
@@ -453,10 +455,13 @@ export function ArchiveView({ client = api }) {
       </div>
 
       {error ? <div className="archive-alert" role="alert">{errorDetail(error)}</div> : null}
+      {teamRunsError ? (
+        <div className="archive-alert" role="alert">{errorDetail(teamRunsError)}</div>
+      ) : null}
       {notice ? <div className="archive-notice" role="status">{notice}</div> : null}
 
       {loading ? (
-        <div className="archive-loading mono" role="status">LOADING ARCHIVE…</div>
+        <div className="archive-loading mono" role="status">LOADING LIBRARY…</div>
       ) : null}
 
       {!loading && ["published", "drafts"].includes(tab) ? (

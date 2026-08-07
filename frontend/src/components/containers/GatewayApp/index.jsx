@@ -248,15 +248,18 @@ export function GatewayApp() {
   });
 
   const loadOperations = useCallback(async () => {
+    const requestScreen = screenRef.current;
     setOperationsLoading(true);
     try {
       const next = await api.operations();
+      if (screenRef.current !== requestScreen) return;
       setOperations(next);
       setOperationsError(null);
     } catch (error) {
+      if (screenRef.current !== requestScreen) return;
       setOperationsError(error);
     } finally {
-      setOperationsLoading(false);
+      if (screenRef.current === requestScreen) setOperationsLoading(false);
     }
   }, []);
 
@@ -271,10 +274,28 @@ export function GatewayApp() {
     return map;
   }, [artifacts]);
 
+  const refreshArtifacts = useCallback(() => {
+    const requestScreen = screenRef.current;
+    return api.artifacts()
+      .then((nextArtifacts) => {
+        if (screenRef.current === requestScreen) setArtifacts(nextArtifacts);
+      })
+      .catch((error) => {
+        if (screenRef.current === requestScreen) setScreenError(error);
+      });
+  }, []);
+
   useEffect(() => {
     if (!authenticated) return;
+    let active = true;
     setScreenError(null);
-    const load = (promise, setter) => promise.then(setter).catch(setScreenError);
+    const load = (promise, setter, reportError = true) => promise
+      .then((value) => {
+        if (active) setter(value);
+      })
+      .catch((error) => {
+        if (active && reportError) setScreenError(error);
+      });
     if (screen === "personas") {
       load(api.personas(), setPersonas);
       load(api.avatarManifest(), setAvatarChoices);
@@ -299,7 +320,7 @@ export function GatewayApp() {
       load(api.artifacts(), setArtifacts);
     } else if (screen === "chat") {
       load(api.artifacts(), setArtifacts);
-      api.personas().then(setPersonas).catch(() => {});
+      load(api.personas(), setPersonas, false);
     } else if (screen === "jobs") {
       load(api.jobs(), setJobs);
     } else if (screen === "schedules") {
@@ -308,11 +329,14 @@ export function GatewayApp() {
     } else if (screen === "hooks") {
       load(api.listHooks(), setHooks);
       load(api.teamRuns(), setTeamRuns);
-      api.personas().then(setPersonas).catch(() => {});
+      load(api.personas(), setPersonas, false);
       setHooksBadge(0);
     } else if (screen === "operations") {
       loadOperations();
     }
+    return () => {
+      active = false;
+    };
   }, [screen, authenticated, loadOperations, screenReloadKey]);
 
   // Logout moved off the sidebar to match the design; to be surfaced from the Settings screen.
@@ -815,7 +839,7 @@ export function GatewayApp() {
           onResolveApproval={handleResolveApproval}
           onInterrupt={handleInterrupt}
           registeredByPath={registeredByPath}
-          onArtifactChange={() => api.artifacts().then(setArtifacts).catch(setScreenError)}
+          onArtifactChange={refreshArtifacts}
         />
       ) : screen === "personas" ? (
         <div className="screen">
@@ -992,7 +1016,7 @@ export function GatewayApp() {
         <div className="screen">
           <ArtifactsView
             artifacts={artifacts}
-            onChange={() => api.artifacts().then(setArtifacts).catch(setScreenError)}
+            onChange={refreshArtifacts}
           />
         </div>
       ) : screen === "jobs" ? (

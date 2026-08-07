@@ -122,6 +122,11 @@ describe("ArchiveView", () => {
   it("presents the knowledge lifecycle as Published, Drafts, and Requests", async () => {
     render(<ArchiveView client={makeClient()} />);
 
+    expect(screen.getByRole("region", { name: "Library" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Library totals")).toBeInTheDocument();
+    expect(screen.getByLabelText("How Library works")).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Library sections" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("LOADING LIBRARY…");
     expect(await screen.findByRole("heading", { name: "Library" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Published/ })).toHaveAttribute(
       "aria-selected",
@@ -150,6 +155,23 @@ describe("ArchiveView", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Published" }));
     await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
     expect(client.teamRuns).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a base Library load error after Requests team loading succeeds", async () => {
+    const client = makeClient();
+    client.archiveEntries.mockImplementation(({ status = "published" } = {}) => (
+      status === "draft"
+        ? Promise.reject(new Error("Draft Library unavailable"))
+        : Promise.resolve([entry])
+    ));
+
+    render(<ArchiveView client={client} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Draft Library unavailable");
+    await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
+    await waitFor(() => expect(client.teamRuns).toHaveBeenCalledOnce());
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Draft Library unavailable");
   });
 
   it("keeps direct Request actions available and retries Team Run loading", async () => {
