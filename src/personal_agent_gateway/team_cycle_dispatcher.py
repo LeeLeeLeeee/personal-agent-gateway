@@ -163,7 +163,7 @@ class TeamCycleDispatcher:
                     output_contract_id = replacement.output_contract_id
             if request.previous_summary_text:
                 instruction += (
-                    "\n\nPREVIOUS CYCLE SUMMARY\n"
+                    "\n\nPREVIOUS CYCLE CONTEXT\n"
                     + request.previous_summary_text
                 )
             self._teams.set_cycle_effective_instruction(

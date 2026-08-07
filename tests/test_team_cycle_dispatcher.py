@@ -256,7 +256,7 @@ async def test_dispatcher_persists_preparer_replacement_as_semantic_source(
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_runs_fifo_and_passes_previous_summary_to_leader_only(
+async def test_dispatcher_runs_fifo_and_passes_previous_context_to_leader_only(
     tmp_path: Path,
 ) -> None:
     services = make_dispatcher_services(tmp_path)
@@ -290,14 +290,16 @@ async def test_dispatcher_runs_fifo_and_passes_previous_summary_to_leader_only(
     call = services.orchestrator.calls[0]
     assert call[0] == services.run.id
     assert call[2] == (
-        "next work\n\nPREVIOUS CYCLE SUMMARY\nprevious result"
+        "next work\n\nPREVIOUS CYCLE CONTEXT\n"
+        "STATUS: COMPLETED\n\nSUMMARY\nprevious result"
     )
     assert services.cycles.get_request(second.id).status == "queued"
 
     first_cycle = services.teams.get_cycle_for_request(first.id)
     assert first_cycle is not None
     assert services.teams.get_cycle_effective_instruction(first_cycle.id) == (
-        "next work\n\nPREVIOUS CYCLE SUMMARY\nprevious result"
+        "next work\n\nPREVIOUS CYCLE CONTEXT\n"
+        "STATUS: COMPLETED\n\nSUMMARY\nprevious result"
     )
     services.teams.set_cycle_status(
         first_cycle.id,
