@@ -66,6 +66,9 @@ export function GatewayApp() {
   const notificationStateRef = useRef(notificationState);
   const notifiedTeamRunsRef = useRef(new Set());
   const screenRef = useRef("dashboard");
+  const screenGenerationRef = useRef(0);
+  const artifactRequestGenerationRef = useRef(0);
+  const operationsRequestGenerationRef = useRef(0);
   const openHookRunsIdRef = useRef(null);
   const [focusedJobId, setFocusedJobId] = useState(null);
   const [focusedScheduleId, setFocusedScheduleId] = useState(null);
@@ -78,6 +81,12 @@ export function GatewayApp() {
   const lastConfigAttemptRef = useRef(null);
   const activeSessionIdRef = useRef(null);
   const busyRef = useRef(false);
+  const transitionScreen = useCallback((nextScreen) => {
+    if (screenRef.current === nextScreen) return;
+    screenGenerationRef.current += 1;
+    screenRef.current = nextScreen;
+    setScreen(nextScreen);
+  }, []);
   const {
     booting,
     authenticated,
@@ -105,7 +114,7 @@ export function GatewayApp() {
   } = useGatewayBootstrap({ activeSessionIdRef, setSessionStateById });
 
   async function handleAuthLogin(otp) {
-    if (await handleLogin(otp)) setScreen("dashboard");
+    if (await handleLogin(otp)) transitionScreen("dashboard");
   }
 
   const {
@@ -176,13 +185,13 @@ export function GatewayApp() {
       if (!notifiedTeamRunsRef.current.has(key)) {
         const notification = showTeamRunNotification(event, (teamRunId) => {
           setSelectedTeamRunId(teamRunId);
-          setScreen("teams");
+          transitionScreen("teams");
         });
         if (notification) notifiedTeamRunsRef.current.add(key);
       }
     }
     handleTeamEvent(event);
-  }, [handleTeamEvent, setSelectedTeamRunId]);
+  }, [handleTeamEvent, setSelectedTeamRunId, transitionScreen]);
 
   useEffect(() => { hooksRef.current = hooks; }, [hooks]);
   useEffect(() => { screenRef.current = screen; }, [screen]);
@@ -247,19 +256,29 @@ export function GatewayApp() {
     onHookEvent: handleHookEvent
   });
 
-  const loadOperations = useCallback(async () => {
-    const requestScreen = screenRef.current;
+  const loadOperations = useCallback(async (ownerGeneration = screenGenerationRef.current) => {
+    if (screenGenerationRef.current !== ownerGeneration) return;
+    const requestGeneration = ++operationsRequestGenerationRef.current;
     setOperationsLoading(true);
     try {
       const next = await api.operations();
-      if (screenRef.current !== requestScreen) return;
+      if (
+        screenGenerationRef.current !== ownerGeneration
+        || operationsRequestGenerationRef.current !== requestGeneration
+      ) return;
       setOperations(next);
       setOperationsError(null);
     } catch (error) {
-      if (screenRef.current !== requestScreen) return;
+      if (
+        screenGenerationRef.current !== ownerGeneration
+        || operationsRequestGenerationRef.current !== requestGeneration
+      ) return;
       setOperationsError(error);
     } finally {
-      if (screenRef.current === requestScreen) setOperationsLoading(false);
+      if (
+        screenGenerationRef.current === ownerGeneration
+        && operationsRequestGenerationRef.current === requestGeneration
+      ) setOperationsLoading(false);
     }
   }, []);
 
@@ -274,20 +293,41 @@ export function GatewayApp() {
     return map;
   }, [artifacts]);
 
-  const refreshArtifacts = useCallback(() => {
-    const requestScreen = screenRef.current;
+  const requestArtifacts = useCallback((ownerGeneration, isCurrent = () => true) => {
+    if (screenGenerationRef.current !== ownerGeneration || !isCurrent()) {
+      return Promise.resolve();
+    }
+    const requestGeneration = ++artifactRequestGenerationRef.current;
     return api.artifacts()
       .then((nextArtifacts) => {
-        if (screenRef.current === requestScreen) setArtifacts(nextArtifacts);
+        if (
+          isCurrent()
+          && screenGenerationRef.current === ownerGeneration
+          && artifactRequestGenerationRef.current === requestGeneration
+        ) setArtifacts(nextArtifacts);
       })
       .catch((error) => {
-        if (screenRef.current === requestScreen) setScreenError(error);
+        if (
+          isCurrent()
+          && screenGenerationRef.current === ownerGeneration
+          && artifactRequestGenerationRef.current === requestGeneration
+        ) setScreenError(error);
       });
   }, []);
+  const renderedScreenGeneration = screenGenerationRef.current;
+  const refreshArtifacts = useCallback(
+    () => requestArtifacts(renderedScreenGeneration),
+    [renderedScreenGeneration, requestArtifacts]
+  );
+  const refreshOperations = useCallback(
+    () => loadOperations(renderedScreenGeneration),
+    [loadOperations, renderedScreenGeneration]
+  );
 
   useEffect(() => {
     if (!authenticated) return;
     let active = true;
+    const ownerGeneration = screenGenerationRef.current;
     setScreenError(null);
     const load = (promise, setter, reportError = true) => promise
       .then((value) => {
@@ -317,9 +357,9 @@ export function GatewayApp() {
       load(api.settings(), setSettings);
       load(api.authSessions(), setAuthSessions);
     } else if (screen === "outputs") {
-      load(api.artifacts(), setArtifacts);
+      requestArtifacts(ownerGeneration, () => active);
     } else if (screen === "chat") {
-      load(api.artifacts(), setArtifacts);
+      requestArtifacts(ownerGeneration, () => active);
       load(api.personas(), setPersonas, false);
     } else if (screen === "jobs") {
       load(api.jobs(), setJobs);
@@ -332,12 +372,12 @@ export function GatewayApp() {
       load(api.personas(), setPersonas, false);
       setHooksBadge(0);
     } else if (screen === "operations") {
-      loadOperations();
+      loadOperations(ownerGeneration);
     }
     return () => {
       active = false;
     };
-  }, [screen, authenticated, loadOperations, screenReloadKey]);
+  }, [screen, authenticated, loadOperations, requestArtifacts, screenReloadKey]);
 
   // Logout moved off the sidebar to match the design; to be surfaced from the Settings screen.
   async function handleLogout() {
@@ -538,7 +578,7 @@ export function GatewayApp() {
       setJobs(nextJobs);
       setSchedules(nextSchedules);
       setFocusedJobId(result.job.id);
-      setScreen("jobs");
+      transitionScreen("jobs");
       toast("실행을 시작했습니다", "success");
     } catch (_error) {
       toast("Failed to run schedule", "error");
@@ -585,7 +625,7 @@ export function GatewayApp() {
   function handleOpenHookTeamRun(teamRunId) {
     handleCloseHookRuns();
     setSelectedTeamRunId(teamRunId);
-    setScreen("teams");
+    transitionScreen("teams");
     setNavOpen(false);
   }
 
@@ -605,57 +645,63 @@ export function GatewayApp() {
     }
   }
 
-  async function refreshOperationsDomains() {
+  async function refreshOperationsDomains(ownerGeneration) {
+    if (screenGenerationRef.current !== ownerGeneration) return;
     const [nextJobs, nextSchedules, nextRuns, nextSettings] = await Promise.all([
       api.jobs(),
       api.schedules(),
       api.teamRuns(),
       api.settings()
     ]);
+    if (screenGenerationRef.current !== ownerGeneration) return;
     setJobs(nextJobs);
     setSchedules(nextSchedules);
     setTeamRuns(nextRuns);
     setSettings(nextSettings);
-    await loadOperations();
+    await loadOperations(ownerGeneration);
   }
 
   async function handleEmergencyStop() {
+    const ownerGeneration = screenGenerationRef.current;
     try {
       await api.emergencyStop();
-      await refreshOperationsDomains();
+      await refreshOperationsDomains(ownerGeneration);
       toast("모든 실행 intake를 중단했습니다", "warning");
     } catch (error) {
-      setOperationsError(error);
+      if (screenGenerationRef.current === ownerGeneration) setOperationsError(error);
     }
   }
 
   async function handleResumeIntake() {
+    const ownerGeneration = screenGenerationRef.current;
     try {
       await api.resumeIntake();
-      await loadOperations();
+      await loadOperations(ownerGeneration);
       toast("실행 intake를 재개했습니다", "success");
     } catch (error) {
-      setOperationsError(error);
+      if (screenGenerationRef.current === ownerGeneration) setOperationsError(error);
     }
   }
 
   async function handleCreateBackup() {
+    const ownerGeneration = screenGenerationRef.current;
     try {
       await api.createBackup();
-      await loadOperations();
+      await loadOperations(ownerGeneration);
       toast("Backup을 생성했습니다", "success");
     } catch (error) {
-      setOperationsError(error);
+      if (screenGenerationRef.current === ownerGeneration) setOperationsError(error);
     }
   }
 
   async function handleVerifyBackup(id) {
+    const ownerGeneration = screenGenerationRef.current;
     try {
       await api.verifyBackup(id);
-      await loadOperations();
+      await loadOperations(ownerGeneration);
       toast("Backup 검증을 통과했습니다", "success");
     } catch (error) {
-      setOperationsError(error);
+      if (screenGenerationRef.current === ownerGeneration) setOperationsError(error);
     }
   }
 
@@ -669,31 +715,33 @@ export function GatewayApp() {
     } else if (target.screen === "schedules" && target.schedule_id) {
       setFocusedScheduleId(target.schedule_id);
     }
-    setScreen(target.screen);
+    transitionScreen(target.screen);
   }
 
   async function handleResumeOperationItem(item) {
+    const ownerGeneration = screenGenerationRef.current;
     try {
       if (item.domain === "team_run") {
         await api.resumeTeamRun(item.id);
       } else if (item.domain === "schedule") {
         await api.resumeSchedule(item.id);
       }
-      await refreshOperationsDomains();
+      await refreshOperationsDomains(ownerGeneration);
     } catch (error) {
-      setOperationsError(error);
+      if (screenGenerationRef.current === ownerGeneration) setOperationsError(error);
     }
   }
 
   async function handleRetryOperationItem(item) {
+    const ownerGeneration = screenGenerationRef.current;
     const retried = await handleRetryJob(item.id);
-    if (retried) await loadOperations();
+    if (retried) await loadOperations(ownerGeneration);
   }
 
   function handleOperationsRelogin() {
     setAuthenticated(false);
     setAuthStage("login");
-    setScreen("chat");
+    transitionScreen("chat");
   }
 
   async function handleAccessModeChange(mode, confirmed) {
@@ -774,7 +822,7 @@ export function GatewayApp() {
         if (screen === "teams" && nextScreen !== "teams") {
           clearTeamRunView();
         }
-        setScreen(nextScreen);
+        transitionScreen(nextScreen);
         setNavOpen(false);
       }}
     >
@@ -998,7 +1046,7 @@ export function GatewayApp() {
           data={operations}
           loading={operationsLoading}
           error={operationsError}
-          onRefresh={loadOperations}
+          onRefresh={refreshOperations}
           onEmergencyStop={handleEmergencyStop}
           onResumeIntake={handleResumeIntake}
           onCreateBackup={handleCreateBackup}

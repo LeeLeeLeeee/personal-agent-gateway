@@ -287,6 +287,100 @@ describe("GatewayApp", () => {
     confirmSpy.mockRestore();
   });
 
+  it("does not start an Artifact refresh when delete finishes after leaving Outputs", async () => {
+    let artifactListReads = 0;
+    const artifactDelete = deferredResponse();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": { items: [], counts: {} },
+      "GET /api/artifacts": () => {
+        artifactListReads += 1;
+        return artifactListReads === 1
+          ? response({ artifacts: [artifact] })
+          : Promise.reject(new Error("stale Outputs refresh started"));
+      },
+      "DELETE /api/artifacts/artifact-1": () => artifactDelete.promise,
+      "GET /api/archive/entries?status=published": { entries: [] },
+      "GET /api/archive/entries?status=draft": { entries: [] },
+      "GET /api/personas": { personas: [] },
+      "GET /api/archive/requests": { requests: [] }
+    });
+
+    await renderGatewayApp({ openChat: false });
+    await userEvent.click(await screen.findByRole("button", { name: "Outputs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open release-report.md" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/artifacts/artifact-1",
+      { method: "DELETE" }
+    ));
+
+    await userEvent.click(screen.getByRole("button", { name: "Library" }));
+    expect(await screen.findByRole("heading", { name: "Library" })).toBeInTheDocument();
+    await act(async () => {
+      artifactDelete.resolve({});
+      await artifactDelete.promise;
+    });
+
+    expect(artifactListReads).toBe(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+
+  it("ignores an old Outputs refresh after returning to a newer Outputs instance", async () => {
+    let artifactListReads = 0;
+    const oldArtifactRefresh = deferredResponse();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": { items: [], counts: {} },
+      "GET /api/artifacts": () => {
+        artifactListReads += 1;
+        if (artifactListReads === 1) return response({ artifacts: [artifact] });
+        if (artifactListReads === 2) return oldArtifactRefresh.promise;
+        return response({ artifacts: [] });
+      },
+      "DELETE /api/artifacts/artifact-1": {},
+      "GET /api/archive/entries?status=published": { entries: [] },
+      "GET /api/archive/entries?status=draft": { entries: [] },
+      "GET /api/personas": { personas: [] },
+      "GET /api/archive/requests": { requests: [] }
+    });
+
+    await renderGatewayApp({ openChat: false });
+    await userEvent.click(await screen.findByRole("button", { name: "Outputs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open release-report.md" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(artifactListReads).toBe(2));
+
+    await userEvent.click(screen.getByRole("button", { name: "Library" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Outputs" }));
+    await waitFor(() => expect(artifactListReads).toBe(3));
+    expect(await screen.findByText("NO ARTIFACTS")).toBeInTheDocument();
+
+    await act(async () => {
+      oldArtifactRefresh.reject(new Error("old Outputs refresh failed"));
+      await oldArtifactRefresh.promise.catch(() => {});
+    });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("NO ARTIFACTS")).toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+
   it("opens an operations dashboard item through the existing target navigation handler", async () => {
     installFetch({
       "GET /api/auth/status": { authenticated: true, totp_configured: true },
