@@ -37,6 +37,10 @@ Archive Map UI, frontend client, API route, backend graph read model과 전용
 - Focused frontend: 3 files, 104 tests passed.
 - Focused backend: 28 tests passed, 기존 Starlette/httpx deprecation warning 1건.
 - Full frontend: 40 files, 356 tests passed with `--maxWorkers=1`.
+- Full backend: 1,387 tests를 수집했지만 repository baseline 실패로 전체 GREEN은 아니다.
+  - main에서도 Agent catalog 5건, emergency-stop 1건,
+    `runtime_factory_headless` 16건의 동일한 22 failures가 재현됐다.
+  - 격리 워크트리에서는 `.env`가 없어 `test_local_runtime_scripts.py` 1건이 추가된다.
 - Production build: Vite exit 0, 80 modules transformed in 3.75s.
   - JavaScript: 468.26 kB, gzip 132.86 kB.
   - CSS: 104.77 kB, gzip 17.43 kB.
