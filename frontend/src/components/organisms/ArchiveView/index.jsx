@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../api/client.js";
 import { ArtifactsView } from "../ArtifactsView/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
@@ -105,6 +105,7 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
   const [requests, setRequests] = useState([]);
   const [teamRuns, setTeamRuns] = useState([]);
   const [teamRunsStatus, setTeamRunsStatus] = useState("idle");
+  const teamRunsRequestGeneration = useRef(0);
   const [selectedTeams, setSelectedTeams] = useState({});
   const [loading, setLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
@@ -151,20 +152,28 @@ export function ArchiveView({ client = api, artifacts = [], onArtifactChange }) 
 
   const loadDocumentationTeams = useCallback(async () => {
     if (["loading", "ready"].includes(teamRunsStatus)) return;
+    const requestGeneration = ++teamRunsRequestGeneration.current;
     setTeamRunsStatus("loading");
     setError(null);
     try {
-      setTeamRuns(await client.teamRuns());
+      const nextTeamRuns = await client.teamRuns();
+      if (requestGeneration !== teamRunsRequestGeneration.current) return;
+      setTeamRuns(nextTeamRuns);
       setTeamRunsStatus("ready");
     } catch (nextError) {
+      if (requestGeneration !== teamRunsRequestGeneration.current) return;
       setTeamRunsStatus("error");
       setError(nextError);
     }
   }, [client, teamRunsStatus]);
 
   useEffect(() => {
+    teamRunsRequestGeneration.current += 1;
     setTeamRuns([]);
     setTeamRunsStatus("idle");
+    return () => {
+      teamRunsRequestGeneration.current += 1;
+    };
   }, [client]);
 
   useEffect(() => {

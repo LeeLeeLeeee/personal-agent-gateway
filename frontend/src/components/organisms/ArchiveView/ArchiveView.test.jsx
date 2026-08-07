@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../../../api/client.js";
@@ -232,6 +232,9 @@ describe("ArchiveView", () => {
     await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
 
     const retry = await screen.findByRole("button", { name: "Retry team loading" });
+    expect(client.archiveEntries).toHaveBeenCalledTimes(2);
+    expect(client.personas).toHaveBeenCalledOnce();
+    expect(client.knowledgeRequests).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", {
       name: `Write ${request.title} in Library`
     })).toBeEnabled();
@@ -244,9 +247,52 @@ describe("ArchiveView", () => {
     await userEvent.click(retry);
 
     await waitFor(() => expect(client.teamRuns).toHaveBeenCalledTimes(2));
+    expect(client.archiveEntries).toHaveBeenCalledTimes(2);
+    expect(client.personas).toHaveBeenCalledOnce();
+    expect(client.knowledgeRequests).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", {
       name: `Send ${request.title} to documentation team`
     })).toBeEnabled();
+  });
+
+  it("ignores a stale Team Run response after the client changes", async () => {
+    let resolveStaleTeams;
+    const staleTeams = new Promise((resolve) => {
+      resolveStaleTeams = resolve;
+    });
+    const nextDocumentationTeam = {
+      ...documentationTeam,
+      id: "team-2",
+      team_name: "Replacement documentation team"
+    };
+    const firstClient = makeClient();
+    const nextClient = makeClient();
+    firstClient.teamRuns.mockReturnValue(staleTeams);
+    nextClient.teamRuns.mockResolvedValue([nextDocumentationTeam]);
+
+    const { rerender } = render(<ArchiveView client={firstClient} />);
+
+    await screen.findByRole("heading", { name: "Archive" });
+    await userEvent.click(screen.getByRole("tab", { name: /Requests/ }));
+    await waitFor(() => expect(firstClient.teamRuns).toHaveBeenCalledOnce());
+
+    rerender(<ArchiveView client={nextClient} />);
+
+    expect(await screen.findByRole("option", {
+      name: "Replacement documentation team"
+    })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveStaleTeams([documentationTeam]);
+      await staleTeams;
+    });
+
+    expect(screen.queryByRole("option", {
+      name: "Documentation team"
+    })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", {
+      name: "Replacement documentation team"
+    })).toBeInTheDocument();
   });
 
   it("keeps team output private until the user reviews and publishes the draft", async () => {
@@ -306,6 +352,8 @@ describe("ArchiveView", () => {
       "request-1",
       "team-1"
     ));
+    await waitFor(() => expect(client.knowledgeRequests).toHaveBeenCalledTimes(2));
+    expect(client.teamRuns).toHaveBeenCalledOnce();
   });
 
   it("shows why a delegated Team Run produced no draft", async () => {
