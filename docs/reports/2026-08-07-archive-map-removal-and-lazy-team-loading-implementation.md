@@ -27,17 +27,18 @@ Archive Map UI, frontend client, API route, backend graph read model과 전용
 
 - Archive 기본 조회를 entries, drafts, personas, requests 네 요청으로 제한했다.
 - Team Runs 실패가 Write, Later, Dismiss 같은 직접 Request 작업을 막지 않게 했다.
+- client 전환 전 시작한 Team Runs 응답은 request generation으로 무효화한다.
 - `/api/archive/map`은 인증 상태에서도 404를 반환한다.
 - Library, Draft, Artifact, Knowledge Request workflow와 Artifact 소유 경계는 유지했다.
 - 격리 워크트리에서 production frontend asset을 다시 생성해 반영했다.
 
 ## Verification
 
-- Focused frontend: 3 files, 103 tests passed.
+- Focused frontend: 3 files, 104 tests passed.
 - Focused backend: 28 tests passed, 기존 Starlette/httpx deprecation warning 1건.
-- Full frontend: 40 files, 355 tests passed with `--maxWorkers=1`.
-- Production build: Vite exit 0, 80 modules transformed in 3.69s.
-  - JavaScript: 468.11 kB, gzip 132.82 kB.
+- Full frontend: 40 files, 356 tests passed with `--maxWorkers=1`.
+- Production build: Vite exit 0, 80 modules transformed in 3.75s.
+  - JavaScript: 468.26 kB, gzip 132.86 kB.
   - CSS: 104.77 kB, gzip 17.43 kB.
   - HTML: 1.00 kB, gzip 0.55 kB.
 - Static removal scan: production source와 generated asset에서 Map 계약 0건.

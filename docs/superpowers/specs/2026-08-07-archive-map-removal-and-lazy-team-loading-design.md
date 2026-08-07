@@ -89,15 +89,15 @@ Keep `teamRuns` as an array and add this explicit request state:
 idle | loading | ready | error
 ```
 
-The Requests tab uses one handler that first selects the tab and then loads
-Team Runs when the state is `idle` or `error`. `loading` and `ready` prevent a
-duplicate request. A successful response is cached until `ArchiveView`
-unmounts. Navigating to another top-level screen unmounts Archive, so returning
-to Archive starts with `idle` and obtains a fresh Team Run list.
+The Requests tab loads Team Runs automatically only when the state is `idle`.
+`loading` and `ready` prevent a duplicate request, while `error` waits for the
+user's explicit retry action. A successful response is cached until
+`ArchiveView` unmounts. Navigating to another top-level screen unmounts Archive,
+so returning to Archive starts with `idle` and obtains a fresh Team Run list.
 
 Changing the injected `client` resets Team Runs and their request state to
-`idle`. This keeps component tests and non-production client injection
-deterministic.
+`idle` and invalidates any in-flight response from the previous client. This
+keeps component tests and non-production client injection deterministic.
 
 ### Backend removal
 
@@ -142,10 +142,10 @@ GatewayApp selects Archive
 ```text
 User opens Requests
   -> Requests panel renders immediately
-  -> teamRunsStatus idle/error: request Team Runs
+  -> teamRunsStatus idle: request Team Runs
   -> teamRunsStatus loading: disable delegation-only controls
   -> success: cache Team Runs and enable valid documentation teams
-  -> failure: preserve all non-delegation Request actions and offer retry
+  -> failure: preserve all non-delegation Request actions and wait for explicit retry
 ```
 
 ### Request mutations
