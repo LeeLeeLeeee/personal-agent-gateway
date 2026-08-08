@@ -109,7 +109,10 @@ AGENT_MODEL=default
 LMG_LOCAL_TOKEN=replace-with-a-long-random-value
 ```
 
-LMG에도 동일한 `LMG_LOCAL_TOKEN`을 설정해야 합니다. LMG에서 실행 경로를 제한하려면 OS path-list separator(macOS/Linux `:`, Windows `;`)로 `LMG_ALLOWED_ROOTS`를 지정합니다.
+LMG에도 동일한 `LMG_LOCAL_TOKEN`을 설정해야 합니다. macOS 런처는
+`LMG_LOCAL_TOKEN`이 비어 있고 `PAG_LOCAL_TOKEN`이 있으면 그 값을 공유 토큰으로
+사용합니다. Windows PowerShell 런처는 기존처럼 `LMG_LOCAL_TOKEN`을 사용합니다.
+LMG에서 실행 경로를 제한하려면 OS path-list separator(macOS/Linux `:`, Windows `;`)로 `LMG_ALLOWED_ROOTS`를 지정합니다.
 
 ```bash
 LMG_ALLOWED_ROOTS=/absolute/path/to/workspace:/another/allowed/root
@@ -143,12 +146,19 @@ npm stop
 .\scripts\stop_local_runtime.ps1
 ```
 
-루트 npm 명령은 Windows 전용이며 일반 PowerShell 또는 cmd에서 실행해야 합니다.
+루트 npm 명령은 Windows와 macOS에서 사용할 수 있습니다. Windows에서는 일반
+PowerShell 또는 cmd에서 실행하세요.
 `npm start`에서 Frontend build가 실패하면 PAG와 LMG는 시작되지 않습니다.
 
 ```bash
 # macOS
-scripts/run_local.sh
+npm start
+
+# Frontend build 없이 PAG와 LMG 시작
+npm run start:no-build
+
+# 런처가 시작한 PAG와 LMG 종료
+npm stop
 ```
 
 > **Windows에서 Codex로 실행할 때**

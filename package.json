@@ -5,7 +5,7 @@
   "scripts": {
     "build:frontend": "npm --prefix frontend run build",
     "start": "npm run build:frontend && npm run start:no-build",
-    "start:no-build": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/start_local_runtime.ps1",
-    "stop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop_local_runtime.ps1"
+    "start:no-build": "node ./scripts/local_runtime_launcher.js start",
+    "stop": "node ./scripts/local_runtime_launcher.js stop"
   }
 }
