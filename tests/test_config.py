@@ -59,3 +59,41 @@ def test_job_worker_concurrency_rejects_unsupported_values(tmp_path):
             "AGENT_JOB_WORKER_CONCURRENCY": "2",
             "LMG_LOCAL_TOKEN": "local-secret",
         })
+
+
+def test_team_run_concurrency_defaults_and_accepts_env_override(tmp_path):
+    config = AppConfig(
+        workspace_root=tmp_path,
+        session_dir=tmp_path / "sessions",
+    )
+    assert config.team_run_concurrency == 2
+
+    configured = AppConfig.from_env(
+        {
+            "AGENT_WORKSPACE_ROOT": str(tmp_path),
+            "AGENT_SESSION_DIR": str(tmp_path / "sessions"),
+            "AGENT_TEAM_RUN_CONCURRENCY": "4",
+            "LMG_LOCAL_TOKEN": "local-secret",
+        }
+    )
+    assert configured.team_run_concurrency == 4
+
+
+@pytest.mark.parametrize("value", [0, 17])
+def test_team_run_concurrency_rejects_values_outside_limit(tmp_path, value):
+    with pytest.raises(ValidationError, match="between 1 and 16"):
+        AppConfig(
+            workspace_root=tmp_path,
+            session_dir=tmp_path / "sessions",
+            team_run_concurrency=value,
+        )
+
+    with pytest.raises(ConfigError, match="between 1 and 16"):
+        AppConfig.from_env(
+            {
+                "AGENT_WORKSPACE_ROOT": str(tmp_path),
+                "AGENT_SESSION_DIR": str(tmp_path / "sessions"),
+                "AGENT_TEAM_RUN_CONCURRENCY": str(value),
+                "LMG_LOCAL_TOKEN": "local-secret",
+            }
+        )

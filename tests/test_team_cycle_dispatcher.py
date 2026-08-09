@@ -130,6 +130,201 @@ def test_dispatcher_requires_provider_recovery(tmp_path):
         )
 
 
+def test_dispatcher_rejects_nonpositive_concurrency(tmp_path):
+    _db, teams, cycles, _run = make_cycle_services(tmp_path, "triggered")
+
+    with pytest.raises(ValueError, match="concurrency must be positive"):
+        TeamCycleDispatcher(
+            cycles,
+            teams,
+            RecordingOrchestrator(teams),
+            EventBus(),
+            provider_recovery=_provider_recovery(teams),
+            concurrency=0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_runs_distinct_team_runs_in_parallel(tmp_path):
+    _db, teams, cycles, first_run = make_cycle_services(tmp_path, "triggered")
+    agents = teams.list_agents(first_run.id)
+    second_run = teams.create_team_run(
+        "second goal",
+        agents[0].persona_id,
+        [agents[1].persona_id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    entered = {
+        first_run.id: asyncio.Event(),
+        second_run.id: asyncio.Event(),
+    }
+    release = asyncio.Event()
+
+    class GatedOrchestrator:
+        async def run_cycle(self, team_run_id, cycle_id, _instruction):
+            entered[team_run_id].set()
+            await release.wait()
+            teams.set_cycle_status(cycle_id, "completed", summary="done")
+            return teams.get_team_run(team_run_id)
+
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        GatedOrchestrator(),
+        EventBus(),
+        provider_recovery=_provider_recovery(teams),
+        concurrency=2,
+    )
+    cycles.enqueue_request(first_run.id, "manual", "first", "work", previous_cycle_id=None)
+    cycles.enqueue_request(second_run.id, "manual", "second", "work", previous_cycle_id=None)
+
+    await dispatcher.start()
+    try:
+        await dispatcher.enqueue_run(first_run.id)
+        await dispatcher.enqueue_run(second_run.id)
+        await asyncio.wait_for(entered[first_run.id].wait(), timeout=1)
+        await asyncio.wait_for(entered[second_run.id].wait(), timeout=1)
+    finally:
+        release.set()
+        await dispatcher._queue.join()
+        await dispatcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_limits_parallel_team_runs_to_configured_workers(
+    tmp_path,
+):
+    _db, teams, cycles, first_run = make_cycle_services(tmp_path, "triggered")
+    agents = teams.list_agents(first_run.id)
+    runs = [first_run]
+    for ordinal in range(2):
+        runs.append(
+            teams.create_team_run(
+                f"goal {ordinal}",
+                agents[0].persona_id,
+                [agents[1].persona_id],
+                "plan_and_execute",
+                1,
+                lifecycle_mode="continuous",
+                execution_policy="triggered",
+            )
+        )
+    entered = {run.id: asyncio.Event() for run in runs}
+    releases = {run.id: asyncio.Event() for run in runs}
+
+    class GatedOrchestrator:
+        async def run_cycle(self, team_run_id, cycle_id, _instruction):
+            entered[team_run_id].set()
+            await releases[team_run_id].wait()
+            teams.set_cycle_status(cycle_id, "completed", summary="done")
+            return teams.get_team_run(team_run_id)
+
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        GatedOrchestrator(),
+        EventBus(),
+        provider_recovery=_provider_recovery(teams),
+        concurrency=2,
+    )
+    for ordinal, run in enumerate(runs):
+        cycles.enqueue_request(
+            run.id,
+            "manual",
+            f"request-{ordinal}",
+            "work",
+            previous_cycle_id=None,
+        )
+
+    await dispatcher.start()
+    try:
+        for run in runs:
+            await dispatcher.enqueue_run(run.id)
+        await asyncio.wait_for(entered[runs[0].id].wait(), timeout=1)
+        await asyncio.wait_for(entered[runs[1].id].wait(), timeout=1)
+        assert entered[runs[2].id].is_set() is False
+
+        releases[runs[0].id].set()
+        await asyncio.wait_for(entered[runs[2].id].wait(), timeout=1)
+    finally:
+        for release in releases.values():
+            release.set()
+        await dispatcher._queue.join()
+        await dispatcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_keeps_cycles_in_same_run_serial_with_two_workers(
+    tmp_path,
+):
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    registry = TeamRunRegistry()
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    release_first = asyncio.Event()
+    active_count = 0
+    max_active_count = 0
+    call_count = 0
+
+    class Runtime:
+        async def add_work(self, _team_run_id, _instruction, cycle_id=None):
+            teams.set_cycle_status(cycle_id, "running")
+            return []
+
+        async def resume(self, team_run_id, cycle_id=None):
+            nonlocal active_count, call_count, max_active_count
+            call_count += 1
+            active_count += 1
+            max_active_count = max(max_active_count, active_count)
+            if call_count == 1:
+                first_started.set()
+                await release_first.wait()
+            else:
+                second_started.set()
+            teams.set_cycle_status(cycle_id, "completed", summary="done")
+            active_count -= 1
+            return teams.get_team_run(team_run_id)
+
+    orchestrator = TeamRunOrchestrator(registry, Runtime)
+    dispatcher = TeamCycleDispatcher(
+        cycles,
+        teams,
+        orchestrator,
+        EventBus(),
+        provider_recovery=_provider_recovery(teams),
+        concurrency=2,
+    )
+    orchestrator.add_observer(dispatcher.on_team_run_settled)
+    first_request = cycles.enqueue_request(
+        run.id, "manual", "first", "work", previous_cycle_id=None
+    )
+    second_request = cycles.enqueue_request(
+        run.id, "manual", "second", "work", previous_cycle_id=None
+    )
+
+    await dispatcher.start()
+    try:
+        await dispatcher.enqueue_run(run.id)
+        await dispatcher.enqueue_run(run.id)
+        await asyncio.wait_for(first_started.wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert second_started.is_set() is False
+
+        release_first.set()
+        await asyncio.wait_for(second_started.wait(), timeout=1)
+        await dispatcher._queue.join()
+
+        assert max_active_count == 1
+        assert cycles.get_request(first_request.id).status == "settled"
+        assert cycles.get_request(second_request.id).status == "settled"
+    finally:
+        release_first.set()
+        await dispatcher.stop()
+
+
 def test_freeze_cycle_persists_every_roster_provider(tmp_path):
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
     worker = next(

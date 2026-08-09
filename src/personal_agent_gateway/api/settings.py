@@ -95,6 +95,8 @@ def _settings_payload(config: AppConfig, request: Request) -> dict[str, object]:
         "capture_binary": config.capture_binary,
         "job_worker_concurrency": config.job_worker_concurrency,
         "effective_job_concurrency": 1,
+        "team_run_concurrency": config.team_run_concurrency,
+        "effective_team_run_concurrency": config.team_run_concurrency,
         "cookie_secure": config.cookie_secure,
         "totp_configured": request.app.state.auth_store.is_totp_enabled(),
         "session_authenticated": True,
@@ -107,7 +109,7 @@ def _settings_payload(config: AppConfig, request: Request) -> dict[str, object]:
         "automation_ready": not automation_reasons,
         "automation_unavailable_reason": "; ".join(automation_reasons) or None,
         "team_review_supported": False,
-        "team_execution_mode": "sequential",
+        "team_execution_mode": ("parallel" if config.team_run_concurrency > 1 else "sequential"),
         "agent_availability": agent_availability,
         "access_mode": request.app.state.security_settings.access_mode,
         "workspace_writable": config.workspace_root.is_dir()

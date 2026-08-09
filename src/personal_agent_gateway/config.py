@@ -69,6 +69,7 @@ class AppConfig(BaseModel):
     ffprobe_binary: str = "ffprobe"
     capture_binary: str = _default_capture_binary()
     job_worker_concurrency: int = 1
+    team_run_concurrency: int = 2
     hook_poll_interval_seconds: int = 30
     lmg_base_url: str = "http://127.0.0.1:8788"
     lmg_local_token: str | None = None
@@ -85,6 +86,13 @@ class AppConfig(BaseModel):
     def validate_job_worker_concurrency(cls, value: int) -> int:
         if value != 1:
             raise ValueError("AGENT_JOB_WORKER_CONCURRENCY currently supports only 1")
+        return value
+
+    @field_validator("team_run_concurrency")
+    @classmethod
+    def validate_team_run_concurrency(cls, value: int) -> int:
+        if value < 1 or value > 16:
+            raise ValueError("AGENT_TEAM_RUN_CONCURRENCY must be between 1 and 16")
         return value
 
     @field_validator(
@@ -221,6 +229,7 @@ class AppConfig(BaseModel):
                 ffprobe_binary=env.get("AGENT_FFPROBE_BIN") or "ffprobe",
                 capture_binary=env.get("AGENT_CAPTURE_BIN") or _default_capture_binary(),
                 job_worker_concurrency=int(env.get("AGENT_JOB_WORKER_CONCURRENCY") or "1"),
+                team_run_concurrency=int(env.get("AGENT_TEAM_RUN_CONCURRENCY") or "2"),
                 hook_poll_interval_seconds=int(
                     env.get("AGENT_HOOK_POLL_INTERVAL_SECONDS") or "30"
                 ),
@@ -277,6 +286,7 @@ def load_config() -> AppConfig:
             "AGENT_FFPROBE_BIN": os.getenv("AGENT_FFPROBE_BIN"),
             "AGENT_CAPTURE_BIN": os.getenv("AGENT_CAPTURE_BIN"),
             "AGENT_JOB_WORKER_CONCURRENCY": os.getenv("AGENT_JOB_WORKER_CONCURRENCY"),
+            "AGENT_TEAM_RUN_CONCURRENCY": os.getenv("AGENT_TEAM_RUN_CONCURRENCY"),
             "AGENT_HOOK_POLL_INTERVAL_SECONDS": os.getenv("AGENT_HOOK_POLL_INTERVAL_SECONDS"),
             "LMG_BASE_URL": os.getenv("LMG_BASE_URL"),
             "LMG_LOCAL_TOKEN": os.getenv("LMG_LOCAL_TOKEN"),

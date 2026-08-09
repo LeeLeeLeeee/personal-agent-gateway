@@ -55,7 +55,11 @@ class TeamCycleDispatcher:
         orchestrator: TeamRunOrchestrator,
         event_bus: EventBus,
         provider_recovery: TeamProviderRecovery,
+        *,
+        concurrency: int = 1,
     ) -> None:
+        if concurrency < 1:
+            raise ValueError("concurrency must be positive")
         self._cycles = cycles
         self._teams = teams
         self._orchestrator = orchestrator
@@ -63,42 +67,55 @@ class TeamCycleDispatcher:
         self._provider_recovery = provider_recovery
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._preparers: list[CyclePreparer] = []
-        self._task: asyncio.Task[None] | None = None
+        self._concurrency = concurrency
+        self._workers: dict[int, asyncio.Task[None]] = {}
+        self._worker_errors: dict[int, str] = {}
         self._last_error: str | None = None
         self._interrupt_on_stop = True
         self._startup_operation_cycles: list[str] = []
 
     @property
     def alive(self) -> bool:
-        return self._task is not None and not self._task.done()
+        return len(self._workers) == self._concurrency and all(
+            not task.done() for task in self._workers.values()
+        )
 
     @property
     def last_error(self) -> str | None:
+        if self._worker_errors:
+            worker_id = next(reversed(self._worker_errors))
+            return self._worker_errors[worker_id]
         return self._last_error
 
     async def start(self) -> None:
-        if not self.alive:
-            self._task = asyncio.create_task(self._run_loop())
-            startup_cycles = self._startup_operation_cycles
-            self._startup_operation_cycles = []
-            for cycle_id in startup_cycles:
-                cycle = self._teams.get_cycle(cycle_id)
-                operation = self._provider_recovery.get_open_operation(
-                    cycle.id
-                )
-                self._resume_operation(cycle, operation)
+        if self.alive:
+            return
+        for worker_id in range(self._concurrency):
+            task = self._workers.get(worker_id)
+            if task is not None and not task.done():
+                continue
+            self._workers[worker_id] = asyncio.create_task(
+                self._worker_loop(worker_id),
+                name=f"team-cycle-dispatcher-{worker_id}",
+            )
+        startup_cycles = self._startup_operation_cycles
+        self._startup_operation_cycles = []
+        for cycle_id in startup_cycles:
+            cycle = self._teams.get_cycle(cycle_id)
+            operation = self._provider_recovery.get_open_operation(cycle.id)
+            self._resume_operation(cycle, operation)
 
     async def stop(self, *, interrupt_active: bool = True) -> None:
-        if self._task is None:
+        if not self._workers:
             return
         self._interrupt_on_stop = interrupt_active
-        self._task.cancel()
+        workers = list(self._workers.values())
+        for worker in workers:
+            worker.cancel()
         try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
+            await asyncio.gather(*workers, return_exceptions=True)
         finally:
-            self._task = None
+            self._workers.clear()
             self._interrupt_on_stop = True
 
     def discard_pending(self) -> None:
@@ -391,19 +408,17 @@ class TeamCycleDispatcher:
         except Exception as exc:
             self._last_error = redact_text(exc) or type(exc).__name__
 
-    async def _run_loop(self) -> None:
+    async def _worker_loop(self, worker_id: int) -> None:
         while True:
             team_run_id = await self._queue.get()
             try:
                 await self.run_one(team_run_id)
-                self._last_error = None
+                self._worker_errors.pop(worker_id, None)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._last_error = (
-                    redact_text(exc)
-                    or type(exc).__name__
-                )
+                self._worker_errors.pop(worker_id, None)
+                self._worker_errors[worker_id] = redact_text(exc) or type(exc).__name__
             finally:
                 self._queue.task_done()
 

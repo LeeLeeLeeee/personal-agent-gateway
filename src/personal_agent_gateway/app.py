@@ -262,6 +262,7 @@ def create_app(
         app.state.team_run_orchestrator,
         event_bus,
         provider_recovery=provider_recovery,
+        concurrency=app_config.team_run_concurrency,
     )
     app.state.team_cycle_loop = TeamCycleLoop(
         app.state.team_cycle_service,

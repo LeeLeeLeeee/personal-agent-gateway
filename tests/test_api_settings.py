@@ -87,6 +87,8 @@ def test_settings_returns_non_secret_config_snapshot(tmp_path: Path) -> None:
         "capture_binary",
         "job_worker_concurrency",
         "effective_job_concurrency",
+        "team_run_concurrency",
+        "effective_team_run_concurrency",
         "cookie_secure",
         "totp_configured",
         "session_authenticated",
@@ -99,15 +101,15 @@ def test_settings_returns_non_secret_config_snapshot(tmp_path: Path) -> None:
         "automation_ready",
         "automation_unavailable_reason",
         "team_review_supported",
-            "team_execution_mode",
-            "agent_availability",
-            "access_mode",
-            "workspace_writable",
-            "active_session_count",
-            "audit_enabled",
-            "audit_retention_days",
-            "schema_version",
-        }
+        "team_execution_mode",
+        "agent_availability",
+        "access_mode",
+        "workspace_writable",
+        "active_session_count",
+        "audit_enabled",
+        "audit_retention_days",
+        "schema_version",
+    }
     assert settings["provider"] == "codex"
     assert settings["totp_configured"] is True
     assert settings["session_authenticated"] is True
@@ -116,13 +118,32 @@ def test_settings_returns_non_secret_config_snapshot(tmp_path: Path) -> None:
     assert settings["scheduler_alive"] is False
     assert settings["automation_ready"] is False
     assert settings["team_review_supported"] is False
-    assert settings["team_execution_mode"] == "sequential"
+    assert settings["team_execution_mode"] == "parallel"
     assert settings["job_worker_concurrency"] == 1
     assert settings["effective_job_concurrency"] == 1
+    assert settings["team_run_concurrency"] == 2
+    assert settings["effective_team_run_concurrency"] == 2
     assert "web_token" not in settings
     assert "openai_api_key" not in settings
     assert "auth_setup_token" not in settings
     assert "totp_secret" not in settings
+
+
+def test_settings_reports_sequential_team_mode_when_concurrency_is_one(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path).model_copy(update={"team_run_concurrency": 1})
+    client = TestClient(create_app(config))
+    client.cookies.set(
+        "agent_session",
+        client.app.state.auth_session_service.issue().token,
+    )
+
+    settings = client.get("/api/settings").json()["settings"]
+
+    assert settings["team_run_concurrency"] == 1
+    assert settings["effective_team_run_concurrency"] == 1
+    assert settings["team_execution_mode"] == "sequential"
 
 
 def test_settings_reports_live_automation_inside_app_lifespan(tmp_path: Path) -> None:
