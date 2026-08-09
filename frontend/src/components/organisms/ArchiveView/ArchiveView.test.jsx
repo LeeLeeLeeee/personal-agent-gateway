@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ArchiveView } from "./index.jsx";
@@ -274,6 +274,31 @@ describe("ArchiveView", () => {
         content_markdown: draft.content_markdown
       })
     ));
+  });
+
+  it("previews the current private draft in a modal before publishing", async () => {
+    render(<ArchiveView client={makeClient()} />);
+
+    await screen.findByRole("heading", { name: "Library" });
+    await userEvent.click(screen.getByRole("tab", { name: /Drafts/ }));
+    await userEvent.click(screen.getByRole("button", {
+      name: "Review Rollback checklist draft"
+    }));
+    await userEvent.clear(screen.getByLabelText("Content"));
+    await userEvent.type(
+      screen.getByLabelText("Content"),
+      "# Rollback checklist\n\nPreview the revised marker before publishing."
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Preview draft" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Preview: Rollback checklist" });
+    expect(within(dialog).getByText("Preview the revised marker before publishing."))
+      .toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", {
+      name: "Close draft preview"
+    }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("lets the user delete a private Team draft after confirmation", async () => {

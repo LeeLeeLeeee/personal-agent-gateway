@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../api/client.js";
 import { Button } from "../../atoms/Button/index.jsx";
+import { MarkdownContent } from "../MarkdownContent/index.jsx";
 
 const ENTRY_KINDS = [
   ["procedure", "Procedure"],
@@ -119,6 +120,7 @@ export function ArchiveView({ client = api }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [revisions, setRevisions] = useState([]);
+  const [previewDraft, setPreviewDraft] = useState(null);
 
   const loadData = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -213,6 +215,14 @@ export function ArchiveView({ client = api }) {
     setError(null);
     setNotice("");
     setTab("published");
+  }
+
+  function openDraftPreview() {
+    if (!editingDraft) return;
+    setPreviewDraft({
+      title: form.title.trim() || "Untitled draft",
+      content: form.content
+    });
   }
 
   async function editEntry(entry) {
@@ -584,6 +594,11 @@ export function ArchiveView({ client = api }) {
               ) : form.requestId ? (
                 <span className="archive-request-link mono">FROM REQUEST</span>
               ) : null}
+              {editingDraft ? (
+                <Button type="button" size="btn-sm" onClick={openDraftPreview}>
+                  Preview draft
+                </Button>
+              ) : null}
             </div>
 
             <div className="archive-form-grid">
@@ -947,6 +962,33 @@ export function ArchiveView({ client = api }) {
                 No active knowledge requests. Personas already have the reusable context they asked for.
               </div>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {previewDraft ? (
+        <div className="modal-backdrop" onClick={() => setPreviewDraft(null)}>
+          <div
+            className="modal-card doc-preview"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Preview: ${previewDraft.title}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <span className="mono">PRIVATE DRAFT · {previewDraft.title}</span>
+              <button
+                type="button"
+                className="modal-close"
+                aria-label="Close draft preview"
+                onClick={() => setPreviewDraft(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="doc-preview-body">
+              <MarkdownContent source={previewDraft.content} />
+            </div>
           </div>
         </div>
       ) : null}
