@@ -1175,7 +1175,12 @@ class TeamModelEffectService:
     ) -> tuple[TeamTask, TeamAgent]:
         if (
             operation.stage
-            not in {"worker_execution", "mediation_worker", "acceptance_worker"}
+            not in {
+                "worker_execution",
+                "mediation_worker",
+                "acceptance_worker",
+                "acceptance_worker_repair",
+            }
             or operation.task_id is None
         ):
             raise OperationConflict("Operation is not a Worker execution stage")
@@ -3098,6 +3103,9 @@ def team_model_effect_result_validators() -> OperationResultValidatorRegistry:
             "acceptance_review": _valid_acceptance_resolution,
         },
         "acceptance_worker": {
+            "task_outcome": _valid_task_outcome,
+        },
+        "acceptance_worker_repair": {
             "task_outcome": _valid_task_outcome,
         },
         "cycle_synthesis": {

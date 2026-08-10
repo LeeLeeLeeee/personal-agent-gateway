@@ -641,6 +641,7 @@ class TeamRuntime:
             "worker_execution",
             "mediation_worker",
             "acceptance_worker",
+            "acceptance_worker_repair",
         }:
             if operation.task_id is None:
                 raise OperationConflict("Worker operation has no task")
@@ -707,7 +708,7 @@ class TeamRuntime:
                             worker,
                             run,
                         )
-            else:
+            elif operation.stage == "acceptance_worker":
                 lead_operation = self._operations.get_by_key(
                     _operation_key(
                         cycle_id,
@@ -734,11 +735,52 @@ class TeamRuntime:
                         run,
                         self._finalize_persona_content,
                     )
-            before = (
-                workspace_snapshot(Path(run.working_root or run.workspace_root))
-                if operation.status == "prepared"
-                else None
-            )
+            else:
+                failed_operation = self._operations.get_by_key(
+                    _operation_key(
+                        cycle_id,
+                        "acceptance_worker",
+                        operation.stage_ordinal,
+                        task_id=task.id,
+                    )
+                )
+                if (
+                    failed_operation is None
+                    or failed_operation.status != "failed"
+                    or failed_operation.reason_code
+                    != "invalid_structured_output"
+                ):
+                    raise OperationConflict(
+                        "Acceptance Worker repair has no failed source operation"
+                    )
+                messages = _acceptance_worker_repair_messages(
+                    failed_operation.reason_code
+                )
+
+                def parser(response):
+                    return _validated_task_outcome_result(
+                        response,
+                        worker,
+                        run,
+                        self._finalize_persona_content,
+                    )
+
+            if operation.stage == "acceptance_worker_repair":
+                before = self._teams.get_operation_workspace_baseline(
+                    failed_operation.id,
+                    team_run_id=operation.team_run_id,
+                    cycle_id=operation.cycle_id,
+                    task_id=task.id,
+                    agent_id=worker.id,
+                )
+            else:
+                before = (
+                    workspace_snapshot(
+                        Path(run.working_root or run.workspace_root)
+                    )
+                    if operation.status == "prepared"
+                    else None
+                )
             recovered = operation
             if operation.status == "prepared":
                 recovered = await self._invoke_existing_operation(
@@ -1204,6 +1246,7 @@ class TeamRuntime:
                         "mediation_worker",
                         "acceptance_lead",
                         "acceptance_worker",
+                        "acceptance_worker_repair",
                     }:
                         raise OperationConflict(
                             "Cycle has an open operation for another stage"
@@ -1974,25 +2017,49 @@ class TeamRuntime:
             Path(run.working_root or run.workspace_root)
         )
         worker_agent = self._teams.get_agent(worker.id)
-        worker_operation = await self._invoke_operation(
-            _operation_spec(
-                run,
-                task.cycle_id,
-                worker_agent,
-                "acceptance_worker",
-                lead_effect.attempt,
-                worker_messages,
-                task_id=task.id,
-            ),
-            worker_agent,
-            worker_messages,
-            lambda response: _validated_task_outcome_result(
+        def parser(response):
+            return _validated_task_outcome_result(
                 response,
                 worker_agent,
                 run,
                 self._finalize_persona_content,
-            ),
-        )
+            )
+
+        try:
+            worker_operation = await self._invoke_operation(
+                _operation_spec(
+                    run,
+                    task.cycle_id,
+                    worker_agent,
+                    "acceptance_worker",
+                    lead_effect.attempt,
+                    worker_messages,
+                    task_id=task.id,
+                ),
+                worker_agent,
+                worker_messages,
+                parser,
+            )
+        except InvalidOperationResult as exc:
+            failed = self._operations.get(exc.operation_id)
+            repair_messages = _acceptance_worker_repair_messages(
+                failed.reason_code
+            )
+            worker_operation = await self._invoke_operation(
+                _operation_spec(
+                    run,
+                    task.cycle_id,
+                    worker_agent,
+                    "acceptance_worker_repair",
+                    lead_effect.attempt,
+                    repair_messages,
+                    task_id=task.id,
+                    upstream_session_id=failed.upstream_session_id,
+                ),
+                worker_agent,
+                repair_messages,
+                parser,
+            )
         return await self._apply_cycle_worker_operation(
             run,
             leader,
@@ -3338,6 +3405,27 @@ def _acceptance_worker_messages(
                 "Authoritative current acceptance criteria:\n"
                 f"{_task_acceptance_json(task.acceptance)}\n"
                 "Return only the required TaskOutcome JSON object."
+            ),
+        }
+    ]
+
+
+def _acceptance_worker_repair_messages(
+    reason_code: str | None,
+) -> list[dict[str, object]]:
+    error = reason_code or "invalid_structured_output"
+    return [
+        {
+            "role": "user",
+            "content": (
+                "Your previous response could not be parsed.\n"
+                f"Error: {error}. The response was not a valid "
+                "TaskOutcome JSON object.\n\n"
+                "Do not repeat the task or modify files. Re-emit only the "
+                "previous final result as one raw JSON object with exactly "
+                "these keys: status, summary, reason_code, deliverables, "
+                "verifications. Do not include explanations, Markdown, or "
+                "code fences."
             ),
         }
     ]

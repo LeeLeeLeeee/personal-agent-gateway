@@ -21,6 +21,7 @@ OperationStage = Literal[
     "mediation_worker",
     "acceptance_lead",
     "acceptance_worker",
+    "acceptance_worker_repair",
     "cycle_synthesis",
     "cycle_synthesis_repair",
 ]

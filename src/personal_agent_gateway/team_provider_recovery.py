@@ -539,6 +539,7 @@ _WORKER_STAGES = {
     "worker_execution",
     "mediation_worker",
     "acceptance_worker",
+    "acceptance_worker_repair",
 }
 _LEAD_STAGES = {"mediation_lead", "acceptance_lead"}
 

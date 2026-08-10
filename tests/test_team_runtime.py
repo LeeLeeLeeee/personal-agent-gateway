@@ -819,6 +819,125 @@ async def test_lead_acceptance_retry_uses_separate_worker_operation(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acceptance_worker_repairs_invalid_structured_output_once(tmp_path):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    corrected = _outcome_json("draft-fixed")
+    setup.worker_client.responses = [
+        setup.worker_client.responses[0],
+        ModelResponse(
+            f"Verification passed.\n```json\n{corrected}\n```",
+            [],
+            upstream_session_id="worker-session",
+        ),
+        ModelResponse(
+            corrected,
+            [],
+            upstream_session_id="worker-session",
+        ),
+    ]
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review("Fix the missing citation check."), []),
+        ModelResponse("summary", []),
+    ]
+
+    completed = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert completed.status == "completed"
+    assert setup.worker_client.calls == 3
+    failed = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_worker:1"
+    )
+    repaired = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_worker_repair:1"
+    )
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.reason_code == "invalid_structured_output"
+    assert repaired is not None
+    assert repaired.status == "applied"
+    repair_prompt = setup.worker_client.messages[-1][0]["content"]
+    assert "invalid_structured_output" in repair_prompt
+    assert "Do not repeat the task or modify files" in repair_prompt
+
+
+@pytest.mark.asyncio
+async def test_acceptance_worker_format_repair_is_not_retried_twice(tmp_path):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    invalid = "Verification passed, but this is not a TaskOutcome JSON object."
+    setup.worker_client.responses = [
+        setup.worker_client.responses[0],
+        ModelResponse(invalid, [], upstream_session_id="worker-session"),
+        ModelResponse(invalid, [], upstream_session_id="worker-session"),
+        ModelResponse(
+            _outcome_json("unreachable"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+    ]
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review("Fix the missing citation check."), []),
+    ]
+
+    failed_run = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert failed_run.status == "failed"
+    assert setup.worker_client.calls == 3
+    repair = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_worker_repair:1"
+    )
+    assert repair is not None
+    assert repair.status == "failed"
+    assert repair.reason_code == "invalid_structured_output"
+
+
+@pytest.mark.asyncio
+async def test_completed_acceptance_worker_format_repair_resumes_without_reinvoke(
+    tmp_path,
+):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    corrected = _outcome_json("draft-fixed")
+    setup.worker_client.responses = [
+        setup.worker_client.responses[0],
+        ModelResponse("not json", [], upstream_session_id="worker-session"),
+        ModelResponse(
+            corrected,
+            [],
+            upstream_session_id="worker-session",
+        ),
+    ]
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review("Fix the missing citation check."), []),
+        ModelResponse("summary", []),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        TeamModelInvoker(setup.operations, sleep=_no_sleep),
+        "acceptance_worker_repair",
+        1,
+        "completed",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    worker_calls = setup.worker_client.calls
+    operation = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert operation is not None
+    assert (operation.stage, operation.status) == (
+        "acceptance_worker_repair",
+        "completed",
+    )
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.worker_client.calls == worker_calls
+    assert setup.operations.get(operation.id).status == "applied"
+
+
+@pytest.mark.asyncio
 async def test_lead_review_session_is_owned_by_lead_and_keeps_worker_applied(
     tmp_path,
 ):
