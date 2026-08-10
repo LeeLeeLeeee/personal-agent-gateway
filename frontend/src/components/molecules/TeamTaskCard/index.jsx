@@ -9,7 +9,7 @@ function initials(name) {
 }
 
 function note(task) {
-  if (task.status !== "failed" && task.status !== "blocked") return null;
+  if (!["failed", "blocked", "skipped"].includes(task.status)) return null;
   const reasonCode = task.acceptance_result?.reason_code || task.outcome?.reason_code;
   if (task.error_message && task.error_message !== reasonCode) return task.error_message;
   return task.outcome?.summary || task.error_message || null;
@@ -17,10 +17,18 @@ function note(task) {
 
 function statusLabel(status) {
   if (status === "blocked") return "차단됨";
-  return String(status || "pending").replace("_", " ").toUpperCase();
+  if (status === "skipped") return "건너뜀";
+  return String(status || "pending").replaceAll("_", " ").toUpperCase();
 }
 
-export function TeamTaskCard({ task, owner, fileCount = 0, reportCount = 0, onOpen }) {
+export function TeamTaskCard({
+  task,
+  owner,
+  prerequisiteTitles = [],
+  fileCount = 0,
+  reportCount = 0,
+  onOpen
+}) {
   const avatar = owner?.persona_snapshot?.avatar;
   const noteText = note(task);
   const reasonCode = task.acceptance_result?.reason_code || task.outcome?.reason_code;
@@ -42,6 +50,11 @@ export function TeamTaskCard({ task, owner, fileCount = 0, reportCount = 0, onOp
       {noteText ? (
         <div className={`team-task-diagnostic mono team-task-note-${task.status === "failed" ? "danger" : "warning"}`}>
           {noteText}
+        </div>
+      ) : null}
+      {task.status === "skipped" && prerequisiteTitles.length ? (
+        <div className="team-task-diagnostic mono">
+          선행 작업 · {prerequisiteTitles.join(", ")}
         </div>
       ) : null}
       <div className="team-task-meta">

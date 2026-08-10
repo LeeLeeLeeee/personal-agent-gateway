@@ -70,6 +70,25 @@ describe("TeamPicker", () => {
     expect(onStart).toHaveBeenCalledWith(expect.objectContaining({ team_id: "t2" }));
   });
 
+  it("can inherit a completed Team Run workspace", async () => {
+    const onStart = vi.fn();
+    const teamRuns = [
+      { id: "source-run", team_name: "SNS Studio", display_status: "completed" },
+      { id: "active-run", team_name: "Busy", display_status: "running" }
+    ];
+    render(<TeamPicker teams={teams} teamRuns={teamRuns} onStart={onStart} />);
+
+    await userEvent.selectOptions(screen.getByLabelText("Inherit workspace"), "source-run");
+    expect(screen.queryByRole("option", { name: /Busy/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
+
+    expect(onStart).toHaveBeenCalledWith({
+      team_id: "t1",
+      execution_policy: "triggered",
+      parent_team_run_id: "source-run"
+    });
+  });
+
   it("keeps the runtime execution summary without exposing worker controls", () => {
     render(<TeamPicker teams={teams} onStart={vi.fn()} runtime={{
       team_execution_mode: "sequential"

@@ -7,7 +7,24 @@ import { DocumentPreview } from "../DocumentPreview/index.jsx";
 import { MarkdownContent } from "../MarkdownContent/index.jsx";
 import { elapsedSeconds, fmtDateTime, fmtElapsed } from "../../../lib/time.js";
 
-const TEAM_TASK_COLUMNS = ["pending", "in_progress", "blocked", "completed", "failed"];
+const TEAM_TASK_COLUMNS = [
+  "pending",
+  "in_progress",
+  "waiting_for_provider",
+  "waiting_for_user",
+  "skipped",
+  "blocked",
+  "completed",
+  "failed",
+  "canceled"
+];
+const OPEN_TASK_STATUSES = new Set([
+  "pending",
+  "in_progress",
+  "waiting_for_provider",
+  "waiting_for_user",
+  "blocked"
+]);
 const TERMINAL_STATUSES = [
   "completed",
   "completed_with_failures",
@@ -99,12 +116,23 @@ function buildHandoffs(messages) {
 }
 
 export function currentWork(agent, task, runStatus) {
-  if (task) return { title: task.title, startedAt: task.started_at || null };
+  if (task) {
+    return {
+      title: task.title,
+      startedAt: task.status === "in_progress" ? task.started_at || null : null
+    };
+  }
   if (agent.role !== "leader") return { title: "No active task", startedAt: null };
   if (runStatus === "planning") return { title: "Planning tasks", startedAt: null };
   if (runStatus === "running") return { title: "Coordinating agents", startedAt: null };
   if (runStatus === "summarizing") return { title: "Summarizing results", startedAt: null };
   return { title: "No active task", startedAt: null };
+}
+
+function effectiveChildStatus(status, runStatus) {
+  if (runStatus !== "failed") return status;
+  if (status === "running" || status === "in_progress") return "failed";
+  return status;
 }
 
 function groupReportsByTask(messages) {
@@ -783,7 +811,9 @@ export function TeamRunDetail({
     };
   }, [nextRunAt]);
 
-  const hasRunningAgent = (detail?.agents || []).some((agent) => agent.status === "running");
+  const hasRunningAgent = (detail?.agents || []).some(
+    (agent) => effectiveChildStatus(agent.status, run?.status) === "running"
+  );
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!hasRunningAgent) return undefined;
@@ -812,8 +842,17 @@ export function TeamRunDetail({
     return <div className="team-run-empty mono">No team run selected.</div>;
   }
 
-  const agents = detail.agents || [];
-  const tasks = detail.tasks || [];
+  const agents = (detail.agents || []).map((agent) => ({
+    ...agent,
+    status: effectiveChildStatus(agent.status, run.status)
+  }));
+  const tasks = (detail.tasks || []).map((task) => ({
+    ...task,
+    status: effectiveChildStatus(task.status, run.status),
+    error_message: task.error_message || (
+      task.status === "in_progress" && run.status === "failed" ? run.error_message : null
+    )
+  }));
   const messages = detail.messages || [];
   const cycles = [...(detail.cycles || [])].sort((left, right) => right.sequence - left.sequence);
   const currentCycle = cycles[0] || null;
@@ -842,6 +881,16 @@ export function TeamRunDetail({
     ? tasks.filter((task) => task.cycle_id === currentCycle.id)
     : tasks;
   const visibleTasks = showAllTasks ? tasks : currentCycleTasks;
+  const taskTitlesById = new Map(tasks.map((task) => [task.id, task.title]));
+  const decisionRequest = detail.decisionRequest;
+  const decisionCycle = decisionRequest?.cycle_id
+    ? cycles.find((cycle) => cycle.id === decisionRequest.cycle_id)
+    : null;
+  const canAnswerDecision = Boolean(
+    run.status === "waiting_for_user"
+      && decisionRequest?.status === "awaiting_user"
+      && (!decisionRequest.cycle_id || decisionCycle?.status === "waiting_for_user")
+  );
   const selectedTask = selectedTaskId ? findTask(tasks, selectedTaskId) : null;
   const selectedTaskReports = selectedTask ? (reportsByTask.get(selectedTask.id) || []) : [];
   const selectedTaskReviews = selectedTask
@@ -881,7 +930,7 @@ export function TeamRunDetail({
             <span>{String(run.execution_policy || run.lifecycle_mode || "standard").toUpperCase()}</span>
             <span>LEAD · {leader?.name || "-"}</span>
             <span>{currentCycle ? `CYCLE #${currentCycle.sequence}` : "NO CYCLE"}</span>
-            <span>{tasks.filter((task) => ["pending", "in_progress", "blocked"].includes(task.status)).length} OPEN TASKS</span>
+            <span>{tasks.filter((task) => OPEN_TASK_STATUSES.has(task.status)).length} OPEN TASKS</span>
           </div>
         </div>
         <div className="team-run-hero-actions">
@@ -1139,10 +1188,10 @@ export function TeamRunDetail({
       ) : null}
 
       {run.status === "waiting_for_user" ? (
-        detail.decisionRequest?.status === "awaiting_user" ? (
+        canAnswerDecision ? (
           <DecisionRequestPanel
-            key={`${detail.decisionRequest.id}:${detail.decisionRequest.revision}`}
-            request={detail.decisionRequest}
+            key={`${decisionRequest.id}:${decisionRequest.revision}`}
+            request={decisionRequest}
             onSubmit={onAnswerDecision}
           />
         ) : (
@@ -1324,6 +1373,8 @@ export function TeamRunDetail({
                             key={task.id}
                             task={task}
                             owner={findAgent(agents, task.owner_agent_id)}
+                            prerequisiteTitles={(task.depends_on_task_ids || [])
+                              .map((taskId) => taskTitlesById.get(taskId) || taskId)}
                             fileCount={taskFileCount(taskReports)}
                             reportCount={taskReports.length}
                             onOpen={() => setSelectedTaskId(task.id)}

@@ -11,6 +11,7 @@ from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_provider_recovery import OperationReconcileResult
 from personal_agent_gateway.teams import TeamRunService
 from team_cycle_helpers import RecordingOrchestrator, dt, make_cycle_services
 
@@ -28,6 +29,9 @@ class PassThroughProviderRecovery:
 
     def freeze_cycle(self, cycle_id: str):
         return self._teams.get_cycle(cycle_id)
+
+    def reconcile_startup(self) -> OperationReconcileResult:
+        return OperationReconcileResult((), (), ())
 
 
 def reopen_services(tmp_path: Path) -> ReopenedServices:
@@ -481,6 +485,72 @@ def test_interrupted_resume_targets_same_cycle_after_fresh_reopen(
         assert len(app.state.team_run_service.list_cycles(run.id)) == 1
 
 
+def test_reconcile_publishes_collecting_decision_once_and_repairs_hil_state(
+    tmp_path: Path,
+) -> None:
+    _db, teams, cycles, run = make_cycle_services(
+        tmp_path,
+        "auto",
+        auto_repeat_count=2,
+    )
+    request = cycles.claim_next(run.id)
+    cycle = teams.create_cycle(
+        run.id,
+        request.source_type,
+        request.source_id,
+        request_id=request.id,
+    )
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(run.id, "running")
+    worker = next(
+        agent
+        for agent in teams.list_agents(run.id)
+        if agent.id != run.leader_agent_id
+    )
+    task = teams.create_task(
+        run.id,
+        "Choose target",
+        "Wait for user input",
+        owner_agent_id=worker.id,
+        cycle_id=cycle.id,
+    )
+    teams.start_task(task.id, worker.id)
+    collecting = teams.defer_task_for_user_decision(
+        task.id,
+        worker.id,
+        {
+            "topic": "target",
+            "question": "Which target?",
+            "why_needed": "Changes the result.",
+            "options": [],
+            "recommended_option_id": None,
+            "blocking_scope": "task",
+        },
+    )
+
+    restarted = reopen_services(tmp_path)
+    restarted.teams.interrupt_active_runs()
+    assert restarted.dispatcher.reconcile() == []
+    assert restarted.dispatcher.reconcile() == []
+
+    assert restarted.teams.get_team_run(run.id).status == "waiting_for_user"
+    assert restarted.teams.get_cycle(cycle.id).status == "waiting_for_user"
+    assert restarted.teams.get_task(task.id).status == "waiting_for_user"
+    assert restarted.teams.get_agent(worker.id).status == "waiting"
+    assert restarted.teams.get_active_decision_request(
+        run.id,
+        cycle.id,
+    ).status == "awaiting_user"
+    assert restarted.cycles.get_active_series(run.id).status == "paused_user"
+    decision_messages = [
+        message
+        for message in restarted.teams.list_messages(run.id, cycle.id)
+        if message.kind == "user_decision_requested"
+    ]
+    assert len(decision_messages) == 1
+    assert decision_messages[0].metadata["request_id"] == collecting.id
+
+
 def test_waiting_user_answer_targets_same_cycle_after_fresh_reopen(
     tmp_path: Path,
 ) -> None:
@@ -497,7 +567,8 @@ def test_waiting_user_answer_targets_same_cycle_after_fresh_reopen(
         request.source_id,
         request_id=request.id,
     )
-    teams.set_cycle_status(cycle.id, "waiting_for_user")
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(run.id, "running")
     teams.defer_run_for_user_decision(
         run.id,
         {
@@ -512,7 +583,6 @@ def test_waiting_user_answer_targets_same_cycle_after_fresh_reopen(
         cycle_id=cycle.id,
     )
     decision = teams.publish_decision_request(run.id, cycle.id)
-    cycles.pause_for_user(cycle.id)
 
     app = reopen_app(tmp_path)
     resume_calls: list[tuple[str, str | None]] = []
@@ -545,9 +615,10 @@ def test_waiting_user_answer_targets_same_cycle_after_fresh_reopen(
         assert recovered_request.status == "dispatching"
         assert recovered_request.auto_series_id == series.id
         assert recovered_request.slot_ordinal == 1
-        assert recovered_cycle.status == "interrupted"
+        assert recovered_cycle.status == "running"
         assert recovered_cycle.request_id == request.id
-        assert recovered_series.paused_cycle_id == cycle.id
+        assert recovered_series.status == "running"
+        assert recovered_series.paused_cycle_id is None
         assert len(app.state.team_cycle_service.list_requests(run.id)) == 1
         assert len(app.state.team_run_service.list_cycles(run.id)) == 1
 

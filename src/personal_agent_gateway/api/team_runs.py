@@ -52,10 +52,12 @@ class CreateTeamRunRequest(BaseModel):
     execution_policy: Literal["auto", "triggered"]
     auto_repeat_count: Annotated[int | None, Field(ge=1)] = None
     auto_interval_minutes: Annotated[int | None, Field(ge=1)] = None
+    parent_team_run_id: str | None = None
 
     @model_validator(mode="after")
     def validate_policy_settings(self) -> Self:
         self.goal = (self.goal or "").strip()
+        self.parent_team_run_id = (self.parent_team_run_id or "").strip() or None
         auto_fields = (self.auto_repeat_count, self.auto_interval_minutes)
         if self.execution_policy == "auto":
             if not self.goal:
@@ -162,6 +164,7 @@ async def create_team_run(
                 if payload.auto_interval_minutes is not None
                 else None
             ),
+            parent_team_run_id=payload.parent_team_run_id,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team not found") from exc
@@ -190,6 +193,7 @@ async def create_team_run(
             "run_mode": run.run_mode,
             "team_id": run.team_id,
             "execution_policy": run.execution_policy,
+            "parent_team_run_id": run.parent_team_run_id,
         },
     )
     return {"team_run": _team_run_payload(run)}
@@ -364,6 +368,7 @@ def get_team_run_detail(
         run = service.get_team_run(team_run_id)
         agents = service.list_agents(team_run_id)
         tasks = service.list_tasks(team_run_id)
+        task_dependencies = service.list_task_dependency_map(team_run_id)
         messages = service.list_messages(team_run_id)
         cycles = service.list_cycles(team_run_id)
     except KeyError as exc:
@@ -374,7 +379,10 @@ def get_team_run_detail(
     return {
         "team_run": _team_run_payload(run),
         "agents": [_agent_payload(agent) for agent in agents],
-        "tasks": [_task_payload(task) for task in selected_tasks],
+        "tasks": [
+            _task_payload(task, task_dependencies.get(task.id, []))
+            for task in selected_tasks
+        ],
         "messages": [_message_payload(message) for message in selected_messages],
         "cycles": [_cycle_payload(cycle) for cycle in cycles],
         "decision_request": _decision_request_payload(
@@ -762,13 +770,20 @@ async def retry_team_task(
         raise HTTPException(status_code=404, detail="Team run or task not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    task_payload = _task_payload(
+        task,
+        [
+            dependency.depends_on_task_id
+            for dependency in service.list_task_dependencies(task.id)
+        ],
+    )
     await request.app.state.event_bus.publish(
         {
             "type": "team.task.updated",
             "team_run_id": team_run_id,
             "task_id": task.id,
             "original_task_id": task_id,
-            "task": _task_payload(task),
+            "task": task_payload,
         }
     )
     record_domain_audit(
@@ -788,7 +803,7 @@ async def retry_team_task(
     )
     return {
         "team_run": _team_run_payload(run),
-        "task": _task_payload(task),
+        "task": task_payload,
         "cycle": _cycle_payload(cycle) if cycle else None,
     }
 
@@ -938,8 +953,10 @@ def list_team_tasks(
     cursor: str | None = None,
     _session: None = session_dependency,
 ) -> dict[str, object]:
+    service = request.app.state.team_run_service
     try:
-        tasks = request.app.state.team_run_service.list_tasks(team_run_id)
+        tasks = service.list_tasks(team_run_id)
+        task_dependencies = service.list_task_dependency_map(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     try:
@@ -947,7 +964,10 @@ def list_team_tasks(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid cursor") from exc
     return {
-        "tasks": [_task_payload(task) for task in selected],
+        "tasks": [
+            _task_payload(task, task_dependencies.get(task.id, []))
+            for task in selected
+        ],
         "next_cursor": next_cursor,
     }
 
@@ -1229,6 +1249,7 @@ def _team_run_payload(run: TeamRun) -> dict[str, object]:
         "artifact_root": run.artifact_root,
         "space_policy": run.space_policy,
         "team_id": run.team_id,
+        "parent_team_run_id": run.parent_team_run_id,
         "rules_snapshot": run.rules_snapshot,
         "summary": run.summary,
         "error_message": run.error_message,
@@ -1268,12 +1289,16 @@ def _agent_payload(agent: TeamAgent) -> dict[str, object]:
     }
 
 
-def _task_payload(task: TeamTask) -> dict[str, object]:
+def _task_payload(
+    task: TeamTask,
+    depends_on_task_ids: list[str] | None = None,
+) -> dict[str, object]:
     return {
         "id": task.id,
         "team_run_id": task.team_run_id,
         "cycle_id": task.cycle_id,
         "retry_of_task_id": task.retry_of_task_id,
+        "depends_on_task_ids": list(depends_on_task_ids or []),
         "title": task.title,
         "description": task.description,
         "owner_agent_id": task.owner_agent_id,

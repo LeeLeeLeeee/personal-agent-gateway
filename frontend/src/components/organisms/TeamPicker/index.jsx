@@ -11,12 +11,13 @@ function Avatar({ person }) {
   return <span className="tp-avatar tp-avatar-initials mono">{(person?.name || "?").slice(0, 2).toUpperCase()}</span>;
 }
 
-export function TeamPicker({ teams = [], onStart, runtime = null }) {
+export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null }) {
   const [teamId, setTeamId] = useState("");
   const [baseObjective, setBaseObjective] = useState("");
   const [executionPolicy, setExecutionPolicy] = useState("triggered");
   const [repeatCount, setRepeatCount] = useState("3");
   const [intervalMinutes, setIntervalMinutes] = useState("5");
+  const [parentTeamRunId, setParentTeamRunId] = useState("");
 
   useEffect(() => {
     if (!teamId && teams.length) setTeamId(teams[0].id);
@@ -29,6 +30,10 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
   const team = teams.find((item) => item.id === teamId) || teams[0];
   const activePolicy = EXECUTION_POLICIES.find((policy) => policy.value === executionPolicy);
   const executionMode = (runtime?.team_execution_mode || "sequential").toUpperCase();
+  const inheritableRuns = teamRuns.filter((run) => [
+    "completed", "completed_with_failures", "blocked", "failed", "canceled"
+  ].includes(run.status || run.display_status));
+  const parentRun = inheritableRuns.find((run) => run.id === parentTeamRunId);
 
   return (
     <form className="tp" aria-label="New team run" onSubmit={(event) => {
@@ -42,6 +47,7 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
         payload.auto_repeat_count = Number(repeatCount);
         payload.auto_interval_minutes = Number(intervalMinutes);
       }
+      if (parentTeamRunId) payload.parent_team_run_id = parentTeamRunId;
       onStart(payload);
     }}>
       <div className="tp-form">
@@ -78,6 +84,24 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
               </div>
             ))}
           </div>
+        </div>
+
+        <div className="tp-field">
+          <label className="tp-label" htmlFor="tp-parent-run">Inherit workspace</label>
+          <select
+            id="tp-parent-run"
+            className="tp-select"
+            value={parentTeamRunId}
+            onChange={(event) => setParentTeamRunId(event.target.value)}
+          >
+            <option value="">Start with an empty workspace</option>
+            {inheritableRuns.map((run) => (
+              <option key={run.id} value={run.id}>
+                {run.team_name || run.goal || "Unnamed Team Run"} · {run.id.slice(0, 8)}
+              </option>
+            ))}
+          </select>
+          <div className="tp-mode-desc">Copies safe files into a new writable, isolated workspace.</div>
         </div>
 
         {executionPolicy === "auto" ? (
@@ -154,6 +178,7 @@ export function TeamPicker({ teams = [], onStart, runtime = null }) {
             <div className="k">TEAM</div><div>{team.name}</div>
             <div className="k">MEMBERS</div><div>{(team.members || []).length} agents</div>
             <div className="k">POLICY</div><div>{activePolicy.label}</div>
+            <div className="k">WORKSPACE</div><div>{parentRun ? `Inherit ${parentRun.id.slice(0, 8)}` : "Empty"}</div>
             {executionPolicy === "auto" ? (
               <>
                 <div className="k">OBJECTIVE</div><div>{baseObjective.trim() || "Required"}</div>

@@ -550,6 +550,34 @@ async def test_internal_resume_does_not_claim_or_mutate_ambiguous_operation(
 
 
 @pytest.mark.asyncio
+async def test_resume_failure_settles_active_task_and_agents(tmp_path):
+    setup = make_operation_runtime(tmp_path)
+    setup.teams.set_run_status(setup.run.id, "running")
+    task = setup.teams.create_task(
+        setup.run.id,
+        "work",
+        "work",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+    )
+    setup.teams.start_task(task.id, setup.worker.id)
+
+    async def fail_recovery(*_args):
+        raise OperationConflict("Operation key is already bound to another request")
+
+    setup.runtime._recover_applied_operation_chain = fail_recovery
+
+    failed = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert failed.status == "failed"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "failed"
+    assert setup.teams.get_task(task.id).status == "failed"
+    agents = setup.teams.list_agents(setup.run.id)
+    assert all(agent.status != "running" for agent in agents)
+    assert all(agent.current_task_id is None for agent in agents)
+
+
+@pytest.mark.asyncio
 async def test_cycle_add_work_safe_admission_exhaustion_enters_waiting(
     tmp_path,
 ):
@@ -654,6 +682,31 @@ async def test_invalid_add_work_closes_initial_operation_then_waits_on_repair(
     assert TeamCycleService(setup.db).get_request(
         setup.cycle_request.id
     ).status == "dispatching"
+
+
+@pytest.mark.asyncio
+async def test_add_work_retries_plan_with_unknown_owner_agent_id(tmp_path):
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.lead_client.responses = [
+        ModelResponse(valid_plan_json("unknown-agent-id"), []),
+        ModelResponse(valid_plan_json(setup.worker.id), []),
+    ]
+
+    created = await setup.runtime.add_work(
+        setup.run.id,
+        "work",
+        setup.cycle.id,
+    )
+
+    operations = setup.operations.list_for_cycle(setup.cycle.id)
+    assert [(item.stage, item.status) for item in operations] == [
+        ("cycle_add_work", "failed"),
+        ("cycle_planning_repair", "applied"),
+    ]
+    assert [task.owner_agent_id for task in created] == [setup.worker.id]
+    repair_prompt = setup.lead_client.messages[1][0]["content"]
+    assert "was not one of the fixed team member IDs" in repair_prompt
+    assert setup.worker.id in repair_prompt
 
 
 @pytest.mark.asyncio
@@ -1301,6 +1354,48 @@ async def test_acceptance_user_answer_resumes_distinct_worker_operation(
     )
     assert continuation is not None
     assert continuation.status == "applied"
+
+
+@pytest.mark.asyncio
+async def test_acceptance_user_decision_does_not_block_dependent_tasks(
+    tmp_path,
+):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    dependent = setup.teams.create_task(
+        setup.run.id,
+        "Implement",
+        "Implement after research.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+    )
+    setup.teams.add_task_dependencies(dependent.id, [setup.task.id])
+    setup.worker_client.responses.append(
+        ModelResponse(_outcome_json("implemented"), [])
+    )
+    setup.lead_client.responses = [
+        ModelResponse(_ask_user_resolution("Which acceptance scope?"), []),
+        ModelResponse("summary", []),
+    ]
+
+    waiting = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert waiting.status == "waiting_for_user"
+    assert setup.teams.get_task(dependent.id).status == "pending"
+    request = setup.teams.list_decision_requests(setup.run.id)[0]
+    setup.teams.answer_decision_request(
+        setup.run.id,
+        request.id,
+        request.revision,
+        {request.items[0]["id"]: "Use the current acceptance scope."},
+    )
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.teams.get_task(dependent.id).status == "completed"
 
 
 @pytest.mark.asyncio
@@ -3434,7 +3529,7 @@ async def test_acceptance_review_ask_user_defers_without_consuming_attempt(
     assert waiting.status == "waiting_for_user"
     assert delegated == [task.id]
     assert task.acceptance_recovery_attempts == 0
-    assert task.status == "blocked"
+    assert task.status == "waiting_for_user"
 
 
 @pytest.mark.asyncio
@@ -5232,7 +5327,10 @@ async def test_user_decisions_batch_after_independent_tasks_and_resume_with_answ
     assert request is not None
     assert request.status == "awaiting_user"
     assert [item["id"] for item in request.items] == ["Q-001", "Q-002"]
-    assert [task.status for task in teams.list_tasks(run.id)] == ["blocked", "blocked"]
+    assert [task.status for task in teams.list_tasks(run.id)] == [
+        "waiting_for_user",
+        "waiting_for_user",
+    ]
     assert "team.run.input_requested" in [event["type"] for event in bus.recent()]
     assert "synthesis" not in [message.kind for message in teams.list_messages(run.id)]
 

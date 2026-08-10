@@ -109,6 +109,7 @@ create table if not exists personas (
 
 create table if not exists team_runs (
     id text primary key,
+    parent_team_run_id text references team_runs(id) on delete set null,
     goal text not null,
     status text not null,
     run_mode text not null,

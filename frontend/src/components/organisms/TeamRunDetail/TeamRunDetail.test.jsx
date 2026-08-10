@@ -29,6 +29,39 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("Planning started")).toBeInTheDocument();
   });
 
+  it("keeps waiting, skipped, and canceled tasks visible with dependencies", async () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "Collect", status: "running", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [
+            { id: "source", title: "Collect sources", status: "failed" },
+            {
+              id: "rewrite",
+              title: "Rewrite summary",
+              status: "skipped",
+              error_message: "skipped_by_dependency",
+              depends_on_task_ids: ["source"]
+            },
+            { id: "provider", title: "Fetch transcript", status: "waiting_for_provider" },
+            { id: "review", title: "Review selection", status: "waiting_for_user" },
+            { id: "obsolete", title: "Obsolete work", status: "canceled" }
+          ],
+          messages: []
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+
+    expect(screen.getByRole("button", { name: "Open task Fetch transcript" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open task Review selection" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open task Rewrite summary" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open task Obsolete work" })).toBeInTheDocument();
+    expect(screen.getByText("선행 작업 · Collect sources")).toBeInTheDocument();
+  });
+
   it("renders a placeholder when no run is selected", () => {
     render(<TeamRunDetail detail={null} />);
     expect(screen.getByText("No team run selected.")).toBeInTheDocument();
@@ -1059,6 +1092,26 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("Decision request is unavailable. Refresh this run.")).toBeInTheDocument();
   });
 
+  it("hides the answer form when the linked Cycle is not waiting", () => {
+    render(<TeamRunDetail detail={{
+      run: { id: "r1", goal: "Ship", status: "waiting_for_user", run_mode: "plan_and_execute" },
+      agents: [],
+      tasks: [],
+      messages: [],
+      cycles: [{ id: "c1", sequence: 1, status: "running" }],
+      decisionRequest: {
+        id: "d1",
+        cycle_id: "c1",
+        revision: 1,
+        status: "awaiting_user",
+        items: []
+      }
+    }} />);
+
+    expect(screen.queryByRole("region", { name: "Input needed" })).not.toBeInTheDocument();
+    expect(screen.getByText("Decision request is unavailable. Refresh this run.")).toBeInTheDocument();
+  });
+
   it("reviews, commits, and applies worktree delivery through injected callbacks", async () => {
     const onCommitDelivery = vi.fn().mockResolvedValue(true);
     const onApplyDelivery = vi.fn().mockResolvedValue(true);
@@ -1268,5 +1321,47 @@ describe("TeamRunDetail", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not show stale running child states after the run failed", async () => {
+    const { container } = render(
+      <TeamRunDetail
+        detail={{
+          run: {
+            id: "r1",
+            goal: "Recover operation",
+            status: "failed",
+            run_mode: "plan_and_execute",
+            error_message: "Operation key is already bound to another request"
+          },
+          agents: [
+            {
+              id: "a1",
+              name: "Worker",
+              role: "member",
+              status: "running",
+              current_task_id: "t1"
+            }
+          ],
+          tasks: [
+            {
+              id: "t1",
+              title: "Finalize review",
+              description: "review",
+              status: "in_progress",
+              owner_agent_id: "a1",
+              started_at: "2026-08-06T04:07:12.000Z"
+            }
+          ],
+          messages: []
+        }}
+      />
+    );
+
+    expect(screen.queryByText("LIVE")).not.toBeInTheDocument();
+    expect(container.querySelector(".team-lane-status-row")).toHaveTextContent("FAILED");
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    expect(container.querySelector(".team-task-status")).toHaveTextContent("FAILED");
   });
 });

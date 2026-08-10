@@ -252,6 +252,30 @@ def test_auto_series_counts_continue_and_keeps_retry_in_same_slot(
     assert continued.next_run_at == "2026-07-20T00:09:00+00:00"
 
 
+def test_blocked_auto_cycle_pauses_series_as_failure(tmp_path: Path) -> None:
+    _db, teams, cycles, run = make_auto_run(tmp_path)
+    request = cycles.claim_next(run.id)
+    assert request is not None
+    cycle = teams.create_cycle(
+        run.id,
+        "auto",
+        request.source_id,
+        request_id=request.id,
+    )
+    teams.set_cycle_status(
+        cycle.id,
+        "blocked",
+        error_message="Required task blocked",
+    )
+
+    settled = cycles.settle_cycle(cycle.id)
+
+    assert settled.request.status == "settled"
+    assert settled.series is not None
+    assert settled.series.status == "paused_failure"
+    assert settled.series.pause_reason == "Required task blocked"
+
+
 def test_retry_preserves_failed_slots_previous_cycle_snapshot(
     tmp_path: Path,
 ) -> None:

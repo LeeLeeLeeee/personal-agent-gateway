@@ -847,7 +847,7 @@ def test_acceptance_lead_user_decision_is_atomic_and_idempotent(tmp_path):
     assert second.decision_request.id == first.decision_request.id
     assert second.next_stage == "user_decision"
     assert len(services.teams.list_decision_requests(services.run.id)) == 1
-    assert services.teams.get_task(services.task.id).status == "blocked"
+    assert services.teams.get_task(services.task.id).status == "waiting_for_user"
     assert services.teams.get_agent(services.worker.id).status == "waiting"
     assert followup.operations.get(followup.operation.id).status == "applied"
 
@@ -1394,7 +1394,7 @@ def test_worker_user_decision_is_atomic_and_duplicate_apply_is_idempotent(
     assert len(services.teams.list_decision_requests(services.run.id)) == 1
     task = services.teams.get_task(services.task.id)
     worker = services.teams.get_agent(services.worker.id)
-    assert task.status == "blocked"
+    assert task.status == "waiting_for_user"
     assert worker.status == "waiting"
     assert worker.current_task_id is None
     assert services.operations.get(services.operation.id).status == "applied"

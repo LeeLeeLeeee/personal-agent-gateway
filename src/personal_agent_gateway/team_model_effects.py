@@ -442,7 +442,7 @@ class TeamModelEffectService:
                 connection.execute(
                     """
                     update team_tasks
-                    set status = 'blocked', result = null, error_message = null,
+                    set status = 'waiting_for_user', result = null, error_message = null,
                         finished_at = null, updated_at = ? where id = ?
                     """,
                     (now, task.id),
@@ -666,7 +666,7 @@ class TeamModelEffectService:
                 connection.execute(
                     """
                     update team_tasks
-                    set status = 'blocked', result = null, error_message = null,
+                    set status = 'waiting_for_user', result = null, error_message = null,
                         finished_at = null, updated_at = ? where id = ?
                     """,
                     (now, task.id),
@@ -1419,7 +1419,7 @@ class TeamModelEffectService:
             or not isinstance(effect_ref["decision_request_id"], str)
             or not isinstance(effect_ref["decision_item_id"], str)
             or not isinstance(effect_ref["decision_item_digest"], str)
-            or task.status != "blocked"
+            or task.status != "waiting_for_user"
             or worker.status != "waiting"
             or worker.current_task_id is not None
         ):
@@ -1563,7 +1563,7 @@ class TeamModelEffectService:
                 not isinstance(request_id, str)
                 or not isinstance(effect_ref["decision_item_id"], str)
                 or not isinstance(effect_ref["decision_item_digest"], str)
-                or task.status != "blocked"
+                or task.status != "waiting_for_user"
                 or worker.status != "waiting"
                 or worker.current_task_id is not None
             ):
@@ -1829,7 +1829,7 @@ class TeamModelEffectService:
         connection.execute(
             """
             update team_tasks
-            set status = 'blocked', result = null, error_message = null,
+            set status = 'waiting_for_user', result = null, error_message = null,
                 finished_at = null, updated_at = ? where id = ?
             """,
             (now, task.id),
@@ -2020,7 +2020,7 @@ class TeamModelEffectService:
             task.team_run_id != operation.team_run_id
             or task.cycle_id != operation.cycle_id
             or task.owner_agent_id != operation.agent_id
-            or task.status != "blocked"
+            or task.status != "waiting_for_user"
             or agent.team_run_id != operation.team_run_id
             or agent.status != "waiting"
             or agent.current_task_id is not None
@@ -3036,7 +3036,7 @@ def _decision_item_references_are_valid(
             task is None
             or task["team_run_id"] != operation.team_run_id
             or task["cycle_id"] != operation.cycle_id
-            or task["status"] != "blocked"
+            or task["status"] != "waiting_for_user"
         ):
             return False
     for message_id in query_message_ids:

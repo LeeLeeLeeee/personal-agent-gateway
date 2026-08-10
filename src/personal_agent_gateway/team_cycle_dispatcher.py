@@ -9,6 +9,7 @@ from personal_agent_gateway.team_cycles import (
     TeamCycleRequest,
     TeamCycleService,
 )
+from personal_agent_gateway.team_lifecycle import TERMINAL_CYCLE_STATUSES
 from personal_agent_gateway.team_model_invoker import AmbiguousModelOperation
 from personal_agent_gateway.team_provider_recovery import (
     ProviderOperationWaiting,
@@ -34,12 +35,6 @@ CyclePreparer = Callable[
     Awaitable[CyclePreparation | None],
 ]
 
-_TERMINAL_CYCLE_STATUSES = {
-    "completed",
-    "completed_with_failures",
-    "failed",
-    "canceled",
-}
 _PAUSE_ACTIONS = {
     "paused_failure": ["retry", "continue"],
     "paused_user": ["answer"],
@@ -166,10 +161,22 @@ class TeamCycleDispatcher:
                 request.source_id,
                 request_id=request.id,
             )
-            cycle = self._provider_recovery.freeze_cycle(cycle.id)
         except Exception:
             self._cycles.requeue_claim(request.id)
             raise
+        try:
+            cycle = self._provider_recovery.freeze_cycle(cycle.id)
+        except Exception as exc:  # noqa: BLE001
+            self._teams.set_cycle_status(
+                cycle.id,
+                "failed",
+                error_message=str(exc),
+            )
+            await self.on_team_run_settled(
+                self._teams.get_team_run(team_run_id),
+                cycle.id,
+            )
+            return
         try:
             instruction = request.instruction
             output_contract_id: str | None = None
@@ -213,13 +220,10 @@ class TeamCycleDispatcher:
         except ProviderOperationWaiting:
             return
         except AmbiguousModelOperation:
-            await self.on_team_run_settled(
-                self._teams.get_team_run(team_run_id),
-                cycle.id,
-            )
+            await self._interrupt_cycle(team_run_id, cycle.id)
             return
         except Exception as exc:
-            if self._teams.get_cycle(cycle.id).status in _TERMINAL_CYCLE_STATUSES:
+            if self._teams.get_cycle(cycle.id).status in TERMINAL_CYCLE_STATUSES:
                 current_request = self._cycles.get_request(request.id)
                 if current_request.status == "dispatching":
                     await self.on_team_run_settled(
@@ -250,7 +254,7 @@ class TeamCycleDispatcher:
         result = self._cycles.settle_cycle(cycle_id)
         if not result.transitioned:
             return
-        if cycle.status in _TERMINAL_CYCLE_STATUSES:
+        if cycle.status in TERMINAL_CYCLE_STATUSES:
             await self._event_bus.publish(
                 {
                     "type": "team.cycle.settled",
@@ -300,6 +304,7 @@ class TeamCycleDispatcher:
             *operation_result.locally_applicable_cycle_ids,
         }
         self._startup_operation_cycles = sorted(startup_cycle_ids)
+        self._teams.reconcile_lifecycle(startup_cycle_ids)
         for request in self._cycles.list_dispatching_requests():
             cycle = self._teams.get_cycle_for_request(request.id)
             if (
@@ -316,12 +321,7 @@ class TeamCycleDispatcher:
         cycle_id: str,
     ) -> None:
         cycle = self._teams.get_cycle(cycle_id)
-        if cycle.status in {
-            "completed",
-            "completed_with_failures",
-            "failed",
-            "canceled",
-        }:
+        if cycle.status in TERMINAL_CYCLE_STATUSES:
             request = self._cycles.get_request(cycle.request_id)
             if request.status == "dispatching":
                 await self.on_team_run_settled(
@@ -401,10 +401,9 @@ class TeamCycleDispatcher:
         except ProviderOperationWaiting:
             return
         except AmbiguousModelOperation:
-            await self.on_team_run_settled(
-                self._teams.get_team_run(team_run_id),
-                cycle_id,
-            )
+            if cycle_id is None:
+                return
+            await self._interrupt_cycle(team_run_id, cycle_id)
         except Exception as exc:
             self._last_error = redact_text(exc) or type(exc).__name__
 

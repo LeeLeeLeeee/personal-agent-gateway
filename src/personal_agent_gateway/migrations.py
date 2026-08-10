@@ -939,6 +939,19 @@ def _migration_28_team_task_plan_ordinal(
     )
 
 
+def _migration_29_team_run_workspace_inheritance(
+    connection: sqlite3.Connection,
+) -> None:
+    if "parent_team_run_id" not in _columns(connection, "team_runs"):
+        connection.execute(
+            "alter table team_runs add column parent_team_run_id text "
+            "references team_runs(id) on delete set null"
+        )
+    connection.execute(
+        "create index if not exists idx_team_runs_parent on team_runs(parent_team_run_id)"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -968,6 +981,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (26, "artifact-browser-origins", _migration_26_artifact_browser_origins),
     (27, "backfill-artifact-origins", _migration_27_backfill_artifact_origins),
     (28, "team-task-plan-ordinal", _migration_28_team_task_plan_ordinal),
+    (29, "team-run-workspace-inheritance", _migration_29_team_run_workspace_inheritance),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

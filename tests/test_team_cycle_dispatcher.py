@@ -554,6 +554,38 @@ async def test_nonterminal_cycle_keeps_request_until_same_cycle_completes(
 
 
 @pytest.mark.asyncio
+async def test_blocked_cycle_settles_dispatching_request(
+    tmp_path: Path,
+) -> None:
+    services = make_dispatcher_services(tmp_path)
+    request = services.cycles.enqueue_request(
+        services.run.id,
+        "manual",
+        "client-1",
+        "work",
+        previous_cycle_id=None,
+    )
+    await services.dispatcher.run_one(services.run.id)
+    cycle = services.teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    services.teams.set_cycle_status(
+        cycle.id,
+        "blocked",
+        error_message="Required task blocked",
+    )
+
+    await services.dispatcher.on_team_run_settled(
+        services.run,
+        cycle.id,
+    )
+
+    assert services.cycles.get_request(request.id).status == "settled"
+    assert [
+        event["type"] for event in services.event_bus.recent()
+    ].count("team.cycle.settled") == 1
+
+
+@pytest.mark.asyncio
 async def test_cancellation_in_preparer_interrupts_same_cycle_and_request(
     tmp_path: Path,
 ) -> None:
@@ -733,7 +765,7 @@ async def test_cycle_creation_failure_requeues_claim(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_source", ["preparer", "orchestrator"])
+@pytest.mark.parametrize("failure_source", ["freeze", "preparer", "orchestrator"])
 async def test_dispatch_failure_marks_cycle_failed_and_settles_request(
     tmp_path: Path,
     failure_source: str,
@@ -747,7 +779,13 @@ async def test_dispatch_failure_marks_cycle_failed_and_settles_request(
         previous_cycle_id=None,
     )
 
-    if failure_source == "preparer":
+    if failure_source == "freeze":
+
+        def fail_freeze(*_args):
+            raise ProviderRecoveryRequired("codex", "gateway_unauthorized")
+
+        services.dispatcher._provider_recovery.freeze_cycle = fail_freeze
+    elif failure_source == "preparer":
 
         async def fail_preparer(*_args):
             raise RuntimeError("prepare failed")

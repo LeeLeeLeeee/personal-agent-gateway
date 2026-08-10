@@ -766,6 +766,74 @@ def test_create_team_run_snapshots_personas(tmp_path):
     assert unchanged.persona_snapshot["name"] == "QA Tester"
 
 
+def test_create_team_run_inherits_terminal_workspace_as_writable_snapshot(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("Tech Lead", "Planning", "Plans work.", [], [])
+    source = teams.create_team_run(
+        "Build SNS studio",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+    )
+    source_root = Path(source.working_root)
+    (source_root / "apps" / "web").mkdir(parents=True)
+    (source_root / "apps" / "web" / "package.json").write_text(
+        '{"name":"sns-studio"}', encoding="utf-8"
+    )
+    (source_root / ".env").write_text("SECRET=value", encoding="utf-8")
+    (source_root / ".env.example").write_text(
+        "STUDIO_PUBLISHER_MODE=mock", encoding="utf-8"
+    )
+    (source_root / ".git").mkdir()
+    (source_root / ".git" / "config").write_text("private", encoding="utf-8")
+    teams.set_run_status(source.id, "completed")
+
+    inherited = teams.create_team_run(
+        "Refactor SNS studio",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        parent_team_run_id=source.id,
+    )
+
+    inherited_root = Path(inherited.working_root)
+    inherited_package = inherited_root / "apps" / "web" / "package.json"
+    assert inherited.parent_team_run_id == source.id
+    assert inherited_package.read_text(encoding="utf-8") == '{"name":"sns-studio"}'
+    assert not (inherited_root / ".env").exists()
+    assert (inherited_root / ".env.example").read_text(
+        encoding="utf-8"
+    ) == "STUDIO_PUBLISHER_MODE=mock"
+    assert not (inherited_root / ".git").exists()
+    inherited_package.write_text('{"name":"refactored"}', encoding="utf-8")
+    assert (source_root / "apps" / "web" / "package.json").read_text(
+        encoding="utf-8"
+    ) == '{"name":"sns-studio"}'
+    manifest = Path(inherited.artifact_root) / "workspace-inheritance.json"
+    assert f'"source_team_run_id": "{source.id}"' in manifest.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_create_team_run_rejects_active_workspace_inheritance(tmp_path):
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("Tech Lead", "Planning", "Plans work.", [], [])
+    source = teams.create_team_run("Source", leader.id, [], "plan_and_execute", 1)
+    teams.set_run_status(source.id, "running")
+
+    with pytest.raises(ValueError, match="must be terminal"):
+        teams.create_team_run(
+            "Child",
+            leader.id,
+            [],
+            "plan_and_execute",
+            1,
+            parent_team_run_id=source.id,
+        )
+
+
 def test_list_team_runs_enriched(tmp_path):
     (tmp_path / "workspace").mkdir()
     personas, teams = make_services(tmp_path)
@@ -1691,7 +1759,7 @@ def test_retry_failed_task_rejects_nonfailed_task_and_nonterminal_run(tmp_path):
         teams.retry_failed_task(run.id, task.id)
 
 
-def test_decision_request_batches_blocked_tasks_and_projects_workspace_file(tmp_path):
+def test_decision_request_batches_waiting_tasks_and_projects_workspace_file(tmp_path):
     personas, teams = make_services(tmp_path)
     leader = personas.create_persona("L", "lead", "d", [], [])
     member = personas.create_persona("W", "work", "d", [], [])
@@ -1723,14 +1791,15 @@ def test_decision_request_batches_blocked_tasks_and_projects_workspace_file(tmp_
     assert request.status == "collecting"
     assert request.revision == 2
     assert [item["id"] for item in request.items] == ["Q-001", "Q-002"]
-    assert {task.status for task in teams.list_tasks(run.id)} == {"blocked"}
+    assert {task.status for task in teams.list_tasks(run.id)} == {"waiting_for_user"}
 
     published = teams.publish_decision_request(run.id)
 
     assert published.status == "awaiting_user"
     assert published.revision == 3
     assert teams.get_team_run(run.id).status == "waiting_for_user"
-    assert teams.get_agent(leader_agent.id).status == "waiting"
+    assert teams.get_agent(leader_agent.id).status == "running"
+    assert teams.get_agent(worker.id).status == "waiting"
     decision_file = Path(run.workspace_root) / "USER_DECISIONS.md"
     content = decision_file.read_text(encoding="utf-8")
     assert "status: awaiting_user" in content
@@ -1870,7 +1939,7 @@ def test_dependency_ready_tasks_wait_for_prerequisite(tmp_path) -> None:
     assert teams.list_dependency_ready_tasks(run.id, cycle.id) == [draft]
 
 
-def test_failed_prerequisite_blocks_transitive_dependents(tmp_path) -> None:
+def test_failed_prerequisite_skips_transitive_dependents(tmp_path) -> None:
     _db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, _cycles, run)
     research = teams.create_task(run.id, "Research", "Research", cycle_id=cycle.id)
@@ -1880,13 +1949,15 @@ def test_failed_prerequisite_blocks_transitive_dependents(tmp_path) -> None:
     teams.add_task_dependencies(qa.id, [draft.id])
     teams.set_task_status(research.id, "failed", error_message="source failed")
 
-    blocked = teams.block_pending_dependency_failures(run.id, cycle.id)
+    skipped = teams.skip_pending_dependency_failures(run.id, cycle.id)
 
-    assert [task.id for task in blocked] == [draft.id, qa.id]
-    assert teams.get_task(draft.id).error_message == "blocked_by_dependency"
+    assert [task.id for task in skipped] == [draft.id, qa.id]
+    assert teams.get_task(draft.id).status == "skipped"
+    assert teams.get_task(draft.id).error_message == "skipped_by_dependency"
+    assert teams.skip_pending_dependency_failures(run.id, cycle.id) == []
 
 
-def test_failed_prerequisite_blocks_dependent_instead_of_running(tmp_path) -> None:
+def test_failed_prerequisite_skips_dependent_instead_of_running(tmp_path) -> None:
     _db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
     cycle = make_queued_cycle(teams, _cycles, run)
     fix = teams.create_task(run.id, "Fix", "Fix", cycle_id=cycle.id)
@@ -1896,11 +1967,31 @@ def test_failed_prerequisite_blocks_dependent_instead_of_running(tmp_path) -> No
     assert [t.id for t in teams.list_dependency_ready_tasks(run.id, cycle.id)] == [fix.id]
 
     teams.set_task_status(fix.id, "failed", error_message="draft-unmodified")
-    blocked = teams.block_pending_dependency_failures(run.id, cycle.id)
+    skipped = teams.skip_pending_dependency_failures(run.id, cycle.id)
 
-    assert [t.id for t in blocked] == [qa.id]
-    assert teams.get_task(qa.id).error_message == "blocked_by_dependency"
+    assert [t.id for t in skipped] == [qa.id]
+    assert teams.get_task(qa.id).status == "skipped"
+    assert teams.get_task(qa.id).error_message == "skipped_by_dependency"
     assert teams.list_dependency_ready_tasks(run.id, cycle.id) == []
+
+
+@pytest.mark.parametrize(
+    "prerequisite_status",
+    ["pending", "in_progress", "waiting_for_user", "waiting_for_provider"],
+)
+def test_nonterminal_prerequisite_does_not_skip_dependent(
+    tmp_path,
+    prerequisite_status,
+) -> None:
+    _db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, _cycles, run)
+    prerequisite = teams.create_task(run.id, "First", "First", cycle_id=cycle.id)
+    dependent = teams.create_task(run.id, "Next", "Next", cycle_id=cycle.id)
+    teams.add_task_dependencies(dependent.id, [prerequisite.id])
+    teams.set_task_status(prerequisite.id, prerequisite_status)
+
+    assert teams.skip_pending_dependency_failures(run.id, cycle.id) == []
+    assert teams.get_task(dependent.id).status == "pending"
 
 
 def test_create_task_assigns_increasing_plan_ordinals(tmp_path) -> None:

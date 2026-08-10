@@ -23,7 +23,11 @@ def is_sensitive_file(name: str) -> bool:
     return lowered == ".env" or lowered.startswith(".env.")
 
 
-def iter_safe_files(root: Path):
+def iter_safe_files(
+    root: Path,
+    *,
+    allowed_sensitive_names: frozenset[str] = frozenset(),
+):
     if not root.is_dir():
         return
     for current, dirs, files in os.walk(root):
@@ -35,6 +39,10 @@ def iter_safe_files(root: Path):
         )
         for name in sorted(files):
             path = Path(current) / name
-            if is_sensitive_file(name) or path.is_symlink() or not path.is_file():
+            sensitive = (
+                is_sensitive_file(name)
+                and name.lower() not in allowed_sensitive_names
+            )
+            if sensitive or path.is_symlink() or not path.is_file():
                 continue
             yield path, path.relative_to(root).as_posix()

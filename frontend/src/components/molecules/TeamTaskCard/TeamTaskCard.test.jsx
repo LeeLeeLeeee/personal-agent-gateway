@@ -80,4 +80,23 @@ describe("TeamTaskCard", () => {
     expect(container.querySelector(".team-task-meta")).toHaveTextContent("FILES 0");
     expect(container.querySelector(".team-task-meta")).toHaveTextContent("REPORTS 1");
   });
+
+  it("shows why a dependency-skipped task did not run", () => {
+    render(
+      <TeamTaskCard
+        task={{
+          ...task,
+          status: "skipped",
+          error_message: "skipped_by_dependency"
+        }}
+        owner={null}
+        prerequisiteTitles={["Collect sources"]}
+        onOpen={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("건너뜀")).toBeInTheDocument();
+    expect(screen.getByText("skipped_by_dependency")).toBeInTheDocument();
+    expect(screen.getByText("선행 작업 · Collect sources")).toBeInTheDocument();
+  });
 });

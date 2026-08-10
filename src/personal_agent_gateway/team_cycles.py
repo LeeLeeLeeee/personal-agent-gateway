@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.team_lifecycle import TERMINAL_CYCLE_STATUSES
 from personal_agent_gateway.teams import TeamRunCycle
 
 if TYPE_CHECKING:
@@ -39,12 +40,6 @@ _PREVIOUS_CONTEXT_CYCLE_STATUSES = {
     "completed_with_failures",
     "failed",
     "blocked",
-    "canceled",
-}
-_TERMINAL_CYCLE_STATUSES = {
-    "completed",
-    "completed_with_failures",
-    "failed",
     "canceled",
 }
 _KNOWLEDGE_REQUEST_ATTEMPT_SEPARATOR = "#attempt-"
@@ -524,7 +519,7 @@ class TeamCycleService:
                     "interrupted",
                     timestamp,
                 )
-            if cycle["status"] not in _TERMINAL_CYCLE_STATUSES:
+            if cycle["status"] not in TERMINAL_CYCLE_STATUSES:
                 raise ValueError("Cycle is not ready to settle")
             if request.status in {"settled", "canceled"}:
                 return CycleSettlement(
@@ -546,7 +541,7 @@ class TeamCycleService:
             if series is not None:
                 if cycle["status"] in _SETTLED_CYCLE_STATUSES:
                     self._settle_auto_slot(connection, series, timestamp)
-                elif cycle["status"] == "failed":
+                elif cycle["status"] in {"blocked", "failed"}:
                     connection.execute(
                         """
                         update team_run_auto_series
@@ -966,7 +961,7 @@ class TeamCycleService:
             cycle = teams.get_cycle_for_request(request.id)
             if cycle is None:
                 self.requeue_claim(request.id)
-            elif cycle.status in _TERMINAL_CYCLE_STATUSES:
+            elif cycle.status in TERMINAL_CYCLE_STATUSES:
                 self.settle_cycle(cycle.id, now=now)
             elif cycle.status == "interrupted":
                 self.pause_interrupted(cycle.id)

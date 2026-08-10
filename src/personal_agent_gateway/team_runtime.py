@@ -39,6 +39,10 @@ from personal_agent_gateway.team_model_invoker import (
     ProviderOperationUnavailable,
     TeamModelInvoker,
 )
+from personal_agent_gateway.team_lifecycle import (
+    LifecycleIntegrityError,
+    cycle_execution_disposition,
+)
 from personal_agent_gateway.team_model_operations import (
     OperationConflict,
     OperationSpec,
@@ -239,7 +243,11 @@ Do not assign by list order or previous completion status."""
 
 AGENT_REINVOCATION_CAP = 3
 _SESSION_UNSET = object()
-_PLANNING_REPAIR_INSTRUCTION = "Return ONLY a JSON array. No prose, no code fences."
+_PLANNING_REPAIR_INSTRUCTION = (
+    "The previous response was invalid. If an owner_agent_id was not one of the "
+    "fixed team member IDs, replace it with an exact ID from Available team "
+    "members or null. Return ONLY a JSON array. No prose, no code fences."
+)
 _WORKER_REPAIR_INSTRUCTION = (
     "Return ONLY the required TaskOutcome JSON object or "
     "the exact needs_info JSON block."
@@ -467,6 +475,11 @@ class TeamRuntime:
         *,
         planning_stage: Literal["cycle_planning", "cycle_add_work"] | None = None,
         planning_messages: list[dict[str, object]] | None = None,
+        planning_parser: Callable[
+            [ModelResponse],
+            ValidatedOperationResult,
+        ]
+        | None = None,
         synthesis_messages: list[dict[str, object]] | None = None,
         synthesis_parser: Callable[
             [ModelResponse],
@@ -545,7 +558,7 @@ class TeamRuntime:
                     operation,
                     leader,
                     messages,
-                    _validated_task_plan,
+                    planning_parser or _validated_task_plan,
                 )
             return OpenOperationRecovery(
                 recovered,
@@ -1042,10 +1055,7 @@ class TeamRuntime:
             workers = _find_workers(self._teams.list_agents(run.id))
             if not workers:
                 error = "plan_and_execute run has no worker agents (empty member_persona_ids)"
-                run = self._teams.set_run_status(run.id, "failed", error_message=error)
-                if cycle_id is not None:
-                    self._teams.set_cycle_status(cycle_id, "failed", error_message=error)
-                self._teams.set_agent_status(leader.id, "failed")
+                run = self._settle_failed(run, error, cycle_id)
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
                 return run
 
@@ -1060,11 +1070,7 @@ class TeamRuntime:
             raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__
-            run = self._teams.set_run_status(run.id, "failed", error_message=error)
-            if cycle_id is not None:
-                self._teams.set_cycle_status(cycle_id, "failed", error_message=error)
-            if leader is not None:
-                self._teams.set_agent_status(leader.id, "failed")
+            run = self._settle_failed(run, error, cycle_id)
             await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
             return run
 
@@ -1169,12 +1175,23 @@ class TeamRuntime:
         stage: Literal["cycle_planning", "cycle_add_work"],
         messages: list[dict[str, object]],
     ) -> TeamModelOperation:
+        member_ids = {
+            member.id for member in _find_workers(self._teams.list_agents(run.id))
+        }
+
+        def validate_plan(response: ModelResponse) -> ValidatedOperationResult:
+            return _validated_task_plan(
+                response,
+                allowed_owner_agent_ids=member_ids,
+            )
+
         recovery = await self._recover_open_operation(
             run,
             leader,
             cycle_id,
             planning_stage=stage,
             planning_messages=messages,
+            planning_parser=validate_plan,
         )
         if recovery is not None:
             return recovery.operation
@@ -1191,7 +1208,7 @@ class TeamRuntime:
                 spec,
                 leader,
                 messages,
-                _validated_task_plan,
+                validate_plan,
             )
         except InvalidOperationResult as exc:
             failed = self._operations.get(exc.operation_id)
@@ -1209,7 +1226,7 @@ class TeamRuntime:
                 repair_spec,
                 leader,
                 repair_messages,
-                _validated_task_plan,
+                validate_plan,
             )
 
     async def _execute(
@@ -2714,12 +2731,29 @@ class TeamRuntime:
     ) -> TeamRun:
         while True:
             await self._execute(run, leader, workers, cycle_id)
-            self._teams.block_pending_dependency_failures(run.id, cycle_id)
             request = self._teams.get_active_decision_request(run.id, cycle_id)
             if request is not None and request.status == "collecting":
                 return await self._publish_user_decision_request(run, cycle_id)
+            self._teams.skip_pending_dependency_failures(run.id, cycle_id)
             tasks = self._teams.list_tasks(run.id, cycle_id)
-            status = _terminal_status(tasks)
+            dependencies = self._teams.list_task_dependency_map(run.id, cycle_id)
+            status = _terminal_status(tasks, dependencies)
+            if status is None:
+                unresolved = sorted(
+                    task.id
+                    for task in tasks
+                    if task.status
+                    not in {
+                        "completed",
+                        "skipped",
+                        "blocked",
+                        "failed",
+                        "canceled",
+                    }
+                )
+                raise LifecycleIntegrityError(
+                    f"Cycle has unresolved tasks with no executable path: {unresolved}"
+                )
             if status in {"blocked", "failed"}:
                 error = (
                     "Required task blocked"
@@ -2834,10 +2868,7 @@ class TeamRuntime:
             )
             if not workers:
                 error = "resume has no worker agents"
-                run = self._teams.set_run_status(run.id, "failed", error_message=error)
-                if cycle_id is not None:
-                    self._teams.set_cycle_status(cycle_id, "failed", error_message=error)
-                self._teams.set_agent_status(leader.id, "failed")
+                run = self._settle_failed(run, error, cycle_id)
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
                 return run
             return await self._execute_and_synthesize(run, leader, workers, cycle_id)
@@ -2849,11 +2880,7 @@ class TeamRuntime:
             raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__
-            run = self._teams.set_run_status(run.id, "failed", error_message=error)
-            if cycle_id is not None:
-                self._teams.set_cycle_status(cycle_id, "failed", error_message=error)
-            if leader is not None:
-                self._teams.set_agent_status(leader.id, "failed")
+            run = self._settle_failed(run, error, cycle_id)
             await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
             return run
 
@@ -3120,8 +3147,6 @@ class TeamRuntime:
         cycle_id: str | None,
     ) -> TeamRun:
         request = self._teams.publish_decision_request(run.id, cycle_id)
-        if cycle_id is not None:
-            self._teams.set_cycle_status(cycle_id, "waiting_for_user")
         run = self._teams.get_team_run(run.id)
         await self._publish(
             {
@@ -3155,6 +3180,38 @@ class TeamRuntime:
         self._teams.set_run_status(run.id, "canceled")
         if cycle_id is not None:
             self._teams.set_cycle_status(cycle_id, "canceled")
+
+    def _settle_failed(
+        self,
+        run: TeamRun,
+        error: str,
+        cycle_id: str | None = None,
+    ) -> TeamRun:
+        for task in self._teams.list_tasks(run.id, cycle_id):
+            if task.status != "in_progress":
+                continue
+            if task.owner_agent_id:
+                self._teams.finish_task(
+                    task.id,
+                    task.owner_agent_id,
+                    "failed",
+                    result=task.result,
+                    error_message=error,
+                )
+                continue
+            self._teams.set_task_status(
+                task.id,
+                "failed",
+                result=task.result,
+                error_message=error,
+            )
+        for agent in self._teams.list_agents(run.id):
+            if agent.status == "running":
+                self._teams.set_agent_status(agent.id, "failed")
+        failed = self._teams.set_run_status(run.id, "failed", error_message=error)
+        if cycle_id is not None:
+            self._teams.set_cycle_status(cycle_id, "failed", error_message=error)
+        return failed
 
     def _validate_cycle(self, run: TeamRun, cycle_id: str | None) -> None:
         if run.lifecycle_mode == "continuous" and cycle_id is None:
@@ -3240,24 +3297,14 @@ def _cycle_input_artifacts_block(inputs: list[object]) -> str:
     )
 
 
-def _terminal_status(tasks: list[TeamTask]) -> str:
-    if not tasks:
-        return "failed"
-    required = [task for task in tasks if task.required]
-    optional = [task for task in tasks if not task.required]
-    if any(task.status == "failed" for task in required):
-        return "failed"
-    if any(task.status == "blocked" for task in required):
-        return "blocked"
-    if all(task.status == "completed" for task in required):
-        if any(task.status in {"blocked", "failed"} for task in optional):
-            return "completed_with_failures"
-        return "completed"
-    if not required and any(
-        task.status in {"blocked", "failed"} for task in optional
-    ):
-        return "completed_with_failures"
-    return "blocked"
+def _terminal_status(
+    tasks: list[TeamTask],
+    dependencies: dict[str, list[str]] | None = None,
+) -> str | None:
+    disposition = cycle_execution_disposition(tasks, dependencies or {})
+    if disposition.kind != "terminal":
+        return None
+    return disposition.terminal_status
 
 
 def _run_delta(run: TeamRun) -> dict[str, object]:
@@ -3502,8 +3549,15 @@ def _operation_spec(
     )
 
 
-def _validated_task_plan(response: ModelResponse) -> ValidatedOperationResult:
-    tasks = _parse_task_plan(response.content)
+def _validated_task_plan(
+    response: ModelResponse,
+    *,
+    allowed_owner_agent_ids: set[str] | None = None,
+) -> ValidatedOperationResult:
+    tasks = _parse_task_plan(
+        response.content,
+        allowed_owner_agent_ids=allowed_owner_agent_ids,
+    )
     return ValidatedOperationResult(
         "task_plan",
         {
@@ -3770,6 +3824,7 @@ def _agent_delta(agent: TeamAgent) -> dict[str, object]:
 def _parse_task_plan(
     content: str,
     allowed_input_artifact_ids: set[str] | None = None,
+    allowed_owner_agent_ids: set[str] | None = None,
 ) -> list[dict[str, object]]:
     stripped = normalize_json_envelope(content)
     if stripped.startswith("```"):
@@ -3807,6 +3862,14 @@ def _parse_task_plan(
             not isinstance(owner_agent_id, str) or not owner_agent_id.strip()
         ):
             raise ValueError("Planner task owner must be a member ID or null")
+        if (
+            isinstance(owner_agent_id, str)
+            and allowed_owner_agent_ids is not None
+            and owner_agent_id.strip() not in allowed_owner_agent_ids
+        ):
+            raise ValueError(
+                "Planner task owner_agent_id was not one of the fixed team member IDs"
+            )
         required = item.get("required")
         if not isinstance(required, bool):
             raise ValueError("Planner task required must be a boolean")

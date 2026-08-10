@@ -12,6 +12,7 @@ from personal_agent_gateway.migrations import (
     _migration_19_team_acceptance_recovery,
     _migration_20_team_model_operations,
     _migration_21_knowledge_request_draft_failure,
+    _migration_29_team_run_workspace_inheritance,
 )
 
 
@@ -89,7 +90,7 @@ def test_migration_21_adds_knowledge_request_draft_failure_columns_idempotently(
         "last_draft_failed_at",
         "last_draft_cycle_id",
     } <= columns
-    assert LATEST_SCHEMA_VERSION == 28
+    assert LATEST_SCHEMA_VERSION == 29
 
 
 def test_migration_18_adds_nullable_cycle_space_snapshot() -> None:
@@ -440,3 +441,16 @@ def test_schema_v5_database_reaches_latest_before_cycle_indexes_are_created(
         "select name from sqlite_master "
         "where name = 'idx_team_tasks_run_cycle_status_created'"
     ) is not None
+
+
+def test_migration_29_adds_team_run_parent_idempotently() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.execute("create table team_runs (id text primary key)")
+
+    _migration_29_team_run_workspace_inheritance(connection)
+    _migration_29_team_run_workspace_inheritance(connection)
+
+    assert "parent_team_run_id" in {
+        row["name"] for row in connection.execute("pragma table_info(team_runs)")
+    }

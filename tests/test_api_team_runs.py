@@ -1164,6 +1164,12 @@ def test_team_task_payload_exposes_acceptance_outcome_and_result(tmp_path: Path)
             (RequiredVerification("link-check"),),
         ),
     )
+    prerequisite = service.create_task(
+        run["id"],
+        "Prepare guide",
+        "Write the guide.",
+    )
+    service.add_task_dependencies(task.id, [prerequisite.id])
     service.record_task_outcome(
         task.id,
         {
@@ -1191,6 +1197,7 @@ def test_team_task_payload_exposes_acceptance_outcome_and_result(tmp_path: Path)
     assert response.status_code == 200
     payload = response.json()["tasks"][0]
     assert payload["required"] is True
+    assert payload["depends_on_task_ids"] == [prerequisite.id]
     assert payload["acceptance"] == {
         "required_outputs": ["outputs/guide.md"],
         "required_verifications": [{"name": "link-check", "check": None}],
@@ -1200,6 +1207,13 @@ def test_team_task_payload_exposes_acceptance_outcome_and_result(tmp_path: Path)
         "required_verification_failed"
     )
     assert payload["acceptance_recovery_attempts"] == 0
+
+    detail = client.get(f"/api/team-runs/{run['id']}/detail")
+
+    assert detail.status_code == 200
+    detail_tasks = {item["id"]: item for item in detail.json()["tasks"]}
+    assert detail_tasks[task.id]["depends_on_task_ids"] == [prerequisite.id]
+    assert detail_tasks[prerequisite.id]["depends_on_task_ids"] == []
 
     leader, worker = service.list_agents(run["id"])
     service.start_task(task.id, worker.id)
@@ -1451,6 +1465,35 @@ def test_create_team_run_api_snapshots_agents(tmp_path: Path) -> None:
     stored_agent = client.app.state.team_run_service.get_agent(agents[0]["id"])
     model = client.app.state.team_runtime._model_factory(stored_agent)
     assert Path(model._execution["workspace_root"]).resolve() == Path(run["working_root"]).resolve()
+
+
+def test_create_team_run_api_inherits_parent_workspace(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
+    parent = client.post(
+        "/api/team-runs",
+        json={"team_id": team_id, "execution_policy": "triggered"},
+    ).json()["team_run"]
+    parent_file = Path(parent["working_root"]) / "README.md"
+    parent_file.write_text("SNS studio", encoding="utf-8")
+    client.app.state.team_run_service.set_run_status(parent["id"], "completed")
+
+    response = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "execution_policy": "triggered",
+            "parent_team_run_id": parent["id"],
+        },
+    )
+
+    assert response.status_code == 200
+    child = response.json()["team_run"]
+    assert child["parent_team_run_id"] == parent["id"]
+    assert (Path(child["working_root"]) / "README.md").read_text(
+        encoding="utf-8"
+    ) == "SNS studio"
 
 
 def test_create_team_run_is_continuous_and_standard_record_remains_readable(
