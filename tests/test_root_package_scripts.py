@@ -32,3 +32,20 @@ def test_macos_launcher_accepts_pag_local_token_as_lmg_local_token() -> None:
     launcher = (ROOT / "scripts" / "start_local_runtime.sh").read_text(encoding="utf-8")
 
     assert 'export LMG_LOCAL_TOKEN="${PAG_LOCAL_TOKEN:-}"' in launcher
+
+
+def test_macos_stop_waits_for_exit_before_removing_runtime_state() -> None:
+    stop_script = (ROOT / "scripts" / "stop_local_runtime.sh").read_text(
+        encoding="utf-8"
+    )
+
+    term_index = stop_script.index('kill "$pag_pid" "$lmg_pid"')
+    wait_index = stop_script.index('wait_for_processes 10 "$pag_pid" "$lmg_pid"')
+    force_index = stop_script.index('force_stop "$pag_pid"')
+    final_wait_index = stop_script.index(
+        'wait_for_processes 5 "$pag_pid" "$lmg_pid"'
+    )
+    remove_index = stop_script.index('rm "$state_path"')
+
+    assert 'kill -KILL "$pid"' in stop_script
+    assert term_index < wait_index < force_index < final_wait_index < remove_index
