@@ -242,6 +242,13 @@ of them.
 | 7 | `_execute` open-stage allowlist, `team_runtime.py:1260-1269` | `"Cycle has an open operation for another stage"` — same outcome, one line later |
 | 8 | workspace baseline set, `team_runtime.py:414-419` | worker stages only; a lead repair must not be added here |
 | 9 | `_WORKER_STAGES` / `_LEAD_STAGES`, `team_provider_recovery.py:538-544` | provider-wait state validation is silently skipped — no error, weaker invariant |
+| 10 | `_validate_lead_operation`, `team_model_effects.py:1223-1230` | `operation.stage != stage` rejects the repair **after it has already succeeded** — the run fails with `Operation is not a acceptance_lead stage` |
+
+Site 10 was found during implementation, not during design: the repair operation
+completed, its result validated, and the effect application then refused it. Two
+earlier drafts of this checklist missed it. A repair re-emits the same result for
+the same stage, so its effect is the base stage's effect, and the validator has
+to accept either name.
 
 Unaffected but verified:
 

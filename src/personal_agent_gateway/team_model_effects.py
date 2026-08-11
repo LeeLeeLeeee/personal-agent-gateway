@@ -25,6 +25,7 @@ from personal_agent_gateway.team_model_operations import (
     TeamModelOperation,
     TeamModelOperationService,
 )
+from personal_agent_gateway.team_repair_stages import REPAIR_STAGE
 from personal_agent_gateway.team_outcomes import TaskOutcomeError, parse_task_outcome
 from personal_agent_gateway.team_verification_checks import (
     CHECK_TYPES,
@@ -1226,7 +1227,13 @@ class TeamModelEffectService:
         operation: TeamModelOperation,
         stage: Literal["mediation_lead", "acceptance_lead"],
     ) -> tuple[TeamTask, TeamAgent, TeamAgent]:
-        if operation.stage != stage or operation.task_id is None:
+        # A repair re-emits the same result for the same stage, so its effect is
+        # the base stage's effect. Requiring an exact match here rejected the
+        # repair after it had already succeeded.
+        if (
+            operation.stage not in {stage, REPAIR_STAGE.get(stage)}
+            or operation.task_id is None
+        ):
             raise OperationConflict(f"Operation is not a {stage} stage")
         run = connection.execute(
             "select leader_agent_id from team_runs where id = ?",

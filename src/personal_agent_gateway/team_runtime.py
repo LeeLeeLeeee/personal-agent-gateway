@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal, Protocol
@@ -54,6 +54,7 @@ from personal_agent_gateway.team_provider_recovery import (
     ProviderOperationWaiting,
     TeamProviderRecovery,
 )
+from personal_agent_gateway.team_repair_stages import repair_stage_for
 from personal_agent_gateway.team_results import (
     TeamRunResultPackager,
     WorkspaceSnapshot,
@@ -396,6 +397,57 @@ class TeamRuntime:
         if cycle_id is None:
             return self._model_factory(agent)
         return self._model_factory(agent, cycle_id)
+
+    async def _invoke_with_repair(
+        self,
+        spec: OperationSpec,
+        agent: TeamAgent,
+        messages: list[dict[str, object]],
+        parser: Callable[[ModelResponse], ValidatedOperationResult],
+        *,
+        repair_messages: list[dict[str, object]] | None = None,
+        on_exhausted: Callable[
+            [TeamModelOperation], Awaitable[None]
+        ] | None = None,
+    ) -> TeamModelOperation:
+        """Invoke a stage, and ask once more when the response will not parse.
+
+        Repair used to be wired per stage, which meant a stage could inherit
+        none -- acceptance_lead had none, so one unparseable review ended the
+        run. Routing every stage through here makes that omission impossible.
+        """
+        try:
+            return await self._invoke_operation(spec, agent, messages, parser)
+        except InvalidOperationResult as exc:
+            failed = self._operations.get(exc.operation_id)
+
+        repair_stage = repair_stage_for(spec.stage)
+        # worker_execution repairs in place at the next ordinal; every other
+        # stage repairs under its own name at the ordinal that failed.
+        repair_ordinal = (
+            failed.stage_ordinal + 1
+            if repair_stage == spec.stage
+            else failed.stage_ordinal
+        )
+        prompt = repair_messages or _repair_messages(failed.reason_code)
+        repair_spec = _operation_spec(
+            self._teams.get_team_run(spec.team_run_id),
+            spec.cycle_id,
+            agent,
+            repair_stage,
+            repair_ordinal,
+            prompt,
+            task_id=spec.task_id,
+            upstream_session_id=failed.upstream_session_id,
+        )
+        try:
+            return await self._invoke_operation(repair_spec, agent, prompt, parser)
+        except InvalidOperationResult as exc:
+            if on_exhausted is None:
+                raise
+            exhausted = self._operations.get(exc.operation_id)
+            await on_exhausted(exhausted)
+            return exhausted
 
     async def _invoke_operation(
         self,
@@ -1979,7 +2031,7 @@ class TeamRuntime:
             worker_agent,
             task,
         )
-        lead_operation = await self._invoke_operation(
+        lead_operation = await self._invoke_with_repair(
             _operation_spec(
                 run,
                 task.cycle_id,
@@ -3456,6 +3508,29 @@ def _acceptance_worker_messages(
                 "Authoritative current acceptance criteria:\n"
                 f"{_task_acceptance_json(task.acceptance)}\n"
                 "Return only the required TaskOutcome JSON object."
+            ),
+        }
+    ]
+
+
+def _repair_messages(reason_code: str | None) -> list[dict[str, object]]:
+    """Shape-agnostic on purpose.
+
+    Only the parser knows the expected keys and there is no schema to read them
+    from, so naming keys here would be right for one stage and subtly wrong for
+    the rest. A stage that wants to restate its keys passes its own
+    repair_messages.
+    """
+    error = reason_code or "invalid_structured_output"
+    return [
+        {
+            "role": "user",
+            "content": (
+                "Your previous response could not be parsed.\n"
+                f"Error: {error}.\n\n"
+                "Do not repeat the work and do not modify files. Re-emit only "
+                "the previous final result as one raw JSON object. No "
+                "explanations, no Markdown, no code fences."
             ),
         }
     ]

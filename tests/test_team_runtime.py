@@ -873,6 +873,31 @@ async def test_lead_acceptance_retry_uses_separate_worker_operation(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_lead_acceptance_repairs_invalid_structured_output_once(tmp_path):
+    """The worker side already recovers this way; the lead side did not, and one
+    unparseable review ended the whole run."""
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse("I reviewed it and it looks fine to me.", []),
+        ModelResponse(_retry_review("Fix the missing citation check."), []),
+        ModelResponse("summary", []),
+    ]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    failed = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:1"
+    )
+    repaired = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead_repair:1"
+    )
+    assert failed.status == "failed"
+    assert failed.reason_code == "invalid_structured_output"
+    assert repaired is not None
+    assert repaired.status == "applied"
+
+
+@pytest.mark.asyncio
 async def test_acceptance_worker_repairs_invalid_structured_output_once(tmp_path):
     setup = make_recoverable_acceptance_runtime(tmp_path)
     corrected = _outcome_json("draft-fixed")
