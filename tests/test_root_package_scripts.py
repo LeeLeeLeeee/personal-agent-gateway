@@ -59,3 +59,14 @@ def test_launcher_bounds_uvicorn_graceful_shutdown() -> None:
     assert "--timeout-graceful-shutdown" in script
     local = (ROOT / "scripts" / "run_local.ps1").read_text(encoding="utf-8")
     assert "--timeout-graceful-shutdown" in local
+
+
+def test_stop_script_kills_process_trees_and_waits_for_ports() -> None:
+    """Stop-Process ends the recorded PID and nothing below it, so a CLI tree
+    spawned by the gateway outlived the stop it was supposed to end."""
+    stop = (ROOT / "scripts" / "stop_local_runtime.ps1").read_text(encoding="utf-8")
+    assert "taskkill" in stop.lower()
+    assert "/T" in stop
+    assert "Wait-PortReleased" in stop
+    common = (ROOT / "scripts" / "local_runtime_common.ps1").read_text(encoding="utf-8")
+    assert "function Wait-PortReleased" in common

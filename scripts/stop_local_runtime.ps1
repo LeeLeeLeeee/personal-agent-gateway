@@ -51,7 +51,11 @@ foreach ($name in "pag", "lmg") {
     $process = $verified[$name]
     if ($null -ne $process) {
         try {
-            Stop-Process -Id $process.Id -Force -ErrorAction Stop
+            # Stop-Process ends this PID only. The gateway spawns CLI trees,
+            # so kill the descendants with it -- otherwise they outlive the
+            # stop, holding workspace handles and burning provider quota.
+            & taskkill.exe /PID $process.Id /T /F | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "taskkill_failed: $($process.Id) exit $LASTEXITCODE" }
             Wait-RuntimeProcessExit -ProcessId $process.Id
             $stopped += $name
         } catch {
@@ -60,6 +64,16 @@ foreach ($name in "pag", "lmg") {
                 pid = $process.Id
                 error = $_.Exception.Message
             }
+        }
+    }
+}
+
+foreach ($entry in @(@{ name = "pag"; port = 8787 }, @{ name = "lmg"; port = 8788 })) {
+    if (-not (Wait-PortReleased -Port $entry.port)) {
+        $failures += [pscustomobject]@{
+            name  = $entry.name
+            pid   = $null
+            error = "port_still_listening: $($entry.port)"
         }
     }
 }

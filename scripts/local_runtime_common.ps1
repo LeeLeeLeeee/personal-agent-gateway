@@ -140,3 +140,19 @@ function Wait-RuntimeProcessExit {
     }
     throw "process_still_running: pid=$ProcessId"
 }
+
+function Wait-PortReleased {
+    param(
+        [Parameter(Mandatory = $true)][int] $Port,
+        [int] $TimeoutSeconds = 10
+    )
+    # Reporting "stopped" while the port is still bound sends the operator
+    # straight into a port_conflict on the next start.
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        if ($null -eq $listener) { return $true }
+        Start-Sleep -Milliseconds 250
+    }
+    return $false
+}
