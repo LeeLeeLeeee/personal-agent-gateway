@@ -119,6 +119,16 @@ for it now exists outside the run.
 
 ## Finding 4 — The user cannot contest the plan, only add to it
 
+**Designed 2026-08-12 in `2026-08-12-team-run-plan-visibility-and-contest-design.md`,
+together with the operator-facing half of Finding 3.** Following the code while
+writing that design sharpened this finding: `/add-work` refuses runs whose
+`lifecycle_mode` is `continuous`, which both existing runs are, so the endpoint
+quoted below is not even the path they take. Instructions arrive as cycle
+requests and land on the `cycle_add_work` stage — and run 699c1915's ledger holds
+no `cycle_planning` operation at all, one `cycle_add_work`, from which its entire
+13-task plan came. The prompt below is therefore not merely *one* leader path; it
+is the only prompt that ever produces a plan.
+
 Seventeen endpoints let the user act on an in-flight run. None of them lets the
 user say the plan itself is wrong and have the leader adjudicate.
 
@@ -179,9 +189,10 @@ it is what actually ended this run.
 
 ## Also noticed, unrelated to completeness
 
-- `interventions.py` is an in-memory store with no references in `app.py`,
-  `team_runtime.py`, or any API module. Nothing is wired and its state would not
-  survive a restart. Decide whether it is being adopted or removed.
+- `interventions.py` was an in-memory store with no references in `app.py`,
+  `team_runtime.py`, or any API module. **Resolved 2026-08-12: removed.** The
+  capability it reached for already exists, wired and persisted, as the team-run
+  decision request flow, so a second in-memory version could only drift from it.
 - `docs/english-learning/srs-algorithm.md` contradicts itself: §1 requires a
   vetted FSRS library and forbids reimplementing the weights, while a later
   section sanctions the in-repo implementation that `srs.py` actually contains.
