@@ -9,6 +9,7 @@ vi.mock("../api/client.js", () => ({
     applyTeamRunDelivery: vi.fn(),
     cancelTeamRunDeliveryConflicts: vi.fn(),
     commitTeamRunDelivery: vi.fn(),
+    deleteTeamRun: vi.fn(),
     continueTeamRunDelivery: vi.fn(),
     resolveTeamRunDeliveryConflict: vi.fn(),
     teamDocuments: vi.fn(),
@@ -43,7 +44,7 @@ function renderController() {
     confirm: vi.fn().mockResolvedValue(true),
     setScreenError: vi.fn()
   };
-  return renderHook(() => useTeamRunController(dependencies));
+  return { ...renderHook(() => useTeamRunController(dependencies)), dependencies };
 }
 
 afterEach(() => {
@@ -572,5 +573,48 @@ describe("useTeamRunController delivery", () => {
     await act(async () => result.current.handleContinueTeamRunDelivery());
     expect(api.continueTeamRunDelivery).toHaveBeenCalledWith("run-a");
     expect(result.current.teamRunDelivery).toEqual(applied);
+  });
+});
+
+describe("useTeamRunController delete", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.teamRuns.mockResolvedValue([]);
+  });
+
+  it("shows the server's reason when a delete is refused", async () => {
+    api.deleteTeamRun.mockResolvedValue({
+      ok: false,
+      status: 409,
+      detail: "Running team runs cannot be deleted"
+    });
+    const { result, dependencies } = renderController();
+
+    await act(async () => result.current.handleDeleteTeamRun("run-a"));
+
+    expect(dependencies.toast).toHaveBeenCalledWith(
+      "Running team runs cannot be deleted",
+      "error"
+    );
+    expect(api.teamRuns).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a generic message when the server gives no reason", async () => {
+    api.deleteTeamRun.mockResolvedValue({ ok: false, status: 500, detail: null });
+    const { result, dependencies } = renderController();
+
+    await act(async () => result.current.handleDeleteTeamRun("run-a"));
+
+    expect(dependencies.toast).toHaveBeenCalledWith("Failed to delete team run", "error");
+  });
+
+  it("refreshes the list and reports success when the delete lands", async () => {
+    api.deleteTeamRun.mockResolvedValue({ ok: true, status: 200, detail: null });
+    const { result, dependencies } = renderController();
+
+    await act(async () => result.current.handleDeleteTeamRun("run-a"));
+
+    expect(api.teamRuns).toHaveBeenCalled();
+    expect(dependencies.toast).toHaveBeenCalledWith("Team run deleted", "success");
   });
 });

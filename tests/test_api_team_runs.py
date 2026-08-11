@@ -2073,6 +2073,42 @@ def test_delete_team_run_removes_it(tmp_path: Path) -> None:
     assert not workspace.exists()
 
 
+def test_delete_team_run_whose_worktree_branch_is_already_gone(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Ship it",
+            "execution_policy": "triggered",
+        },
+    ).json()["team_run"]
+    workspace = Path(run["workspace_root"])
+    workspace.mkdir(parents=True, exist_ok=True)
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+    client.app.state.team_run_service._db.execute(
+        "update team_runs set space_policy_snapshot_json = ?, working_root = ?, "
+        "worktree_branch = ? where id = ?",
+        (
+            json.dumps({"write_mode": "worktree", "workspace_path": str(repository)}),
+            str(workspace / "project"),
+            f"team-run/{run['id']}",
+            run["id"],
+        ),
+    )
+
+    deleted = client.delete(f"/api/team-runs/{run['id']}")
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+    assert client.get(f"/api/team-runs/{run['id']}").status_code == 404
+    assert not workspace.exists()
+
+
 def test_delete_running_team_run_keeps_workspace_and_record(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")

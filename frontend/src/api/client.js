@@ -518,7 +518,13 @@ export const api = {
   },
   async deleteTeamRun(id) {
     const response = await fetch(`/api/team-runs/${encodeURIComponent(id)}`, { method: "DELETE" });
-    return response.ok;
+    if (response.ok) return { ok: true, status: response.status, detail: null };
+    const body = await response.json().catch(() => null);
+    return {
+      ok: false,
+      status: response.status,
+      detail: typeof body?.detail === "string" ? body.detail : null
+    };
   },
   async teamRunDelivery(id) {
     const body = await jsonOrNull(await fetch(

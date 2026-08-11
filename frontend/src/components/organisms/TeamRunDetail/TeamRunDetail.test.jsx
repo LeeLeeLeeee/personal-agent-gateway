@@ -1364,4 +1364,68 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
     expect(container.querySelector(".team-task-status")).toHaveTextContent("FAILED");
   });
+
+  it("groups every task state into four board columns", async () => {
+    const { container } = render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "Board", status: "running", run_mode: "plan_and_execute" },
+          agents: [],
+          messages: [],
+          tasks: [
+            { id: "t1", title: "Queued work", status: "pending" },
+            { id: "t2", title: "Active work", status: "in_progress" },
+            { id: "t3", title: "Awaiting answer", status: "waiting_for_user" },
+            { id: "t4", title: "Awaiting provider", status: "waiting_for_provider" },
+            { id: "t5", title: "Finished work", status: "completed" },
+            { id: "t6", title: "Bypassed work", status: "skipped" },
+            { id: "t7", title: "Stuck work", status: "blocked" },
+            { id: "t8", title: "Broken work", status: "failed" },
+            { id: "t9", title: "Dropped work", status: "canceled" }
+          ]
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+
+    const columns = [...container.querySelectorAll(".team-task-column")];
+    expect(columns).toHaveLength(4);
+
+    const heads = columns.map((column) => column.querySelector(".team-task-column-head"));
+    expect(heads.map((head) => head.firstElementChild.textContent)).toEqual([
+      "PENDING",
+      "IN PROGRESS",
+      "COMPLETED",
+      "UNRESOLVED"
+    ]);
+    expect(heads.map((head) => head.lastElementChild.textContent)).toEqual(["1", "3", "2", "3"]);
+
+    const titlesByColumn = columns.map((column) =>
+      [...column.querySelectorAll(".team-task-title")].map((node) => node.textContent)
+    );
+    expect(titlesByColumn[0]).toEqual(["Queued work"]);
+    expect(titlesByColumn[1]).toEqual(["Active work", "Awaiting answer", "Awaiting provider"]);
+    expect(titlesByColumn[2]).toEqual(["Finished work", "Bypassed work"]);
+    expect(titlesByColumn[3]).toEqual(["Stuck work", "Broken work", "Dropped work"]);
+  });
+
+  it("keeps a task with an unmapped state visible instead of dropping it", async () => {
+    const { container } = render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "Board", status: "running", run_mode: "plan_and_execute" },
+          agents: [],
+          messages: [],
+          tasks: [{ id: "t1", title: "Unknown state work", status: "invented_state" }]
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+
+    const unresolved = [...container.querySelectorAll(".team-task-column")][3];
+    expect(unresolved.querySelector(".team-task-title").textContent).toBe("Unknown state work");
+    expect(screen.getByRole("button", { name: "Open task Unknown state work" })).toBeInTheDocument();
+  });
 });

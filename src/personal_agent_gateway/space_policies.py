@@ -265,10 +265,16 @@ class TeamSpaceManager:
     ) -> None:
         if policy and policy.write_mode == "worktree" and policy.workspace_path and working_root:
             repository = Path(policy.workspace_path).resolve()
-            if working_root.exists():
-                _run_git(repository, "worktree", "remove", "--force", str(working_root))
-            if branch:
-                _run_git(repository, "branch", "-D", branch)
+            # Git state removed outside the gateway counts as already cleaned;
+            # state that exists but resists removal still fails, so a leaked
+            # branch is never hidden.
+            if _git_succeeds(repository, "rev-parse", "--git-dir"):
+                if working_root.exists():
+                    _run_git(repository, "worktree", "remove", "--force", str(working_root))
+                if branch and _git_succeeds(
+                    repository, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"
+                ):
+                    _run_git(repository, "branch", "-D", branch)
         if run_root.exists():
             _clear_readonly(run_root)
             shutil.rmtree(run_root)
@@ -322,6 +328,17 @@ def _policy_from_row(row) -> SpacePolicy:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _git_succeeds(repository: Path, *args: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(repository), *args],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def _run_git(repository: Path, *args: str) -> None:

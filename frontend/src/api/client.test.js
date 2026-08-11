@@ -633,4 +633,45 @@ describe("api client", () => {
       body: JSON.stringify({ status: "deferred" })
     }));
   });
+
+  describe("deleteTeamRun", () => {
+    it("reports success without a detail", async () => {
+      fetch.mockResolvedValueOnce({ ok: true, status: 200 });
+
+      await expect(api.deleteTeamRun("run 1")).resolves.toEqual({
+        ok: true,
+        status: 200,
+        detail: null
+      });
+      expect(fetch).toHaveBeenCalledWith("/api/team-runs/run%201", { method: "DELETE" });
+    });
+
+    it("carries the server's refusal detail", async () => {
+      fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: () => Promise.resolve({ detail: "Running team runs cannot be deleted" })
+      });
+
+      await expect(api.deleteTeamRun("run-1")).resolves.toEqual({
+        ok: false,
+        status: 409,
+        detail: "Running team runs cannot be deleted"
+      });
+    });
+
+    it("reports a failure with a null detail when the body is unreadable", async () => {
+      fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: () => Promise.reject(new Error("not json"))
+      });
+
+      await expect(api.deleteTeamRun("run-1")).resolves.toEqual({
+        ok: false,
+        status: 500,
+        detail: null
+      });
+    });
+  });
 });

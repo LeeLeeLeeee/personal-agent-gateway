@@ -6,18 +6,8 @@ import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
 import { DocumentPreview } from "../DocumentPreview/index.jsx";
 import { MarkdownContent } from "../MarkdownContent/index.jsx";
 import { elapsedSeconds, fmtDateTime, fmtElapsed } from "../../../lib/time.js";
+import { TASK_STATUS_GROUPS, groupForTaskStatus } from "../../../lib/taskStatusGroups.js";
 
-const TEAM_TASK_COLUMNS = [
-  "pending",
-  "in_progress",
-  "waiting_for_provider",
-  "waiting_for_user",
-  "skipped",
-  "blocked",
-  "completed",
-  "failed",
-  "canceled"
-];
 const OPEN_TASK_STATUSES = new Set([
   "pending",
   "in_progress",
@@ -1356,12 +1346,14 @@ export function TeamRunDetail({
             ) : null}
           </div>
           <div className="team-task-board">
-            {TEAM_TASK_COLUMNS.map((column) => {
-              const columnTasks = visibleTasks.filter((task) => task.status === column);
+            {TASK_STATUS_GROUPS.map((group) => {
+              const columnTasks = visibleTasks.filter(
+                (task) => groupForTaskStatus(task.status) === group.key
+              );
               return (
-                <div className="team-task-column" key={column}>
+                <div className="team-task-column" key={group.key}>
                   <div className="team-task-column-head mono">
-                    <span>{column.replace("_", " ")}</span>
+                    <span>{group.label}</span>
                     <span>{columnTasks.length}</span>
                   </div>
                   <div className="team-task-column-body">

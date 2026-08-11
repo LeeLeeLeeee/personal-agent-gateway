@@ -1,5 +1,7 @@
+import json
 import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -914,6 +916,37 @@ def test_delete_team_run_allows_missing_workspace(tmp_path):
 
     with pytest.raises(KeyError):
         teams.get_team_run(run.id)
+
+
+def test_delete_team_run_when_worktree_branch_is_already_gone(tmp_path):
+    """Reproduces the reported failure: a finished worktree run whose branch and
+    project directory were cleaned up outside the gateway stayed undeletable."""
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    run = teams.create_team_run("temporary test run", leader.id, [], "planning_only", 1)
+    task = teams.create_task(run.id, "temporary task", "test only")
+    workspace = Path(run.workspace_root)
+    workspace.mkdir(parents=True, exist_ok=True)
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+    teams._db.execute(
+        "update team_runs set space_policy_snapshot_json = ?, working_root = ?, "
+        "worktree_branch = ? where id = ?",
+        (
+            json.dumps({"write_mode": "worktree", "workspace_path": str(repository)}),
+            str(workspace / "project"),
+            f"team-run/{run.id}",
+            run.id,
+        ),
+    )
+
+    teams.delete_team_run(run.id)
+
+    assert not workspace.exists()
+    with pytest.raises(KeyError):
+        teams.get_team_run(run.id)
+    assert teams._db.fetchone("select id from team_tasks where id = ?", (task.id,)) is None
 
 
 def test_delete_team_run_rejects_workspace_outside_configured_root(tmp_path):

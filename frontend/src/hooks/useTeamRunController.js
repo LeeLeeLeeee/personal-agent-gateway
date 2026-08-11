@@ -570,8 +570,8 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     });
     if (!accepted) return;
     const deleted = await api.deleteTeamRun(id);
-    if (!deleted) {
-      toast("Failed to delete team run", "error");
+    if (!deleted.ok) {
+      toast(deleted.detail || "Failed to delete team run", "error");
       return;
     }
     if (id === selectedTeamRunId) setSelectedTeamRunId(null);

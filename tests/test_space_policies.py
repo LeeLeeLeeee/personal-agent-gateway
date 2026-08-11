@@ -1,6 +1,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.space_policies import SpacePolicyService, TeamSpaceManager
@@ -102,6 +104,114 @@ def test_none_read_mode_rejects_a_read_path(tmp_path: Path) -> None:
     )
 
     assert policy.read_path is None
+
+
+def _git_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "README.md").write_text("root", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-m", "init"], check=True, capture_output=True)
+    return repository
+
+
+def _worktree_policy(tmp_path: Path, workspace_path: Path):
+    _, personas, spaces, teams = _services(tmp_path)
+    lead = _persona(personas, "Lead")
+    team = teams.create_team("Crew", "", lead.id, [])
+    return spaces.upsert(
+        "team",
+        team.id,
+        read_mode="home",
+        read_path=None,
+        write_mode="worktree",
+        workspace_path=str(workspace_path),
+    )
+
+
+def _branches(repository: Path) -> list[str]:
+    result = subprocess.run(
+        ["git", "-C", str(repository), "branch", "--format=%(refname:short)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.split()
+
+
+def test_cleanup_succeeds_when_worktree_and_branch_are_already_gone(tmp_path: Path) -> None:
+    repository = _git_repository(tmp_path)
+    policy = _worktree_policy(tmp_path, repository)
+    run_root = tmp_path / "runs" / "run-1"
+    run_root.mkdir(parents=True)
+    prepared = TeamSpaceManager().prepare("run-1", run_root, policy)
+
+    # Someone cleaned the worktree up outside the gateway.
+    subprocess.run(
+        ["git", "-C", str(repository), "worktree", "remove", "--force", str(prepared.working_root)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "branch", "-D", prepared.worktree_branch],
+        check=True,
+        capture_output=True,
+    )
+
+    TeamSpaceManager().cleanup(run_root, policy, prepared.working_root, prepared.worktree_branch)
+
+    assert not run_root.exists()
+
+
+def test_cleanup_deletes_a_branch_that_still_exists(tmp_path: Path) -> None:
+    repository = _git_repository(tmp_path)
+    policy = _worktree_policy(tmp_path, repository)
+    run_root = tmp_path / "runs" / "run-1"
+    run_root.mkdir(parents=True)
+    prepared = TeamSpaceManager().prepare("run-1", run_root, policy)
+    assert prepared.worktree_branch in _branches(repository)
+
+    TeamSpaceManager().cleanup(run_root, policy, prepared.working_root, prepared.worktree_branch)
+
+    assert prepared.worktree_branch not in _branches(repository)
+    assert not run_root.exists()
+
+
+def test_cleanup_raises_when_an_existing_branch_cannot_be_deleted(tmp_path: Path) -> None:
+    repository = _git_repository(tmp_path)
+    policy = _worktree_policy(tmp_path, repository)
+    run_root = tmp_path / "runs" / "run-1"
+    run_root.mkdir(parents=True)
+    prepared = TeamSpaceManager().prepare("run-1", run_root, policy)
+
+    # The branch is still checked out in the live worktree, so git refuses to
+    # delete it. Point cleanup at an absent working root so it skips worktree
+    # removal and reaches the branch deletion.
+    with pytest.raises(ValueError, match="Git worktree command failed"):
+        TeamSpaceManager().cleanup(
+            run_root,
+            policy,
+            run_root / "absent",
+            prepared.worktree_branch,
+        )
+
+    assert prepared.worktree_branch in _branches(repository)
+    assert run_root.exists()
+
+
+def test_cleanup_skips_git_when_the_workspace_path_is_not_a_repository(tmp_path: Path) -> None:
+    plain_directory = tmp_path / "not-a-repository"
+    plain_directory.mkdir()
+    policy = _worktree_policy(tmp_path, plain_directory)
+    run_root = tmp_path / "runs" / "run-1"
+    (run_root / "artifacts").mkdir(parents=True)
+
+    TeamSpaceManager().cleanup(run_root, policy, run_root / "project", "team-run/run-1")
+
+    assert not run_root.exists()
 
 
 def test_worktree_mode_prepares_isolated_git_worktree(tmp_path: Path) -> None:
