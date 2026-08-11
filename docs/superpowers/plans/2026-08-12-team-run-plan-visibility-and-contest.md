@@ -126,6 +126,17 @@ def test_a_declared_file_that_is_not_there_is_reported_missing(tmp_path):
     assert task_build_evidence(task, tmp_path)["missing_files"] == ["ghost.md"]
 
 
+def test_a_sensitive_file_that_is_present_is_not_reported_missing(tmp_path):
+    """safe_workspace_file refuses .env by name, not by absence. Reporting a file
+    that is plainly there as missing would make the screen lie."""
+    (tmp_path / ".env.example").write_text("KEY=", encoding="utf-8")
+    task = _task(
+        tmp_path, outcome={"deliverables": [{"path": ".env.example"}]}
+    )
+
+    assert task_build_evidence(task, tmp_path)["missing_files"] == []
+
+
 def test_a_path_escaping_the_workspace_counts_as_missing(tmp_path):
     """safe_workspace_file returns None for an escape, and the report must not
     turn that into a file that exists somewhere else on the machine."""
@@ -229,8 +240,28 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'personal_agent_gateway
 ```python
 from pathlib import Path
 
+from personal_agent_gateway.file_safety import is_sensitive_file
 from personal_agent_gateway.team_verification_checks import safe_workspace_file
 from personal_agent_gateway.teams import TeamTask
+
+
+def _is_missing(workspace: Path, relative_path: str) -> bool:
+    """Absent, or unreachable for a reason that is not absence.
+
+    safe_workspace_file also refuses .env and .env.* by name, so asking it alone
+    would report a file that is plainly there as missing and the screen would be
+    telling the operator something false. Sensitive names are checked separately
+    against the resolved path, still inside the workspace.
+    """
+    if safe_workspace_file(workspace, relative_path) is not None:
+        return False
+    root = workspace.resolve()
+    try:
+        candidate = (root / relative_path).resolve()
+        candidate.relative_to(root)
+    except (OSError, ValueError):
+        return True
+    return not (candidate.is_file() and is_sensitive_file(candidate.name))
 
 
 def task_build_evidence(task: TeamTask, workspace: Path) -> dict[str, object]:
@@ -259,9 +290,7 @@ def task_build_evidence(task: TeamTask, workspace: Path) -> dict[str, object]:
         "undeclared_promises": sorted(promised - declared_paths),
         "extra_declarations": sorted(declared_paths - promised),
         "missing_files": sorted(
-            path
-            for path in declared_paths
-            if safe_workspace_file(workspace, path) is None
+            path for path in declared_paths if _is_missing(workspace, path)
         ),
         "verifications": [
             {
@@ -297,7 +326,7 @@ def run_build_evidence(
 - [ ] **Step 4: Run the tests and watch them pass**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_team_build_evidence.py -q -p no:randomly`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Lint**
 
@@ -933,9 +962,15 @@ it would invalidate it.
 
 Import `extract_coverage_gaps` at the top of the module.
 
-`_valid_synthesis` in `team_model_operations.py` decides whether this payload is
-acceptable — check it (near line 635) and widen it to allow the optional
-`coverage_gaps` key, or the operation will be rejected as an invalid result.
+`_valid_synthesis` decides whether this payload is acceptable, and it lives in
+`team_model_effects.py` — reachable from the registry
+`team_model_effect_result_validators()` at line 3096, not from
+`_built_in_result_validators()` in `team_model_operations.py`. There are two
+registries: the built-in one carries the three planning stages and is always
+applied, and the injected one carries everything else; the service constructor
+merges them and raises on a duplicate stage-and-kind pair. Widen `_valid_synthesis`
+to allow the optional `coverage_gaps` key or the operation is rejected as an
+invalid result.
 
 - [ ] **Step 5: Run and watch them pass**
 
@@ -944,11 +979,46 @@ Expected: all pass.
 
 - [ ] **Step 6: Surface it**
 
-Add `"coverage_gaps": cycle.coverage_gaps` to `_cycle_payload`. The cycle row has
-no such column; rather than adding one, read the gaps from the cycle's applied
-`cycle_synthesis` operation in `get_team_run_detail` and attach them to the
-matching cycle payload entry. Adding a column would duplicate state that the
-ledger already owns.
+The cycle row has no `coverage_gaps` column and should not gain one — the ledger
+already owns this state, and a column would be a second copy to keep in step. So
+`_cycle_payload` takes it as an argument the way `_task_payload` takes
+`failure_shape`:
+
+```python
+def _cycle_payload(
+    cycle: TeamRunCycle,
+    coverage_gaps: list[dict[str, str]] | None = None,
+) -> dict[str, object]:
+```
+
+with `"coverage_gaps": coverage_gaps,` in the returned dict. In
+`get_team_run_detail`, build the lookup from each cycle's applied synthesis
+operation before the payload is assembled:
+
+```python
+    operations = request.app.state.team_model_operation_service
+    coverage_by_cycle = {}
+    for cycle in cycles:
+        synthesis = next(
+            (
+                operation
+                for operation in operations.list_for_cycle(cycle.id)
+                if operation.stage in {"cycle_synthesis", "cycle_synthesis_repair"}
+                and operation.status == "applied"
+            ),
+            None,
+        )
+        if synthesis is not None:
+            coverage_by_cycle[cycle.id] = (synthesis.result_json or {}).get(
+                "coverage_gaps"
+            )
+```
+
+and pass it in: `_cycle_payload(cycle, coverage_by_cycle.get(cycle.id))`.
+
+Use the real attribute name for the stored result — confirm it on
+`TeamModelOperation` at `team_model_operations.py:95` rather than assuming
+`result_json`.
 
 - [ ] **Step 7: Write and pass the frontend test**
 
@@ -1005,7 +1075,7 @@ completeness test that fails the moment a stage exists without a repair mapping,
 which is what catches the sites a new stage is read in.
 
 **Files:**
-- Modify: `src/personal_agent_gateway/team_model_operations.py:18` (the `OperationStage` literal) and around line 635 (the validator registry)
+- Modify: `src/personal_agent_gateway/team_model_operations.py:18` (the `OperationStage` literal) and `_built_in_result_validators()` at line 628
 - Modify: `src/personal_agent_gateway/team_repair_stages.py:14`
 - Test: `tests/test_team_repair_stages.py`, `tests/test_team_model_operations.py`
 
@@ -1038,6 +1108,20 @@ def test_reject_carries_no_tasks_and_amend_carries_at_least_one():
     assert _valid_contest_verdict({"kind": "reject", "reason": "task 7 covers it"})
     assert not _valid_contest_verdict(
         {"kind": "reject", "reason": "no", "tasks": [task]}
+    )
+    # The prompt shows every key, so a model will fill them all in. An empty
+    # value for a field this kind does not use has to pass, or the repair is
+    # spent on nearly every verdict.
+    assert _valid_contest_verdict(
+        {"kind": "reject", "reason": "no", "tasks": [], "question": None,
+         "supersedes": []}
+    )
+    assert _valid_contest_verdict(
+        {"kind": "amend", "reason": "ok", "tasks": [task], "question": ""}
+    )
+    assert not _valid_contest_verdict(
+        {"kind": "amend", "reason": "ok", "tasks": [task],
+         "question": "why are you asking?"}
     )
     assert _valid_contest_verdict({"kind": "amend", "reason": "agreed", "tasks": [task]})
     assert not _valid_contest_verdict({"kind": "amend", "reason": "agreed", "tasks": []})
@@ -1109,11 +1193,15 @@ def _valid_contest_verdict(payload: dict[str, object]) -> bool:
         return False
     if kind in {"reject", "ask_back"} and tasks:
         return False
+    question = payload.get("question")
     if kind == "ask_back":
-        question = payload.get("question")
         if not isinstance(question, str) or not question.strip():
             return False
-    elif "question" in payload:
+    # A model shown the full object in the prompt will send every key, so a
+    # present-but-empty question on an amend is the normal case, not a defect.
+    # Rejecting it would burn the repair on almost every verdict. A question with
+    # actual content on a kind that has no question to ask is still wrong.
+    elif question not in (None, ""):
         return False
     supersedes = payload.get("supersedes") or []
     if not isinstance(supersedes, list):
@@ -1135,12 +1223,20 @@ def _valid_contest_verdict(payload: dict[str, object]) -> bool:
     return True
 ```
 
-Register it alongside the other stages:
+Register it in `_built_in_result_validators()` at line 628, beside the planning
+stages:
 
 ```python
         "cycle_contest": {"contest_verdict": _valid_contest_verdict},
         "cycle_contest_repair": {"contest_verdict": _valid_contest_verdict},
 ```
+
+That registry rather than `team_model_effect_result_validators()` in
+`team_model_effects.py`, because a verdict is task specs plus a decision and
+`_valid_task_spec` is already here — `team_model_operations` is a leaf module that
+must not import the domain modules above it. The constructor merges both
+registries and raises on a duplicate stage-and-kind pair, so registering in both
+places is an error, not a belt-and-braces measure.
 
 In `team_repair_stages.py`, add `"cycle_contest": "cycle_contest_repair",`.
 
