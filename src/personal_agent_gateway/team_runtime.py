@@ -44,6 +44,7 @@ from personal_agent_gateway.team_lifecycle import (
     cycle_execution_disposition,
 )
 from personal_agent_gateway.team_model_operations import (
+    OperationStage,
     OperationConflict,
     OperationSpec,
     TeamModelOperation,
@@ -260,6 +261,20 @@ class UserDecisionResolution:
     decision: dict[str, object]
 
 
+class UnparsableLeadOutput(RuntimeError):
+    """A leader stage could not be parsed twice, so the run is paused, not failed.
+
+    Raised from the escalation so the acceptance flow stops instead of handing a
+    failed operation to a caller that expects a usable review. resume() treats it
+    like the other pause signals and returns the waiting run.
+    """
+
+    def __init__(self, stage: str, operation_id: str) -> None:
+        super().__init__(f"{stage} output could not be parsed twice")
+        self.stage = stage
+        self.operation_id = operation_id
+
+
 @dataclass(frozen=True)
 class OpenOperationRecovery:
     operation: TeamModelOperation
@@ -448,6 +463,48 @@ class TeamRuntime:
             exhausted = self._operations.get(exc.operation_id)
             await on_exhausted(exhausted)
             return exhausted
+
+    async def _escalate_unparsable_lead_output(
+        self,
+        run: TeamRun,
+        cycle_id: str,
+        task: TeamTask | None,
+        stage: OperationStage,
+        agent: TeamAgent,
+        failed: TeamModelOperation,
+    ) -> None:
+        """Pause rather than fail. A leader stage failing costs the whole run,
+        and the work waiting for review is still good.
+
+        Nothing is reserved for the retry. Two earlier designs tried to leave a
+        prepared operation for resume to pick up: reusing the failed key returns
+        the failed row, and using the next ordinal collides with the repair key
+        of the next acceptance attempt. Resume does not need one -- the task is
+        still in progress with its outcome persisted, so the acceptance flow
+        re-enters at the next attempt on its own.
+        """
+        if task is not None:
+            self._teams.consume_acceptance_attempt(task.id)
+        where = f" on task '{task.title}'" if task is not None else ""
+        self._teams.raise_system_decision(
+            run.id,
+            cycle_id,
+            topic=f"{stage} output could not be parsed",
+            question=(
+                f"The leader's {stage} response failed to parse twice{where}. "
+                "The recorded failure shape is on the operation. Answer to retry "
+                "it; use Stop to end the run instead."
+            ),
+        )
+        await self._publish(
+            {
+                "type": "team.run.input_requested",
+                "team_run_id": run.id,
+                "reason": "unparsable_lead_output",
+                "stage": stage,
+            }
+        )
+        raise UnparsableLeadOutput(stage, failed.id)
 
     async def _invoke_operation(
         self,
@@ -1119,6 +1176,8 @@ class TeamRuntime:
             if run is not None:
                 self._settle_canceled(run, cycle_id)
             raise
+        except UnparsableLeadOutput:
+            return self._teams.get_team_run(run.id)
         except (ProviderOperationWaiting, AmbiguousModelOperation):
             raise
         except Exception as exc:  # noqa: BLE001
@@ -1570,7 +1629,13 @@ class TeamRuntime:
                 )
             except asyncio.CancelledError:
                 raise
-            except (ProviderOperationWaiting, AmbiguousModelOperation):
+            except (
+                ProviderOperationWaiting,
+                AmbiguousModelOperation,
+                UnparsableLeadOutput,
+            ):
+                # Pause signals, not task failures: the outcome under review is
+                # still good and the run is waiting on the operator.
                 raise
             except Exception as exc:  # noqa: BLE001
                 error = redact_text(exc) or type(exc).__name__
@@ -2044,6 +2109,9 @@ class TeamRuntime:
             leader_agent,
             messages,
             _validated_acceptance_review,
+            on_exhausted=lambda failed: self._escalate_unparsable_lead_output(
+                run, task.cycle_id, task, "acceptance_lead", leader_agent, failed
+            ),
         )
         resolution = _operation_acceptance_resolution(lead_operation)
         lead_effect = self._model_effects.apply_acceptance_lead(
@@ -2932,6 +3000,10 @@ class TeamRuntime:
             if run is not None:
                 self._settle_canceled(run, cycle_id)
             raise
+        except UnparsableLeadOutput:
+            # The escalation already published the decision request and moved the
+            # run to waiting_for_user. Return that state rather than failing.
+            return self._teams.get_team_run(run.id)
         except (ProviderOperationWaiting, AmbiguousModelOperation):
             raise
         except Exception as exc:  # noqa: BLE001

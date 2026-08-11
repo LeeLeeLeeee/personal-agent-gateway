@@ -140,8 +140,18 @@ normal, contained outcome.
 **Leader stages** (`acceptance_lead`, `mediation_lead`, `cycle_synthesis`) pause
 and ask, because failing them costs the whole run:
 
-1. `reserve` the repair operation and leave it `prepared` — do not invoke it
-   (facts 1-3).
+1. Consume one acceptance round on the task
+   (`acceptance_recovery_attempts + 1`). This replaces an earlier step that
+   reserved a `prepared` repair operation for resume to pick up; two attempts at
+   that failed. Reusing the failed key returns the failed row, because `reserve`
+   is keyed and returns whatever exists. Using the next ordinal collides with the
+   repair key of the following acceptance attempt. What actually works is
+   advancing the attempt: `_run_cycle_acceptance` computes
+   `attempt = task.acceptance_recovery_attempts + 1`, and
+   `team_model_effects.py:550` requires the operation ordinal to equal that, so
+   resume re-enters cleanly at `acceptance_lead/2`. The parse failure genuinely
+   used a round, and `ACCEPTANCE_RECOVERY_CAP` then bounds a model that keeps
+   returning garbage instead of pausing forever.
 2. Append a decision item **with no blocking task**, naming the stage, the task,
    and the recorded failure classification. `_append_decision_item`
    (`teams.py:2648`) creates the collecting request when none exists but is

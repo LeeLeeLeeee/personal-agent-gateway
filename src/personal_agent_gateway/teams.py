@@ -2870,6 +2870,56 @@ class TeamRunService:
             ),
         )
 
+    def consume_acceptance_attempt(self, task_id: str) -> TeamTask:
+        """Count an acceptance round that produced no verdict.
+
+        An unparseable review still used a round: the operation key for that
+        attempt is taken and cannot be re-invoked, and team_model_effects
+        requires the operation ordinal to equal attempts + 1. Without this the
+        retry after the operator answers would re-enter the same attempt and hit
+        the failed operation. ACCEPTANCE_RECOVERY_CAP then bounds a model that
+        keeps returning unparseable reviews, which is the behaviour to want.
+        """
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            connection.execute(
+                "update team_tasks "
+                "set acceptance_recovery_attempts = acceptance_recovery_attempts + 1, "
+                "updated_at = ? where id = ?",
+                (now, task_id),
+            )
+        return self.get_task(task_id)
+
+    def raise_system_decision(
+        self,
+        team_run_id: str,
+        cycle_id: str | None,
+        *,
+        topic: str,
+        question: str,
+    ) -> TeamDecisionRequest:
+        """Pause the run on a question the system asked, not an agent.
+
+        The item carries no blocking task on purpose. answer_decision_request
+        resets every blocking task to pending and clears its result, which would
+        throw away the outcome the pause exists to preserve. The pause comes from
+        publishing, not from the blocking relationship.
+        """
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            self._append_decision_item(
+                connection,
+                team_run_id,
+                cycle_id,
+                {"topic": topic, "question": question, "options": []},
+                now,
+                blocking_task_id=None,
+                stage="task",
+            )
+        return self.publish_decision_request(team_run_id, cycle_id)
+
     def publish_decision_request(
         self, team_run_id: str, cycle_id: str | None = None
     ) -> TeamDecisionRequest:

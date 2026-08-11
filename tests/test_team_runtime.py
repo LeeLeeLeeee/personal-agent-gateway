@@ -873,6 +873,60 @@ async def test_lead_acceptance_retry_uses_separate_worker_operation(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_leader_parse_failure_twice_pauses_the_run_instead_of_failing_it(tmp_path):
+    """Failing a leader stage costs the whole run, and the outcome waiting for
+    review is still good -- so pause and ask instead.
+
+    The decision item names no blocking task on purpose:
+    answer_decision_request resets blocking tasks to pending and clears their
+    result, which would discard the worker outcome the pause exists to save.
+    """
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse("Looks fine to me.", []),
+        ModelResponse("Still looks fine.", []),
+    ]
+
+    run = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert run.status == "waiting_for_user"
+    assert setup.teams.get_task(setup.task.id).status == "in_progress"
+    request = setup.teams.get_active_decision_request(setup.run.id)
+    assert request is not None
+    assert all(not item["blocking_task_ids"] for item in request.items)
+    assert "could not be parsed" in request.items[0]["topic"]
+
+
+@pytest.mark.asyncio
+async def test_answering_the_pause_retries_acceptance_and_completes(tmp_path):
+    """Resume re-enters acceptance at the next attempt. The parse failure
+    consumed a round, which is what keeps the operation key free and bounds a
+    model that keeps returning garbage."""
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse("Looks fine to me.", []),
+        ModelResponse("Still looks fine.", []),
+    ]
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+    request = setup.teams.get_active_decision_request(setup.run.id)
+    setup.teams.answer_decision_request(
+        setup.run.id, request.id, request.revision, {request.items[0]["id"]: "retry"}
+    )
+    assert setup.teams.get_task(setup.task.id).status == "in_progress"
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review("Fix the missing citation check."), []),
+        ModelResponse("summary", []),
+    ]
+
+    run = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:2"
+    ).status == "applied"
+
+
+@pytest.mark.asyncio
 async def test_lead_acceptance_repairs_invalid_structured_output_once(tmp_path):
     """The worker side already recovers this way; the lead side did not, and one
     unparseable review ended the whole run."""
