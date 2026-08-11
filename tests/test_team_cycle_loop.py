@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -148,3 +149,38 @@ async def test_loop_lifecycle_reports_redacted_error(
     await loop.stop()
 
     assert loop.alive is False
+
+
+@pytest.mark.asyncio
+async def test_tick_runs_provider_recovery_off_the_event_loop() -> None:
+    """recover_due reaches AgentRegistry.catalog(), which does synchronous
+    httpx calls with time.sleep retries under a threading lock. Running it on
+    the loop froze every other run, not just this tick."""
+
+    class NoCycles:
+        def enqueue_due_auto_requests(self, *, now):
+            return []
+
+    class ThreadRecordingRecovery:
+        def __init__(self) -> None:
+            self.thread_ids: list[int] = []
+
+        def recover_due(self, *, now):
+            self.thread_ids.append(threading.get_ident())
+            return []
+
+    recovery = ThreadRecordingRecovery()
+    loop = TeamCycleLoop(
+        NoCycles(),
+        RecordingDispatcher(),
+        provider_recovery=recovery,
+        now=lambda: dt("2026-07-20T01:00:00+00:00"),
+    )
+
+    await loop.tick()
+
+    assert recovery.thread_ids, "recover_due was never called"
+    assert recovery.thread_ids[0] != threading.get_ident(), (
+        "recover_due ran on the event loop thread; blocking gateway I/O there "
+        "freezes every other run, not just this tick"
+    )

@@ -90,7 +90,11 @@ def create_chat_sessions_router(context: ChatSessionContext) -> APIRouter:
         runtime: AgentRuntime | None = None
         turn_status = "failed"
         try:
-            runtime = context.runtime_for_session(session_id)
+            # runtime_for_session resolves provider capabilities, which is
+            # synchronous network I/O; keep it off the event loop.
+            runtime = await asyncio.to_thread(
+                context.runtime_for_session, session_id
+            )
             if hasattr(runtime, "set_chat_turn_id"):
                 runtime.set_chat_turn_id(request_id)
             result = await runtime.handle_user_message(message)

@@ -34,7 +34,13 @@ class TeamCycleLoop:
     async def tick(self) -> None:
         now = self._now()
         if self._provider_recovery is not None:
-            for claim in self._provider_recovery.recover_due(now=now):
+            # recover_due reaches AgentRegistry.catalog(), which is synchronous
+            # httpx with time.sleep retries under a lock. On the loop thread
+            # that stalls every other run, not just this tick.
+            claims = await asyncio.to_thread(
+                self._provider_recovery.recover_due, now=now
+            )
+            for claim in claims:
                 self._dispatcher.resume_recovered_operation(claim)
         for request in self._cycles.enqueue_due_auto_requests(
             now=now

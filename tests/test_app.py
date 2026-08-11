@@ -1643,8 +1643,18 @@ def test_main_loads_config_and_runs_uvicorn_with_configured_host_port(
     config = make_config(tmp_path)
     calls: list[dict[str, object]] = []
 
-    def fake_run(application: object, host: str, port: int) -> None:
-        calls.append({"application": application, "host": host, "port": port})
+    def fake_run(
+        application: object,
+        host: str,
+        port: int,
+        timeout_graceful_shutdown: int | None = None,
+    ) -> None:
+        calls.append({
+            "application": application,
+            "host": host,
+            "port": port,
+            "timeout_graceful_shutdown": timeout_graceful_shutdown,
+        })
 
     monkeypatch.setattr(app_module, "load_config", lambda: config)
     monkeypatch.setattr(app_module.uvicorn, "run", fake_run)
@@ -1655,3 +1665,6 @@ def test_main_loads_config_and_runs_uvicorn_with_configured_host_port(
     assert isinstance(calls[0]["application"], FastAPI)
     assert calls[0]["host"] == "127.0.0.1"
     assert calls[0]["port"] == 8787
+    # Unbounded graceful shutdown means "wait forever", which made the server
+    # ignore the first interrupt while an SSE stream was open.
+    assert calls[0]["timeout_graceful_shutdown"] == 10
