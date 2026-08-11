@@ -836,6 +836,15 @@ async def add_work(
         raise HTTPException(status_code=409, detail="Resume the run before adding work")
     if run.status == "waiting_for_user":
         raise HTTPException(status_code=409, detail="Answer the pending decision request first")
+    # "canceled" is in _TERMINAL, so without this guard a canceled run passes
+    # here and the resume branch below puts it back to running -- Stop reports
+    # success while the agent keeps writing to the workspace. Completed runs are
+    # still reopenable; only an explicit cancel is refused.
+    if run.status == "canceled":
+        raise HTTPException(
+            status_code=409,
+            detail="Canceled team runs cannot accept additional work",
+        )
 
     await runtime.add_work(team_run_id, payload.instruction)
 

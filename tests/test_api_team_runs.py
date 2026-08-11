@@ -2309,6 +2309,33 @@ def test_add_work_rejects_non_execute_mode(tmp_path: Path) -> None:
     assert resp.status_code == 409
 
 
+def test_add_work_rejects_a_canceled_team_run(tmp_path: Path) -> None:
+    """A canceled run must stay canceled.
+
+    _TERMINAL contains "canceled", so add_work passed its guards and the
+    resume branch below it put the run back to running -- Stop reported
+    success while the agent kept writing to the workspace.
+    """
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Tech Lead", "lead", "d", [], [])
+    leader_id = leader.id
+    created = create_standard_run(app, leader_id)
+    run_id = created["id"]
+    service = app.state.team_run_service
+    service.set_run_status(run_id, "canceled")
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        response = client.post(
+            f"/api/team-runs/{run_id}/add-work",
+            json={"instruction": "keep going"},
+        )
+
+    assert response.status_code == 409
+    assert "cancel" in response.json()["detail"].lower()
+    assert service.get_team_run(run_id).status == "canceled"
+
+
 def test_add_work_rejects_draft_run(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Lead")
