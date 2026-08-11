@@ -49,3 +49,13 @@ def test_macos_stop_waits_for_exit_before_removing_runtime_state() -> None:
 
     assert 'kill -KILL "$pid"' in stop_script
     assert term_index < wait_index < force_index < final_wait_index < remove_index
+
+
+def test_launcher_bounds_uvicorn_graceful_shutdown() -> None:
+    """uvicorn defaults timeout_graceful_shutdown to None, which means wait
+    forever: one browser tab holding GET /api/events made the server ignore the
+    first Ctrl+C entirely."""
+    script = (ROOT / "scripts" / "start_local_runtime.ps1").read_text(encoding="utf-8")
+    assert "--timeout-graceful-shutdown" in script
+    local = (ROOT / "scripts" / "run_local.ps1").read_text(encoding="utf-8")
+    assert "--timeout-graceful-shutdown" in local

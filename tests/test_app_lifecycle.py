@@ -251,3 +251,27 @@ async def test_scheduler_redacts_environment_secret_from_last_error(
     assert "scheduler-secret" not in (loop.last_error or "")
     assert "[redacted]" in (loop.last_error or "")
     await loop.stop()
+
+
+def test_lifespan_cancels_session_runs_on_shutdown(tmp_path: Path) -> None:
+    """The lifespan finally cancelled team runs but never session runs.
+
+    SessionRunRegistry.cancel_all existed and was only reachable through
+    emergency stop, so an in-flight chat turn outlived the server. It only
+    cancels sessions that have an attached task, so this asserts the wiring --
+    that shutdown reaches it at all -- rather than re-testing the registry.
+    """
+    app = create_app(make_config(tmp_path))
+    calls: list[str] = []
+    real = app.state.run_registry.cancel_all
+
+    async def recording_cancel_all():
+        calls.append("called")
+        return await real()
+
+    app.state.run_registry.cancel_all = recording_cancel_all
+
+    with TestClient(app):
+        pass
+
+    assert calls == ["called"], "shutdown did not cancel session runs"

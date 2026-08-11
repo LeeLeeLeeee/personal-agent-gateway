@@ -245,7 +245,9 @@ try {
         "--host",
         "127.0.0.1",
         "--port",
-        "8787"
+        "8787",
+        "--timeout-graceful-shutdown",
+        "10"
     )
     $pag = Start-Process -FilePath $python -ArgumentList $pagArgs `
         -WorkingDirectory $pagRoot `

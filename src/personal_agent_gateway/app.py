@@ -169,6 +169,10 @@ def create_app(
                     team_run_id,
                     include_canceled=True,
                 )
+            # Session runs were never cancelled on shutdown -- cancel_all
+            # existed but only emergency stop reached it, so an in-flight chat
+            # turn outlived the server.
+            await application.state.run_registry.cancel_all()
 
     app = FastAPI(lifespan=lifespan)
 
@@ -615,7 +619,14 @@ def _attach_local_services(
 
 def main() -> None:
     config = load_config()
-    uvicorn.run(create_app(config), host=config.web_host, port=config.web_port)
+    uvicorn.run(
+        create_app(config),
+        host=config.web_host,
+        port=config.web_port,
+        # Without a bound this defaults to None, which means wait forever: an
+        # open SSE stream made the server ignore the first interrupt entirely.
+        timeout_graceful_shutdown=10,
+    )
 
 
 def _team_model_factory(

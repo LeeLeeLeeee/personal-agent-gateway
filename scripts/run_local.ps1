@@ -49,4 +49,4 @@ if (-not $port) {
     $port = "8787"
 }
 
-& $python -m uvicorn personal_agent_gateway.app:create_app --factory --host $hostName --port $port
+& $python -m uvicorn personal_agent_gateway.app:create_app --factory --host $hostName --port $port --timeout-graceful-shutdown 10
