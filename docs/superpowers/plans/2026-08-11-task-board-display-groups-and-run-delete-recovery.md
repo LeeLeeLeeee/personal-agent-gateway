@@ -63,7 +63,18 @@ source change.
     (`test_dashboard_usage_returns_provider_usage`).
   - No `-n auto` contention failures appeared; this run was serial.
   - None of these touch `space_policies`, `teams`, or `api/team_runs`.
-- **frontend: 0 failed / 369 passed** across 40 files.
+- **frontend: 0 failed / 369 passed** across 40 files — but see the correction
+  below; that run was lucky.
+
+Correction found while verifying the merge: `ArchiveView.test.jsx` has two
+load-dependent flakes,
+`previews the current private draft in a modal before publishing` and
+`turns a persona request into a user-authored Library draft and fulfills it
+only on publish`. They time out at the 5s default when the full suite runs
+in parallel and pass when `ArchiveView` runs alone (15/15). Confirmed
+pre-existing by checking out `1c7530c` — the baseline commit, with none of this
+work applied — where the same two tests fail the same way (2 failed / 367
+passed). Treat the frontend baseline as "0-2 failed, ArchiveView only".
 
 ## Task 2: Add the task status group module
 
