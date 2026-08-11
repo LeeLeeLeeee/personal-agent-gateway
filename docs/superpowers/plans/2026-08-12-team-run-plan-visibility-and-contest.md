@@ -2015,9 +2015,11 @@ Expected: 41 files pass.
 
 - [ ] **Step 3: Lint**
 
-Run: `python -m ruff check src/personal_agent_gateway/`
-Expected: `All checks passed!` (`tests/` has one pre-existing unused-import error
-in `tests/test_team_runtime.py`; leave it.)
+Run: `python -m ruff check src/personal_agent_gateway/ tests/`
+Expected: `All checks passed!` on both. `tests/test_team_runtime.py` carried a
+pre-existing unused import of `_operation_spec`; Task 8's recovery test uses it,
+so that error should be gone by now. If ruff still reports it, Task 8's test is
+not importing what it should.
 
 - [ ] **Step 4: Live verification**
 
