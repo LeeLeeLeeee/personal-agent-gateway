@@ -420,7 +420,12 @@ class TeamRuntime:
         messages: list[dict[str, object]],
         parser: Callable[[ModelResponse], ValidatedOperationResult],
         *,
-        repair_messages: list[dict[str, object]] | None = None,
+        repair_messages: list[dict[str, object]]
+        | Callable[[str | None], list[dict[str, object]]]
+        | None = None,
+        repair_parser: Callable[[ModelResponse], ValidatedOperationResult]
+        | None = None,
+        repair_ordinal: int | None = None,
         on_exhausted: Callable[
             [TeamModelOperation], Awaitable[None]
         ] | None = None,
@@ -436,27 +441,79 @@ class TeamRuntime:
         except InvalidOperationResult as exc:
             failed = self._operations.get(exc.operation_id)
 
-        repair_stage = repair_stage_for(spec.stage)
-        # worker_execution repairs in place at the next ordinal; every other
-        # stage repairs under its own name at the ordinal that failed.
-        repair_ordinal = (
-            failed.stage_ordinal + 1
-            if repair_stage == spec.stage
-            else failed.stage_ordinal
-        )
-        prompt = repair_messages or _repair_messages(failed.reason_code)
-        repair_spec = _operation_spec(
-            self._teams.get_team_run(spec.team_run_id),
+        return await self._repair_operation(
+            spec.team_run_id,
             spec.cycle_id,
+            agent,
+            spec.stage,
+            failed,
+            parser,
+            repair_messages=repair_messages,
+            repair_parser=repair_parser,
+            repair_ordinal=repair_ordinal,
+            on_exhausted=on_exhausted,
+            task_id=spec.task_id,
+        )
+
+    async def _repair_operation(
+        self,
+        team_run_id: str,
+        cycle_id: str,
+        agent: TeamAgent,
+        stage: OperationStage,
+        failed: TeamModelOperation,
+        parser: Callable[[ModelResponse], ValidatedOperationResult],
+        *,
+        repair_messages: list[dict[str, object]]
+        | Callable[[str | None], list[dict[str, object]]]
+        | None = None,
+        repair_parser: Callable[[ModelResponse], ValidatedOperationResult]
+        | None = None,
+        repair_ordinal: int | None = None,
+        on_exhausted: Callable[
+            [TeamModelOperation], Awaitable[None]
+        ] | None = None,
+        task_id: str | None = None,
+    ) -> TeamModelOperation:
+        """Ask once more for a response that would not parse.
+
+        Split out from _invoke_with_repair because the ledger recovery path
+        arrives here already holding the failed operation -- it resumed into a
+        stage rather than invoking one, so it has nothing to retry through the
+        seam's own invoke.
+        """
+        repair_stage = repair_stage_for(stage)
+        # worker_execution repairs in place at the next ordinal; every other
+        # stage repairs under its own name at the ordinal that failed. Callers
+        # override only where the ordinal carries meaning the stage name does
+        # not -- cycle_planning and cycle_add_work share cycle_planning_repair,
+        # so recovery tells them apart by ordinal 1 versus 2.
+        if repair_ordinal is None:
+            repair_ordinal = (
+                failed.stage_ordinal + 1
+                if repair_stage == stage
+                else failed.stage_ordinal
+            )
+        # A prompt that quotes the reason code can only be built once the
+        # failure exists, so a caller may pass the builder instead of a prompt.
+        if callable(repair_messages):
+            prompt = repair_messages(failed.reason_code)
+        else:
+            prompt = repair_messages or _repair_messages(failed.reason_code)
+        repair_spec = _operation_spec(
+            self._teams.get_team_run(team_run_id),
+            cycle_id,
             agent,
             repair_stage,
             repair_ordinal,
             prompt,
-            task_id=spec.task_id,
+            task_id=task_id,
             upstream_session_id=failed.upstream_session_id,
         )
         try:
-            return await self._invoke_operation(repair_spec, agent, prompt, parser)
+            return await self._invoke_operation(
+                repair_spec, agent, prompt, repair_parser or parser
+            )
         except InvalidOperationResult as exc:
             if on_exhausted is None:
                 raise
@@ -928,11 +985,7 @@ class TeamRuntime:
             recovered = operation
             if operation.status == "prepared":
                 if operation.stage == "cycle_synthesis_repair":
-                    if synthesis_contract is None:
-                        raise OperationConflict(
-                            "Open synthesis repair operation requires an output contract"
-                        )
-                    repair_messages = _synthesis_repair_messages(
+                    repair_messages = _synthesis_repair_prompt(
                         synthesis_messages, synthesis_contract
                     )
                     recovered = await self._invoke_existing_operation(
@@ -994,33 +1047,33 @@ class TeamRuntime:
             parser,
         )
 
-    async def _synthesis_repair_operation(
+    async def _repair_synthesis_operation(
         self,
         run: TeamRun,
         cycle_id: str,
         leader_agent: TeamAgent,
-        contract: OutputContract,
+        contract: OutputContract | None,
         messages: list[dict[str, object]],
-        failed_operation_id: str,
+        failed: TeamModelOperation,
     ) -> TeamModelOperation:
-        failed = self._operations.get(failed_operation_id)
-        repair_messages = _synthesis_repair_messages(messages, contract)
-        repair_spec = _operation_spec(
-            run,
+        """Repair a synthesis the ledger recovery path resumed into.
+
+        The retry parses with strict=False: a summary that still misses the
+        contract is worth keeping, because losing the cycle's synthesis costs
+        more than an unvalidated payload does. A synthesis without a contract
+        used to re-raise here and end the run; it now gets the shape-agnostic
+        prompt, which is all there is to say when nothing declares a shape.
+        """
+        return await self._repair_operation(
+            run.id,
             cycle_id,
             leader_agent,
-            "cycle_synthesis_repair",
-            failed.stage_ordinal,
-            repair_messages,
-            upstream_session_id=failed.upstream_session_id,
-        )
-        return await self._invoke_operation(
-            repair_spec,
-            leader_agent,
-            repair_messages,
+            "cycle_synthesis",
+            failed,
             lambda response: self._validated_synthesis_result(
                 response, leader_agent, run, contract, strict=False
             ),
+            repair_messages=_synthesis_repair_prompt(messages, contract),
         )
 
     def _apply_cycle_synthesis_operation(
@@ -1315,31 +1368,14 @@ class TeamRuntime:
             0,
             messages,
         )
-        try:
-            return await self._invoke_operation(
-                spec,
-                leader,
-                messages,
-                validate_plan,
-            )
-        except InvalidOperationResult as exc:
-            failed = self._operations.get(exc.operation_id)
-            repair_messages = _planning_repair_messages(messages)
-            repair_spec = _operation_spec(
-                run,
-                cycle_id,
-                leader,
-                "cycle_planning_repair",
-                1 if stage == "cycle_planning" else 2,
-                repair_messages,
-                upstream_session_id=failed.upstream_session_id,
-            )
-            return await self._invoke_operation(
-                repair_spec,
-                leader,
-                repair_messages,
-                validate_plan,
-            )
+        return await self._invoke_with_repair(
+            spec,
+            leader,
+            messages,
+            validate_plan,
+            repair_messages=_planning_repair_messages(messages),
+            repair_ordinal=1 if stage == "cycle_planning" else 2,
+        )
 
     async def _execute(
         self,
@@ -2166,41 +2202,21 @@ class TeamRuntime:
                 self._finalize_persona_content,
             )
 
-        try:
-            worker_operation = await self._invoke_operation(
-                _operation_spec(
-                    run,
-                    task.cycle_id,
-                    worker_agent,
-                    "acceptance_worker",
-                    lead_effect.attempt,
-                    worker_messages,
-                    task_id=task.id,
-                ),
+        worker_operation = await self._invoke_with_repair(
+            _operation_spec(
+                run,
+                task.cycle_id,
                 worker_agent,
+                "acceptance_worker",
+                lead_effect.attempt,
                 worker_messages,
-                parser,
-            )
-        except InvalidOperationResult as exc:
-            failed = self._operations.get(exc.operation_id)
-            repair_messages = _acceptance_worker_repair_messages(
-                failed.reason_code
-            )
-            worker_operation = await self._invoke_operation(
-                _operation_spec(
-                    run,
-                    task.cycle_id,
-                    worker_agent,
-                    "acceptance_worker_repair",
-                    lead_effect.attempt,
-                    repair_messages,
-                    task_id=task.id,
-                    upstream_session_id=failed.upstream_session_id,
-                ),
-                worker_agent,
-                repair_messages,
-                parser,
-            )
+                task_id=task.id,
+            ),
+            worker_agent,
+            worker_messages,
+            parser,
+            repair_messages=_acceptance_worker_repair_messages,
+        )
         return await self._apply_cycle_worker_operation(
             run,
             leader,
@@ -2600,33 +2616,13 @@ class TeamRuntime:
                     worker_agent,
                     run,
                 )
-            try:
-                operation = await self._invoke_operation(
-                    spec,
-                    worker_agent,
-                    messages,
-                    parser,
-                )
-            except InvalidOperationResult as exc:
-                failed = self._operations.get(exc.operation_id)
-                repair_messages = _worker_repair_messages(messages)
-                repair_spec = _operation_spec(
-                    run,
-                    task.cycle_id,
-                    worker_agent,
-                    "worker_execution",
-                    failed.stage_ordinal + 1,
-                    repair_messages,
-                    task_id=task.id,
-                    upstream_session_id=failed.upstream_session_id,
-                )
-                operation = await self._invoke_operation(
-                    repair_spec,
-                    worker_agent,
-                    repair_messages,
-                    parser,
-                )
-            return operation
+            return await self._invoke_with_repair(
+                spec,
+                worker_agent,
+                messages,
+                parser,
+                repair_messages=_worker_repair_messages(messages),
+            )
 
         model = self._model(worker_agent, task.cycle_id)
         response = await model.complete(
@@ -3161,10 +3157,13 @@ class TeamRuntime:
                     synthesis_contract=contract,
                 )
             except InvalidOperationResult as exc:
-                if contract is None:
-                    raise
-                operation = await self._synthesis_repair_operation(
-                    run, cycle_id, leader_agent, contract, messages, exc.operation_id
+                operation = await self._repair_synthesis_operation(
+                    run,
+                    cycle_id,
+                    leader_agent,
+                    contract,
+                    messages,
+                    self._operations.get(exc.operation_id),
                 )
                 return self._apply_cycle_synthesis_operation(operation)
             if recovery is not None:
@@ -3198,19 +3197,16 @@ class TeamRuntime:
                 synthesis_ordinal,
                 messages,
             )
-            try:
-                operation = await self._invoke_operation(
-                    spec,
-                    leader_agent,
-                    messages,
-                    synthesis_parser,
-                )
-            except InvalidOperationResult as exc:
-                if contract is None:
-                    raise
-                operation = await self._synthesis_repair_operation(
-                    run, cycle_id, leader_agent, contract, messages, exc.operation_id
-                )
+            operation = await self._invoke_with_repair(
+                spec,
+                leader_agent,
+                messages,
+                synthesis_parser,
+                repair_messages=_synthesis_repair_prompt(messages, contract),
+                repair_parser=lambda response: self._validated_synthesis_result(
+                    response, leader_agent, run, contract, strict=False
+                ),
+            )
             return self._apply_cycle_synthesis_operation(operation)
 
         model = self._model(leader_agent, cycle_id)
@@ -3519,6 +3515,33 @@ def _synthesis_repair_messages(
         f"{contract.instructions}"
     )
     return [{"role": "user", "content": f"{messages[0]['content']}\n\n{correction}"}]
+
+
+def _synthesis_retry_messages(
+    messages: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """The no-contract counterpart of _synthesis_repair_messages.
+
+    Deterministic in the messages alone, deliberately not in the reason code:
+    the ledger stores only a request digest, so recovery has to rebuild a
+    prepared repair's prompt byte for byte from what it still holds, and it
+    does not hold the failed operation.
+    """
+    correction = (
+        "Your previous response could not be parsed. Send the same result "
+        "again: either a short plain-text summary, or the exact ask_user JSON "
+        "block, with nothing after it."
+    )
+    return [{"role": "user", "content": f"{messages[0]['content']}\n\n{correction}"}]
+
+
+def _synthesis_repair_prompt(
+    messages: list[dict[str, object]],
+    contract: OutputContract | None,
+) -> list[dict[str, object]]:
+    if contract is None:
+        return _synthesis_retry_messages(messages)
+    return _synthesis_repair_messages(messages, contract)
 
 
 def _worker_repair_messages(

@@ -47,15 +47,20 @@ from personal_agent_gateway.team_runtime import (
     PLANNING_PROMPT,
     WORKER_PROMPT,
     TeamRuntime,
+    _acceptance_worker_repair_messages,
     _bounded_path_exists,
     _operation_spec,
     _parse_acceptance_review_resolution,
     _parse_task_plan,
+    _planning_repair_messages,
     _rules_block,
     _safe_relative_output,
+    _synthesis_repair_messages,
     _task_delta,
     _terminal_status,
+    _worker_repair_messages,
 )
+from personal_agent_gateway.team_output_contracts import OutputContract
 from personal_agent_gateway.team_verification_checks import VerificationCheck
 from personal_agent_gateway.teams import (
     RequiredVerification,
@@ -870,6 +875,44 @@ async def test_lead_acceptance_retry_uses_separate_worker_operation(tmp_path):
     assert setup.operations.get_by_key(
         f"{setup.cycle.id}:{setup.task.id}:worker_execution:0"
     ).status == "applied"
+
+
+def test_existing_repair_prompts_are_unchanged() -> None:
+    """Collapsing four hand-wired sites onto one seam must not reword them.
+
+    Each of these prompts was tuned against a specific failure -- the planning
+    one names the owner_agent_id mistake it exists to correct, the acceptance
+    one restates TaskOutcome's keys -- and the generic _repair_messages is
+    shape-agnostic by design, so it cannot stand in for any of them.
+    """
+    planning = _planning_repair_messages([{"role": "user", "content": "base"}])
+    assert "Return ONLY a JSON array. No prose, no code fences." in (
+        planning[0]["content"]
+    )
+    assert "owner_agent_id" in planning[0]["content"]
+
+    worker = _worker_repair_messages([{"role": "user", "content": "base"}])
+    assert "Return ONLY the required TaskOutcome JSON object or" in (
+        worker[0]["content"]
+    )
+
+    acceptance = _acceptance_worker_repair_messages("invalid_structured_output")
+    assert "Your previous response could not be parsed." in acceptance[0]["content"]
+    assert "status, summary, reason_code, deliverables, verifications" in (
+        acceptance[0]["content"]
+    )
+
+    contract = OutputContract(
+        id="pinned",
+        instructions='Return {"resolution": string}.',
+        validate=lambda content: None,
+        human_summary=lambda content: content,
+    )
+    synthesis = _synthesis_repair_messages(
+        [{"role": "user", "content": "base"}], contract
+    )
+    assert "did not satisfy the output contract" in synthesis[0]["content"]
+    assert 'Return {"resolution": string}.' in synthesis[0]["content"]
 
 
 @pytest.mark.asyncio
