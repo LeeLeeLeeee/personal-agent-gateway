@@ -1178,6 +1178,7 @@ class TeamModelEffectService:
             not in {
                 "worker_execution",
                 "mediation_worker",
+                "mediation_worker_repair",
                 "acceptance_worker",
                 "acceptance_worker_repair",
             }
@@ -3095,11 +3096,21 @@ def team_model_effect_result_validators() -> OperationResultValidatorRegistry:
         "mediation_lead": {
             "mediation_resolution": _valid_mediation_resolution,
         },
+        "mediation_lead_repair": {
+            "mediation_resolution": _valid_mediation_resolution,
+        },
         "mediation_worker": {
             "task_outcome": _valid_task_outcome,
             "worker_query": _valid_worker_query,
         },
+        "mediation_worker_repair": {
+            "task_outcome": _valid_task_outcome,
+            "worker_query": _valid_worker_query,
+        },
         "acceptance_lead": {
+            "acceptance_review": _valid_acceptance_resolution,
+        },
+        "acceptance_lead_repair": {
             "acceptance_review": _valid_acceptance_resolution,
         },
         "acceptance_worker": {

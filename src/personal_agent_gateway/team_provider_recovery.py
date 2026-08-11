@@ -538,10 +538,16 @@ class _OperationSource:
 _WORKER_STAGES = {
     "worker_execution",
     "mediation_worker",
+    "mediation_worker_repair",
     "acceptance_worker",
     "acceptance_worker_repair",
 }
-_LEAD_STAGES = {"mediation_lead", "acceptance_lead"}
+_LEAD_STAGES = {
+    "mediation_lead",
+    "mediation_lead_repair",
+    "acceptance_lead",
+    "acceptance_lead_repair",
+}
 
 
 def _validate_single_open_operation(connection, operation) -> None:
