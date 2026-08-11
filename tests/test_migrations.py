@@ -90,7 +90,7 @@ def test_migration_21_adds_knowledge_request_draft_failure_columns_idempotently(
         "last_draft_failed_at",
         "last_draft_cycle_id",
     } <= columns
-    assert LATEST_SCHEMA_VERSION == 29
+    assert LATEST_SCHEMA_VERSION == 30
 
 
 def test_migration_18_adds_nullable_cycle_space_snapshot() -> None:
@@ -454,3 +454,16 @@ def test_migration_29_adds_team_run_parent_idempotently() -> None:
     assert "parent_team_run_id" in {
         row["name"] for row in connection.execute("pragma table_info(team_runs)")
     }
+
+
+def test_migration_adds_operation_failure_columns(tmp_path: Path) -> None:
+    """Diagnostics for a parse failure, kept as structure rather than content --
+    the ledger design excludes raw model responses."""
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+    with db.connection() as connection:
+        columns = {
+            row["name"]
+            for row in connection.execute("pragma table_info(team_model_operations)")
+        }
+    assert {"failure_digest", "failure_shape_json"} <= columns

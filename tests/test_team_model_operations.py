@@ -1,9 +1,12 @@
+import hashlib
+import json
 from dataclasses import replace
 
 import pytest
 
 from personal_agent_gateway.team_model_operations import (
     OperationConflict,
+    failure_shape,
     OperationSpec,
     StaleOperation,
     TeamModelOperationService,
@@ -402,3 +405,74 @@ def test_valid_acceptance_accepts_both_verification_shapes() -> None:
         }
     )
     assert not _valid_acceptance({"required_outputs": [], "required_verifications": []})
+
+
+def test_failure_shape_records_structure_not_content() -> None:
+    """The ledger excludes raw model responses, so a diagnostic has to answer
+    "how was it broken" without keeping what was said."""
+    text = '```json\n{"status": "completed", "surprise": "secret value"}\n```'
+    shape = failure_shape(text, frozenset({"status", "summary", "deliverables"}))
+
+    assert shape["length"] == len(text)
+    assert shape["fenced"] is True
+    assert shape["parsed_json"] is True
+    assert sorted(shape["missing_expected_keys"]) == ["deliverables", "summary"]
+    # Unexpected key NAMES are model output; only their count is kept.
+    assert shape["unexpected_key_count"] == 1
+    serialized = json.dumps(shape)
+    assert "surprise" not in serialized
+    assert "secret value" not in serialized
+
+
+def test_failure_shape_handles_unparseable_text() -> None:
+    shape = failure_shape("I think the answer is probably fine!", frozenset({"status"}))
+
+    assert shape["parsed_json"] is False
+    assert shape["fenced"] is False
+    assert shape["missing_expected_keys"] == ["status"]
+    assert shape["unexpected_key_count"] == 0
+
+
+def test_mark_failed_records_digest_and_shape_but_not_text(tmp_path):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    agent = teams.get_agent(run.leader_agent_id)
+    service = TeamModelOperationService(db)
+    reserved = service.reserve(operation_spec(run, cycle, agent))
+    invoking = service.begin_attempt(reserved.id, "consumer-1")
+    text = '{"status": "completed", "leaked": "do not store me"}'
+
+    failed = service.mark_failed(
+        invoking.id,
+        invoking.version,
+        "invalid_structured_output",
+        response_text=text,
+        expected_keys=frozenset({"status", "summary"}),
+    )
+
+    assert failed.failure_digest == hashlib.sha256(text.encode("utf-8")).hexdigest()
+    assert failed.failure_shape["missing_expected_keys"] == ["summary"]
+    assert failed.failure_shape["unexpected_key_count"] == 1
+    with db.connection() as connection:
+        row = connection.execute(
+            "select * from team_model_operations where id = ?", (failed.id,)
+        ).fetchone()
+    stored = " ".join(str(value) for value in tuple(row))
+    assert "do not store me" not in stored
+    assert "leaked" not in stored
+
+
+def test_mark_failed_without_response_text_stores_nothing(tmp_path):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    agent = teams.get_agent(run.leader_agent_id)
+    service = TeamModelOperationService(db)
+    reserved = service.reserve(operation_spec(run, cycle, agent))
+    invoking = service.begin_attempt(reserved.id, "consumer-1")
+
+    failed = service.mark_failed(
+        invoking.id, invoking.version, "provider_unavailable"
+    )
+
+    assert failed.failure_digest is None
+    assert failed.failure_shape is None

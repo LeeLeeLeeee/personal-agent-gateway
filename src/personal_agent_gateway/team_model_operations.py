@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
@@ -114,6 +114,8 @@ class TeamModelOperation:
     effect_type: str | None
     effect_ref_json: dict[str, object] | None
     reason_code: str | None
+    failure_digest: str | None
+    failure_shape: dict[str, object] | None
     created_at: str
     started_at: str | None
     completed_at: str | None
@@ -309,8 +311,10 @@ class TeamModelOperationService:
         *,
         expected_status: OperationStatus = "invoking",
         upstream_session_id: str | None = None,
+        response_text: str | None = None,
+        expected_keys: frozenset[str] = frozenset(),
     ) -> TeamModelOperation:
-        return self._transition(
+        operation = self._transition(
             operation_id,
             expected_version,
             source_status=expected_status,
@@ -318,6 +322,20 @@ class TeamModelOperationService:
             reason_code=reason_code,
             upstream_session_id=upstream_session_id,
         )
+        if response_text is None:
+            return operation
+        # Structure only. The ledger design excludes raw model responses, and a
+        # digest plus a shape answers "same breakage every time, and broken how"
+        # without keeping what was said.
+        digest = hashlib.sha256(response_text.encode("utf-8")).hexdigest()
+        shape = failure_shape(response_text, expected_keys)
+        with self._db.connection() as connection:
+            connection.execute(
+                "update team_model_operations "
+                "set failure_digest = ?, failure_shape_json = ? where id = ?",
+                (digest, json.dumps(shape, ensure_ascii=False, sort_keys=True), operation_id),
+            )
+        return replace(operation, failure_digest=digest, failure_shape=shape)
 
     def record_invoking_reason(
         self,
@@ -531,6 +549,35 @@ class TeamModelOperationService:
             raise StaleOperation("Operation changed before the transition completed")
 
 
+def failure_shape(text: str, expected_keys: frozenset[str]) -> dict[str, object]:
+    """Non-content facts about a response that failed to parse.
+
+    Deliberately excludes the text and any key the model invented. Expected key
+    names come from the contract, so listing the missing ones records nothing the
+    model produced; unexpected key names are model output, so only their count is
+    kept. The ledger design excludes raw model responses and this stays inside
+    that rule while still answering the first question an investigator asks --
+    is it the same breakage every time, and in what way was it broken.
+    """
+    stripped = text.strip()
+    fenced = stripped.startswith("```")
+    body = stripped
+    if fenced:
+        body = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", stripped)
+    try:
+        parsed: object | None = json.loads(body)
+    except (TypeError, ValueError):
+        parsed = None
+    keys = set(parsed) if isinstance(parsed, dict) else set()
+    return {
+        "length": len(text),
+        "fenced": fenced,
+        "parsed_json": isinstance(parsed, dict),
+        "missing_expected_keys": sorted(expected_keys - keys),
+        "unexpected_key_count": len(keys - expected_keys),
+    }
+
+
 def _result_serialization(
     validators: OperationResultValidatorRegistry,
     stage: OperationStage,
@@ -706,6 +753,12 @@ def _operation_from_row(row: sqlite3.Row) -> TeamModelOperation:
             json.loads(row["effect_ref_json"]) if row["effect_ref_json"] else None
         ),
         reason_code=row["reason_code"],
+        failure_digest=row["failure_digest"],
+        failure_shape=(
+            json.loads(row["failure_shape_json"])
+            if row["failure_shape_json"]
+            else None
+        ),
         created_at=str(row["created_at"]),
         started_at=row["started_at"],
         completed_at=row["completed_at"],

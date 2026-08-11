@@ -952,6 +952,20 @@ def _migration_29_team_run_workspace_inheritance(
     )
 
 
+def _migration_30_operation_failure_shape(
+    connection: sqlite3.Connection,
+) -> None:
+    existing = _columns(connection, "team_model_operations")
+    if "failure_digest" not in existing:
+        connection.execute(
+            "alter table team_model_operations add column failure_digest text"
+        )
+    if "failure_shape_json" not in existing:
+        connection.execute(
+            "alter table team_model_operations add column failure_shape_json text"
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -982,6 +996,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (27, "backfill-artifact-origins", _migration_27_backfill_artifact_origins),
     (28, "team-task-plan-ordinal", _migration_28_team_task_plan_ordinal),
     (29, "team-run-workspace-inheritance", _migration_29_team_run_workspace_inheritance),
+    (30, "operation-failure-shape", _migration_30_operation_failure_shape),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

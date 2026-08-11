@@ -73,6 +73,8 @@ class TeamModelInvoker:
         client: OperationRemoteClient,
         messages: list[dict[str, object]],
         parser: Callable[[ModelResponse], ValidatedOperationResult],
+        *,
+        expected_keys: frozenset[str] = frozenset(),
     ) -> TeamModelOperation:
         current = self._operations.get(operation.id)
         if current.status == "completed":
@@ -125,6 +127,8 @@ class TeamModelInvoker:
                         invoking.version,
                         "invalid_structured_output",
                         upstream_session_id=response.upstream_session_id,
+                        response_text=response.content,
+                        expected_keys=expected_keys,
                     )
                 except OperationSessionConflict as session_exc:
                     raise AmbiguousModelOperation(
@@ -158,6 +162,8 @@ class TeamModelInvoker:
                         invoking.version,
                         "invalid_structured_output",
                         upstream_session_id=response.upstream_session_id,
+                        response_text=response.content,
+                        expected_keys=expected_keys,
                     )
                 except OperationSessionConflict as session_exc:
                     raise AmbiguousModelOperation(
