@@ -565,7 +565,7 @@ class TeamRuntime:
                 self._model_effects.apply_plan(recovered.id),
             )
 
-        if operation.stage == "mediation_lead":
+        if operation.stage in {"mediation_lead", "mediation_lead_repair"}:
             if operation.task_id is None:
                 raise OperationConflict("Mediation operation has no task")
             task = self._teams.get_task(operation.task_id)
@@ -616,7 +616,7 @@ class TeamRuntime:
             )
             return OpenOperationRecovery(recovered, result)
 
-        if operation.stage == "acceptance_lead":
+        if operation.stage in {"acceptance_lead", "acceptance_lead_repair"}:
             if operation.task_id is None:
                 raise OperationConflict("Acceptance operation has no task")
             task = self._teams.get_task(operation.task_id)
@@ -653,6 +653,7 @@ class TeamRuntime:
         if operation.stage in {
             "worker_execution",
             "mediation_worker",
+            "mediation_worker_repair",
             "acceptance_worker",
             "acceptance_worker_repair",
         }:
@@ -1260,8 +1261,11 @@ class TeamRuntime:
                     if open_operation.stage not in {
                         "worker_execution",
                         "mediation_lead",
+                        "mediation_lead_repair",
                         "mediation_worker",
+                        "mediation_worker_repair",
                         "acceptance_lead",
+                        "acceptance_lead_repair",
                         "acceptance_worker",
                         "acceptance_worker_repair",
                     }:

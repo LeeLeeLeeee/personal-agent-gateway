@@ -48,6 +48,7 @@ from personal_agent_gateway.team_runtime import (
     WORKER_PROMPT,
     TeamRuntime,
     _bounded_path_exists,
+    _operation_spec,
     _parse_acceptance_review_resolution,
     _parse_task_plan,
     _rules_block,
