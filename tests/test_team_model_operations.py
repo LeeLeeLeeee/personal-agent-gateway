@@ -476,3 +476,54 @@ def test_mark_failed_without_response_text_stores_nothing(tmp_path):
 
     assert failed.failure_digest is None
     assert failed.failure_shape is None
+
+
+def test_latest_failure_shapes_reports_the_failure_still_blocking_each_task(tmp_path):
+    """The detail payload needs one shape per task, not a history.
+
+    A task that failed to parse, recovered, then failed again is described by
+    the failure that is still in its way. Keying on task_id in arrival order
+    and letting later rows win is what produces that.
+    """
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    agent = teams.get_agent(run.leader_agent_id)
+    task = teams.create_task(
+        run.id, "Verify guide", "Check it.", cycle_id=cycle.id
+    )
+    other = teams.create_task(
+        run.id, "Draft guide", "Write it.", cycle_id=cycle.id
+    )
+    service = TeamModelOperationService(db)
+
+    def fail(key, ordinal, task_id, text, keys):
+        spec = operation_spec(
+            run,
+            cycle,
+            agent,
+            key=key,
+            task_id=task_id,
+            stage="acceptance_lead",
+            stage_ordinal=ordinal,
+        )
+        reserved = service.reserve(spec)
+        started = service.begin_attempt(reserved.id, "consumer")
+        service.mark_failed(
+            started.id,
+            started.version,
+            "invalid_structured_output",
+            response_text=text,
+            expected_keys=frozenset(keys),
+        )
+
+    fail("acceptance_lead:1", 1, task.id, "prose only", {"resolution"})
+    fail("acceptance_lead:2", 2, task.id, '```json\n{"a": 1}\n```', {"resolution"})
+    fail("acceptance_lead:3", 3, other.id, "nope", {"status"})
+
+    shapes = service.latest_failure_shapes(run.id)
+
+    assert set(shapes) == {task.id, other.id}
+    assert shapes[task.id]["fenced"] is True
+    assert shapes[task.id]["missing_expected_keys"] == ["resolution"]
+    assert shapes[other.id]["fenced"] is False
+

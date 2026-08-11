@@ -1428,4 +1428,34 @@ describe("TeamRunDetail", () => {
     expect(unresolved.querySelector(".team-task-title").textContent).toBe("Unknown state work");
     expect(screen.getByRole("button", { name: "Open task Unknown state work" })).toBeInTheDocument();
   });
+  it("shows how a leader response failed to parse", async () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "G", status: "waiting_for_user", run_mode: "plan_and_execute" },
+          agents: [],
+          messages: [],
+          tasks: [{
+            id: "t1",
+            title: "Verify guide",
+            status: "in_progress",
+            failure_shape: {
+              length: 812,
+              fenced: true,
+              parsed_json: false,
+              missing_expected_keys: ["resolution"],
+              unexpected_key_count: 0
+            }
+          }]
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Open task Verify guide" }));
+    const dialog = screen.getByRole("dialog", { name: "Task details: Verify guide" });
+
+    expect(within(dialog).getByText(/812/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/resolution/)).toBeInTheDocument();
+  });
 });

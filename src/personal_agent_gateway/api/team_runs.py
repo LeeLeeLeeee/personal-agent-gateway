@@ -373,6 +373,7 @@ def get_team_run_detail(
         cycles = service.list_cycles(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
+    failure_shapes = request.app.state.team_model_operation_service        .latest_failure_shapes(team_run_id)
     selected_tasks = tasks[-limit:]
     selected_messages = messages[-limit:]
     cycle_service = request.app.state.team_cycle_service
@@ -380,7 +381,11 @@ def get_team_run_detail(
         "team_run": _team_run_payload(run),
         "agents": [_agent_payload(agent) for agent in agents],
         "tasks": [
-            _task_payload(task, task_dependencies.get(task.id, []))
+            _task_payload(
+                task,
+                task_dependencies.get(task.id, []),
+                failure_shapes.get(task.id),
+            )
             for task in selected_tasks
         ],
         "messages": [_message_payload(message) for message in selected_messages],
@@ -1301,6 +1306,7 @@ def _agent_payload(agent: TeamAgent) -> dict[str, object]:
 def _task_payload(
     task: TeamTask,
     depends_on_task_ids: list[str] | None = None,
+    failure_shape: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "id": task.id,
@@ -1322,6 +1328,7 @@ def _task_payload(
         "outcome": task.outcome,
         "acceptance_result": task.acceptance_result,
         "acceptance_recovery_attempts": task.acceptance_recovery_attempts,
+        "failure_shape": failure_shape,
         "result": task.result,
         "error_message": task.error_message,
         "created_at": task.created_at,

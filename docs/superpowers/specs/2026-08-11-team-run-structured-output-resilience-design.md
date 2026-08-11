@@ -280,12 +280,13 @@ and membership in exactly one of the worker/lead/cycle groupings. That closes 1,
 ## Verification
 
 - `_invoke_with_repair` over a fake invoker: parse fails once then the repair
-  succeeds; a worker stage fails twice and raises; a leader stage fails twice,
-  leaving a `prepared` repair operation, the blocking task `waiting_for_user`, a
-  published decision request, and the run `waiting_for_user`.
-- A resume test: with a `prepared` `acceptance_lead_repair` and an answered
-  decision request, resume invokes that operation rather than raising at either
-  `_recover_open_operation` or `_execute`'s allowlist.
+  succeeds; a worker stage fails twice and raises; a leader stage fails twice and
+  the run lands `waiting_for_user` with a published decision request, the task
+  still `in_progress`, and no blocking task on the item.
+- A resume test: after the decision is answered, resume re-enters acceptance at
+  the next attempt rather than raising at `_recover_open_operation` or at
+  `_execute`'s allowlist. Nothing is reserved ahead of it — see the escalation
+  section for why the two reserving designs could not work.
 - The `OperationStage` completeness test described above.
 - Regression tests pinning the four existing repair prompts byte-for-byte, so
   collapsing the call sites cannot silently reword them.
@@ -297,3 +298,30 @@ and membership in exactly one of the worker/lead/cycle groupings. That closes 1,
 - Migration test in `tests/test_migrations.py` for the two new columns.
 - Full backend suite against the recorded 21-failure baseline; frontend suite for
   the diagnostic panel change.
+
+## What the live runtime showed
+
+Recorded because the defect this work fixes is one no existing test caught, so
+test output alone is not evidence the real path works.
+
+- Migration 30 applied on `data/app.sqlite`: `schema_version` 29 → 30,
+  `failure_digest` and `failure_shape_json` present, and all 54 existing
+  operations preserved with both columns null. (The database was copied to the
+  scratchpad first.)
+- `GET /api/team-runs/{id}/detail` on run `699c1915` returns `failure_shape` on
+  all 13 tasks. Every value is null, which is the correct reading rather than a
+  gap: those failures predate the column, so no shape was ever recorded for
+  them. The populated path is covered by
+  `test_latest_failure_shapes_reports_the_failure_still_blocking_each_task`.
+- The served bundle contains the new panel — the built asset carries
+  `RESPONSE DID NOT PARSE`.
+- The escalation loop was driven end to end against a real `TeamRuntime` with a
+  leader that returns prose twice: the run stopped at `waiting_for_user` with
+  the task still `in_progress` and no blocking task, answering left the task
+  `in_progress`, and resume re-entered at `acceptance_lead/2` and finished the
+  run `completed`. The ledger afterwards read `acceptance_lead/1 failed`,
+  `acceptance_lead_repair/1 failed`, `acceptance_lead/2 applied`,
+  `acceptance_worker/2 applied`, `cycle_synthesis/0 applied`.
+- Not observed live: a leader parse failure produced by a real model. Forcing
+  one needs a persona pointed at a model that returns prose, which would mean
+  editing the operator's configured team.

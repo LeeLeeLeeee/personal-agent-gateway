@@ -159,6 +159,26 @@ function taskFileCount(reports) {
   return files.size;
 }
 
+// The response text itself is never stored -- it can carry anything the model
+// was working on -- so this shape is all there is to explain why a run stopped
+// on a parse failure. Which key was missing is usually the whole answer.
+function FailureShape({ shape }) {
+  if (!shape) return null;
+  const missing = shape.missing_expected_keys || [];
+  return (
+    <div>
+      <div className="mono team-task-dialog-label">RESPONSE DID NOT PARSE</div>
+      <div className="team-task-diagnostic mono">
+        <div>{`${shape.length} chars · ${shape.parsed_json ? "valid JSON" : "not JSON"} · ${shape.fenced ? "code-fenced" : "unfenced"}`}</div>
+        {missing.length ? <div>{`missing keys: ${missing.join(", ")}`}</div> : null}
+        {shape.unexpected_key_count ? (
+          <div>{`unexpected keys: ${shape.unexpected_key_count}`}</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, onRetry, onClose }) {
   if (!task) return null;
   const acceptance = task.acceptance || {};
@@ -209,6 +229,8 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
               </div>
             </div>
           ) : null}
+
+          <FailureShape shape={task.failure_shape} />
 
           <div>
             <div className="mono team-task-dialog-label">

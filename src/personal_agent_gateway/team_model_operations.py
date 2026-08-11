@@ -390,6 +390,28 @@ class TeamModelOperationService:
             ).fetchone()
             return _operation_from_row(row) if row is not None else None
 
+    def latest_failure_shapes(self, team_run_id: str) -> dict[str, dict[str, object]]:
+        """How the most recent unparseable response per task was malformed.
+
+        Scoped to the run rather than a cycle so one query serves the whole
+        detail payload. Only the latest failure per task is kept: a task that
+        recovered and failed again later is described by the failure that is
+        still blocking it, not by the one it already got past.
+        """
+        with self._db.connection() as connection:
+            rows = connection.execute(
+                """
+                select task_id, failure_shape_json from team_model_operations
+                where team_run_id = ? and task_id is not null
+                  and failure_shape_json is not null
+                order by created_at asc, id asc
+                """,
+                (team_run_id,),
+            ).fetchall()
+        return {
+            row["task_id"]: json.loads(row["failure_shape_json"]) for row in rows
+        }
+
     def list_for_cycle(self, cycle_id: str) -> list[TeamModelOperation]:
         with self._db.connection() as connection:
             rows = connection.execute(
