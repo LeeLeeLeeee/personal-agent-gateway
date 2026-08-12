@@ -722,6 +722,21 @@ def _validate_active_source(operation, run, cycle, task, actor, worker) -> None:
             and cycle["status"] == "running"
             and actor["status"] == "running"
         )
+    elif operation.stage in {"cycle_contest", "cycle_contest_repair"}:
+        # A contest in flight looks like nothing else: the run and cycle are
+        # both "running", there is no task, and the leader is still "pending"
+        # because adjudicate_contest never calls set_agent_status -- pinned by
+        # test_a_parked_contest_restores_the_state_it_was_parked_from. Without
+        # this branch the fallback below refused the source, wait_for_operation
+        # raised OperationConflict instead of parking, and a provider blip
+        # during the leader's ruling failed the cycle and lost the objection.
+        valid = (
+            operation.task_id is None
+            and run["status"] == "running"
+            and cycle["status"] == "running"
+            and actor["status"] == "pending"
+            and actor["current_task_id"] is None
+        )
     else:
         valid = False
     if not valid:
@@ -750,6 +765,14 @@ def _restore_operation_source(
         run_status = "summarizing"
         cycle_status = "running"
         actor_status = "running"
+    elif operation.stage in {"cycle_contest", "cycle_contest_repair"}:
+        # The state _validate_active_source accepts for a contest, restored
+        # exactly: the generic fallback would put the leader back as "running",
+        # which is a status a contest never had, and the validator would then
+        # refuse the very source this just wrote.
+        run_status = "running"
+        cycle_status = "running"
+        actor_status = "pending"
     else:
         run_status = "running"
         cycle_status = "running"

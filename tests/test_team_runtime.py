@@ -6746,3 +6746,85 @@ def test_the_contest_repair_prompt_names_the_rule_it_broke() -> None:
     assert "reason is required for every kind" in repair
     assert "amend and partial carry at least one task" in repair
     assert "supersedes entry without a task is rejected" in repair
+
+
+def _blip(count=3):
+    return [
+        RemoteRunFailedError("provider_unavailable", "not ready", pre_stream=True)
+        for _ in range(count)
+    ]
+
+
+async def park_a_contest(setup):
+    setup.lead_client.responses = _blip()
+    setup.runtime._provider_recovery = TeamProviderRecovery(
+        setup.teams,
+        SimpleNamespace(),
+        setup.operations,
+    )
+    with pytest.raises(ProviderOperationWaiting):
+        await contest_orchestrator(setup).adjudicate_contest(
+            setup.run.id, setup.cycle.id, "nothing owns T-04"
+        )
+    return setup.runtime._provider_recovery
+
+
+@pytest.mark.asyncio
+async def test_a_provider_blip_parks_a_contest_instead_of_losing_the_objection(
+    tmp_path,
+):
+    """A contest in flight matches no branch _validate_active_source knew, so it
+    fell to valid = False and wait_for_operation raised OperationConflict from
+    inside the only path that can park an operation -- failing the cycle and
+    discarding the objection over a provider blip."""
+    setup = make_contest_setup(tmp_path)
+
+    await park_a_contest(setup)
+
+    operation = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert (operation.stage, operation.status) == (
+        "cycle_contest",
+        "waiting_for_provider",
+    )
+    assert operation.attempts == 3
+    assert setup.teams.get_team_run(setup.run.id).status == "waiting_for_provider"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "waiting_for_provider"
+    # The objection is not lost: it is the cycle's dispatched instruction, and
+    # the request stays dispatching so the retry still owns the run.
+    assert setup.teams.get_cycle_objective(setup.cycle.id) == "nothing owns T-04"
+    assert TeamCycleService(setup.db).get_request(
+        setup.cycle_request.id
+    ).status == "dispatching"
+
+
+@pytest.mark.asyncio
+async def test_a_parked_contest_restores_the_state_it_was_parked_from(tmp_path):
+    """The pinned fact this pair rests on: adjudicate_contest never calls
+    set_agent_status, so the leader is "pending" while it rules. The generic
+    restore fallback claimed "running", which _validate_active_source would then
+    have refused -- the restore would have written a source its own validator
+    rejects."""
+    setup = make_contest_setup(tmp_path)
+    recovery = await park_a_contest(setup)
+
+    claim = recovery.claim_operation(setup.cycle.id)
+
+    assert claim is not None
+    assert setup.teams.get_team_run(setup.run.id).status == "running"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "running"
+    leader = setup.teams.get_agent(setup.run.leader_agent_id)
+    assert leader.status == "pending"
+    assert leader.current_task_id is None
+    assert setup.operations.get(claim.operation_id).status == "prepared"
+
+    # And the restored source is one the validator accepts, so the retry runs
+    # the ruling instead of raising out of recovery again.
+    setup.lead_client.responses = [
+        _contest_verdict("reject", "Task 7 already covers T-04."),
+    ]
+    await contest_orchestrator(setup).resume(setup.run.id, setup.cycle.id)
+
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:cycle_contest:0"
+    ).status == "applied"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "completed"
