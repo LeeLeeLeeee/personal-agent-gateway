@@ -30,6 +30,7 @@ from personal_agent_gateway.team_outcomes import (
     parse_task_outcome,
 )
 from personal_agent_gateway.team_model_effects import (
+    ContestOutcome,
     TeamModelEffectService,
     lead_decision_item_digest,
     team_model_effect_result_validators,
@@ -257,6 +258,29 @@ Available team members: {team_roster_json}
 Assign every task to the member whose persona role and responsibilities best match it.
 Return "owner_agent_id" using the exact ID from the available team members list.
 Do not assign by list order or previous completion status."""
+
+CONTEST_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
+The user is contesting the plan, not adding work to it. Judge the objection.
+Goal: {goal}
+Current tasks:
+{tasks}
+Earlier objections and how you ruled on them:
+{history}
+The user's objection:
+{objection}
+
+Return ONLY one JSON object:
+{{"kind":"amend|partial|reject|ask_back","reason":"why you ruled this way",
+"tasks":[{{"title":"...","description":"...","owner_agent_id":"member id or null",
+"required":true,"acceptance":{{"required_outputs":["..."],"required_verifications":["..."]}}}}],
+"question":"ask_back only","supersedes":[{{"document_path":"...","decision":"..."}}]}}
+reason is required for every kind. amend and partial carry at least one task;
+reject and ask_back carry none. If ruling for the user reverses a decision an
+accepted document still states, list it in supersedes and include a task that
+corrects that document -- a supersedes entry without a task is rejected.
+If the objection is that a finished task's acceptance criteria were too narrow,
+do not try to rewrite that task: create a follow-up task carrying the criteria
+that should have been there. A settled task's contract cannot be revised."""
 
 AGENT_REINVOCATION_CAP = 3
 _SESSION_UNSET = object()
@@ -1027,6 +1051,34 @@ class TeamRuntime:
                 self._apply_cycle_synthesis_operation(recovered),
             )
 
+        if operation.stage in {"cycle_contest", "cycle_contest_repair"}:
+            recovered = operation
+            if operation.status == "prepared":
+                if operation.stage == "cycle_contest":
+                    objection = (
+                        self._teams.get_cycle_effective_instruction(cycle_id)
+                        or self._teams.get_cycle_objective(cycle_id)
+                    )
+                    if objection is None:
+                        raise OperationConflict(
+                            "Prepared contest operation has no persisted objection"
+                        )
+                    messages = self._contest_messages(
+                        run, leader, cycle_id, objection
+                    )
+                else:
+                    messages = _repair_messages(None)
+                recovered = await self._invoke_existing_operation(
+                    operation,
+                    leader,
+                    messages,
+                    _validated_contest_verdict,
+                )
+            return OpenOperationRecovery(
+                recovered,
+                self._apply_contest_outcome(run, cycle_id, recovered.id),
+            )
+
         raise OperationConflict(
             f"Open operation stage {operation.stage} is not recoverable here"
         )
@@ -1163,6 +1215,44 @@ class TeamRuntime:
             team_roster_json=_assignment_roster_json(members),
         )
         return [{"role": "user", "content": prompt}]
+
+    def _contest_messages(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        cycle_id: str,
+        objection: str,
+    ) -> list[dict[str, object]]:
+        tasks = (
+            ", ".join(
+                task.title for task in self._teams.list_tasks(run.id, cycle_id)
+            )
+            or "(none)"
+        )
+        history = _contest_history_text(self._teams.list_messages(run.id))
+        prompt = CONTEST_PROMPT.format(
+            goal=self._goal_context(run, cycle_id),
+            tasks=tasks,
+            history=history,
+            objection=objection,
+        )
+        return [{"role": "user", "content": prompt}]
+
+    def _apply_contest_outcome(
+        self,
+        run: TeamRun,
+        cycle_id: str,
+        operation_id: str,
+    ) -> ContestOutcome:
+        outcome = self._model_effects.apply_contest_verdict(operation_id)
+        if outcome.kind == "ask_back":
+            self._teams.raise_system_decision(
+                run.id,
+                cycle_id,
+                topic="Contest objection is ambiguous",
+                question=outcome.question or "",
+            )
+        return outcome
 
     def _archive_block(
         self,
@@ -1418,6 +1508,8 @@ class TeamRuntime:
                         "cycle_planning",
                         "cycle_planning_repair",
                         "cycle_add_work",
+                        "cycle_contest",
+                        "cycle_contest_repair",
                     }:
                         continue
                     if open_operation.stage not in {
@@ -3101,6 +3193,30 @@ class TeamRuntime:
         )
         return created
 
+    async def adjudicate_contest(
+        self, team_run_id: str, cycle_id: str, objection: str
+    ) -> ContestOutcome:
+        run = self._teams.get_team_run(team_run_id)
+        leader = _find_leader(self._teams.list_agents(run.id))
+        leader_agent = self._teams.get_agent(leader.id)
+        messages = self._contest_messages(run, leader_agent, cycle_id, objection)
+        # Each contested objection is its own round, so it gets the next ordinal
+        # rather than reusing 0 -- a cycle can be contested more than once.
+        ordinal = sum(
+            1
+            for operation in self._operations.list_for_cycle(cycle_id)
+            if operation.stage == "cycle_contest"
+        )
+        operation = await self._invoke_with_repair(
+            _operation_spec(
+                run, cycle_id, leader_agent, "cycle_contest", ordinal, messages
+            ),
+            leader_agent,
+            messages,
+            _validated_contest_verdict,
+        )
+        return self._apply_contest_outcome(run, cycle_id, operation.id)
+
     async def _leader_synthesis(
         self,
         run: TeamRun,
@@ -3761,6 +3877,23 @@ def _validated_task_plan(
             ]
         },
     )
+
+
+def _contest_history_text(messages: list[TeamMessage]) -> str:
+    history = [message for message in messages if message.kind == "plan_adjudication"]
+    if not history:
+        return "(none)"
+    return "\n".join(f"- {message.content}" for message in history)
+
+
+def _validated_contest_verdict(response: ModelResponse) -> ValidatedOperationResult:
+    stripped = normalize_json_envelope(response.content)
+    if stripped.startswith("```"):
+        raise ValueError("Contest verdict response must not use code fences")
+    payload = json.loads(stripped)
+    if not isinstance(payload, dict):
+        raise ValueError("Contest verdict response must be a JSON object")
+    return ValidatedOperationResult("contest_verdict", payload)
 
 
 def _validated_mediation_result(

@@ -49,7 +49,6 @@ from personal_agent_gateway.team_runtime import (
     TeamRuntime,
     _acceptance_worker_repair_messages,
     _bounded_path_exists,
-    _operation_spec,
     _parse_acceptance_review_resolution,
     _parse_task_plan,
     _planning_repair_messages,
@@ -6347,3 +6346,135 @@ async def test_team_runtime_uses_archive_and_routes_knowledge_gap_to_library(tmp
     assert requests[0].requested_by_persona_id == worker.id
     assert requests[0].team_run_id == run.id
     assert len(archive.list_entries()) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_amend_verdict_creates_the_task_it_promised(tmp_path):
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.lead_client.responses = [
+        ModelResponse(
+            json.dumps({
+                "kind": "amend",
+                "reason": "T-04 had no owner.",
+                "tasks": [{
+                    "title": "Own discard",
+                    "description": "Implement T-04.",
+                    "owner_agent_id": None,
+                    "required": True,
+                    "acceptance": {
+                        "required_outputs": ["src/discard.py"],
+                        "required_verifications": [],
+                    },
+                }],
+            }),
+            [],
+        ),
+    ]
+
+    outcome = await setup.runtime.adjudicate_contest(
+        setup.run.id, setup.cycle.id, "T-04 and T-15 have no owner"
+    )
+
+    assert outcome.kind == "amend"
+    assert [t.title for t in setup.teams.list_tasks(setup.run.id)] == ["Own discard"]
+
+
+@pytest.mark.asyncio
+async def test_a_verdict_with_no_reason_is_repaired_once(tmp_path):
+    """The repair seam every stage now goes through gives this for free; the
+    test is here to prove cycle_contest is actually on it."""
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.lead_client.responses = [
+        ModelResponse(json.dumps({"kind": "reject"}), []),
+        ModelResponse(json.dumps({"kind": "reject", "reason": "task 7 covers it"}), []),
+    ]
+
+    outcome = await setup.runtime.adjudicate_contest(
+        setup.run.id, setup.cycle.id, "nothing owns T-04"
+    )
+
+    assert outcome.kind == "reject"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:cycle_contest_repair:0"
+    ).status == "applied"
+
+
+@pytest.mark.asyncio
+async def test_ask_back_pauses_the_run_for_the_user(tmp_path):
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.teams.set_run_status(setup.run.id, "running")
+    setup.lead_client.responses = [
+        ModelResponse(
+            json.dumps({
+                "kind": "ask_back",
+                "reason": "The objection could mean two things.",
+                "question": "Do you mean T-04 or T-12?",
+            }),
+            [],
+        ),
+    ]
+
+    await setup.runtime.adjudicate_contest(
+        setup.run.id, setup.cycle.id, "discard is missing"
+    )
+
+    assert setup.teams.get_team_run(setup.run.id).status == "waiting_for_user"
+    request = setup.teams.get_active_decision_request(setup.run.id)
+    assert "T-04 or T-12" in request.items[0]["question"]
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_carries_the_previous_rejection(tmp_path):
+    """A leader that cannot see why it refused last time will either repeat the
+    refusal blindly or contradict itself."""
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.lead_client.responses = [
+        ModelResponse(json.dumps({"kind": "reject", "reason": "task 7 covers it"}), []),
+    ]
+    await setup.runtime.adjudicate_contest(
+        setup.run.id, setup.cycle.id, "nothing owns T-04"
+    )
+    setup.lead_client.responses = [
+        ModelResponse(json.dumps({"kind": "reject", "reason": "still covered"}), []),
+    ]
+
+    await setup.runtime.adjudicate_contest(
+        setup.run.id, setup.cycle.id, "task 7 does not cover T-04"
+    )
+
+    assert "task 7 covers it" in setup.lead_client.messages[-1][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_prepared_contest_is_resumable_after_a_restart(tmp_path):
+    """Without a recovery branch this raises "is not recoverable here" and the
+    cycle can never move again.
+
+    The objection deliberately matches the cycle's dispatched instruction: the
+    crash leaves only a request digest behind, and recovery can only rebuild an
+    identical prompt from what the cycle itself persisted (get_cycle_objective),
+    not from the in-memory objection string a real caller supplied.
+    """
+    setup = make_operation_runtime(tmp_path, cycle_instruction="nothing owns T-04")
+    add_completed_operation_task(setup)
+    setup.lead_client.responses = [
+        ModelResponse(json.dumps({"kind": "reject", "reason": "task 7 covers it"}), []),
+        ModelResponse("summary", []),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_contest",
+        0,
+        "prepared",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.adjudicate_contest(
+            setup.run.id, setup.cycle.id, "nothing owns T-04"
+        )
+
+    await restart_operation_runtime(setup).resume(setup.run.id, setup.cycle.id)
+
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:cycle_contest:0"
+    ).status == "applied"
