@@ -89,6 +89,19 @@ class TriggerCycleRequest(BaseModel):
         return value
 
 
+class ContestRequest(BaseModel):
+    objection: Annotated[str, Field(min_length=1)]
+    client_request_id: Annotated[str, Field(min_length=1)]
+
+    @field_validator("objection", "client_request_id")
+    @classmethod
+    def reject_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
 class AddWorkRequest(BaseModel):
     instruction: str
 
@@ -237,6 +250,50 @@ async def trigger_cycle(
         principal,
         event_type="team.cycle_request.queued",
         action="team_runs.trigger_cycle",
+        resource_type="team_cycle_request",
+        resource_id=created.id,
+        team_run_id=team_run_id,
+    )
+    return {
+        "cycle_request": _cycle_request_payload(created),
+        "queue_position": request.app.state.team_cycle_service.queue_position(created.id),
+    }
+
+
+@router.post("/{team_run_id}/contests")
+async def contest_plan(
+    request: Request,
+    team_run_id: str,
+    payload: ContestRequest,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    require_intake_open(request)
+    try:
+        created = request.app.state.team_cycle_service.enqueue_request(
+            team_run_id,
+            "contest",
+            payload.client_request_id,
+            payload.objection,
+            previous_cycle_id=None,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await request.app.state.event_bus.publish(
+        {
+            "type": "team.contest.queued",
+            "team_run_id": team_run_id,
+            "cycle_request_id": created.id,
+            "source_type": "contest",
+        }
+    )
+    await request.app.state.team_cycle_dispatcher.enqueue_run(team_run_id)
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.contest.queued",
+        action="team_runs.contest_plan",
         resource_type="team_cycle_request",
         resource_id=created.id,
         team_run_id=team_run_id,
@@ -397,6 +454,7 @@ def get_team_run_detail(
     selected_tasks = tasks[-limit:]
     selected_messages = messages[-limit:]
     cycle_service = request.app.state.team_cycle_service
+    cycle_requests = cycle_service.list_requests(team_run_id)
     workspace = _resolved_workspace(run)
     task_evidence = {
         task.id: task_build_evidence(task, workspace) for task in selected_tasks
@@ -435,6 +493,7 @@ def get_team_run_detail(
             "tasks": len(tasks) > len(selected_tasks),
             "messages": len(messages) > len(selected_messages),
         },
+        "contests": _contests_payload(cycle_requests, cycles, messages),
     }
 
 
@@ -1474,3 +1533,65 @@ def _cycle_request_payload(
         "settled_at": cycle_request.settled_at,
         "updated_at": cycle_request.updated_at,
     }
+
+
+_CONTEST_VERDICT_PREFIX = "Contest verdict: "
+_CONTEST_SUPERSEDES_MARKER = " Supersedes: "
+
+
+def _parse_contest_adjudication(
+    content: str,
+) -> tuple[str | None, str | None, list[dict[str, str]]]:
+    """Inverse of team_model_effects._contest_adjudication_content.
+
+    That function renders "Contest verdict: {kind}. {reason}", optionally
+    followed by " Supersedes: {document_path} — {decision}; ...". Verdict
+    kinds never contain ". ", so splitting on the first occurrence recovers
+    kind and reason without ambiguity.
+    """
+    body, _, overrides = content.partition(_CONTEST_SUPERSEDES_MARKER)
+    supersedes = [
+        {"document_path": document_path, "decision": decision}
+        for document_path, _, decision in (
+            entry.partition(" — ") for entry in overrides.split("; ") if entry
+        )
+    ]
+    body = body.removeprefix(_CONTEST_VERDICT_PREFIX)
+    kind, _, reason = body.partition(". ")
+    return (kind or None, reason or None, supersedes)
+
+
+def _contests_payload(
+    cycle_requests: list[TeamCycleRequest],
+    cycles: list[TeamRunCycle],
+    messages: list[TeamMessage],
+) -> list[dict[str, object]]:
+    cycle_by_request_id = {
+        cycle.request_id: cycle for cycle in cycles if cycle.request_id is not None
+    }
+    adjudication_by_cycle_id = {
+        message.cycle_id: message
+        for message in messages
+        if message.kind == "plan_adjudication" and message.cycle_id is not None
+    }
+    contests = []
+    for cycle_request in cycle_requests:
+        if cycle_request.source_type != "contest":
+            continue
+        kind: str | None = None
+        reason: str | None = None
+        supersedes: list[dict[str, str]] = []
+        cycle = cycle_by_request_id.get(cycle_request.id)
+        message = adjudication_by_cycle_id.get(cycle.id) if cycle is not None else None
+        if message is not None:
+            kind, reason, supersedes = _parse_contest_adjudication(message.content)
+        contests.append(
+            {
+                "objection": cycle_request.instruction,
+                "kind": kind,
+                "reason": reason,
+                "supersedes": supersedes,
+                "created_at": cycle_request.created_at,
+            }
+        )
+    return contests

@@ -2561,3 +2561,51 @@ def test_team_run_detail_shows_what_each_task_built(tmp_path: Path) -> None:
         "worker_asserted_only_count": 1,
         "missing_file_count": 1,
     }
+
+
+def test_contesting_the_plan_queues_a_request(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    create_team(client, leader_id, [member_id])
+    run = create_standard_run(client.app, leader_id, [member_id])
+
+    response = client.post(
+        f"/api/team-runs/{run['id']}/contests",
+        json={"objection": "T-04 and T-15 have no owner", "client_request_id": "c1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["cycle_request"]["source_type"] == "contest"
+
+
+def test_contesting_the_same_objection_twice_is_idempotent(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    create_team(client, leader_id, [member_id])
+    run = create_standard_run(client.app, leader_id, [member_id])
+    payload = {"objection": "T-04 has no owner", "client_request_id": "c1"}
+
+    first = client.post(f"/api/team-runs/{run['id']}/contests", json=payload).json()
+    second = client.post(f"/api/team-runs/{run['id']}/contests", json=payload).json()
+
+    assert first["cycle_request"]["id"] == second["cycle_request"]["id"]
+
+
+def test_a_canceled_run_refuses_a_contest(tmp_path: Path) -> None:
+    """claim_next raises for a canceled run, and enqueue_request refuses too, so
+    the endpoint has to surface that as a 409 rather than a 500."""
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    create_team(client, leader_id, [member_id])
+    run = create_standard_run(client.app, leader_id, [member_id])
+    client.post(f"/api/team-runs/{run['id']}/cancel")
+
+    response = client.post(
+        f"/api/team-runs/{run['id']}/contests",
+        json={"objection": "too late", "client_request_id": "c1"},
+    )
+
+    assert response.status_code == 409

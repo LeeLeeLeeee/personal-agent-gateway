@@ -1245,7 +1245,15 @@ class TeamCycleService:
             expected_policy = "auto"
         else:
             raise ValueError(f"Unsupported cycle request source: {normalized_source_type}")
-        self._require_policy(connection, team_run_id, expected_policy)
+        # A contest can be filed against a plan_and_execute run mid-flight, not
+        # only a continuous one -- adjudication (team_runtime.adjudicate_contest)
+        # owns the run-status guards, so enqueueing only needs to refuse a
+        # canceled run, not the continuous/AUTO-or-TRIGGERED shape the other
+        # source types require.
+        if normalized_source_type == "contest":
+            self._require_not_canceled(connection, team_run_id)
+        else:
+            self._require_policy(connection, team_run_id, expected_policy)
         existing = connection.execute(
             """
             select * from team_cycle_requests
@@ -1498,6 +1506,16 @@ class TeamCycleService:
             raise ValueError("Cycle requests require a continuous team run")
         if run["execution_policy"] != expected:
             raise ValueError(f"Cycle request requires the {expected.upper()} execution policy")
+        return run
+
+    def _require_not_canceled(
+        self,
+        connection: sqlite3.Connection,
+        team_run_id: str,
+    ) -> sqlite3.Row:
+        run = self._require_run(connection, team_run_id)
+        if run["status"] == "canceled":
+            raise ValueError("Team run is canceled and cannot enqueue cycle requests")
         return run
 
     @staticmethod
