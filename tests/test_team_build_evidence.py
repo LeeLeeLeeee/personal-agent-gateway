@@ -1,3 +1,5 @@
+import pytest
+
 from personal_agent_gateway.team_build_evidence import (
     run_build_evidence,
     task_build_evidence,
@@ -100,6 +102,22 @@ def test_a_path_escaping_the_workspace_counts_as_missing(tmp_path):
     task = _task(tmp_path, outcome={"deliverables": [{"path": "../outside.md"}]})
 
     assert task_build_evidence(task, tmp_path)["missing_files"] == ["../outside.md"]
+
+
+def test_a_symlink_at_the_declared_path_counts_as_missing(tmp_path):
+    """safe_workspace_file refuses a symlink outright, by name, without
+    following it. The report must agree, rather than resolve through the
+    symlink and read its real, in-workspace target as present."""
+    (tmp_path / "real.md").write_text("x", encoding="utf-8")
+    link = tmp_path / "link.md"
+    try:
+        link.symlink_to(tmp_path / "real.md")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink creation is not permitted in this environment: {exc}")
+
+    task = _task(tmp_path, outcome={"deliverables": [{"path": "link.md"}]})
+
+    assert task_build_evidence(task, tmp_path)["missing_files"] == ["link.md"]
 
 
 def test_verification_mode_is_carried_through_unchanged(tmp_path):

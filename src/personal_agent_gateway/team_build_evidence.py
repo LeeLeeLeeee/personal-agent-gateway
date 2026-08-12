@@ -8,20 +8,25 @@ from personal_agent_gateway.teams import TeamTask
 def _is_missing(workspace: Path, relative_path: str) -> bool:
     """Absent, or unreachable for a reason that is not absence.
 
-    safe_workspace_file also refuses .env and .env.* by name, so asking it alone
-    would report a file that is plainly there as missing and the screen would be
-    telling the operator something false. Sensitive names are checked separately
-    against the resolved path, still inside the workspace.
+    safe_workspace_file already walks the path, resolves it, and stats it once;
+    redoing all of that here would double the filesystem work for every
+    declared path a run reports on. The only case worth telling apart from a
+    genuine absence is the one safe_workspace_file collapses into the same
+    None: a file that is plainly there but refused by name (.env, .env.*).
+    Answering that needs nothing beyond a symlink check and a stat -- and the
+    symlink check must stop there rather than resolve to whatever the symlink
+    points at, because safe_workspace_file refuses a symlink outright and the
+    report must agree with the gate about what is reachable.
     """
     if safe_workspace_file(workspace, relative_path) is not None:
         return False
-    root = workspace.resolve()
+    candidate = workspace.resolve() / relative_path
     try:
-        candidate = (root / relative_path).resolve()
-        candidate.relative_to(root)
-    except (OSError, ValueError):
+        if candidate.is_symlink() or not candidate.is_file():
+            return True
+    except OSError:
         return True
-    return not (candidate.is_file() and is_sensitive_file(candidate.name))
+    return not is_sensitive_file(candidate.name)
 
 
 def task_build_evidence(task: TeamTask, workspace: Path) -> dict[str, object]:
