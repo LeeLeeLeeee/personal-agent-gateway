@@ -1067,7 +1067,21 @@ class TeamRuntime:
                         run, leader, cycle_id, objection
                     )
                 else:
-                    messages = _repair_messages(None)
+                    failed_operation = self._operations.get_by_key(
+                        _operation_key(
+                            cycle_id,
+                            "cycle_contest",
+                            operation.stage_ordinal,
+                        )
+                    )
+                    if (
+                        failed_operation is None
+                        or failed_operation.status != "failed"
+                    ):
+                        raise OperationConflict(
+                            "Contest repair has no failed source operation"
+                        )
+                    messages = _repair_messages(failed_operation.reason_code)
                 recovered = await self._invoke_existing_operation(
                     operation,
                     leader,
@@ -3197,6 +3211,16 @@ class TeamRuntime:
         self, team_run_id: str, cycle_id: str, objection: str
     ) -> ContestOutcome:
         run = self._teams.get_team_run(team_run_id)
+        # A contest is the cycle doing work, so it owns its own activation the
+        # way start/resume do -- callers (Task 9's orchestrator) invoke this
+        # before resume(), so nothing else has put the cycle or the run into an
+        # active status yet. An explicit cancel is the one status this must not
+        # override; every other terminal status (e.g. a settled previous cycle)
+        # is reopenable, exactly as add_work's API-level guard treats them.
+        if run.status == "canceled":
+            raise OperationConflict("Canceled team runs cannot be contested")
+        self._activate_cycle(cycle_id)
+        run = self._teams.set_run_status(run.id, "running")
         leader = _find_leader(self._teams.list_agents(run.id))
         leader_agent = self._teams.get_agent(leader.id)
         messages = self._contest_messages(run, leader_agent, cycle_id, objection)

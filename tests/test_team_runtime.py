@@ -6401,8 +6401,12 @@ async def test_a_verdict_with_no_reason_is_repaired_once(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ask_back_pauses_the_run_for_the_user(tmp_path):
+    """adjudicate_contest is called before resume(), on a cycle that has not
+    been activated yet and a run still carrying the previous cycle's terminal
+    status -- exactly the precondition Task 9's orchestrator produces."""
     setup = make_operation_runtime(tmp_path, cycle_instruction="work")
-    setup.teams.set_run_status(setup.run.id, "running")
+    setup.teams.set_cycle_status(setup.cycle.id, "queued")
+    setup.teams.set_run_status(setup.run.id, "completed")
     setup.lead_client.responses = [
         ModelResponse(
             json.dumps({
