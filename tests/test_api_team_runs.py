@@ -2563,12 +2563,29 @@ def test_team_run_detail_shows_what_each_task_built(tmp_path: Path) -> None:
     }
 
 
+def _create_triggered_run(client: TestClient, leader_id: str, member_ids: list[str]) -> dict[str, object]:
+    """A contest can only ever be filed against the shape real runs have:
+    plan_and_execute + continuous lifecycle. POST /api/team-runs hardcodes
+    lifecycle_mode="continuous"; passing execution_policy="triggered" gives a
+    run where enqueue_request's policy gate for source_type="contest" is
+    satisfied, the same way test_team_run_detail_aggregate_includes_documents_summary
+    builds its run."""
+    team_id = create_team(client, leader_id, member_ids)
+    return client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Contest test",
+            "execution_policy": "triggered",
+        },
+    ).json()["team_run"]
+
+
 def test_contesting_the_plan_queues_a_request(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "Developer")
-    create_team(client, leader_id, [member_id])
-    run = create_standard_run(client.app, leader_id, [member_id])
+    run = _create_triggered_run(client, leader_id, [member_id])
 
     response = client.post(
         f"/api/team-runs/{run['id']}/contests",
@@ -2583,8 +2600,7 @@ def test_contesting_the_same_objection_twice_is_idempotent(tmp_path: Path) -> No
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "Developer")
-    create_team(client, leader_id, [member_id])
-    run = create_standard_run(client.app, leader_id, [member_id])
+    run = _create_triggered_run(client, leader_id, [member_id])
     payload = {"objection": "T-04 has no owner", "client_request_id": "c1"}
 
     first = client.post(f"/api/team-runs/{run['id']}/contests", json=payload).json()
@@ -2599,8 +2615,7 @@ def test_a_canceled_run_refuses_a_contest(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "Developer")
-    create_team(client, leader_id, [member_id])
-    run = create_standard_run(client.app, leader_id, [member_id])
+    run = _create_triggered_run(client, leader_id, [member_id])
     client.post(f"/api/team-runs/{run['id']}/cancel")
 
     response = client.post(

@@ -451,6 +451,23 @@ def get_team_run_detail(
             coverage_by_cycle[cycle.id] = (
                 (synthesis.result_json or {}).get("payload") or {}
             ).get("coverage_gaps")
+    verdict_payload_by_cycle: dict[str, dict[str, object]] = {}
+    for cycle in cycles:
+        if cycle.source_type != "contest":
+            continue
+        verdict_operation = next(
+            (
+                operation
+                for operation in operations.list_for_cycle(cycle.id)
+                if operation.stage in {"cycle_contest", "cycle_contest_repair"}
+                and operation.status == "applied"
+            ),
+            None,
+        )
+        if verdict_operation is not None:
+            verdict_payload_by_cycle[cycle.id] = (
+                verdict_operation.result_json or {}
+            ).get("payload") or {}
     selected_tasks = tasks[-limit:]
     selected_messages = messages[-limit:]
     cycle_service = request.app.state.team_cycle_service
@@ -493,7 +510,7 @@ def get_team_run_detail(
             "tasks": len(tasks) > len(selected_tasks),
             "messages": len(messages) > len(selected_messages),
         },
-        "contests": _contests_payload(cycle_requests, cycles, messages),
+        "contests": _contests_payload(cycle_requests, cycles, verdict_payload_by_cycle),
     }
 
 
@@ -1535,62 +1552,26 @@ def _cycle_request_payload(
     }
 
 
-_CONTEST_VERDICT_PREFIX = "Contest verdict: "
-_CONTEST_SUPERSEDES_MARKER = " Supersedes: "
-
-
-def _parse_contest_adjudication(
-    content: str,
-) -> tuple[str | None, str | None, list[dict[str, str]]]:
-    """Inverse of team_model_effects._contest_adjudication_content.
-
-    That function renders "Contest verdict: {kind}. {reason}", optionally
-    followed by " Supersedes: {document_path} — {decision}; ...". Verdict
-    kinds never contain ". ", so splitting on the first occurrence recovers
-    kind and reason without ambiguity.
-    """
-    body, _, overrides = content.partition(_CONTEST_SUPERSEDES_MARKER)
-    supersedes = [
-        {"document_path": document_path, "decision": decision}
-        for document_path, _, decision in (
-            entry.partition(" — ") for entry in overrides.split("; ") if entry
-        )
-    ]
-    body = body.removeprefix(_CONTEST_VERDICT_PREFIX)
-    kind, _, reason = body.partition(". ")
-    return (kind or None, reason or None, supersedes)
-
-
 def _contests_payload(
     cycle_requests: list[TeamCycleRequest],
     cycles: list[TeamRunCycle],
-    messages: list[TeamMessage],
+    verdict_payload_by_cycle: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
     cycle_by_request_id = {
         cycle.request_id: cycle for cycle in cycles if cycle.request_id is not None
-    }
-    adjudication_by_cycle_id = {
-        message.cycle_id: message
-        for message in messages
-        if message.kind == "plan_adjudication" and message.cycle_id is not None
     }
     contests = []
     for cycle_request in cycle_requests:
         if cycle_request.source_type != "contest":
             continue
-        kind: str | None = None
-        reason: str | None = None
-        supersedes: list[dict[str, str]] = []
         cycle = cycle_by_request_id.get(cycle_request.id)
-        message = adjudication_by_cycle_id.get(cycle.id) if cycle is not None else None
-        if message is not None:
-            kind, reason, supersedes = _parse_contest_adjudication(message.content)
+        payload = verdict_payload_by_cycle.get(cycle.id) if cycle is not None else None
         contests.append(
             {
                 "objection": cycle_request.instruction,
-                "kind": kind,
-                "reason": reason,
-                "supersedes": supersedes,
+                "kind": payload.get("kind") if payload else None,
+                "reason": payload.get("reason") if payload else None,
+                "supersedes": list(payload.get("supersedes") or []) if payload else [],
                 "created_at": cycle_request.created_at,
             }
         )
