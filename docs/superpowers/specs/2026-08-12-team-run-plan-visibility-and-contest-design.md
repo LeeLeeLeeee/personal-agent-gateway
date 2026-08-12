@@ -262,3 +262,73 @@ produced NameErrors during the previous stage addition.
   tested; the rollup counts the attested-only tasks.
 - Part 2 with a synthesis carrying no block, a malformed block, and a valid one —
   the first two leave the summary intact and record the report as absent.
+
+## What the live runtime showed
+
+Recorded because a green suite proves less here than usual: `authenticated_client`'s
+`TestClient` never runs the app's lifespan, so the cycle dispatcher worker never
+starts and the API tests cannot exercise a contest end to end at all.
+
+**Suites.** Backend 21 failed / 1492 passed / 2 skipped — the same 21 pre-existing
+failures (`test_api_agents` 5, `test_api_dashboard` 1,
+`test_runtime_factory_headless` 15), no new ones, passes up 39. Frontend 41 files
+/ 397 tests pass; one `ArchiveView` timeout appeared on the first run and not the
+second, confirming it as the known flake. `ruff check` clean over `src/` and
+`tests/`.
+
+**Part 1, against run 699c1915's real stored data.**
+`build_evidence_summary` reads `{task_count: 13, worker_asserted_only_count: 0,
+missing_file_count: 0}`. The zero is the correct reading, not a gap:
+`attested_only` is `verified_count == 0`, and all 18 of that run's verification
+entries ran a check, so no task can qualify. What the view does surface is the
+thing the audit had to find by hand — **four tasks whose declared deliverables
+do not match their contract**, including the two the run actually died on:
+`학습 세션·복습 스케줄링 백엔드 구현` promised 4 files and declared 7, and
+`관리자 콘텐츠 관리 화면 구현` promised 3 and declared 7. A third,
+`학습자 학습 화면 구현`, promised 3 and declared 0. None of that was visible
+anywhere before.
+
+Every one of those 18 checks is `file_nonempty`, `file_contains`, `file_matches`,
+or `json_parses` — file reads. The per-verification label says `파일 내용 확인`,
+which is true. **The rollup does not**, and that is a real weakness in this
+design rather than in its implementation: an operator reading
+`워커 신고만으로 통과 0 / 13` will hear "acceptance was rigorous", when the honest
+state is that every task passed a check no stronger than "a file exists and has
+some text in it". The number is accurate to its narrow definition and still
+invites the false confidence the rest of this work exists to prevent. Fixing it
+needs a check kind stronger than a file read, which is Finding 2's territory.
+
+**Part 2.** Cycle payloads carry `coverage_gaps`; run 699c1915's is `null`,
+correctly — it predates the prompt, so the leader never reported. The three-way
+distinction between a list, `[]` and absent is what the UI renders.
+
+**Part 3, end to end on a throwaway run created for this.** Two contests were
+posted to a run made solely for verification, which was cancelled afterwards. No
+existing run was touched.
+
+- The first was posted while the run was still `draft`. The dispatcher claimed it,
+  created a cycle, and the cycle failed with
+  `Team run status 'draft' cannot be contested` — the guard added late in Task 8,
+  firing in production for the first time. The request settled and no operation
+  was created.
+- The run was then moved to `completed` by a direct database write, standing in
+  for a settled previous cycle, and the contest reposted. The full path ran: the
+  request was claimed, a `contest` cycle was created, `cycle_contest:0` reached
+  `applied`, and the leader ruled `amend` with this reason: *"The objection
+  identifies a real coverage gap: the current task list is empty, so neither the
+  discard-draft flow (T-04) nor the reject flow (T-15) has an owning task. No
+  accepted document currently claims these are covered, so nothing needs to be
+  superseded — the fix is simply to add the two missing tasks."* It created the
+  two tasks it promised, each with its own `required_outputs`, and left
+  `supersedes` empty — correctly, having reasoned that there was no prior decision
+  to overturn. Execution then began on the first task, at which point the run was
+  cancelled.
+- `detail["contests"]` returned both rows and told them apart: the refused one
+  with `kind: null`, the ruled one with `kind: "amend"` and its reason.
+
+**Not verified.** No verdict of kind `reject`, `partial`, or `ask_back` was
+produced by a real model — only `amend` was. `ask_back`'s pause is covered by a
+unit test that reproduces the real precondition, but has never run live. Nor was
+a verdict carrying a non-empty `supersedes`, which is the FSRS case this design
+exists for; arranging one needs a run whose accepted documents actually contradict
+its code.
