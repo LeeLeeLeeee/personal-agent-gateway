@@ -7030,18 +7030,87 @@ def test_substring_collision_path_prefix() -> None:
     assert undeclared_retry_is_futile(resolution, extras)
 
 
-def test_path_with_all_boundary_variants() -> None:
-    """A path is recognized as named when appeared with boundaries on both sides.
-    Tests: plain, double quotes, single quotes, backticks, parentheses, comma, period."""
+def test_path_plain_is_named() -> None:
+    """A path appearing plainly is recognized as named."""
+    extras = frozenset({"a/b.md"})
     resolution = AcceptanceReviewResolution(
         kind="retry_worker",
         reason="r",
-        instruction=(
-            "Delete a/b.md or \"a/b.md\" or 'a/b.md' or `a/b.md` or (a/b.md) "
-            "or a/b.md, or a/b.md. and resubmit."
-        ),
+        instruction="Delete a/b.md and resubmit.",
     )
+
+    assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_path_in_double_quotes_is_named() -> None:
+    """A path wrapped in double quotes is recognized as named."""
     extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction='Delete "a/b.md" and resubmit.',
+    )
+
+    assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_path_in_single_quotes_is_named() -> None:
+    """A path wrapped in single quotes is recognized as named."""
+    extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete 'a/b.md' and resubmit.",
+    )
+
+    assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_path_in_backticks_is_named() -> None:
+    """A path wrapped in backticks is recognized as named."""
+    extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete `a/b.md` and resubmit.",
+    )
+
+    assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_path_in_parentheses_is_named() -> None:
+    """A path wrapped in parentheses is recognized as named."""
+    extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete (a/b.md) and resubmit.",
+    )
+
+    assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_path_followed_by_comma_is_named() -> None:
+    """A path followed by a comma is recognized as named."""
+    extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete a/b.md, and resubmit.",
+    )
+
+    assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_path_followed_by_period_is_named() -> None:
+    """A path followed by a period (sentence ending) is recognized as named.
+    This is the trailing-period case where period is punctuation, not extension."""
+    extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete a/b.md.",
+    )
 
     assert not undeclared_retry_is_futile(resolution, extras)
 
@@ -7070,6 +7139,20 @@ def test_extra_with_literal_trailing_dot_named_verbatim() -> None:
     )
 
     assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_period_lookahead_for_extension() -> None:
+    """When period follows the path, check what follows the period.
+    extras {'a/b.md'} with instruction naming 'a/b.md.bak' must be futile
+    because the period continues the path as an extension."""
+    extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete a/b.md.bak and resubmit.",
+    )
+
+    assert undeclared_retry_is_futile(resolution, extras)
 
 
 def test_path_suffix_collision() -> None:

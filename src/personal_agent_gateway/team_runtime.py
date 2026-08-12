@@ -344,6 +344,10 @@ def undeclared_retry_is_futile(
     non-path characters (or string edges). Path characters are ASCII letters,
     digits, `.`, `_`, `-`, `/`, `\\`; anything else is a boundary. This handles
     parentheses, quotes, punctuation, and whitespace without text manipulation.
+    Special case: when `.` immediately follows the match, look ahead; if the
+    next character is a path character, the `.` continues the path (e.g.,
+    `a/b.md.bak`); if it is a boundary or the string ends, the `.` is sentence
+    punctuation and the occurrence counts as named.
 
     The rule does not establish whether prose actually instructs the worker to
     drop a file -- a leader could write "declare outputs/extra.md along with
@@ -351,7 +355,9 @@ def undeclared_retry_is_futile(
     cap-time escalation is what covers that. Comparison is case-sensitive,
     matching the gate's own set-difference logic in team_acceptance.py: on
     case-insensitive filesystems a leader naming the path with different case
-    is scored as not having named it.
+    is scored as not having named it. Path separators are also compared
+    literally: an extra `a\b.md` is not matched by an instruction naming
+    `a/b.md`, since the conventions may differ.
     """
     if resolution.kind != "retry_worker" or not extra_paths:
         return False
@@ -375,9 +381,20 @@ def undeclared_retry_is_futile(
                 continue
             # Check boundary after
             end_pos = pos + len(path)
-            if end_pos < len(instruction) and instruction[end_pos] in path_chars:
-                pos += 1
-                continue
+            if end_pos < len(instruction):
+                char_after = instruction[end_pos]
+                # Special case for trailing period: look ahead
+                if char_after == ".":
+                    # If the character after the period is a path char, the period
+                    # continues the path (e.g., a/b.md.bak)
+                    if end_pos + 1 < len(instruction):
+                        if instruction[end_pos + 1] in path_chars:
+                            pos += 1
+                            continue
+                    # Otherwise the period is punctuation, so this is a boundary
+                elif char_after in path_chars:
+                    pos += 1
+                    continue
             # Both boundaries satisfied
             return True
 
