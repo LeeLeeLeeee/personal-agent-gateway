@@ -330,6 +330,27 @@ class AcceptanceReviewResolution:
     reason_code: str | None = None
 
 
+def undeclared_retry_is_futile(
+    resolution: AcceptanceReviewResolution,
+    extra_paths: frozenset[str],
+) -> bool:
+    """Can this resolution clear an undeclared_deliverable rejection?
+
+    retry_worker leaves the contract untouched, so acceptance requires the next
+    outcome to declare fewer files -- which the worker can only do if it is told
+    which ones to drop. Naming them is therefore a floor, not a preference.
+
+    This is a proxy, and a deliberately loose one: whether prose actually makes
+    the worker drop a file is not decidable here. A leader that writes "declare
+    outputs/extra.md along with the others" names the path and still keeps it, and
+    this rule lets it through. The cap-time escalation is what covers that.
+    """
+    if resolution.kind != "retry_worker" or not extra_paths:
+        return False
+    instruction = resolution.instruction or ""
+    return any(path not in instruction for path in extra_paths)
+
+
 def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:
     if not snapshot:
         return ""

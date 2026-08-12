@@ -46,6 +46,7 @@ from personal_agent_gateway.team_runtime import (
     ADD_WORK_PROMPT,
     PLANNING_PROMPT,
     WORKER_PROMPT,
+    AcceptanceReviewResolution,
     TeamRuntime,
     _acceptance_worker_repair_messages,
     _bounded_path_exists,
@@ -59,6 +60,7 @@ from personal_agent_gateway.team_runtime import (
     _task_delta,
     _terminal_status,
     _worker_repair_messages,
+    undeclared_retry_is_futile,
 )
 from personal_agent_gateway.team_output_contracts import OutputContract
 from personal_agent_gateway.team_verification_checks import VerificationCheck
@@ -6941,3 +6943,75 @@ async def test_a_recovered_contest_leaves_the_leader_pending_while_it_rules(
     )
 
     assert seen["leader"] == "pending"
+
+
+def test_a_retry_that_names_no_extra_path_is_futile() -> None:
+    """retry_worker leaves the contract alone, so the outcome can only be
+    accepted if the worker declares fewer files. An instruction that never says
+    which files to drop cannot produce that, and run 699c1915 lost two tasks to
+    exactly this: the leader said "declare all seven" while the contract listed
+    four, and the identical rejection came back until the cap ran out.
+    """
+    extras = frozenset({"outputs/extra.md", "tests/test_extra.py"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="The outcome declared files outside the contract.",
+        instruction="Declare every file you produced and resubmit.",
+    )
+
+    assert undeclared_retry_is_futile(resolution, extras)
+
+
+def test_a_retry_naming_every_extra_path_is_allowed() -> None:
+    """The legitimate cleanup case must keep working -- telling the worker to
+    delete what it wrote outside its contract is the reason the set-equality rule
+    exists."""
+    extras = frozenset({"outputs/extra.md", "tests/test_extra.py"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="Those files belong to another task.",
+        instruction=(
+            "Delete outputs/extra.md and tests/test_extra.py, then resubmit "
+            "declaring only the contract outputs."
+        ),
+    )
+
+    assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_naming_only_some_extras_is_still_futile() -> None:
+    """A partial instruction leaves at least one undeclared path behind, so the
+    same rejection returns."""
+    extras = frozenset({"outputs/extra.md", "tests/test_extra.py"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete outputs/extra.md and resubmit.",
+    )
+
+    assert undeclared_retry_is_futile(resolution, extras)
+
+
+@pytest.mark.parametrize("kind", ["revise_acceptance", "ask_user", "fail"])
+def test_only_retry_worker_can_be_futile(kind) -> None:
+    """revise_acceptance changes the contract, and the other two do not resubmit
+    at all, so none of them can be judged by this rule."""
+    resolution = AcceptanceReviewResolution(
+        kind=kind,
+        reason="r",
+        instruction="Declare every file you produced and resubmit.",
+    )
+
+    assert not undeclared_retry_is_futile(
+        resolution, frozenset({"outputs/extra.md"})
+    )
+
+
+def test_no_extras_means_nothing_to_judge() -> None:
+    """Called for a rejection that is not about extra paths, or before any are
+    known, the rule must stay out of the way."""
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker", reason="r", instruction="Fix the failing check."
+    )
+
+    assert not undeclared_retry_is_futile(resolution, frozenset())
