@@ -1475,12 +1475,16 @@ describe("TeamRunDetail", () => {
             id: "t1",
             title: "Write the guide",
             status: "completed",
+            // Render-only fixture, not a model of a real state: live, a task can't
+            // land here with status "completed" and a non-empty extra_declarations
+            // -- team_acceptance.py rejects a task whose declared deliverables
+            // exceed required_outputs before acceptance ever succeeds.
             build_evidence: {
               promised: ["kept.md", "forgotten.md"],
-              declared: ["kept.md", "ghost.md"],
+              declared: ["kept.md", "ghost.md", "lost.md"],
               undeclared_promises: ["forgotten.md"],
               extra_declarations: ["ghost.md"],
-              missing_files: ["ghost.md"],
+              missing_files: ["lost.md"],
               verifications: [
                 { name: "ran", mode: "verified", status: "passed" },
                 { name: "claimed", mode: "attested", status: "passed" }
@@ -1500,7 +1504,8 @@ describe("TeamRunDetail", () => {
     const dialog = screen.getByRole("dialog", { name: "Task details: Write the guide" });
 
     expect(within(dialog).getByText(/forgotten\.md/)).toBeInTheDocument();
-    expect(within(dialog).getAllByText(/ghost\.md/).length).toBeGreaterThan(0);
+    expect(within(dialog).getByText(/ghost\.md/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/lost\.md/)).toBeInTheDocument();
     expect(within(dialog).getByText(/파일 내용 확인/)).toBeInTheDocument();
     expect(within(dialog).getByText(/워커 신고/)).toBeInTheDocument();
     expect(within(dialog).queryByText("검증됨")).not.toBeInTheDocument();
