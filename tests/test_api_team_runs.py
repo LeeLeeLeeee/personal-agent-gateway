@@ -2624,3 +2624,117 @@ def test_a_canceled_run_refuses_a_contest(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 409
+
+
+def test_an_unadjudicated_contest_appears_in_detail_with_a_null_kind(
+    tmp_path: Path,
+) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    run = _create_triggered_run(client, leader_id, [member_id])
+    client.post(
+        f"/api/team-runs/{run['id']}/contests",
+        json={"objection": "T-04 and T-15 have no owner", "client_request_id": "c1"},
+    )
+
+    detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+
+    assert detail["contests"] == [
+        {
+            "objection": "T-04 and T-15 have no owner",
+            "kind": None,
+            "reason": None,
+            "supersedes": [],
+            "created_at": detail["contests"][0]["created_at"],
+        }
+    ]
+
+
+def test_an_adjudicated_contest_reports_the_structured_verdict_not_prose(
+    tmp_path: Path,
+) -> None:
+    """The verdict must come from the operation's structured result_json, not
+    from splitting the plan_adjudication message's text -- so the reason and
+    decision here deliberately contain the separators a prose parser would
+    split on (" Supersedes: " and "; "). If detail["contests"] ever goes back
+    to parsing the message, this mangles the reason and this test fails."""
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    run = _create_triggered_run(client, leader_id, [member_id])
+    client.post(
+        f"/api/team-runs/{run['id']}/contests",
+        json={"objection": "T-04 has no owner", "client_request_id": "c1"},
+    )
+
+    app = client.app
+    teams = app.state.team_run_service
+    cycles = app.state.team_cycle_service
+    claimed = cycles.claim_next(run["id"])
+    cycle = teams.create_cycle(
+        run["id"], claimed.source_type, claimed.source_id, request_id=claimed.id
+    )
+    actor = teams.get_agent(run["leader_agent_id"])
+    operations = app.state.team_model_operation_service
+    reserved = operations.reserve(
+        OperationSpec(
+            operation_key=f"{cycle.id}:cycle_contest:0",
+            team_run_id=run["id"],
+            cycle_id=cycle.id,
+            task_id=None,
+            agent_id=actor.id,
+            provider=actor.backend,
+            stage="cycle_contest",
+            stage_ordinal=0,
+            request_digest=hashlib.sha256(b"cycle_contest").hexdigest(),
+        )
+    )
+    invoking = operations.begin_attempt(reserved.id, "consumer-1")
+    reason = (
+        'T-04 has no owner. This reason contains " Supersedes: " on purpose, '
+        "to prove the verdict is read structurally and not by splitting text."
+    )
+    task_spec = {
+        "title": "Own T-04",
+        "description": "Assign an owner to T-04.",
+        "owner_agent_id": None,
+        "required": True,
+        "plan_task_id": "own-t-04",
+        "depends_on_task_ids": [],
+        "acceptance": {
+            "required_outputs": ["own-t-04.md"],
+            "required_verifications": [],
+        },
+    }
+    operation = operations.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult(
+            "contest_verdict",
+            {
+                "kind": "amend",
+                "reason": reason,
+                "tasks": [task_spec],
+                "supersedes": [
+                    {
+                        "document_path": "docs/plan.md",
+                        "decision": "revised; then re-reviewed",
+                    }
+                ],
+            },
+        ),
+        upstream_session_id="lead-session",
+    )
+    app.state.team_model_effect_service.apply_contest_verdict(operation.id)
+
+    detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+
+    contest = next(
+        entry for entry in detail["contests"] if entry["objection"] == "T-04 has no owner"
+    )
+    assert contest["kind"] == "amend"
+    assert contest["reason"] == reason
+    assert contest["supersedes"] == [
+        {"document_path": "docs/plan.md", "decision": "revised; then re-reviewed"}
+    ]
