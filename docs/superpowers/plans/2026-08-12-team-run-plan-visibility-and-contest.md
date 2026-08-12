@@ -1864,18 +1864,35 @@ git commit -m "feat(team-runs): route a contest through the cycle request queue"
 
 - [ ] **Step 1: Write the failing test**
 
-Use `create_standard_run(client.app, leader_id, [member_id])` (line 554), which
-creates the run through the service directly — the same helper the 409-guard
-tests use, and the reason a previous plan's test failed was reaching for a
-`continuous` run whose guards fire first.
+Create the run through the real API with `"execution_policy": "triggered"`, the
+way `test_team_run_detail_aggregate_includes_documents_summary` does. `POST
+/api/team-runs` hardcodes `lifecycle_mode="continuous"`, which is the only shape
+real runs ever have.
+
+Do **not** reach for `create_standard_run`: it bypasses the API and produces a
+non-continuous run, and a contest on one of those is a silent no-op. It enqueues
+and is claimed, but `run_one` calls `create_cycle` before it consults the source
+type, and `teams.py` raises "Cycles require a continuous team run" with no
+carve-out — the request is requeued and fails identically forever while the
+operator sees a 200 and a verdict that never arrives. Loosening the enqueue
+policy does not fix that; it only hides the honest 409 behind a permanent
+background failure.
+
+Note that the API tests cannot catch this class of bug on their own:
+`authenticated_client()`'s `TestClient` never runs the app's lifespan, so the
+dispatcher worker never starts. A green API suite says the dispatch path did not
+run, not that it works.
 
 ```python
 def test_contesting_the_plan_queues_a_request(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "Developer")
-    create_team(client, leader_id, [member_id])
-    run = create_standard_run(client.app, leader_id, [member_id])
+    team_id = create_team(client, leader_id, [member_id])
+    run = client.post(
+        "/api/team-runs",
+        json={"team_id": team_id, "goal": "Contest", "execution_policy": "triggered"},
+    ).json()["team_run"]
 
     response = client.post(
         f"/api/team-runs/{run['id']}/contests",
@@ -1890,8 +1907,11 @@ def test_contesting_the_same_objection_twice_is_idempotent(tmp_path: Path) -> No
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "Developer")
-    create_team(client, leader_id, [member_id])
-    run = create_standard_run(client.app, leader_id, [member_id])
+    team_id = create_team(client, leader_id, [member_id])
+    run = client.post(
+        "/api/team-runs",
+        json={"team_id": team_id, "goal": "Contest", "execution_policy": "triggered"},
+    ).json()["team_run"]
     payload = {"objection": "T-04 has no owner", "client_request_id": "c1"}
 
     first = client.post(f"/api/team-runs/{run['id']}/contests", json=payload).json()
@@ -1906,8 +1926,11 @@ def test_a_canceled_run_refuses_a_contest(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
     leader_id = create_persona(client, "Tech Lead")
     member_id = create_persona(client, "Developer")
-    create_team(client, leader_id, [member_id])
-    run = create_standard_run(client.app, leader_id, [member_id])
+    team_id = create_team(client, leader_id, [member_id])
+    run = client.post(
+        "/api/team-runs",
+        json={"team_id": team_id, "goal": "Contest", "execution_policy": "triggered"},
+    ).json()["team_run"]
     client.post(f"/api/team-runs/{run['id']}/cancel")
 
     response = client.post(
