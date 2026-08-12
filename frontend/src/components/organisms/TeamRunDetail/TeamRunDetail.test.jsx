@@ -410,6 +410,31 @@ describe("TeamRunDetail", () => {
       .toEqual(["CYCLE #2", "CYCLE #1"]);
   });
 
+  it("distinguishes a leader that reported no gaps from one that did not report", async () => {
+    const { rerender } = render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "G", status: "completed", run_mode: "plan_and_execute" },
+          agents: [], messages: [], tasks: [],
+          cycles: [{ id: "c1", sequence: 1, status: "completed", coverage_gaps: [] }]
+        }}
+      />
+    );
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    expect(screen.getByText(/누락 없다고 보고함/)).toBeInTheDocument();
+
+    rerender(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "G", status: "completed", run_mode: "plan_and_execute" },
+          agents: [], messages: [], tasks: [],
+          cycles: [{ id: "c1", sequence: 1, status: "completed" }]
+        }}
+      />
+    );
+    expect(screen.getByText(/커버리지를 보고하지 않음/)).toBeInTheDocument();
+  });
+
   it("triggers from the latest settled Cycle and clears instructions only when accepted", async () => {
     const onTriggerCycle = vi.fn()
       .mockResolvedValueOnce(true)

@@ -1271,6 +1271,26 @@ export function TeamRunDetail({
                         <MarkdownContent source={cycle.summary} pathRegistration={false} />
                       </div>
                     ) : null}
+                    {Array.isArray(cycle.coverage_gaps) ? (
+                      cycle.coverage_gaps.length ? (
+                        <div className="team-cycle-coverage-gaps mono">
+                          <span className="team-cycle-coverage-label">COVERAGE GAPS</span>
+                          <ul>
+                            {cycle.coverage_gaps.map((gap, gapIndex) => (
+                              <li key={gapIndex}>
+                                {gap.obligation}
+                                {gap.document ? ` · ${gap.document}` : ""}
+                                {gap.note ? ` — ${gap.note}` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <div className="team-cycle-coverage mono">누락 없다고 보고함</div>
+                      )
+                    ) : (
+                      <div className="team-cycle-coverage mono">커버리지를 보고하지 않음</div>
+                    )}
                     {cycle.error_message ? <div className="hook-row-error mono">{cycle.error_message}</div> : null}
                   </div>
                 </details>

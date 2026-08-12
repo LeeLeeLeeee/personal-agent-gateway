@@ -19,6 +19,7 @@ from personal_agent_gateway.team_acceptance import (
     rejected_verification_names,
     terminal_rejected_status,
 )
+from personal_agent_gateway.team_coverage_report import extract_coverage_gaps
 from personal_agent_gateway.team_artifact_publisher import (
     ArtifactPublicationError,
     TeamArtifactPublisher,
@@ -174,6 +175,13 @@ produce an accurate final response. First use the goal, frozen rules, prior user
 decisions, and task results.
 Return either:
 1. A concise plain-text summary of what was accomplished, including any failures.
+If any obligation in the accepted specification documents is owned by no task,
+append a fenced block listing them, and nothing else after it:
+```coverage-gaps
+[{{"obligation": "short name", "document": "path §section", "note": "why it is unowned"}}]
+```
+Send an empty list if every obligation is owned. Omit the block entirely if you
+did not check.
 2. ONLY {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the final response cannot be completed accurately","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 At this stage, ask only about final interpretation or presentation that does not
 require additional worker execution."""
@@ -191,6 +199,13 @@ Return either:
    followed by the final response in exactly the form the OUTPUT CONTRACT below
    requires. The contract governs this response, not a file you wrote during the
    run.
+If any obligation in the accepted specification documents is owned by no task,
+append a fenced block listing them, and nothing else after it:
+```coverage-gaps
+[{{"obligation": "short name", "document": "path §section", "note": "why it is unowned"}}]
+```
+Send an empty list if every obligation is owned. Omit the block entirely if you
+did not check.
 2. ONLY {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the final response cannot be completed accurately","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 At this stage, ask only about final interpretation or presentation that does not
 require additional worker execution.
@@ -3249,21 +3264,21 @@ class TeamRuntime:
             persona_id=leader.persona_id,
             team_run_id=run.id,
         )
+        summary, gaps = extract_coverage_gaps(content)
+        payload: dict[str, object] = {"summary": summary}
+        if gaps is not None:
+            payload["coverage_gaps"] = gaps
         if contract is None:
-            return ValidatedOperationResult("synthesis", {"summary": content})
+            return ValidatedOperationResult("synthesis", payload)
         try:
-            contract.validate(content)
+            contract.validate(summary)
         except ValueError:
             if strict:
                 raise
-            return ValidatedOperationResult("synthesis", {"summary": content})
-        return ValidatedOperationResult(
-            "synthesis",
-            {
-                "summary": contract.human_summary(content),
-                "contract_payload": content,
-            },
-        )
+            return ValidatedOperationResult("synthesis", payload)
+        payload["summary"] = contract.human_summary(summary)
+        payload["contract_payload"] = summary
+        return ValidatedOperationResult("synthesis", payload)
 
     async def _publish_user_decision_request(
         self,

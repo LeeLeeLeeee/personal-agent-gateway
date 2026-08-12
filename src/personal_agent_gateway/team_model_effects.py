@@ -3271,13 +3271,24 @@ def _valid_decision_option(value: object) -> bool:
 
 
 def _valid_synthesis(payload: dict[str, object]) -> bool:
-    if set(payload) not in ({"summary"}, {"summary", "contract_payload"}):
+    if set(payload) not in (
+        {"summary"},
+        {"summary", "contract_payload"},
+        {"summary", "coverage_gaps"},
+        {"summary", "contract_payload", "coverage_gaps"},
+    ):
         return False
     if not isinstance(payload["summary"], str) or not payload["summary"].strip():
         return False
     if "contract_payload" in payload:
         contract_payload = payload["contract_payload"]
         if not isinstance(contract_payload, str) or not contract_payload.strip():
+            return False
+    if "coverage_gaps" in payload:
+        gaps = payload["coverage_gaps"]
+        if not isinstance(gaps, list) or not all(
+            isinstance(gap, dict) for gap in gaps
+        ):
             return False
     return True
 

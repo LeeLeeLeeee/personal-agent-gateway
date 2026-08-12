@@ -1752,6 +1752,7 @@ def test_cycle_space_policy_is_included_in_cycle_detail(tmp_path: Path) -> None:
             "rules_snapshot": cycle.rules_snapshot,
             "space_policy": cycle.space_policy,
             "summary": "Mail handled",
+            "coverage_gaps": None,
             "error_message": None,
             "created_at": cycle.created_at,
             "started_at": cycle.started_at,

@@ -877,6 +877,46 @@ async def test_lead_acceptance_retry_uses_separate_worker_operation(tmp_path):
     ).status == "applied"
 
 
+@pytest.mark.asyncio
+async def test_synthesis_records_the_gaps_the_leader_reported(tmp_path):
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review("Fix the missing citation check."), []),
+        ModelResponse(
+            "Built the backend.\n\n```coverage-gaps\n"
+            '[{"obligation": "T-04 discard", "document": "docs/plan.md §4"}]\n```',
+            [],
+        ),
+    ]
+
+    run = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    cycle = setup.teams.get_cycle(setup.cycle.id)
+    assert cycle.summary == "Built the backend."
+    operation = setup.operations.get_by_key(f"{setup.cycle.id}:cycle_synthesis:0")
+    assert operation.result_json["payload"]["coverage_gaps"] == [
+        {"obligation": "T-04 discard", "document": "docs/plan.md §4", "note": ""}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_synthesis_with_no_block_still_completes_the_cycle(tmp_path):
+    """The block is optional by construction. A leader that omits it must not
+    cost the cycle -- that is the whole reason it is not a required field."""
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review("Fix the missing citation check."), []),
+        ModelResponse("Built the backend.", []),
+    ]
+
+    run = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    operation = setup.operations.get_by_key(f"{setup.cycle.id}:cycle_synthesis:0")
+    assert "coverage_gaps" not in operation.result_json["payload"]
+
+
 def test_existing_repair_prompts_are_unchanged() -> None:
     """Collapsing four hand-wired sites onto one seam must not reword them.
 

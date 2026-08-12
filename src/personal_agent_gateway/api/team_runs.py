@@ -377,7 +377,23 @@ def get_team_run_detail(
         cycles = service.list_cycles(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
-    failure_shapes = request.app.state.team_model_operation_service        .latest_failure_shapes(team_run_id)
+    operations = request.app.state.team_model_operation_service
+    failure_shapes = operations.latest_failure_shapes(team_run_id)
+    coverage_by_cycle: dict[str, list[dict[str, str]] | None] = {}
+    for cycle in cycles:
+        synthesis = next(
+            (
+                operation
+                for operation in operations.list_for_cycle(cycle.id)
+                if operation.stage in {"cycle_synthesis", "cycle_synthesis_repair"}
+                and operation.status == "applied"
+            ),
+            None,
+        )
+        if synthesis is not None:
+            coverage_by_cycle[cycle.id] = (
+                (synthesis.result_json or {}).get("payload") or {}
+            ).get("coverage_gaps")
     selected_tasks = tasks[-limit:]
     selected_messages = messages[-limit:]
     cycle_service = request.app.state.team_cycle_service
@@ -398,7 +414,10 @@ def get_team_run_detail(
             for task in selected_tasks
         ],
         "messages": [_message_payload(message) for message in selected_messages],
-        "cycles": [_cycle_payload(cycle) for cycle in cycles],
+        "cycles": [
+            _cycle_payload(cycle, coverage_by_cycle.get(cycle.id))
+            for cycle in cycles
+        ],
         "decision_request": _decision_request_payload(
             service.get_active_decision_request(team_run_id)
         ),
@@ -1364,7 +1383,10 @@ def _message_payload(message: TeamMessage) -> dict[str, object]:
     }
 
 
-def _cycle_payload(cycle: TeamRunCycle) -> dict[str, object]:
+def _cycle_payload(
+    cycle: TeamRunCycle,
+    coverage_gaps: list[dict[str, str]] | None = None,
+) -> dict[str, object]:
     return {
         "id": cycle.id,
         "team_run_id": cycle.team_run_id,
@@ -1377,6 +1399,7 @@ def _cycle_payload(cycle: TeamRunCycle) -> dict[str, object]:
         "rules_snapshot": cycle.rules_snapshot,
         "space_policy": cycle.space_policy,
         "summary": cycle.summary,
+        "coverage_gaps": coverage_gaps,
         "error_message": cycle.error_message,
         "created_at": cycle.created_at,
         "started_at": cycle.started_at,
