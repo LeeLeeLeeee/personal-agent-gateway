@@ -853,6 +853,93 @@ def make_recoverable_acceptance_runtime(
     return SimpleNamespace(**values)
 
 
+def make_undeclared_deliverable_acceptance_runtime(tmp_path):
+    """A recoverable acceptance fixture whose worker declares a deliverable
+    outside the task's contract, so the first outcome is rejected with
+    reason_code "undeclared_deliverable" -- the rejection
+    undeclared_retry_is_futile exists to guard, unlike
+    make_recoverable_acceptance_runtime's verification mismatch.
+    """
+    setup = make_operation_runtime(tmp_path)
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Research",
+        "Research the request.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
+    )
+    setup.worker_client.responses = [
+        ModelResponse(
+            _outcome_json(
+                "draft",
+                deliverables=[{"path": "wrong-check", "kind": "note"}],
+            ),
+            [],
+            upstream_session_id="worker-session",
+        ),
+        ModelResponse(
+            _outcome_json("draft-fixed"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+    ]
+    values = vars(setup).copy()
+    values["task"] = task
+    return SimpleNamespace(**values)
+
+
+@pytest.mark.asyncio
+async def test_a_futile_retry_is_sent_back_to_the_leader_once(tmp_path):
+    """The refusal has to reach the repair seam, not the recovery cap. A leader
+    that picks an action which cannot work made a formatting mistake, and paying
+    for it with one of two recovery attempts is how run 699c1915 lost its tasks.
+    """
+    setup = make_undeclared_deliverable_acceptance_runtime(tmp_path)
+    futile = _retry_review("Declare every file you produced and resubmit.")
+    corrected = _retry_review(
+        "Delete the files outside the contract and resubmit: wrong-check."
+    )
+    setup.lead_client.responses = [
+        ModelResponse(futile, []),
+        ModelResponse(corrected, []),
+    ]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:1"
+    ).status == "failed"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead_repair:1"
+    ).status == "applied"
+    # The refusal must not have consumed a recovery attempt.
+    assert setup.teams.get_task(setup.task.id).acceptance_recovery_attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_a_retry_naming_the_extras_is_accepted_first_time(tmp_path):
+    """Guards the other direction: the cleanup instruction must not be refused,
+    or the rule would block the legitimate use of retry_worker."""
+    setup = make_undeclared_deliverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(
+            _retry_review("Delete wrong-check and resubmit the contract outputs."),
+            [],
+        ),
+        ModelResponse("summary", []),
+    ]
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:1"
+    ).status == "applied"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead_repair:1"
+    ) is None
+
+
 @pytest.mark.asyncio
 async def test_lead_acceptance_retry_uses_separate_worker_operation(tmp_path):
     setup = make_recoverable_acceptance_runtime(tmp_path)
@@ -4060,7 +4147,12 @@ async def test_acceptance_recovery_rejects_undeclared_path_left_on_disk(
             )
 
     leader_model = ScriptedModel(
-        [plan, _retry_review(), _retry_review(), "completed"]
+        [
+            plan,
+            _retry_review("Remove docs/d3.md before resubmitting."),
+            _retry_review(),
+            "completed",
+        ]
     )
     worker_model = LingeringFileWorker()
     runtime = TeamRuntime(

@@ -2349,6 +2349,26 @@ class TeamRuntime:
             worker_agent,
             task,
         )
+        outcome = _persisted_task_outcome_value(task)
+        acceptance = _persisted_acceptance_value(task)
+        extra_paths = frozenset(
+            item.path
+            for item in outcome.deliverables
+            if item.path not in task.acceptance.required_outputs
+        )
+
+        def review_parser(response: ModelResponse) -> ValidatedOperationResult:
+            validated = _validated_acceptance_review(response)
+            if acceptance.reason_code == "undeclared_deliverable":
+                resolution = _parse_acceptance_review_resolution(response.content)
+                if undeclared_retry_is_futile(resolution, extra_paths):
+                    raise ValueError(
+                        "retry_worker cannot clear undeclared_deliverable unless "
+                        "the instruction names every path to remove: "
+                        + ", ".join(sorted(extra_paths))
+                    )
+            return validated
+
         lead_operation = await self._invoke_with_repair(
             _operation_spec(
                 run,
@@ -2361,7 +2381,18 @@ class TeamRuntime:
             ),
             leader_agent,
             messages,
-            _validated_acceptance_review,
+            review_parser,
+            # extra_paths is non-empty exactly when reason_code is
+            # "undeclared_deliverable" -- evaluate() in team_acceptance.py
+            # returns that reason_code before checking anything else whenever
+            # declared - expected is non-empty. Guarding here means a repair
+            # triggered by an unrelated parse failure still gets the generic
+            # _repair_messages prompt instead of one naming an empty path list.
+            repair_messages=(
+                _undeclared_retry_repair_messages(messages, extra_paths)
+                if acceptance.reason_code == "undeclared_deliverable"
+                else None
+            ),
             on_exhausted=lambda failed: self._escalate_unparsable_lead_output(
                 run, task.cycle_id, task, "acceptance_lead", leader_agent, failed
             ),
@@ -2621,13 +2652,31 @@ class TeamRuntime:
             changes=changes,
         )
         model = self._model(leader_agent, task.cycle_id)
+        extra_paths = frozenset(
+            item.path
+            for item in outcome.deliverables
+            if item.path not in task.acceptance.required_outputs
+        )
         response = await model.complete(messages)
         if response.upstream_session_id:
             self._teams.set_agent_session(
                 leader_agent.id, response.upstream_session_id
             )
+        # This path has no ledger operation and no repair seam: its own
+        # `except ValueError` below is the retry, reused here so a futile
+        # retry_worker resolution gets the same second chance an unparseable
+        # response already gets.
         try:
-            return _parse_acceptance_review_resolution(response.content)
+            resolution = _parse_acceptance_review_resolution(response.content)
+            if acceptance.reason_code == "undeclared_deliverable" and (
+                undeclared_retry_is_futile(resolution, extra_paths)
+            ):
+                raise ValueError(
+                    "retry_worker cannot clear undeclared_deliverable unless "
+                    "the instruction names every path to remove: "
+                    + ", ".join(sorted(extra_paths))
+                )
+            return resolution
         except ValueError:
             retry = await model.complete(
                 [
@@ -2645,7 +2694,16 @@ class TeamRuntime:
                 self._teams.set_agent_session(
                     leader_agent.id, retry.upstream_session_id
                 )
-            return _parse_acceptance_review_resolution(retry.content)
+            resolution = _parse_acceptance_review_resolution(retry.content)
+            if acceptance.reason_code == "undeclared_deliverable" and (
+                undeclared_retry_is_futile(resolution, extra_paths)
+            ):
+                raise ValueError(
+                    "retry_worker cannot clear undeclared_deliverable unless "
+                    "the instruction names every path to remove: "
+                    + ", ".join(sorted(extra_paths))
+                ) from None
+            return resolution
 
     async def _recover_task_outcome(
         self,
@@ -3994,6 +4052,30 @@ def _repair_messages(reason_code: str | None) -> list[dict[str, object]]:
             ),
         }
     ]
+
+
+def _undeclared_retry_repair_messages(
+    messages: list[dict[str, object]],
+    extra_paths: frozenset[str],
+) -> list[dict[str, object]]:
+    """Send a futile retry_worker resolution back to the leader by name.
+
+    The generic _repair_messages prompt says only "could not be parsed", which
+    is true at the ledger level (both land as invalid_structured_output) but
+    misleading here -- the resolution parsed fine, it just cannot clear the
+    rejection. Naming the extras gives the leader the one fact it is missing.
+    """
+    correction = (
+        "Your resolution cannot clear this rejection. The outcome declared these "
+        "paths, which the contract does not list:\n"
+        + "\n".join(f"- {path}" for path in sorted(extra_paths))
+        + "\n\nTo keep them, return revise_acceptance with required_outputs "
+        "extended to include every one. To have the worker remove them, return "
+        "retry_worker with an instruction that names each path to delete. "
+        "retry_worker without those paths leaves the contract unchanged and the "
+        "same rejection returns."
+    )
+    return [{"role": "user", "content": f"{messages[0]['content']}\n\n{correction}"}]
 
 
 def _acceptance_worker_repair_messages(
