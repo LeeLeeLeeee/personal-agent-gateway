@@ -713,3 +713,45 @@ def test_reconcile_is_idempotent_after_terminal_cycle_settlement(
     assert cycles.get_request(request.id).status == "settled"
     assert teams.get_cycle_for_request(request.id).id == cycle.id
     assert len(teams.list_cycles(run.id)) == 1
+
+
+def test_a_contest_request_can_be_enqueued(tmp_path: Path) -> None:
+    _db, teams, cycles, run = make_triggered_run(tmp_path)
+
+    created = cycles.enqueue_request(
+        run.id, "contest", "client-1", "T-04 has no owner", previous_cycle_id=None
+    )
+
+    assert created.source_type == "contest"
+    assert created.status == "queued"
+
+
+def test_the_same_contest_twice_returns_the_same_request(tmp_path: Path) -> None:
+    """contest joins the idempotent group, so a double-submitted objection does
+    not queue two adjudications of the same thing."""
+    _db, teams, cycles, run = make_triggered_run(tmp_path)
+
+    first = cycles.enqueue_request(
+        run.id, "contest", "client-1", "T-04 has no owner", previous_cycle_id=None
+    )
+    second = cycles.enqueue_request(
+        run.id, "contest", "client-1", "T-04 has no owner", previous_cycle_id=None
+    )
+
+    assert first.id == second.id
+
+
+def test_a_contest_waits_while_another_request_is_dispatching(
+    tmp_path: Path,
+) -> None:
+    """Serialization is already there -- claim_next refuses while a request is
+    dispatching -- and it is why a contest cannot reproduce the mid-flight
+    collision /add-work caused with cancel."""
+    _db, teams, cycles, run = make_triggered_run(tmp_path)
+    cycles.enqueue_request(run.id, "manual", "client-1", "do the work", previous_cycle_id=None)
+    assert cycles.claim_next(run.id) is not None
+    cycles.enqueue_request(
+        run.id, "contest", "client-2", "T-04 has no owner", previous_cycle_id=None
+    )
+
+    assert cycles.claim_next(run.id) is None

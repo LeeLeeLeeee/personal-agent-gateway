@@ -1549,3 +1549,33 @@ async def test_auto_settlement_publishes_series_event(
         assert series_event["settled_slots"] == 1
         assert series_event["target_slots"] == 1
     assert cycles.policy_status(run.id) == expected_policy_status
+
+
+@pytest.mark.asyncio
+async def test_the_dispatcher_adjudicates_a_contest_instead_of_planning(tmp_path):
+    services = make_dispatcher_services(tmp_path)
+    services.cycles.enqueue_request(
+        services.run.id, "contest", "client-1", "T-04 has no owner",
+        previous_cycle_id=None,
+    )
+
+    await services.dispatcher.run_one(services.run.id)
+
+    assert [
+        objection for _run, _cycle, objection in services.orchestrator.contests
+    ] == ["T-04 has no owner"]
+    assert services.orchestrator.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_manual_request_still_plans(tmp_path):
+    """Guards the branch: adding the contest path must not divert ordinary work."""
+    services = make_dispatcher_services(tmp_path)
+    services.cycles.enqueue_request(
+        services.run.id, "manual", "client-1", "do it", previous_cycle_id=None,
+    )
+
+    await services.dispatcher.run_one(services.run.id)
+
+    assert services.orchestrator.contests == []
+    assert len(services.orchestrator.calls) == 1

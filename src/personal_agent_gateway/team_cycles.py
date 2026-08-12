@@ -1239,7 +1239,7 @@ class TeamCycleService:
         if not normalized_source_type or not normalized_source_id:
             raise ValueError("Cycle request source type and source id are required")
         expected_policy: ExecutionPolicy
-        if normalized_source_type in {"manual", "hook", "knowledge_request"}:
+        if normalized_source_type in {"manual", "hook", "knowledge_request", "contest"}:
             expected_policy = "triggered"
         elif normalized_source_type in {"auto", "retry"}:
             expected_policy = "auto"
@@ -1258,7 +1258,7 @@ class TeamCycleService:
         if normalized_source_type in {"auto", "retry"} and auto_series_id is None:
             raise ValueError("AUTO cycle requests require an AUTO series")
         if (
-            normalized_source_type in {"manual", "hook", "knowledge_request"}
+            normalized_source_type in {"manual", "hook", "knowledge_request", "contest"}
             and auto_series_id is not None
         ):
             raise ValueError("TRIGGERED cycle requests cannot have an AUTO series")

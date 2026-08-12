@@ -205,11 +205,18 @@ class TeamCycleDispatcher:
                     "slot_ordinal": request.slot_ordinal,
                 }
             )
-            await self._orchestrator.run_cycle(
-                team_run_id,
-                cycle.id,
-                instruction,
-            )
+            if request.source_type == "contest":
+                await self._orchestrator.adjudicate_contest(
+                    team_run_id,
+                    cycle.id,
+                    instruction,
+                )
+            else:
+                await self._orchestrator.run_cycle(
+                    team_run_id,
+                    cycle.id,
+                    instruction,
+                )
         except asyncio.CancelledError:
             task = asyncio.current_task()
             dispatcher_stopping = task is not None and task.cancelling()

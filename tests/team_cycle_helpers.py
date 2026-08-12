@@ -108,6 +108,7 @@ class RecordingOrchestrator:
     def __init__(self, teams: TeamRunService) -> None:
         self.teams = teams
         self.calls: list[tuple[str, str, str]] = []
+        self.contests: list[tuple[str, str, str]] = []
 
     async def run_cycle(
         self,
@@ -116,4 +117,13 @@ class RecordingOrchestrator:
         instruction: str,
     ) -> TeamRun:
         self.calls.append((team_run_id, cycle_id, instruction))
+        return self.teams.get_team_run(team_run_id)
+
+    async def adjudicate_contest(
+        self,
+        team_run_id: str,
+        cycle_id: str,
+        objection: str,
+    ) -> TeamRun:
+        self.contests.append((team_run_id, cycle_id, objection))
         return self.teams.get_team_run(team_run_id)

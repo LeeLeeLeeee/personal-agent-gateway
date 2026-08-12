@@ -19,6 +19,10 @@ class TeamRuntimeProtocol(Protocol):
         self, team_run_id: str, instruction: str, cycle_id: str | None = None
     ) -> list[object]: ...
 
+    async def adjudicate_contest(
+        self, team_run_id: str, cycle_id: str, objection: str
+    ) -> object: ...
+
 
 class TeamRunOrchestrator:
     def __init__(
@@ -78,6 +82,17 @@ class TeamRunOrchestrator:
             return await runtime.resume(team_run_id, cycle_id)
 
         return self._schedule(team_run_id, cycle_id, execute_cycle)
+
+    def adjudicate_contest(
+        self, team_run_id: str, cycle_id: str, objection: str
+    ) -> asyncio.Task:
+        runtime = self._runtime_provider()
+
+        async def execute() -> TeamRun:
+            await runtime.adjudicate_contest(team_run_id, cycle_id, objection)
+            return await runtime.resume(team_run_id, cycle_id)
+
+        return self._schedule(team_run_id, cycle_id, execute)
 
     def _schedule(
         self,
