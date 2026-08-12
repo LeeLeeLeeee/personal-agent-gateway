@@ -107,23 +107,53 @@ def test_a_path_escaping_the_workspace_counts_as_missing(tmp_path):
 def test_a_symlink_at_the_declared_path_counts_as_missing(tmp_path, monkeypatch):
     """safe_workspace_file refuses a symlink outright, without following it.
     Creating a real symlink needs privileges this environment does not have,
-    so the symlink is simulated instead: the declared path's leaf reports as
-    a symlink without actually being one, which exercises exactly the check
-    this test protects, on this machine, without a skip."""
-    (tmp_path / "real.md").write_text("x", encoding="utf-8")
-    link_path = tmp_path / "link.md"
+    so the symlink is simulated instead, for the one declared path only: it
+    reports as a symlink, resolving it lands on a real, readable file
+    actually created inside the workspace, and it reports as a file --
+    exactly what a real symlink to that target would do at the OS level.
+
+    The declared path is itself named `.env` so the assertion actually
+    depends on the short-circuit under test. The rescue formula below only
+    ever answers "not missing" when the *declared* name looks sensitive; a
+    non-sensitive declared name (e.g. `link.md`) stays "missing" whether or
+    not the symlink is followed, because `is_sensitive_file` is checked
+    against that unresolved name, not the resolved target's. So a symlink
+    named plainly cannot distinguish the fix from a regression -- only a
+    sensitively-named symlink pointing at an ordinary target can, and that is
+    precisely the shape of the vulnerability the short-circuit closes: a
+    symlink at `.env` resolving through to a real, ordinary file must still
+    read as refused, not rescued.
+    """
+    real_target = tmp_path / "real.md"
+    real_target.write_text("x", encoding="utf-8")
+    link_path = tmp_path / ".env"
+
     real_is_symlink = Path.is_symlink
+    real_resolve = Path.resolve
+    real_is_file = Path.is_file
 
     def fake_is_symlink(self):
         if self == link_path:
             return True
         return real_is_symlink(self)
 
+    def fake_resolve(self, *args, **kwargs):
+        if self == link_path:
+            return real_target
+        return real_resolve(self, *args, **kwargs)
+
+    def fake_is_file(self):
+        if self == link_path:
+            return True
+        return real_is_file(self)
+
     monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+    monkeypatch.setattr(Path, "is_file", fake_is_file)
 
-    task = _task(tmp_path, outcome={"deliverables": [{"path": "link.md"}]})
+    task = _task(tmp_path, outcome={"deliverables": [{"path": ".env"}]})
 
-    assert task_build_evidence(task, tmp_path)["missing_files"] == ["link.md"]
+    assert task_build_evidence(task, tmp_path)["missing_files"] == [".env"]
 
 
 def test_an_absolute_path_to_a_real_file_outside_the_workspace_counts_as_missing(
