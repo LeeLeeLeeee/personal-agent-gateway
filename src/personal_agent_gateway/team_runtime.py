@@ -3343,7 +3343,15 @@ class TeamRuntime:
             self._activate_cycle(cycle_id)
             leader = _find_leader(self._teams.list_agents(run.id))
             run = self._teams.set_run_status(run.id, "running")
-            leader = self._teams.set_agent_status(leader.id, "running")
+            # The leader is deliberately left "pending". adjudicate_contest
+            # never sets an agent status, so "pending" is what a contest looks
+            # like live, and that is the one state
+            # _validate_active_source accepts for cycle_contest -- setting
+            # "running" here made a provider failure during recovery raise the
+            # OperationConflict that parking exists to avoid, failing the cycle
+            # and losing the objection. Two paths, one truth about what the
+            # leader's status means while it rules. settle_contest and
+            # publish_decision_request both already work from "pending".
             recovery = await self._recover_open_operation(run, leader, cycle_id)
             if recovery is None or not isinstance(
                 recovery.result, ContestOutcome

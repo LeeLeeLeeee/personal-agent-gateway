@@ -267,7 +267,8 @@ describe("api client", () => {
           error_message: null,
           supersedes: [],
           created_at: "2026-08-12T00:00:00+00:00"
-        }]
+        }],
+        truncated: { tasks: true, messages: false, build_evidence_summary: true }
       }));
 
     await expect(api.addWork("r1", "write docs")).resolves.toEqual({ team_run: { id: "r1", status: "running" } });
@@ -296,7 +297,10 @@ describe("api client", () => {
         error_message: null,
         supersedes: [],
         created_at: "2026-08-12T00:00:00+00:00"
-      }]
+      }],
+      // The rollup covers only the returned task window, so whether it was cut
+      // has to be readable, not just present in the response.
+      truncated: { tasks: true, messages: false, build_evidence_summary: true }
     });
 
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/team-runs/r1/add-work", expect.objectContaining({
@@ -333,7 +337,8 @@ describe("api client", () => {
       queueCount: 0,
       activeRequest: null,
       buildEvidenceSummary: null,
-      contests: []
+      contests: [],
+      truncated: null
     });
   });
 

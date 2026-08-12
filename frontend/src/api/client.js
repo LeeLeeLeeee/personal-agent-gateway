@@ -613,7 +613,11 @@ export const api = {
         // build_evidence and per-cycle coverage_gaps ride inside tasks/cycles,
         // which pass through wholesale; these two do not.
         buildEvidenceSummary: body?.build_evidence_summary || null,
-        contests: body?.contests || []
+        contests: body?.contests || [],
+        // Same reason: truncated says which of tasks, messages and the build
+        // evidence rollup were cut to the limit, and none of it was readable
+        // from here either.
+        truncated: body?.truncated || null
       };
     } catch (error) {
       if (!(error instanceof ApiError) || ![0, 404].includes(error.status)) throw error;
@@ -636,7 +640,8 @@ export const api = {
         queueCount: 0,
         activeRequest: null,
         buildEvidenceSummary: null,
-        contests: []
+        contests: [],
+        truncated: null
       };
     }
   },

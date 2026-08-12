@@ -6828,3 +6828,116 @@ async def test_a_parked_contest_restores_the_state_it_was_parked_from(tmp_path):
         f"{setup.cycle.id}:cycle_contest:0"
     ).status == "applied"
     assert setup.teams.get_cycle(setup.cycle.id).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_a_recovered_contest_parks_when_the_provider_is_still_down(
+    tmp_path,
+):
+    """The case the healthy-provider recovery test never reaches.
+
+    _resume_zero_task_contest is reachable in production from the dispatcher's
+    startup reconcile and from resume_recovered_operation, and both can find the
+    provider still unavailable. It used to set the leader "running" -- a status
+    _validate_active_source refuses for cycle_contest -- so the park raised
+    OperationConflict instead, and the cycle failed with "Operation active
+    source state is invalid" while the objection was lost.
+    """
+    setup = make_contest_setup(tmp_path)
+    setup.lead_client.responses = [
+        _contest_verdict("reject", "Task 7 already covers T-04."),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_contest",
+        0,
+        "prepared",
+    )
+    with pytest.raises(SimulatedProcessCrash):
+        await contest_orchestrator(setup).adjudicate_contest(
+            setup.run.id, setup.cycle.id, "nothing owns T-04"
+        )
+
+    restarted = restart_operation_runtime(setup)
+    restarted._provider_recovery = TeamProviderRecovery(
+        setup.teams,
+        SimpleNamespace(),
+        setup.operations,
+    )
+    setup.lead_client.responses = _blip()
+
+    with pytest.raises(ProviderOperationWaiting):
+        await TeamRunOrchestrator(
+            TeamRunRegistry(), lambda: restarted
+        ).resume(setup.run.id, setup.cycle.id)
+
+    operation = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert (operation.stage, operation.stage_ordinal, operation.status) == (
+        "cycle_contest",
+        0,
+        "waiting_for_provider",
+    )
+    cycle = setup.teams.get_cycle(setup.cycle.id)
+    assert cycle.status == "waiting_for_provider"
+    assert cycle.error_message is None
+    assert setup.teams.get_team_run(
+        setup.run.id
+    ).status == "waiting_for_provider"
+    # The objection is still there to rule on once the provider comes back.
+    assert setup.teams.get_cycle_objective(setup.cycle.id) == "nothing owns T-04"
+
+    # And the park is genuinely resumable: claim it back and the ruling lands.
+    claim = restarted._provider_recovery.claim_operation(setup.cycle.id)
+    assert claim is not None
+    setup.lead_client.responses = [
+        _contest_verdict("reject", "Task 7 already covers T-04."),
+    ]
+    await TeamRunOrchestrator(TeamRunRegistry(), lambda: restarted).resume(
+        setup.run.id, setup.cycle.id
+    )
+
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:cycle_contest:0"
+    ).status == "applied"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "completed"
+    assert setup.teams.list_tasks(setup.run.id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_recovered_contest_leaves_the_leader_pending_while_it_rules(
+    tmp_path,
+):
+    """The live path and the recovery path have to say the same thing about the
+    leader's status, because _validate_active_source encodes exactly one of
+    them."""
+    setup = make_contest_setup(tmp_path)
+    setup.lead_client.responses = [
+        _contest_verdict("reject", "Task 7 already covers T-04."),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_contest",
+        0,
+        "prepared",
+    )
+    with pytest.raises(SimulatedProcessCrash):
+        await contest_orchestrator(setup).adjudicate_contest(
+            setup.run.id, setup.cycle.id, "nothing owns T-04"
+        )
+
+    restarted = restart_operation_runtime(setup)
+    seen = {}
+
+    def record(_calls):
+        seen["leader"] = setup.teams.get_agent(setup.run.leader_agent_id).status
+
+    setup.lead_client.before_complete = record
+    setup.lead_client.responses = [
+        _contest_verdict("reject", "Task 7 already covers T-04."),
+    ]
+
+    await TeamRunOrchestrator(TeamRunRegistry(), lambda: restarted).resume(
+        setup.run.id, setup.cycle.id
+    )
+
+    assert seen["leader"] == "pending"
