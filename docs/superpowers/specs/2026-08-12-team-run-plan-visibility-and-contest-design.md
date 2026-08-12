@@ -320,14 +320,29 @@ existing run was touched.
   accepted document currently claims these are covered, so nothing needs to be
   superseded — the fix is simply to add the two missing tasks."* It created the
   two tasks it promised, each with its own `required_outputs`, and left
-  `supersedes` empty — correctly, having reasoned that there was no prior decision
-  to overturn. Execution then began on the first task, at which point the run was
-  cancelled.
+  `supersedes` empty. Execution then began on the first task, at which point the
+  run was cancelled.
+
+  **That reasoning has to be discounted, and the run above is partly a record of
+  a bug.** The final whole-branch review found that `_contest_messages` built its
+  task list from the contest's *own* fresh cycle, so it was always empty: the
+  leader was asked to judge coverage while shown nothing to judge. Its quoted
+  sentence is not evidence the feature reasons well — it is the leader correctly
+  describing the empty list the defect handed it. The same review found that a
+  `reject` or `ask_back` verdict was replanned and executed anyway, which is why
+  only `amend` — the one kind whose path avoided that — appeared to work. Both are
+  fixed, with tests that travel through the orchestrator and assert against the
+  prompt the leader actually received. What the live run genuinely establishes is
+  narrower than it first read: the queue routes a contest, the draft guard fires,
+  the ledger records the operation, the effect creates the tasks, and the payload
+  distinguishes a ruled contest from an unruled one.
 - `detail["contests"]` returned both rows and told them apart: the refused one
   with `kind: null`, the ruled one with `kind: "amend"` and its reason.
 
 **Not verified.** No verdict of kind `reject`, `partial`, or `ask_back` was
-produced by a real model — only `amend` was. `ask_back`'s pause is covered by a
+produced by a real model — only `amend` was, and at the time only `amend` could
+have survived the orchestrator (see the discount above). The three other kinds are
+now covered by orchestrator-level tests but have never run against a real leader. `ask_back`'s pause is covered by a
 unit test that reproduces the real precondition, but has never run live. Nor was
 a verdict carrying a non-empty `supersedes`, which is the FSRS case this design
 exists for; arranging one needs a run whose accepted documents actually contradict
