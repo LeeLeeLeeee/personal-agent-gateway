@@ -1797,13 +1797,24 @@ In the dispatcher, branch on the claimed request rather than always calling
                 )
 ```
 
-In `_resume_operation`, treat a recovered `cycle_contest` or
-`cycle_contest_repair` like the add-work branch: read the cycle's effective
-instruction and schedule `adjudicate_contest`.
+**Leave `_resume_operation` and `team_provider_recovery.py`'s preplanning
+predicates alone.** An earlier draft of this plan told you to treat a contest
+like add-work in both, and that is wrong — it was written before Task 8 decided
+that `adjudicate_contest` activates the cycle and run *itself*, before invoking
+the model. Add-work does not; only its follow-up `resume()` does, which is why
+the preplanning predicates restore add-work to `run=draft, cycle=queued`. A
+crashed contest was created against an active run and cycle, so restoring it that
+way would record the wrong state, and `_resume_operation` re-invoking
+`adjudicate_contest` would then hit that method's own guard against a `draft`
+run. Plain `resume()` already recovers a contest through
+`_recover_open_operation`'s contest branch — Task 8 has a committed test proving
+it — for both the plain-restart and provider-recovery paths.
 
-In `team_provider_recovery.py`, add both stages to the two preplanning
-predicates so a recovered contest validates against `cycle.status == "queued"`
-and `task_id is None`, and restores to the same statuses add-work does.
+One real gap this leaves, inherited from Task 8 and out of scope here:
+`_validate_active_source` has no contest branch and falls through to invalid, so
+a provider outage *during* a contest's model call fails the cycle instead of
+parking the operation for retry. Its in-flight state is `running`, not `queued`,
+so the add-work branch would not have covered it either.
 
 In the orchestrator, add beside `continue_cycle`:
 
