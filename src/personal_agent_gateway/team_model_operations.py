@@ -27,6 +27,8 @@ OperationStage = Literal[
     "acceptance_worker_repair",
     "cycle_synthesis",
     "cycle_synthesis_repair",
+    "cycle_contest",
+    "cycle_contest_repair",
 ]
 
 OperationStatus = Literal[
@@ -633,6 +635,8 @@ def _built_in_result_validators() -> dict[
         "cycle_planning": {"task_plan": _valid_task_plan},
         "cycle_planning_repair": {"task_plan": _valid_task_plan},
         "cycle_add_work": {"task_plan": _valid_task_plan},
+        "cycle_contest": {"contest_verdict": _valid_contest_verdict},
+        "cycle_contest_repair": {"contest_verdict": _valid_contest_verdict},
     }
 
 
@@ -641,6 +645,57 @@ def _valid_task_plan(payload: dict[str, object]) -> bool:
         return False
     tasks = payload["tasks"]
     return isinstance(tasks, list) and all(_valid_task_spec(task) for task in tasks)
+
+
+_CONTEST_KINDS = {"amend", "partial", "reject", "ask_back"}
+
+
+def _valid_contest_verdict(payload: dict[str, object]) -> bool:
+    if set(payload) - {"kind", "reason", "tasks", "question", "supersedes"}:
+        return False
+    kind = payload.get("kind")
+    if kind not in _CONTEST_KINDS:
+        return False
+    reason = payload.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        return False
+    tasks = payload.get("tasks") or []
+    if not isinstance(tasks, list) or not all(
+        _valid_task_spec(task) for task in tasks
+    ):
+        return False
+    if kind in {"amend", "partial"} and not tasks:
+        return False
+    if kind in {"reject", "ask_back"} and tasks:
+        return False
+    question = payload.get("question")
+    if kind == "ask_back":
+        if not isinstance(question, str) or not question.strip():
+            return False
+    # A model shown the full object in the prompt will send every key, so a
+    # present-but-empty question on an amend is the normal case, not a defect.
+    # Rejecting it would burn the repair on almost every verdict. A question with
+    # actual content on a kind that has no question to ask is still wrong.
+    elif question not in (None, ""):
+        return False
+    supersedes = payload.get("supersedes") or []
+    if not isinstance(supersedes, list):
+        return False
+    for entry in supersedes:
+        if not isinstance(entry, dict) or set(entry) != {
+            "document_path",
+            "decision",
+        }:
+            return False
+        if not all(
+            isinstance(entry[key], str) and entry[key].strip() for key in entry
+        ):
+            return False
+    # Admitting a reversal without producing the work to correct the document
+    # is exactly the FSRS episode this rule exists to prevent.
+    if supersedes and not tasks:
+        return False
+    return True
 
 
 def _valid_task_spec(value: object) -> bool:

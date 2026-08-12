@@ -12,6 +12,7 @@ from personal_agent_gateway.team_model_operations import (
     TeamModelOperationService,
     ValidatedOperationResult,
     _valid_acceptance,
+    _valid_contest_verdict,
 )
 from team_cycle_helpers import make_cycle_services, make_queued_cycle
 
@@ -526,4 +527,75 @@ def test_latest_failure_shapes_reports_the_failure_still_blocking_each_task(tmp_
     assert shapes[task.id]["fenced"] is True
     assert shapes[task.id]["missing_expected_keys"] == ["resolution"]
     assert shapes[other.id]["fenced"] is False
+
+
+def test_a_verdict_without_a_reason_is_invalid():
+    """A verdict with no reason is worthless as a record, which is half of why
+    this feature exists -- so it is a parse failure, not a defaulted field."""
+    assert not _valid_contest_verdict({"kind": "reject", "reason": ""})
+    assert not _valid_contest_verdict({"kind": "reject"})
+
+
+def test_reject_carries_no_tasks_and_amend_carries_at_least_one():
+    task = {
+        "title": "Fix §1",
+        "description": "Correct the reversed decision.",
+        "owner_agent_id": None,
+        "required": True,
+        "acceptance": {"required_outputs": ["docs/srs.md"], "required_verifications": []},
+    }
+    assert _valid_contest_verdict({"kind": "reject", "reason": "task 7 covers it"})
+    assert not _valid_contest_verdict(
+        {"kind": "reject", "reason": "no", "tasks": [task]}
+    )
+    # The prompt shows every key, so a model will fill them all in. An empty
+    # value for a field this kind does not use has to pass, or the repair is
+    # spent on nearly every verdict.
+    assert _valid_contest_verdict(
+        {"kind": "reject", "reason": "no", "tasks": [], "question": None,
+         "supersedes": []}
+    )
+    assert _valid_contest_verdict(
+        {"kind": "amend", "reason": "ok", "tasks": [task], "question": ""}
+    )
+    assert not _valid_contest_verdict(
+        {"kind": "amend", "reason": "ok", "tasks": [task],
+         "question": "why are you asking?"}
+    )
+    assert _valid_contest_verdict({"kind": "amend", "reason": "agreed", "tasks": [task]})
+    assert not _valid_contest_verdict({"kind": "amend", "reason": "agreed", "tasks": []})
+
+
+def test_ask_back_needs_a_question():
+    assert _valid_contest_verdict(
+        {"kind": "ask_back", "reason": "ambiguous", "question": "which one?"}
+    )
+    assert not _valid_contest_verdict({"kind": "ask_back", "reason": "ambiguous"})
+
+
+def test_overturning_a_decision_requires_the_work_to_correct_it():
+    """If the leader admits an agreed decision is being reversed, correcting the
+    document that still states the old decision comes out of the same verdict.
+    Run 699c1915 reversed one with nothing but a quiet document edit."""
+    task = {
+        "title": "Fix §1",
+        "description": "Correct the reversed decision.",
+        "owner_agent_id": None,
+        "required": True,
+        "acceptance": {"required_outputs": ["docs/srs.md"], "required_verifications": []},
+    }
+    supersedes = [{"document_path": "docs/srs.md", "decision": "use a vetted library"}]
+    assert not _valid_contest_verdict(
+        {"kind": "amend", "reason": "r", "tasks": [], "supersedes": supersedes}
+    )
+    assert not _valid_contest_verdict(
+        {"kind": "reject", "reason": "r", "supersedes": supersedes}
+    )
+    assert _valid_contest_verdict(
+        {"kind": "amend", "reason": "r", "tasks": [task], "supersedes": supersedes}
+    )
+
+
+def test_an_unknown_kind_is_invalid():
+    assert not _valid_contest_verdict({"kind": "whatever", "reason": "r"})
 
