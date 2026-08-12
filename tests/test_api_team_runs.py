@@ -2499,3 +2499,64 @@ async def test_cancel_endpoint_settles_blocked_run_as_canceled(tmp_path: Path) -
 
         final = (await client.get(f"/api/team-runs/{run_id}")).json()["team_run"]
         assert final["status"] == "canceled"
+
+
+def test_team_run_detail_shows_what_each_task_built(tmp_path: Path) -> None:
+    """The operator cannot contest a plan whose coverage they cannot see, so the
+    promised-versus-built comparison has to reach the client."""
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    team_id = create_team(client, leader_id, [member_id])
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Show build evidence",
+            "execution_policy": "triggered",
+        },
+    ).json()["team_run"]
+    workspace = Path(run["working_root"])
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "kept.md").write_text("x", encoding="utf-8")
+    service = client.app.state.team_run_service
+    task = service.create_task(
+        run["id"],
+        "Write the guide",
+        "Write it.",
+        acceptance=TaskAcceptance(("kept.md", "forgotten.md"), ()),
+    )
+    with client.app.state.database.connection() as connection:
+        connection.execute(
+            "update team_tasks set status = 'completed', outcome_json = ?, "
+            "acceptance_result_json = ? where id = ?",
+            (
+                json.dumps({"deliverables": [{"path": "kept.md"}, {"path": "ghost.md"}]}),
+                json.dumps(
+                    {
+                        "evidence": {
+                            "verifications": {
+                                "n": {"mode": "attested", "status": "passed"}
+                            },
+                            "attested_only": True,
+                        }
+                    }
+                ),
+                task.id,
+            ),
+        )
+
+    detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+
+    evidence = detail["tasks"][0]["build_evidence"]
+    assert evidence["undeclared_promises"] == ["forgotten.md"]
+    assert evidence["extra_declarations"] == ["ghost.md"]
+    assert evidence["missing_files"] == ["ghost.md"]
+    assert evidence["verifications"] == [
+        {"name": "n", "mode": "attested", "status": "passed"}
+    ]
+    assert detail["build_evidence_summary"] == {
+        "task_count": 1,
+        "worker_asserted_only_count": 1,
+        "missing_file_count": 1,
+    }

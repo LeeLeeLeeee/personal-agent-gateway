@@ -16,6 +16,10 @@ from personal_agent_gateway.api.dependencies import (
 )
 from personal_agent_gateway.auth_sessions import SessionPrincipal
 from personal_agent_gateway.pagination import decode_cursor, encode_cursor
+from personal_agent_gateway.team_build_evidence import (
+    run_build_evidence,
+    task_build_evidence,
+)
 from personal_agent_gateway.team_cycles import TeamAutoSeries, TeamCycleRequest
 from personal_agent_gateway.team_delivery import TeamRunDeliveryError
 from personal_agent_gateway.team_provider_recovery import (
@@ -377,6 +381,10 @@ def get_team_run_detail(
     selected_tasks = tasks[-limit:]
     selected_messages = messages[-limit:]
     cycle_service = request.app.state.team_cycle_service
+    workspace = _resolved_workspace(run)
+    task_evidence = {
+        task.id: task_build_evidence(task, workspace) for task in selected_tasks
+    }
     return {
         "team_run": _team_run_payload(run),
         "agents": [_agent_payload(agent) for agent in agents],
@@ -385,6 +393,7 @@ def get_team_run_detail(
                 task,
                 task_dependencies.get(task.id, []),
                 failure_shapes.get(task.id),
+                task_evidence.get(task.id),
             )
             for task in selected_tasks
         ],
@@ -402,6 +411,7 @@ def get_team_run_detail(
             cycle_service.get_dispatching(team_run_id)
         ),
         "document_summary": _document_summary(_resolved_workspace(run)),
+        "build_evidence_summary": run_build_evidence(selected_tasks, workspace),
         "truncated": {
             "tasks": len(tasks) > len(selected_tasks),
             "messages": len(messages) > len(selected_messages),
@@ -1307,6 +1317,7 @@ def _task_payload(
     task: TeamTask,
     depends_on_task_ids: list[str] | None = None,
     failure_shape: dict[str, object] | None = None,
+    build_evidence: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "id": task.id,
@@ -1329,6 +1340,7 @@ def _task_payload(
         "acceptance_result": task.acceptance_result,
         "acceptance_recovery_attempts": task.acceptance_recovery_attempts,
         "failure_shape": failure_shape,
+        "build_evidence": build_evidence,
         "result": task.result,
         "error_message": task.error_message,
         "created_at": task.created_at,
