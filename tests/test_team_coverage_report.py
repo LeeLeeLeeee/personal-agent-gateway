@@ -64,3 +64,31 @@ def test_a_block_without_the_obligation_field_is_dropped():
     _, gaps = extract_coverage_gaps(text)
 
     assert gaps == []
+
+
+def test_none_argument_returns_empty_summary_and_none():
+    summary, gaps = extract_coverage_gaps(None)
+
+    assert summary == ""
+    assert gaps is None
+
+
+def test_int_argument_returns_empty_summary_and_none():
+    summary, gaps = extract_coverage_gaps(42)
+
+    assert summary == ""
+    assert gaps is None
+
+
+def test_dict_argument_returns_empty_summary_and_none():
+    summary, gaps = extract_coverage_gaps({"key": "value"})
+
+    assert summary == ""
+    assert gaps is None
+
+
+def test_list_argument_returns_empty_summary_and_none():
+    summary, gaps = extract_coverage_gaps([1, 2, 3])
+
+    assert summary == ""
+    assert gaps is None

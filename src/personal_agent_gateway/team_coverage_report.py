@@ -17,10 +17,14 @@ def extract_coverage_gaps(
     leader said nothing, the other means it claimed full coverage, and only the
     second is a claim the operator can contest.
 
+    Only the first coverage-gaps block is read; subsequent blocks are left as-is.
+
     Nothing here raises. Synthesis is a leader stage, so a parse failure costs
     the cycle, and a block that is optional by design must not be able to do
     that.
     """
+    if not isinstance(text, str):
+        return "", None
     match = _BLOCK.search(text or "")
     if match is None:
         return (text or "").strip(), None
