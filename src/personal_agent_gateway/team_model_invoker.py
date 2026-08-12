@@ -94,7 +94,13 @@ class TeamModelInvoker:
                 )
             except RemoteRunError as exc:
                 if exc.pre_stream and exc.code in _SAFE_ADMISSION_CODES:
-                    if invoking.attempts == _MAX_ATTEMPTS:
+                    # >=, not ==: attempts accumulates for the life of the
+                    # operation, so one that was parked at the cap and later
+                    # claimed back re-enters here already past it. With == the
+                    # guard never fired, the loop ran its third pass, and
+                    # _RETRY_DELAYS -- which has one entry fewer than
+                    # _MAX_ATTEMPTS -- was indexed out of range.
+                    if invoking.attempts >= _MAX_ATTEMPTS:
                         self._operations.record_invoking_reason(
                             invoking.id,
                             invoking.version,

@@ -249,6 +249,45 @@ async def test_invoker_leaves_exhausted_safe_admission_invoking(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_invoker_parks_again_instead_of_overrunning_the_retry_delays(tmp_path):
+    """An operation that already spent its attempts must park, not crash.
+
+    attempts accumulates for the life of an operation -- begin_attempt only ever
+    increments it and no transition resets it -- so an operation that was parked
+    at the cap and later claimed back re-enters invoke with attempts already at
+    _MAX_ATTEMPTS. The exhaustion guard compared attempts == _MAX_ATTEMPTS, which
+    can never be true once it is past the cap, so the loop ran to its third pass
+    and indexed _RETRY_DELAYS (two entries) at 2.
+    """
+    service, spec = make_operation_service_and_spec(tmp_path)
+    reserved = service.reserve(spec)
+    with service._db.connection() as connection:
+        connection.execute(
+            "update team_model_operations set attempts = ? where id = ?",
+            (3, reserved.id),
+        )
+    reserved = service.get(reserved.id)
+    assert reserved.status == "prepared" and reserved.attempts == 3
+    client = RecordingOperationClient(
+        [RemoteRunFailedError("provider_not_ready", "not_ready", pre_stream=True)] * 3
+    )
+
+    with pytest.raises(ProviderOperationUnavailable) as raised:
+        await TeamModelInvoker(service, sleep=lambda _: asyncio.sleep(0)).invoke(
+            reserved,
+            client,
+            [{"role": "user", "content": "work"}],
+            parse_test_result,
+        )
+
+    assert raised.value.reason_code == "provider_not_ready"
+    assert service.get(raised.value.operation_id).status == "invoking"
+    # It gives up on the first failure rather than burning two more provider
+    # calls it was never entitled to.
+    assert client.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_invoker_marks_parser_failure_without_agent_session_mutation(tmp_path):
     service, spec = make_operation_service_and_spec(tmp_path)
     client = RecordingOperationClient(
