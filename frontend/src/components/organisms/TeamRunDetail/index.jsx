@@ -1218,6 +1218,8 @@ export function TeamRunDetail({
         )
       ) : null}
 
+      <ContestPanel runId={run.id} contests={detail.contests} onContestPlan={onContestPlan} />
+
       <div className="team-detail-tabs" role="tablist" aria-label="Run detail views">
         {DETAIL_TABS.map(([key, label]) => (
           <button
@@ -1490,8 +1492,6 @@ export function TeamRunDetail({
               </div>
             ) : <div className="team-task-empty mono">No handoffs yet.</div>}
           </details>
-
-          <ContestPanel runId={run.id} contests={detail.contests} onContestPlan={onContestPlan} />
         </div>
       ) : null}
 

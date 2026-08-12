@@ -1583,4 +1583,74 @@ describe("TeamRunDetail", () => {
 
     expect(onContest).toHaveBeenCalledWith("r1", "T-15 also has no owner");
   });
+
+  it("shows the server's rejection detail when a contest submission is rejected", async () => {
+    const onContest = vi.fn().mockResolvedValue({ ok: false, status: 409, detail: "run is canceled" });
+    render(
+      <TeamRunDetail
+        onContestPlan={onContest}
+        detail={{
+          run: { id: "r1", goal: "G", status: "canceled", run_mode: "plan_and_execute" },
+          agents: [], messages: [], tasks: [], contests: []
+        }}
+      />
+    );
+
+    await userEvent.type(screen.getByRole("textbox", { name: /계획에 이의/ }), "T-15 has no owner");
+    await userEvent.click(screen.getByRole("button", { name: /이의 보내기/ }));
+
+    expect(onContest).toHaveBeenCalledWith("r1", "T-15 has no owner");
+    expect(screen.getByText(/run is canceled/)).toBeInTheDocument();
+  });
+
+  it("disables submit and does not call onContestPlan for a whitespace-only objection", async () => {
+    const onContest = vi.fn();
+    render(
+      <TeamRunDetail
+        onContestPlan={onContest}
+        detail={{
+          run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
+          agents: [], messages: [], tasks: [], contests: []
+        }}
+      />
+    );
+
+    await userEvent.type(screen.getByRole("textbox", { name: /계획에 이의/ }), "   ");
+    expect(screen.getByRole("button", { name: /이의 보내기/ })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: /이의 보내기/ }));
+    expect(onContest).not.toHaveBeenCalled();
+  });
+
+  it("labels reject and ask_back verdicts and renders each supersedes entry by field", async () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
+          agents: [], messages: [], tasks: [],
+          contests: [
+            {
+              objection: "T-04 has no owner",
+              kind: "reject",
+              reason: "task 7 covers it",
+              supersedes: [],
+              created_at: "2026-08-12T00:00:00Z"
+            },
+            {
+              objection: "T-09 conflicts with T-10",
+              kind: "ask_back",
+              reason: "need clarification from operator",
+              supersedes: [{ document_path: "docs/plan.md", decision: "revise" }],
+              created_at: "2026-08-12T01:00:00Z"
+            }
+          ]
+        }}
+      />
+    );
+
+    expect(screen.getByText(/기각 · task 7 covers it/)).toBeInTheDocument();
+    expect(screen.getByText(/재질문 · need clarification from operator/)).toBeInTheDocument();
+    expect(screen.getByText(/docs\/plan\.md/)).toBeInTheDocument();
+    expect(screen.getByText(/revise/)).toBeInTheDocument();
+  });
 });

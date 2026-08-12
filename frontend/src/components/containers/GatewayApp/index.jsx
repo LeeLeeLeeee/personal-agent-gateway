@@ -921,6 +921,7 @@ export function GatewayApp() {
               loading={teamRunDetailEffectiveLoading}
               loadError={teamRunDetailLoadError}
               onLoadDocument={(path) => api.teamDocumentContent(selectedTeamRunId, path)}
+              onContestPlan={(runId, objection) => api.contestPlan(runId, objection)}
               onTriggerCycle={handleTriggerTeamCycle}
               onRetryAuto={handleRetryAuto}
               onContinueAuto={handleContinueAuto}
