@@ -2291,3 +2291,121 @@ def test_add_work_plan_does_not_outrank_pending_tasks_of_the_same_cycle(tmp_path
 
     assert [task.title for task in ready] == ["Qa", "Extra"]
     assert [task.title for task in listed] == ["Fix", "Qa", "Extra"]
+
+
+def test_applying_an_amend_creates_its_tasks_and_records_the_reason(tmp_path):
+    """apply_plan already turns task specs into tasks, so an amend reuses it
+    rather than growing a second way to create one."""
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_contest",
+        result=ValidatedOperationResult(
+            "contest_verdict",
+            {
+                "kind": "amend",
+                "reason": "The plan left T-04 unowned.",
+                "tasks": [valid_task_spec("Own discard", None)],
+            },
+        ),
+    )
+
+    outcome = services.effects.apply_contest_verdict(services.operation.id)
+
+    assert outcome.kind == "amend"
+    assert outcome.reason == "The plan left T-04 unowned."
+    assert [task.title for task in outcome.tasks] == ["Own discard"]
+    adjudications = [
+        message
+        for message in services.teams.list_messages(services.run.id)
+        if message.kind == "plan_adjudication"
+    ]
+    assert len(adjudications) == 1
+    assert "T-04" in adjudications[0].content
+    assert services.operations.get(services.operation.id).status == "applied"
+
+
+def test_applying_a_reject_creates_no_tasks_but_still_records_it(tmp_path):
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_contest",
+        result=ValidatedOperationResult(
+            "contest_verdict",
+            {"kind": "reject", "reason": "Task 7 already covers it."},
+        ),
+    )
+
+    outcome = services.effects.apply_contest_verdict(services.operation.id)
+
+    assert outcome.kind == "reject"
+    assert outcome.tasks == []
+    assert services.teams.list_tasks(services.run.id, services.cycle.id) == []
+    assert any(
+        message.kind == "plan_adjudication"
+        for message in services.teams.list_messages(services.run.id)
+    )
+
+
+def test_a_superseded_decision_appears_in_the_record(tmp_path):
+    """The FSRS episode left no trace precisely because the reversal was never
+    written down anywhere a reader would find it."""
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_contest",
+        result=ValidatedOperationResult(
+            "contest_verdict",
+            {
+                "kind": "amend",
+                "reason": "Allowing the in-repo implementation.",
+                "tasks": [valid_task_spec("Correct srs section 1", None)],
+                "supersedes": [
+                    {
+                        "document_path": "docs/english-learning/srs-algorithm.md",
+                        "decision": "use a vetted FSRS library",
+                    }
+                ],
+            },
+        ),
+    )
+
+    services.effects.apply_contest_verdict(services.operation.id)
+
+    content = next(
+        message.content
+        for message in services.teams.list_messages(services.run.id)
+        if message.kind == "plan_adjudication"
+    )
+    assert "srs-algorithm.md" in content
+    assert "use a vetted FSRS library" in content
+
+
+def test_applying_twice_is_idempotent(tmp_path):
+    """Every other effect in this module replays instead of doubling, because
+    resume re-enters an applied operation after a restart."""
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_contest",
+        result=ValidatedOperationResult(
+            "contest_verdict",
+            {
+                "kind": "amend",
+                "reason": "The plan left T-04 unowned.",
+                "tasks": [valid_task_spec("Own discard", None)],
+            },
+        ),
+    )
+
+    first = services.effects.apply_contest_verdict(services.operation.id)
+    second = services.effects.apply_contest_verdict(services.operation.id)
+
+    assert [task.id for task in first.tasks] == [task.id for task in second.tasks]
+    assert len(services.teams.list_tasks(services.run.id, services.cycle.id)) == 1
+    assert (
+        len(
+            [
+                message
+                for message in services.teams.list_messages(services.run.id)
+                if message.kind == "plan_adjudication"
+            ]
+        )
+        == 1
+    )

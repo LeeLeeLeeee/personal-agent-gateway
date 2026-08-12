@@ -54,6 +54,8 @@ _PLAN_STAGES = {
     "cycle_planning",
     "cycle_planning_repair",
     "cycle_add_work",
+    "cycle_contest",
+    "cycle_contest_repair",
 }
 _SYNTHESIS_STAGES = {
     "cycle_synthesis",
@@ -92,6 +94,15 @@ class AcceptanceEffectResult:
     attempt: int
     message: TeamMessage
     decision_request: TeamDecisionRequest | None = None
+
+
+@dataclass(frozen=True)
+class ContestOutcome:
+    kind: str
+    reason: str
+    tasks: list[TeamTask]
+    question: str | None
+    supersedes: tuple[dict[str, str], ...]
 
 
 class TeamModelEffectService:
@@ -170,6 +181,81 @@ class TeamModelEffectService:
                 now=now,
             )
             return tasks
+
+    def apply_contest_verdict(self, operation_id: str) -> ContestOutcome:
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            operation = self._operations._get(connection, operation_id)
+            self._validate_plan_operation(connection, operation)
+            if operation.status == "applied":
+                return self._replay_contest_verdict(connection, operation)
+            if operation.status != "completed":
+                raise StaleOperation(
+                    f"Expected operation status completed, got {operation.status}"
+                )
+
+            payload = _contest_verdict_payload(operation)
+            specs = payload.get("tasks") or []
+            # Same ordinal continuation as apply_plan: an amend or partial verdict
+            # lands on a cycle that may already hold tasks.
+            ordinal_base = int(
+                connection.execute(
+                    """
+                    select coalesce(max(plan_ordinal), -1) + 1 from team_tasks
+                    where team_run_id = ? and cycle_id is ?
+                    """,
+                    (operation.team_run_id, operation.cycle_id),
+                ).fetchone()[0]
+            )
+            tasks = [
+                self._create_task(connection, operation, spec, now, ordinal_base + index)
+                for index, spec in enumerate(specs)
+            ]
+            self._persist_plan_dependencies(connection, specs, tasks)
+            reason = payload["reason"]
+            supersedes = tuple(dict(entry) for entry in payload.get("supersedes") or [])
+            content = _contest_adjudication_content(payload["kind"], reason, supersedes)
+            message_id = uuid4().hex
+            connection.execute(
+                """
+                insert into team_messages (
+                    id, team_run_id, cycle_id, sender_agent_id, recipient_agent_id,
+                    kind, content, metadata_json, created_at
+                ) values (?, ?, ?, ?, null, 'plan_adjudication', ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    operation.team_run_id,
+                    operation.cycle_id,
+                    operation.agent_id,
+                    content,
+                    json.dumps(
+                        {"operation_id": operation.id},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
+            )
+            _promote_actor_session(connection, operation, now)
+            _mark_applied(
+                connection,
+                operation,
+                effect_type="contest_verdict",
+                effect_ref={
+                    "task_ids": [task.id for task in tasks],
+                    "message_id": message_id,
+                },
+                now=now,
+            )
+            return ContestOutcome(
+                kind=payload["kind"],
+                reason=reason,
+                tasks=tasks,
+                question=payload.get("question") or None,
+                supersedes=supersedes,
+            )
 
     def apply_worker_outcome(
         self,
@@ -2269,6 +2355,76 @@ class TeamModelEffectService:
             raise OperationConflict("Applied plan message does not match the operation")
         return tasks
 
+    def _replay_contest_verdict(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+    ) -> ContestOutcome:
+        effect_ref = operation.effect_ref_json
+        if (
+            operation.effect_type != "contest_verdict"
+            or not isinstance(effect_ref, dict)
+            or set(effect_ref) != {"task_ids", "message_id"}
+            or not isinstance(effect_ref["task_ids"], list)
+            or not all(isinstance(item, str) for item in effect_ref["task_ids"])
+            or len(set(effect_ref["task_ids"])) != len(effect_ref["task_ids"])
+            or not isinstance(effect_ref["message_id"], str)
+        ):
+            raise OperationConflict("Applied contest verdict effect reference is invalid")
+        payload = _contest_verdict_payload(operation)
+        specs = payload.get("tasks") or []
+        tasks = [
+            self._teams._task_from_connection(connection, task_id)
+            for task_id in effect_ref["task_ids"]
+        ]
+        if len(tasks) != len(specs):
+            raise OperationConflict("Applied contest verdict task count does not match")
+        actor = self._teams._agent_from_connection(
+            connection,
+            operation.agent_id,
+        )
+        if any(
+            task.team_run_id != operation.team_run_id
+            or task.cycle_id != operation.cycle_id
+            or not _task_matches_plan_spec(task, spec)
+            or not _task_inputs_match_plan_spec(connection, task.id, spec)
+            or not _task_dependencies_match_plan_spec(
+                connection, task.id, spec, tasks, specs
+            )
+            for task, spec in zip(tasks, specs, strict=True)
+        ) or (
+            not _operation_session_matches(operation, actor)
+        ):
+            raise OperationConflict(
+                "Applied contest verdict tasks do not match the operation"
+            )
+        reason = payload["reason"]
+        supersedes = tuple(dict(entry) for entry in payload.get("supersedes") or [])
+        content = _contest_adjudication_content(payload["kind"], reason, supersedes)
+        message = self._teams._message_from_connection(
+            connection,
+            effect_ref["message_id"],
+        )
+        if (
+            message.team_run_id != operation.team_run_id
+            or message.cycle_id != operation.cycle_id
+            or message.sender_agent_id != operation.agent_id
+            or message.recipient_agent_id is not None
+            or message.kind != "plan_adjudication"
+            or message.content != content
+            or message.metadata != {"operation_id": operation.id}
+        ):
+            raise OperationConflict(
+                "Applied contest verdict message does not match the operation"
+            )
+        return ContestOutcome(
+            kind=payload["kind"],
+            reason=reason,
+            tasks=tasks,
+            question=payload.get("question") or None,
+            supersedes=supersedes,
+        )
+
 
 def _plan_specs(operation: TeamModelOperation) -> list[dict[str, object]]:
     stored = operation.result_json
@@ -2284,6 +2440,50 @@ def _plan_specs(operation: TeamModelOperation) -> list[dict[str, object]]:
     ):
         raise OperationConflict("Completed planning result is invalid")
     return stored["payload"]["tasks"]
+
+
+_CONTEST_VERDICT_KINDS = {"amend", "partial", "reject", "ask_back"}
+
+
+def _contest_verdict_payload(operation: TeamModelOperation) -> dict[str, object]:
+    stored = operation.result_json
+    if (
+        operation.result_kind != "contest_verdict"
+        or not isinstance(stored, dict)
+        or set(stored) != {"kind", "payload"}
+        or stored["kind"] != "contest_verdict"
+        or not isinstance(stored["payload"], dict)
+    ):
+        raise OperationConflict("Completed contest verdict result is invalid")
+    payload = stored["payload"]
+    if payload.get("kind") not in _CONTEST_VERDICT_KINDS:
+        raise OperationConflict("Completed contest verdict result is invalid")
+    reason = payload.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise OperationConflict("Completed contest verdict result is invalid")
+    tasks = payload.get("tasks") or []
+    if not isinstance(tasks, list) or not all(isinstance(item, dict) for item in tasks):
+        raise OperationConflict("Completed contest verdict result is invalid")
+    supersedes = payload.get("supersedes") or []
+    if not isinstance(supersedes, list) or not all(
+        isinstance(item, dict) for item in supersedes
+    ):
+        raise OperationConflict("Completed contest verdict result is invalid")
+    return payload
+
+
+def _contest_adjudication_content(
+    kind: str,
+    reason: str,
+    supersedes: tuple[dict[str, str], ...],
+) -> str:
+    content = f"Contest verdict: {kind}. {reason}"
+    if supersedes:
+        overrides = "; ".join(
+            f"{entry['document_path']} — {entry['decision']}" for entry in supersedes
+        )
+        content = f"{content} Supersedes: {overrides}"
+    return content
 
 
 def _task_outcome(operation: TeamModelOperation):
