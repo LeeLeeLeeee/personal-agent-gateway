@@ -774,6 +774,14 @@ def test_entries_that_are_not_objects_are_dropped_not_fatal():
     assert gaps == [{"obligation": "T-09", "document": "", "note": ""}]
 
 
+def test_a_non_string_argument_returns_not_reported_instead_of_raising():
+    """The six cases above all pass strings. This function sits on the leader's
+    synthesis path, where anything that raises costs the whole cycle, so the
+    never-raises property needs a test that actually probes it."""
+    for hostile in (None, 42, {"a": 1}, [1, 2, 3]):
+        assert extract_coverage_gaps(hostile) == ("", None)
+
+
 def test_a_block_without_the_obligation_field_is_dropped():
     text = '```coverage-gaps\n[{"document": "d.md"}]\n```'
 
@@ -811,9 +819,14 @@ def extract_coverage_gaps(
 
     Nothing here raises. Synthesis is a leader stage, so a parse failure costs
     the cycle, and a block that is optional by design must not be able to do
-    that.
+    that. Only the first block is read.
     """
-    match = _BLOCK.search(text or "")
+    # `text or ""` is not enough: `or` keeps a truthy non-string, which re.search
+    # then rejects with TypeError. The never-raises property has to be checked,
+    # not assumed.
+    if not isinstance(text, str):
+        return "", None
+    match = _BLOCK.search(text)
     if match is None:
         return (text or "").strip(), None
     summary = (text[: match.start()] + text[match.end():]).strip()
@@ -843,7 +856,7 @@ def extract_coverage_gaps(
 - [ ] **Step 4: Run and watch it pass**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_team_coverage_report.py -q -p no:randomly`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
