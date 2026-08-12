@@ -1553,4 +1553,34 @@ describe("TeamRunDetail", () => {
 
     expect(within(dialog).queryByText(/약속한 파일/)).not.toBeInTheDocument();
   });
+
+  it("lets the operator contest the plan and shows how it was ruled on", async () => {
+    const onContest = vi.fn().mockResolvedValue({ ok: true });
+    render(
+      <TeamRunDetail
+        onContestPlan={onContest}
+        detail={{
+          run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
+          agents: [], messages: [], tasks: [],
+          contests: [{
+            objection: "T-04 has no owner",
+            kind: "reject",
+            reason: "task 7 covers it",
+            supersedes: [],
+            created_at: "2026-08-12T00:00:00Z"
+          }]
+        }}
+      />
+    );
+
+    expect(screen.getByText(/task 7 covers it/)).toBeInTheDocument();
+
+    await userEvent.type(
+      screen.getByRole("textbox", { name: /계획에 이의/ }),
+      "T-15 also has no owner"
+    );
+    await userEvent.click(screen.getByRole("button", { name: /이의 보내기/ }));
+
+    expect(onContest).toHaveBeenCalledWith("r1", "T-15 also has no owner");
+  });
 });

@@ -516,6 +516,20 @@ export const api = {
       body: JSON.stringify({ instruction })
     }));
   },
+  async contestPlan(id, objection) {
+    const response = await fetch(`/api/team-runs/${encodeURIComponent(id)}/contests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ objection, client_request_id: crypto.randomUUID() })
+    });
+    const body = await response.json().catch(() => null);
+    if (response.ok) return { ok: true, status: response.status, detail: body };
+    return {
+      ok: false,
+      status: response.status,
+      detail: typeof body?.detail === "string" ? body.detail : null
+    };
+  },
   async deleteTeamRun(id) {
     const response = await fetch(`/api/team-runs/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (response.ok) return { ok: true, status: response.status, detail: null };

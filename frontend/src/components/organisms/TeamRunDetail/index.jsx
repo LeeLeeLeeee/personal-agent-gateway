@@ -4,6 +4,7 @@ import { Button } from "../../atoms/Button/index.jsx";
 import { LoaderCube } from "../../molecules/LoaderCube/index.jsx";
 import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
 import { BuildEvidence, BuildEvidenceSummary } from "./BuildEvidence.jsx";
+import { ContestPanel } from "./ContestPanel.jsx";
 import { DocumentPreview } from "../DocumentPreview/index.jsx";
 import { MarkdownContent } from "../MarkdownContent/index.jsx";
 import { elapsedSeconds, fmtDateTime, fmtElapsed } from "../../../lib/time.js";
@@ -787,7 +788,8 @@ export function TeamRunDetail({
   onLoadDocument, onAddWork, onResume, onAnswerDecision,
   onRetryTask, onCancel, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto,
   onRefreshDelivery, onCommitDelivery, onApplyDelivery,
-  onResolveDeliveryConflict, onContinueDelivery, onCancelDeliveryConflicts
+  onResolveDeliveryConflict, onContinueDelivery, onCancelDeliveryConflicts,
+  onContestPlan
 }) {
   const [workInput, setWorkInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -1488,6 +1490,8 @@ export function TeamRunDetail({
               </div>
             ) : <div className="team-task-empty mono">No handoffs yet.</div>}
           </details>
+
+          <ContestPanel runId={run.id} contests={detail.contests} onContestPlan={onContestPlan} />
         </div>
       ) : null}
 
