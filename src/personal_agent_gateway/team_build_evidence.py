@@ -9,24 +9,29 @@ def _is_missing(workspace: Path, relative_path: str) -> bool:
     """Absent, or unreachable for a reason that is not absence.
 
     safe_workspace_file already walks the path, resolves it, and stats it once;
-    redoing all of that here would double the filesystem work for every
-    declared path a run reports on. The only case worth telling apart from a
-    genuine absence is the one safe_workspace_file collapses into the same
-    None: a file that is plainly there but refused by name (.env, .env.*).
-    Answering that needs nothing beyond a symlink check and a stat -- and the
-    symlink check must stop there rather than resolve to whatever the symlink
-    points at, because safe_workspace_file refuses a symlink outright and the
-    report must agree with the gate about what is reachable.
+    redoing all of that in full would double the filesystem work for every
+    declared path a run reports on -- but the resolve-and-contain check here
+    is not that duplication, it is load-bearing on its own. pathlib's `/`
+    discards the workspace root entirely when the declared path is itself
+    absolute, so without re-resolving and checking containment, an absolute
+    or `..`-escaping path that happens to match a real file on the host would
+    read as present while safe_workspace_file refuses it. The symlink check
+    that runs first must not follow the link to its target for the same
+    reason: safe_workspace_file refuses a symlink outright, and the report
+    must agree with the gate about what is reachable.
     """
     if safe_workspace_file(workspace, relative_path) is not None:
         return False
-    candidate = workspace.resolve() / relative_path
+    root = workspace.resolve()
+    candidate = root / relative_path
     try:
-        if candidate.is_symlink() or not candidate.is_file():
+        if candidate.is_symlink():
             return True
-    except OSError:
+        resolved = candidate.resolve()
+        resolved.relative_to(root)
+    except (OSError, ValueError):
         return True
-    return not is_sensitive_file(candidate.name)
+    return not (candidate.is_file() and is_sensitive_file(candidate.name))
 
 
 def task_build_evidence(task: TeamTask, workspace: Path) -> dict[str, object]:

@@ -1,4 +1,4 @@
-import pytest
+from pathlib import Path
 
 from personal_agent_gateway.team_build_evidence import (
     run_build_evidence,
@@ -104,20 +104,45 @@ def test_a_path_escaping_the_workspace_counts_as_missing(tmp_path):
     assert task_build_evidence(task, tmp_path)["missing_files"] == ["../outside.md"]
 
 
-def test_a_symlink_at_the_declared_path_counts_as_missing(tmp_path):
-    """safe_workspace_file refuses a symlink outright, by name, without
-    following it. The report must agree, rather than resolve through the
-    symlink and read its real, in-workspace target as present."""
+def test_a_symlink_at_the_declared_path_counts_as_missing(tmp_path, monkeypatch):
+    """safe_workspace_file refuses a symlink outright, without following it.
+    Creating a real symlink needs privileges this environment does not have,
+    so the symlink is simulated instead: the declared path's leaf reports as
+    a symlink without actually being one, which exercises exactly the check
+    this test protects, on this machine, without a skip."""
     (tmp_path / "real.md").write_text("x", encoding="utf-8")
-    link = tmp_path / "link.md"
-    try:
-        link.symlink_to(tmp_path / "real.md")
-    except (OSError, NotImplementedError) as exc:
-        pytest.skip(f"symlink creation is not permitted in this environment: {exc}")
+    link_path = tmp_path / "link.md"
+    real_is_symlink = Path.is_symlink
+
+    def fake_is_symlink(self):
+        if self == link_path:
+            return True
+        return real_is_symlink(self)
+
+    monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
 
     task = _task(tmp_path, outcome={"deliverables": [{"path": "link.md"}]})
 
     assert task_build_evidence(task, tmp_path)["missing_files"] == ["link.md"]
+
+
+def test_an_absolute_path_to_a_real_file_outside_the_workspace_counts_as_missing(
+    tmp_path_factory,
+):
+    """pathlib's `/` discards the workspace root entirely when the joined
+    path is itself absolute, so an absolute declared path that matches a
+    real file on the host must still be reported missing -- the report must
+    not read the host filesystem as if it were the workspace."""
+    workspace = tmp_path_factory.mktemp("workspace")
+    outside_file = tmp_path_factory.mktemp("outside") / "real.md"
+    outside_file.write_text("x", encoding="utf-8")
+    task = _task(
+        workspace, outcome={"deliverables": [{"path": str(outside_file)}]}
+    )
+
+    assert task_build_evidence(task, workspace)["missing_files"] == [
+        str(outside_file)
+    ]
 
 
 def test_verification_mode_is_carried_through_unchanged(tmp_path):
