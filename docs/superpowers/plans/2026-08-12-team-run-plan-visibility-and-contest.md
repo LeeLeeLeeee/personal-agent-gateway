@@ -1984,10 +1984,17 @@ git commit -m "feat(api): accept a plan contest and report its verdict"
 - Modify: `frontend/src/api/client.js` — a `contestPlan` call
 - Create: `frontend/src/components/organisms/TeamRunDetail/ContestPanel.jsx`
 - Modify: `frontend/src/components/organisms/TeamRunDetail/index.jsx`
+- Modify: `frontend/src/components/containers/GatewayApp/index.jsx` — pass
+  `onContestPlan` down beside the other actions, calling `api.contestPlan`
 - Test: `frontend/src/components/organisms/TeamRunDetail/TeamRunDetail.test.jsx`
 
 **Interfaces:**
 - Consumes: `POST /api/team-runs/{id}/contests` and `detail.contests` from Task 10.
+
+Do not omit the `GatewayApp` wiring. A component test hands `onContestPlan` in
+directly and passes whether or not anything supplies it in the real app, so
+without that line the panel's submit UI never renders for an operator, the API
+client is dead code, and Task 12's live verification has nothing to click.
 - Produces: `ContestPanel` as a named export.
 
 - [ ] **Step 1: Write the failing test**
@@ -2033,7 +2040,10 @@ Expected: FAIL — no such textbox.
 
 `ContestPanel` renders the existing contests (objection, verdict kind, reason,
 and each `supersedes` entry) plus a labelled textarea and a submit button that
-calls `onContestPlan(runId, objection)` and clears on success. A contest with a
+calls `onContestPlan(runId, objection)` and clears on success. Put it in the
+always-visible area beside the "Trigger cycle" instruction box, not inside a tab:
+a contest produces a cycle request like that one does, and an operator decides
+the plan is wrong while looking at TASKS or HISTORY. A contest with a
 null `kind` renders as `판정 대기`. Add `contestPlan` to `frontend/src/api/client.js`
 following `deleteTeamRun`'s shape, which returns `{ok, status, detail}` so the
 caller can surface a rejection reason rather than a bare failure.
