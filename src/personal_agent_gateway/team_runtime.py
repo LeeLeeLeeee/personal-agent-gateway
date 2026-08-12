@@ -3214,11 +3214,23 @@ class TeamRuntime:
         # A contest is the cycle doing work, so it owns its own activation the
         # way start/resume do -- callers (Task 9's orchestrator) invoke this
         # before resume(), so nothing else has put the cycle or the run into an
-        # active status yet. An explicit cancel is the one status this must not
-        # override; every other terminal status (e.g. a settled previous cycle)
-        # is reopenable, exactly as add_work's API-level guard treats them.
-        if run.status == "canceled":
-            raise OperationConflict("Canceled team runs cannot be contested")
+        # active status yet. Activation below is unconditional otherwise, so
+        # these four statuses have to be refused first, mirroring add_work's
+        # API-level guard (api/team_runs.py) exactly: a run that never started,
+        # or that is already paused for an unrelated decision or recovery,
+        # must not be forced to "running" and stepped over. Every other
+        # terminal status (e.g. a settled previous cycle) is reopenable, per
+        # that same guard's own comment. waiting_for_user/interrupted are
+        # believed unreachable here today -- team_cycles._pause_cycle never
+        # resolves a paused cycle's request out of "dispatching", and
+        # claim_next refuses to claim a new request while one is still
+        # dispatching for the run, so a distinct queued cycle should never
+        # coexist with a run paused by a different one. This is defensive
+        # insurance against that wiring changing, not a path exercised today.
+        if run.status in {"draft", "interrupted", "waiting_for_user", "canceled"}:
+            raise OperationConflict(
+                f"Team run status '{run.status}' cannot be contested"
+            )
         self._activate_cycle(cycle_id)
         run = self._teams.set_run_status(run.id, "running")
         leader = _find_leader(self._teams.list_agents(run.id))

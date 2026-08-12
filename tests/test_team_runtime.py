@@ -6350,7 +6350,12 @@ async def test_team_runtime_uses_archive_and_routes_knowledge_gap_to_library(tmp
 
 @pytest.mark.asyncio
 async def test_an_amend_verdict_creates_the_task_it_promised(tmp_path):
+    """A settled previous cycle is the real precondition adjudicate_contest
+    runs under -- the run is terminal (not draft) and this cycle is still
+    queued, not yet activated by resume()."""
     setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.teams.set_cycle_status(setup.cycle.id, "queued")
+    setup.teams.set_run_status(setup.run.id, "completed")
     setup.lead_client.responses = [
         ModelResponse(
             json.dumps({
@@ -6377,6 +6382,8 @@ async def test_an_amend_verdict_creates_the_task_it_promised(tmp_path):
 
     assert outcome.kind == "amend"
     assert [t.title for t in setup.teams.list_tasks(setup.run.id)] == ["Own discard"]
+    assert setup.teams.get_team_run(setup.run.id).status == "running"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "running"
 
 
 @pytest.mark.asyncio
@@ -6384,6 +6391,8 @@ async def test_a_verdict_with_no_reason_is_repaired_once(tmp_path):
     """The repair seam every stage now goes through gives this for free; the
     test is here to prove cycle_contest is actually on it."""
     setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.teams.set_cycle_status(setup.cycle.id, "queued")
+    setup.teams.set_run_status(setup.run.id, "completed")
     setup.lead_client.responses = [
         ModelResponse(json.dumps({"kind": "reject"}), []),
         ModelResponse(json.dumps({"kind": "reject", "reason": "task 7 covers it"}), []),
@@ -6397,6 +6406,28 @@ async def test_a_verdict_with_no_reason_is_repaired_once(tmp_path):
     assert setup.operations.get_by_key(
         f"{setup.cycle.id}:cycle_contest_repair:0"
     ).status == "applied"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "run_status", ["draft", "interrupted", "waiting_for_user", "canceled"]
+)
+async def test_adjudicate_contest_refuses_an_inactive_run(tmp_path, run_status):
+    """adjudicate_contest activates its cycle and run unconditionally, so it
+    must refuse these statuses up front rather than trample them -- a run
+    that never started, one already paused for someone else's decision or
+    recovery, and an explicit cancel must all be left exactly as they are."""
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.teams.set_cycle_status(setup.cycle.id, "queued")
+    setup.teams.set_run_status(setup.run.id, run_status)
+
+    with pytest.raises(OperationConflict):
+        await setup.runtime.adjudicate_contest(
+            setup.run.id, setup.cycle.id, "nothing owns T-04"
+        )
+
+    assert setup.teams.get_team_run(setup.run.id).status == run_status
+    assert setup.teams.get_cycle(setup.cycle.id).status == "queued"
 
 
 @pytest.mark.asyncio
@@ -6432,6 +6463,8 @@ async def test_the_prompt_carries_the_previous_rejection(tmp_path):
     """A leader that cannot see why it refused last time will either repeat the
     refusal blindly or contradict itself."""
     setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    setup.teams.set_cycle_status(setup.cycle.id, "queued")
+    setup.teams.set_run_status(setup.run.id, "completed")
     setup.lead_client.responses = [
         ModelResponse(json.dumps({"kind": "reject", "reason": "task 7 covers it"}), []),
     ]
@@ -6461,6 +6494,7 @@ async def test_a_prepared_contest_is_resumable_after_a_restart(tmp_path):
     """
     setup = make_operation_runtime(tmp_path, cycle_instruction="nothing owns T-04")
     add_completed_operation_task(setup)
+    setup.teams.set_run_status(setup.run.id, "completed")
     setup.lead_client.responses = [
         ModelResponse(json.dumps({"kind": "reject", "reason": "task 7 covers it"}), []),
         ModelResponse("summary", []),
