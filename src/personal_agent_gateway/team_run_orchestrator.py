@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from typing import Protocol
 
 from personal_agent_gateway.run_state import TeamRunRegistry
+from personal_agent_gateway.team_model_effects import ContestOutcome
 from personal_agent_gateway.teams import TeamRun
 
 
@@ -21,7 +22,9 @@ class TeamRuntimeProtocol(Protocol):
 
     async def adjudicate_contest(
         self, team_run_id: str, cycle_id: str, objection: str
-    ) -> object: ...
+    ) -> ContestOutcome: ...
+
+    async def settle_contest(self, team_run_id: str, cycle_id: str) -> TeamRun: ...
 
 
 class TeamRunOrchestrator:
@@ -89,8 +92,22 @@ class TeamRunOrchestrator:
         runtime = self._runtime_provider()
 
         async def execute() -> TeamRun:
-            await runtime.adjudicate_contest(team_run_id, cycle_id, objection)
-            return await runtime.resume(team_run_id, cycle_id)
+            outcome = await runtime.adjudicate_contest(
+                team_run_id, cycle_id, objection
+            )
+            # Only a verdict that created work has anything to execute. Chaining
+            # resume() unconditionally used to run the objection itself: a
+            # contest owns a fresh cycle, so a task-less verdict left that cycle
+            # empty, resume()'s zero-task shortcut fell through to start(), and
+            # the plan it built had the objection text as its cycle objective.
+            # A refused objection was therefore carried out anyway.
+            if outcome.tasks:
+                return await runtime.resume(team_run_id, cycle_id)
+            # reject leaves a running cycle nothing else would ever settle;
+            # ask_back has already parked the run on a decision request and
+            # must be left exactly as it is. settle_contest tells them apart by
+            # the cycle status the verdict left behind.
+            return await runtime.settle_contest(team_run_id, cycle_id)
 
         return self._schedule(team_run_id, cycle_id, execute)
 

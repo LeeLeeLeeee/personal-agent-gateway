@@ -1081,7 +1081,9 @@ class TeamRuntime:
                         raise OperationConflict(
                             "Contest repair has no failed source operation"
                         )
-                    messages = _repair_messages(failed_operation.reason_code)
+                    messages = _contest_repair_messages(
+                        failed_operation.reason_code
+                    )
                 recovered = await self._invoke_existing_operation(
                     operation,
                     leader,
@@ -1090,7 +1092,7 @@ class TeamRuntime:
                 )
             return OpenOperationRecovery(
                 recovered,
-                self._apply_contest_outcome(run, cycle_id, recovered.id),
+                await self._apply_contest_outcome(run, cycle_id, recovered.id),
             )
 
         raise OperationConflict(
@@ -1237,9 +1239,20 @@ class TeamRuntime:
         cycle_id: str,
         objection: str,
     ) -> list[dict[str, object]]:
+        # The whole run, not this cycle: a contest always owns a fresh cycle, so
+        # scoping the list to cycle_id made it unconditionally empty and asked
+        # the leader to judge coverage with no plan in front of it. The
+        # predictable answer to "does any task own this?" with an empty list is
+        # "no", which granted every objection and made reject unreachable.
+        # required_outputs comes along because the prompt tells the leader to
+        # judge whether a finished task's acceptance criteria were too narrow,
+        # and the criteria are exactly what that needs.
         tasks = (
-            ", ".join(
-                task.title for task in self._teams.list_tasks(run.id, cycle_id)
+            "\n".join(
+                f"- [{task.status}] {task.title}"
+                f" (required_outputs: "
+                f"{', '.join(task.acceptance.required_outputs) or 'none'})"
+                for task in self._teams.list_tasks(run.id)
             )
             or "(none)"
         )
@@ -1252,13 +1265,24 @@ class TeamRuntime:
         )
         return [{"role": "user", "content": prompt}]
 
-    def _apply_contest_outcome(
+    async def _apply_contest_outcome(
         self,
         run: TeamRun,
         cycle_id: str,
         operation_id: str,
     ) -> ContestOutcome:
         outcome = self._model_effects.apply_contest_verdict(operation_id)
+        # Same announcement _plan and add_work make: a task the UI never hears
+        # about only appears on the next poll, and an amend's tasks are the
+        # whole visible result of the verdict.
+        for task in outcome.tasks:
+            await self._publish(
+                {
+                    "type": "team.task.created",
+                    "team_run_id": run.id,
+                    "task_id": task.id,
+                }
+            )
         if outcome.kind == "ask_back":
             self._teams.raise_system_decision(
                 run.id,
@@ -3081,6 +3105,7 @@ class TeamRuntime:
     async def resume(self, team_run_id: str, cycle_id: str | None = None) -> TeamRun:
         run = self._teams.get_team_run(team_run_id)
         self._validate_cycle(run, cycle_id)
+        open_operation: TeamModelOperation | None = None
         if cycle_id is not None:
             open_operation = self._operations.get_open_for_cycle(cycle_id)
             if open_operation is not None:
@@ -3094,6 +3119,11 @@ class TeamRuntime:
                 if open_operation.status == "waiting_for_provider":
                     raise ProviderOperationWaiting(open_operation.id)
         if not self._teams.list_tasks(run.id, cycle_id):
+            if cycle_id is not None and open_operation is not None and (
+                open_operation.stage
+                in {"cycle_contest", "cycle_contest_repair"}
+            ):
+                return await self._resume_zero_task_contest(run, cycle_id)
             return await self.start(team_run_id, cycle_id)
         leader: TeamAgent | None = None
         try:
@@ -3236,22 +3266,110 @@ class TeamRuntime:
         leader = _find_leader(self._teams.list_agents(run.id))
         leader_agent = self._teams.get_agent(leader.id)
         messages = self._contest_messages(run, leader_agent, cycle_id, objection)
-        # Each contested objection is its own round, so it gets the next ordinal
-        # rather than reusing 0 -- a cycle can be contested more than once.
+        # Counted rather than hard-coded, but 0 is the only value it can take
+        # today: an objection is enqueued as its own cycle request and so always
+        # gets a fresh cycle, which cannot already hold a cycle_contest. The
+        # count exists so that a second contest on one cycle -- if the queue
+        # ever allows it -- gets its own ordinal instead of colliding.
         ordinal = sum(
             1
             for operation in self._operations.list_for_cycle(cycle_id)
             if operation.stage == "cycle_contest"
         )
-        operation = await self._invoke_with_repair(
-            _operation_spec(
-                run, cycle_id, leader_agent, "cycle_contest", ordinal, messages
-            ),
-            leader_agent,
-            messages,
-            _validated_contest_verdict,
+        try:
+            operation = await self._invoke_with_repair(
+                _operation_spec(
+                    run,
+                    cycle_id,
+                    leader_agent,
+                    "cycle_contest",
+                    ordinal,
+                    messages,
+                ),
+                leader_agent,
+                messages,
+                _validated_contest_verdict,
+                repair_messages=_contest_repair_messages,
+            )
+            return await self._apply_contest_outcome(run, cycle_id, operation.id)
+        except asyncio.CancelledError:
+            # Every other cycle path settles what it activated before the
+            # cancel propagates; without this the cycle and run this method
+            # just moved to "running" are left there for the dispatcher to
+            # relabel "interrupted" instead of "canceled".
+            self._settle_canceled(run, cycle_id)
+            raise
+
+    async def settle_contest(self, team_run_id: str, cycle_id: str) -> TeamRun:
+        """Close a contest cycle that produced no work.
+
+        A verdict with no tasks ends the cycle it opened, but nothing else in
+        the system would: there is no execution to synthesize and no failure to
+        settle, so the cycle would stay `running` forever and its request would
+        stay `dispatching`, blocking every later request for the run.
+
+        Only a `reject` reaches the close below. `ask_back` has already moved
+        the cycle to `waiting_for_user` through the decision request it raised,
+        and that pause is the whole point of the verdict -- completing the cycle
+        here would destroy it one call after it was created. The cycle status
+        the verdict left behind is what tells the two apart.
+        """
+        run = self._teams.get_team_run(team_run_id)
+        if self._teams.get_cycle(cycle_id).status != "running":
+            return run
+        leader = _find_leader(self._teams.list_agents(run.id))
+        self._teams.set_agent_status(leader.id, "completed")
+        self._teams.set_cycle_status(cycle_id, "completed")
+        run = self._teams.set_run_status(run.id, "completed")
+        await self._publish(
+            {"type": "team.run.completed", "team_run_id": run.id}
         )
-        return self._apply_contest_outcome(run, cycle_id, operation.id)
+        return run
+
+    async def _resume_zero_task_contest(
+        self, run: TeamRun, cycle_id: str
+    ) -> TeamRun:
+        """Finish a crash-recovered contest whose cycle owns no tasks.
+
+        resume() would otherwise take its zero-task shortcut into start(),
+        which opens a cycle_planning operation while the recovered
+        cycle_contest is still open -- the ledger refuses two open operations
+        for one cycle, so the cycle could never move again. Recovering the
+        contest operation applies the verdict the crash lost, and from there
+        this is the same fork the orchestrator takes on a live verdict.
+        """
+        leader: TeamAgent | None = None
+        try:
+            self._activate_cycle(cycle_id)
+            leader = _find_leader(self._teams.list_agents(run.id))
+            run = self._teams.set_run_status(run.id, "running")
+            leader = self._teams.set_agent_status(leader.id, "running")
+            recovery = await self._recover_open_operation(run, leader, cycle_id)
+            if recovery is None or not isinstance(
+                recovery.result, ContestOutcome
+            ):
+                raise OperationConflict(
+                    "Contest recovery did not produce a verdict"
+                )
+            if recovery.result.tasks:
+                return await self.resume(run.id, cycle_id)
+            return await self.settle_contest(run.id, cycle_id)
+        except asyncio.CancelledError:
+            self._settle_canceled(run, cycle_id)
+            raise
+        except (ProviderOperationWaiting, AmbiguousModelOperation):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            error = redact_text(exc) or type(exc).__name__
+            run = self._settle_failed(run, error, cycle_id)
+            await self._publish(
+                {
+                    "type": "team.run.failed",
+                    "team_run_id": run.id,
+                    "error": error,
+                }
+            )
+            return run
 
     async def _leader_synthesis(
         self,
@@ -3814,6 +3932,43 @@ def _acceptance_worker_repair_messages(
                 "these keys: status, summary, reason_code, deliverables, "
                 "verifications. Do not include explanations, Markdown, or "
                 "code fences."
+            ),
+        }
+    ]
+
+
+def _contest_repair_messages(
+    reason_code: str | None,
+) -> list[dict[str, object]]:
+    """Name the rules a verdict actually fails.
+
+    The generic prompt says "re-emit only the previous final result", which is
+    exactly wrong for the failure this stage sees most: a verdict missing
+    `reason`. Re-emitting the same object cannot satisfy the validator, so the
+    repair burns its one attempt. Every rule the verdict validator enforces is
+    restated here instead.
+    """
+    error = reason_code or "invalid_structured_output"
+    return [
+        {
+            "role": "user",
+            "content": (
+                "Your previous verdict could not be accepted.\n"
+                f"Error: {error}.\n\n"
+                "Do not repeat the adjudication and do not modify files. "
+                "Send the same ruling again as one raw JSON object with "
+                'these keys: kind, reason, tasks, question, supersedes.\n'
+                '- kind is exactly one of "amend", "partial", "reject", '
+                '"ask_back".\n'
+                "- reason is required for every kind, including reject and "
+                "ask_back. A verdict without a reason is rejected.\n"
+                "- amend and partial carry at least one task; reject and "
+                "ask_back carry none.\n"
+                "- question is required for ask_back and only for ask_back.\n"
+                "- every supersedes entry needs a task that corrects the "
+                "document it names; a supersedes entry without a task is "
+                "rejected.\n"
+                "No explanations, no Markdown, no code fences."
             ),
         }
     ]

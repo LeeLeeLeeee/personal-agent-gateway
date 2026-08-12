@@ -49,6 +49,7 @@ from personal_agent_gateway.team_runtime import (
     TeamRuntime,
     _acceptance_worker_repair_messages,
     _bounded_path_exists,
+    _contest_repair_messages,
     _parse_acceptance_review_resolution,
     _parse_task_plan,
     _planning_repair_messages,
@@ -6516,3 +6517,232 @@ async def test_a_prepared_contest_is_resumable_after_a_restart(tmp_path):
     assert setup.operations.get_by_key(
         f"{setup.cycle.id}:cycle_contest:0"
     ).status == "applied"
+
+
+def _contest_verdict(kind, reason, *, tasks=None, question=None, supersedes=None):
+    payload = {"kind": kind, "reason": reason}
+    if tasks is not None:
+        payload["tasks"] = tasks
+    if question is not None:
+        payload["question"] = question
+    if supersedes is not None:
+        payload["supersedes"] = supersedes
+    return ModelResponse(json.dumps(payload), [])
+
+
+def _contest_task(title="Own discard", outputs=(), verifications=("worker-result",)):
+    return {
+        "title": title,
+        "description": "Implement the obligation nothing owned.",
+        "owner_agent_id": None,
+        "required": True,
+        "acceptance": {
+            "required_outputs": list(outputs),
+            "required_verifications": list(verifications),
+        },
+    }
+
+
+def make_contest_setup(tmp_path, objection="nothing owns T-04"):
+    """The state a dispatched contest request really runs under.
+
+    The cycle is freshly created and still queued, and the run carries the
+    previous cycle's terminal status -- exactly what TeamCycleDispatcher hands
+    the orchestrator for a source_type == "contest" request.
+    """
+    setup = make_operation_runtime(tmp_path, cycle_instruction=objection)
+    setup.teams.set_cycle_status(setup.cycle.id, "queued")
+    setup.teams.set_run_status(setup.run.id, "completed")
+    return setup
+
+
+def contest_orchestrator(setup):
+    return TeamRunOrchestrator(TeamRunRegistry(), lambda: setup.runtime)
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_objection_is_never_replanned_or_executed(tmp_path):
+    """The production seam is TeamRunOrchestrator.adjudicate_contest, which used
+    to chain resume() unconditionally.
+
+    A reject creates no tasks and a contest always owns a fresh cycle, so
+    resume()'s zero-task shortcut fell through to start(), which planned and
+    executed a cycle whose objective was the objection text itself. The spec
+    forbids exactly that: there is no path for the operator to overrule a
+    rejection. cycle_contest must be the only operation the cycle ever holds.
+    """
+    setup = make_contest_setup(tmp_path)
+    setup.lead_client.responses = [
+        _contest_verdict("reject", "Task 7 already covers T-04."),
+    ]
+
+    await contest_orchestrator(setup).adjudicate_contest(
+        setup.run.id, setup.cycle.id, "nothing owns T-04"
+    )
+
+    assert [
+        (operation.stage, operation.stage_ordinal, operation.status)
+        for operation in setup.operations.list_for_cycle(setup.cycle.id)
+    ] == [("cycle_contest", 0, "applied")]
+    assert setup.teams.list_tasks(setup.run.id) == []
+    assert setup.lead_client.calls == 1
+    # The refusal still has to end the cycle it opened; nothing else would.
+    assert setup.teams.get_cycle(setup.cycle.id).status == "completed"
+    assert setup.teams.get_team_run(setup.run.id).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_ask_back_keeps_the_pause_it_just_created(tmp_path):
+    """The pause used to be destroyed one line after it was created: resume()
+    ran, the cycle failed, and the decision request was left at awaiting_user
+    with a bumped revision the operator could never answer."""
+    setup = make_contest_setup(tmp_path)
+    setup.lead_client.responses = [
+        _contest_verdict(
+            "ask_back",
+            "The objection could mean two things.",
+            question="Do you mean T-04 or T-12?",
+        ),
+    ]
+
+    run = await contest_orchestrator(setup).adjudicate_contest(
+        setup.run.id, setup.cycle.id, "discard is missing"
+    )
+
+    assert run.status == "waiting_for_user"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "waiting_for_user"
+    request = setup.teams.get_active_decision_request(setup.run.id)
+    assert request.status == "awaiting_user"
+    assert "T-04 or T-12" in request.items[0]["question"]
+    assert [
+        operation.stage
+        for operation in setup.operations.list_for_cycle(setup.cycle.id)
+    ] == ["cycle_contest"]
+    assert setup.lead_client.calls == 1
+    # The point of the pause is that the operator can answer it. resume() used
+    # to fail the cycle out from under this request, leaving it unanswerable.
+    setup.teams.answer_decision_request(
+        setup.run.id,
+        request.id,
+        request.revision,
+        {request.items[0]["id"]: "T-04"},
+    )
+    assert setup.teams.get_active_decision_request(setup.run.id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["amend", "partial"])
+async def test_a_granted_objection_executes_the_task_it_created(tmp_path, kind):
+    """The other half of the branch: a verdict that created work must still be
+    resumed, and the plan it runs is the verdict's task -- not a cycle_planning
+    built out of the objection."""
+    setup = make_contest_setup(tmp_path)
+    setup.lead_client.responses = [
+        _contest_verdict(
+            kind,
+            "T-04 had no owner.",
+            tasks=[_contest_task()],
+        ),
+        ModelResponse("Owned it.", []),
+    ]
+
+    run = await contest_orchestrator(setup).adjudicate_contest(
+        setup.run.id, setup.cycle.id, "nothing owns T-04"
+    )
+
+    assert run.status == "completed"
+    assert [task.title for task in setup.teams.list_tasks(setup.run.id)] == [
+        "Own discard"
+    ]
+    stages = {
+        operation.stage
+        for operation in setup.operations.list_for_cycle(setup.cycle.id)
+    }
+    assert "cycle_contest" in stages
+    assert "worker_execution" in stages
+    assert "cycle_planning" not in stages
+    assert "cycle_add_work" not in stages
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_zero_task_contest_recovers_without_replanning(tmp_path):
+    """Crash recovery re-enters through orchestrator.resume(), and a rejected
+    contest owns no tasks -- so the zero-task shortcut sent it into start(),
+    which opened cycle_planning while the recovered cycle_contest was still
+    open and the ledger refused it."""
+    setup = make_contest_setup(tmp_path)
+    setup.lead_client.responses = [
+        _contest_verdict("reject", "Task 7 already covers T-04."),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        setup.runtime._model_invoker,
+        "cycle_contest",
+        0,
+        "prepared",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await contest_orchestrator(setup).adjudicate_contest(
+            setup.run.id, setup.cycle.id, "nothing owns T-04"
+        )
+
+    restarted = restart_operation_runtime(setup)
+    orchestrator = TeamRunOrchestrator(TeamRunRegistry(), lambda: restarted)
+    await orchestrator.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:cycle_contest:0"
+    ).status == "applied"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:cycle_planning:0"
+    ) is None
+    assert setup.teams.list_tasks(setup.run.id) == []
+    assert setup.teams.get_cycle(setup.cycle.id).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_the_contest_prompt_lists_tasks_from_every_cycle(tmp_path):
+    """A contest always owns a fresh cycle, so scoping the task list to that
+    cycle made it unconditionally empty -- and a leader asked "does any task
+    own this?" with an empty list in front of it grants every objection."""
+    setup = make_operation_runtime(tmp_path, cycle_instruction="nothing owns T-04")
+    earlier = setup.teams.create_task(
+        setup.run.id,
+        "Discard the draft",
+        "Implement T-04.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance(
+            ("src/discard.py",),
+            (RequiredVerification("worker-result"),),
+        ),
+    )
+    setup.teams.set_task_status(earlier.id, "completed", result="done")
+    contest_cycle = setup.teams.create_cycle(setup.run.id, "contest", "contest-1")
+    setup.teams.set_cycle_status(contest_cycle.id, "queued")
+    setup.teams.set_run_status(setup.run.id, "completed")
+    setup.lead_client.responses = [
+        _contest_verdict("reject", "Discard the draft already owns T-04."),
+    ]
+
+    await contest_orchestrator(setup).adjudicate_contest(
+        setup.run.id, contest_cycle.id, "nothing owns T-04"
+    )
+
+    prompt = setup.lead_client.messages[-1][0]["content"]
+    assert "Discard the draft" in prompt
+    assert "[completed]" in prompt
+    # The prompt tells the leader to judge whether a settled task's criteria
+    # were too narrow, which is unanswerable without the criteria.
+    assert "src/discard.py" in prompt
+
+
+def test_the_contest_repair_prompt_names_the_rule_it_broke() -> None:
+    """The likeliest rejection is a missing reason, and the generic repair
+    prompt tells the leader to re-emit the same object -- which cannot pass."""
+    repair = _contest_repair_messages("invalid_structured_output")[0]["content"]
+
+    assert "invalid_structured_output" in repair
+    assert "reason is required for every kind" in repair
+    assert "amend and partial carry at least one task" in repair
+    assert "supersedes entry without a task is rejected" in repair
