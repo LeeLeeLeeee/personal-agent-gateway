@@ -647,14 +647,14 @@ def _valid_task_plan(payload: dict[str, object]) -> bool:
     return isinstance(tasks, list) and all(_valid_task_spec(task) for task in tasks)
 
 
-_CONTEST_KINDS = {"amend", "partial", "reject", "ask_back"}
+CONTEST_VERDICT_KINDS = {"amend", "partial", "reject", "ask_back"}
 
 
 def _valid_contest_verdict(payload: dict[str, object]) -> bool:
     if set(payload) - {"kind", "reason", "tasks", "question", "supersedes"}:
         return False
     kind = payload.get("kind")
-    if kind not in _CONTEST_KINDS:
+    if kind not in CONTEST_VERDICT_KINDS:
         return False
     reason = payload.get("reason")
     if not isinstance(reason, str) or not reason.strip():

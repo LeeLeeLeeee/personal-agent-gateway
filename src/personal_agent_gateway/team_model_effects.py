@@ -19,6 +19,7 @@ from personal_agent_gateway.team_acceptance import (
     terminal_rejected_status,
 )
 from personal_agent_gateway.team_model_operations import (
+    CONTEST_VERDICT_KINDS,
     OperationConflict,
     OperationResultValidatorRegistry,
     StaleOperation,
@@ -2442,9 +2443,6 @@ def _plan_specs(operation: TeamModelOperation) -> list[dict[str, object]]:
     return stored["payload"]["tasks"]
 
 
-_CONTEST_VERDICT_KINDS = {"amend", "partial", "reject", "ask_back"}
-
-
 def _contest_verdict_payload(operation: TeamModelOperation) -> dict[str, object]:
     stored = operation.result_json
     if (
@@ -2456,7 +2454,7 @@ def _contest_verdict_payload(operation: TeamModelOperation) -> dict[str, object]
     ):
         raise OperationConflict("Completed contest verdict result is invalid")
     payload = stored["payload"]
-    if payload.get("kind") not in _CONTEST_VERDICT_KINDS:
+    if payload.get("kind") not in CONTEST_VERDICT_KINDS:
         raise OperationConflict("Completed contest verdict result is invalid")
     reason = payload.get("reason")
     if not isinstance(reason, str) or not reason.strip():

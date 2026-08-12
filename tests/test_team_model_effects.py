@@ -2345,6 +2345,34 @@ def test_applying_a_reject_creates_no_tasks_but_still_records_it(tmp_path):
     )
 
 
+def test_applying_an_ask_back_carries_the_question_and_creates_no_tasks(tmp_path):
+    services = make_completed_operation(
+        tmp_path,
+        stage="cycle_contest",
+        result=ValidatedOperationResult(
+            "contest_verdict",
+            {
+                "kind": "ask_back",
+                "reason": "The scope of T-04 is unclear.",
+                "question": "Should T-04 include the migration script?",
+            },
+        ),
+    )
+
+    outcome = services.effects.apply_contest_verdict(services.operation.id)
+
+    assert outcome.kind == "ask_back"
+    assert outcome.question == "Should T-04 include the migration script?"
+    assert outcome.tasks == []
+    assert services.teams.list_tasks(services.run.id, services.cycle.id) == []
+    adjudications = [
+        message
+        for message in services.teams.list_messages(services.run.id)
+        if message.kind == "plan_adjudication"
+    ]
+    assert len(adjudications) == 1
+
+
 def test_a_superseded_decision_appears_in_the_record(tmp_path):
     """The FSRS episode left no trace precisely because the reversal was never
     written down anywhere a reader would find it."""
