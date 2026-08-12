@@ -340,34 +340,49 @@ def undeclared_retry_is_futile(
     outcome to declare fewer files -- which the worker can only do if it is told
     which ones to drop. Naming them is therefore a floor, not a preference.
 
-    This rule is a proxy for "the instruction names the path". It checks whether
-    each extra path appears as a whole token in the instruction text: splits on
-    whitespace, strips backticks, quotes, and trailing punctuation (,.:;)), and
-    compares tokens exactly to the path. This prevents substring collisions like
-    matching "a/b.md" against "x/a/b.md".
+    A path counts as named when it appears in the instruction bounded by
+    non-path characters (or string edges). Path characters are ASCII letters,
+    digits, `.`, `_`, `-`, `/`, `\\`; anything else is a boundary. This handles
+    parentheses, quotes, punctuation, and whitespace without text manipulation.
 
-    The rule does not establish whether prose actually makes the worker drop a
-    file -- a leader could write "declare outputs/extra.md along with the others"
-    (names the path, keeps it) and this rule lets it through. The cap-time
-    escalation is what covers that. Comparison is case-sensitive, matching the
-    gate's own set-difference logic in team_acceptance.py: on case-insensitive
-    filesystems a leader naming the path with different case is scored as not
-    having named it.
+    The rule does not establish whether prose actually instructs the worker to
+    drop a file -- a leader could write "declare outputs/extra.md along with
+    the others" (names the path, keeps it) and this rule lets it through. The
+    cap-time escalation is what covers that. Comparison is case-sensitive,
+    matching the gate's own set-difference logic in team_acceptance.py: on
+    case-insensitive filesystems a leader naming the path with different case
+    is scored as not having named it.
     """
     if resolution.kind != "retry_worker" or not extra_paths:
         return False
     instruction = resolution.instruction or ""
-    tokens = set()
-    for token in instruction.split():
-        # Strip quotes and backticks from beginning
-        while token and token[0] in ('"', "'", "`"):
-            token = token[1:]
-        # Strip backticks and trailing punctuation from end
-        while token and token[-1] in ("`", ",", ".", ";", ":", ")"):
-            token = token[:-1]
-        if token:
-            tokens.add(token)
-    return any(path not in tokens for path in extra_paths)
+
+    # Path continuation characters
+    path_chars = set(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/\\"
+    )
+
+    def path_is_named(path: str) -> bool:
+        """Check if path appears in instruction with boundaries on both sides."""
+        pos = 0
+        while True:
+            pos = instruction.find(path, pos)
+            if pos == -1:
+                return False
+            # Check boundary before
+            if pos > 0 and instruction[pos - 1] in path_chars:
+                pos += 1
+                continue
+            # Check boundary after
+            end_pos = pos + len(path)
+            if end_pos < len(instruction) and instruction[end_pos] in path_chars:
+                pos += 1
+                continue
+            # Both boundaries satisfied
+            return True
+
+    # Return True (futile) if any path is not named
+    return any(not path_is_named(path) for path in extra_paths)
 
 
 def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:

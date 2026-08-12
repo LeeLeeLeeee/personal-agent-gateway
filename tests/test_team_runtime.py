@@ -7017,10 +7017,9 @@ def test_no_extras_means_nothing_to_judge() -> None:
     assert not undeclared_retry_is_futile(resolution, frozenset())
 
 
-def test_substring_match_does_not_count_as_named() -> None:
-    """A path that appears only as a substring of another token is not named.
-    This prevents false negatives like matching 'a/b.md' when the instruction
-    mentions only 'x/a/b.md'."""
+def test_substring_collision_path_prefix() -> None:
+    """A path that appears only as a substring of another path is not named.
+    extras {'a/b.md'} with instruction naming only 'x/a/b.md' must be futile."""
     extras = frozenset({"a/b.md"})
     resolution = AcceptanceReviewResolution(
         kind="retry_worker",
@@ -7031,26 +7030,93 @@ def test_substring_match_does_not_count_as_named() -> None:
     assert undeclared_retry_is_futile(resolution, extras)
 
 
-def test_path_in_backticks_counts_as_named() -> None:
-    """A path wrapped in backticks is recognized as a whole token."""
-    extras = frozenset({"outputs/extra.md"})
+def test_path_with_all_boundary_variants() -> None:
+    """A path is recognized as named when appeared with boundaries on both sides.
+    Tests: plain, double quotes, single quotes, backticks, parentheses, comma, period."""
     resolution = AcceptanceReviewResolution(
         kind="retry_worker",
         reason="r",
-        instruction="Delete `outputs/extra.md` and resubmit.",
+        instruction=(
+            "Delete a/b.md or \"a/b.md\" or 'a/b.md' or `a/b.md` or (a/b.md) "
+            "or a/b.md, or a/b.md. and resubmit."
+        ),
+    )
+    extras = frozenset({"a/b.md"})
+
+    assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_extra_with_literal_parens_named_verbatim() -> None:
+    """An extra literally named 'archive(2024)' with its parens is recognized
+    when named verbatim, because parens are boundaries."""
+    extras = frozenset({"archive(2024)"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete archive(2024) and resubmit.",
     )
 
     assert not undeclared_retry_is_futile(resolution, extras)
 
 
-def test_path_followed_by_punctuation_counts_as_named() -> None:
-    """A path followed by punctuation is recognized as a whole token after
-    stripping the trailing punctuation."""
-    extras = frozenset({"outputs/extra.md"})
+def test_extra_with_literal_trailing_dot_named_verbatim() -> None:
+    """An extra literally named 'trailing.' with its dot is recognized when
+    named verbatim, because the dot is a boundary at the end."""
+    extras = frozenset({"trailing."})
     resolution = AcceptanceReviewResolution(
         kind="retry_worker",
         reason="r",
-        instruction="Delete outputs/extra.md, tests/test_extra.py and resubmit.",
+        instruction="Delete trailing. and resubmit.",
     )
 
     assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_path_suffix_collision() -> None:
+    """extras {'a/b.md'} with instruction naming 'a/b.mdx' must be futile
+    because the 'x' continues the path."""
+    extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete a/b.mdx and resubmit.",
+    )
+
+    assert undeclared_retry_is_futile(resolution, extras)
+
+
+def test_conftest_vs_test_collision() -> None:
+    """extras {'test.py'} with instruction naming 'conftest.py' must be futile
+    because substring 'test.py' is contained within 'conftest.py'."""
+    extras = frozenset({"test.py"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete conftest.py and resubmit.",
+    )
+
+    assert undeclared_retry_is_futile(resolution, extras)
+
+
+def test_none_instruction_is_futile() -> None:
+    """instruction=None counts as empty, so no paths are named."""
+    extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction=None,
+    )
+
+    assert undeclared_retry_is_futile(resolution, extras)
+
+
+def test_empty_instruction_is_futile() -> None:
+    """instruction='' means no paths are named."""
+    extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="",
+    )
+
+    assert undeclared_retry_is_futile(resolution, extras)
