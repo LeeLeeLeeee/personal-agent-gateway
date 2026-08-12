@@ -1387,7 +1387,7 @@ export function TeamRunDetail({
             <span className="mono team-section-count">
               {showAllTasks ? `${tasks.length} ALL CYCLES` : `${visibleTasks.length} CURRENT CYCLE`}
             </span>
-            <BuildEvidenceSummary summary={detail.build_evidence_summary} />
+            <BuildEvidenceSummary summary={detail.buildEvidenceSummary} />
             <span className="team-section-rule" />
             {currentCycle && tasksHaveCycleIds ? (
               <Button size="btn-sm" onClick={() => setShowAllTasks((value) => !value)}>

@@ -607,7 +607,13 @@ export const api = {
         policyStatus: body?.policy_status || "ready",
         activeAutoSeries: body?.active_auto_series || null,
         queueCount: body?.queue_count || 0,
-        activeRequest: body?.active_request || null
+        activeRequest: body?.active_request || null,
+        // This mapper lists every field it forwards, so a new top-level field
+        // on /detail is invisible to the UI until it is named here. Per-task
+        // build_evidence and per-cycle coverage_gaps ride inside tasks/cycles,
+        // which pass through wholesale; these two do not.
+        buildEvidenceSummary: body?.build_evidence_summary || null,
+        contests: body?.contests || []
       };
     } catch (error) {
       if (!(error instanceof ApiError) || ![0, 404].includes(error.status)) throw error;
@@ -628,7 +634,9 @@ export const api = {
         policyStatus: "ready",
         activeAutoSeries: null,
         queueCount: 0,
-        activeRequest: null
+        activeRequest: null,
+        buildEvidenceSummary: null,
+        contests: []
       };
     }
   },

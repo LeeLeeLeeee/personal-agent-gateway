@@ -250,7 +250,24 @@ describe("api client", () => {
         active_auto_series: { id: "s1", status: "paused_failure" },
         queue_count: 2,
         active_request: { id: "q1", status: "dispatching" },
-        document_summary: { count: 2 }
+        document_summary: { count: 2 },
+        // Both of these are top-level, so the mapper has to name them or the
+        // UI never sees them -- unlike per-task build_evidence and per-cycle
+        // coverage_gaps, which ride inside tasks/cycles.
+        build_evidence_summary: {
+          task_count: 3,
+          worker_asserted_only_count: 2,
+          missing_file_count: 1
+        },
+        contests: [{
+          objection: "nothing owns T-04",
+          kind: "reject",
+          reason: "task 7 covers it",
+          status: "settled",
+          error_message: null,
+          supersedes: [],
+          created_at: "2026-08-12T00:00:00+00:00"
+        }]
       }));
 
     await expect(api.addWork("r1", "write docs")).resolves.toEqual({ team_run: { id: "r1", status: "running" } });
@@ -265,7 +282,21 @@ describe("api client", () => {
       policyStatus: "paused_failure",
       activeAutoSeries: { id: "s1", status: "paused_failure" },
       queueCount: 2,
-      activeRequest: { id: "q1", status: "dispatching" }
+      activeRequest: { id: "q1", status: "dispatching" },
+      buildEvidenceSummary: {
+        task_count: 3,
+        worker_asserted_only_count: 2,
+        missing_file_count: 1
+      },
+      contests: [{
+        objection: "nothing owns T-04",
+        kind: "reject",
+        reason: "task 7 covers it",
+        status: "settled",
+        error_message: null,
+        supersedes: [],
+        created_at: "2026-08-12T00:00:00+00:00"
+      }]
     });
 
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/team-runs/r1/add-work", expect.objectContaining({
@@ -300,7 +331,9 @@ describe("api client", () => {
       policyStatus: "ready",
       activeAutoSeries: null,
       queueCount: 0,
-      activeRequest: null
+      activeRequest: null,
+      buildEvidenceSummary: null,
+      contests: []
     });
   });
 

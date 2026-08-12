@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { vi } from "vitest";
+import { api } from "../../../api/client.js";
 import { TeamRunDetail } from "./index.jsx";
 
 describe("TeamRunDetail", () => {
@@ -1491,7 +1492,7 @@ describe("TeamRunDetail", () => {
           run: { id: "r1", goal: "G", status: "completed", run_mode: "plan_and_execute" },
           agents: [],
           messages: [],
-          build_evidence_summary: {
+          buildEvidenceSummary: {
             task_count: 3,
             worker_asserted_only_count: 2,
             missing_file_count: 1,
@@ -1522,7 +1523,12 @@ describe("TeamRunDetail", () => {
     );
 
     await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
-    expect(screen.getByText(/워커 신고만으로 통과 2/)).toBeInTheDocument();
+    // "통과" would read as "acceptance was rigorous". Every check kind is a file
+    // read, so the label has to say that and name its own scope.
+    expect(screen.getByText(/태스크 3개 중 파일 내용만 확인 1/)).toBeInTheDocument();
+    expect(screen.getByText(/워커 신고만 2/)).toBeInTheDocument();
+    expect(screen.getByText(/검사는 모두 파일 읽기/)).toBeInTheDocument();
+    expect(screen.queryByText(/워커 신고만으로 통과/)).not.toBeInTheDocument();
     expect(screen.getByText(/없는 파일 1/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Open task Write the guide" }));
@@ -1652,5 +1658,89 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText(/재질문 · need clarification from operator/)).toBeInTheDocument();
     expect(screen.getByText(/docs\/plan\.md/)).toBeInTheDocument();
     expect(screen.getByText(/revise/)).toBeInTheDocument();
+  });
+  it("tells a dead contest apart from one still awaiting a ruling", async () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
+          agents: [], messages: [], tasks: [],
+          contests: [
+            {
+              // The live run produced exactly this: the cycle refused the
+              // objection outright, so there is no verdict and never will be.
+              // Refiling the same objection is idempotent, so a contest shown
+              // as "판정 대기" here waits forever and cannot be retried.
+              objection: "nothing owns T-04",
+              kind: null,
+              reason: null,
+              status: "settled",
+              error_message: "Team run status 'draft' cannot be contested",
+              supersedes: [],
+              created_at: "2026-08-12T00:00:00Z"
+            },
+            {
+              objection: "T-15 has no owner",
+              kind: null,
+              reason: null,
+              status: "queued",
+              error_message: null,
+              supersedes: [],
+              created_at: "2026-08-12T01:00:00Z"
+            }
+          ]
+        }}
+      />
+    );
+
+    expect(
+      screen.getByText(/실패 · Team run status 'draft' cannot be contested/)
+    ).toBeInTheDocument();
+    expect(screen.getByText("판정 대기")).toBeInTheDocument();
+  });
+
+  it("carries build evidence and contests from a /detail response into the view", async () => {
+    // The seam the three shipped defects hid behind: api.teamRunDetail rebuilds
+    // the response field by field, so a top-level field it does not name is
+    // invisible to the UI no matter what the endpoint returns.
+    const detailBody = {
+      team_run: { id: "r1", goal: "G", status: "completed", run_mode: "plan_and_execute" },
+      agents: [],
+      messages: [],
+      tasks: [{ id: "t1", title: "Write the guide", status: "completed" }],
+      cycles: [],
+      build_evidence_summary: {
+        task_count: 13,
+        worker_asserted_only_count: 13,
+        missing_file_count: 2
+      },
+      contests: [{
+        objection: "nothing owns T-04",
+        kind: "reject",
+        reason: "task 7 covers it",
+        status: "settled",
+        error_message: null,
+        supersedes: [],
+        created_at: "2026-08-12T00:00:00Z"
+      }]
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(detailBody)
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let detail;
+    try {
+      detail = await api.teamRunDetail("r1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    render(<TeamRunDetail detail={detail} />);
+
+    expect(screen.getByText(/기각 · task 7 covers it/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    expect(screen.getByText(/태스크 13개 중 파일 내용만 확인 0/)).toBeInTheDocument();
+    expect(screen.getByText(/없는 파일 2/)).toBeInTheDocument();
   });
 });

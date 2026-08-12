@@ -2,10 +2,21 @@ import { useState } from "react";
 import { Button } from "../../atoms/Button/index.jsx";
 import { fmtDateTime } from "../../../lib/time.js";
 
-// kind is null until the leader rules on the objection. reason is required on
-// every verdict, so "판정 대기" (no kind yet) and "기각 · <reason>" (ruled) are
-// the only two states -- there is no ruled-with-no-reason state to render.
+// kind is null until the leader rules on the objection -- but it is also null
+// when the contest's cycle died before a ruling, and refiling the same objection
+// is idempotent, so showing that as "판정 대기" left a dead contest waiting
+// forever with no way to retry. A settled request with no verdict is failed.
 const KIND_LABEL = { amend: "수정", partial: "부분 인정", reject: "기각", ask_back: "재질문" };
+
+function contestStatusText(contest) {
+  if (contest.kind) {
+    return `${KIND_LABEL[contest.kind] || contest.kind} · ${contest.reason}`;
+  }
+  if (contest.status === "settled" || contest.status === "canceled" || contest.error_message) {
+    return `실패 · ${contest.error_message || "판정 전에 사이클이 종료되었습니다."}`;
+  }
+  return "판정 대기";
+}
 
 export function ContestPanel({ runId, contests = [], onContestPlan }) {
   const [objection, setObjection] = useState("");
@@ -39,9 +50,7 @@ export function ContestPanel({ runId, contests = [], onContestPlan }) {
           {contests.map((contest, index) => (
             <div className="team-contest-item" key={contest.created_at ? `${contest.created_at}-${index}` : index}>
               <div>{contest.objection}</div>
-              <div className="mono team-task-diagnostic">
-                {contest.kind ? `${KIND_LABEL[contest.kind] || contest.kind} · ${contest.reason}` : "판정 대기"}
-              </div>
+              <div className="mono team-task-diagnostic">{contestStatusText(contest)}</div>
               {(contest.supersedes || []).map((entry, supersedeIndex) => (
                 <div className="mono team-task-diagnostic" key={supersedeIndex}>
                   {`${entry.document_path} · ${entry.decision}`}

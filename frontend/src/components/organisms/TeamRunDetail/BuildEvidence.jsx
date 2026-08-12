@@ -34,11 +34,23 @@ export function BuildEvidence({ evidence }) {
   );
 }
 
+// "워커 신고만으로 통과 0 / 13" reads as "acceptance was rigorous", which is the
+// one thing this number cannot say. Every check kind in the system is a file
+// read, so a task outside that count passed a check no stronger than "the file
+// exists and has some text in it". The count is honest; only the wording can be
+// fixed without a stronger check kind, so the label says what the checks are.
+// The count is scoped by naming it, not by a separate flag: the rollup always
+// covers exactly the task window /detail returned, so "태스크 13개 중" is true
+// whether or not the run has more tasks above the limit.
 export function BuildEvidenceSummary({ summary }) {
   if (!summary) return null;
+  const inspected = summary.task_count - summary.worker_asserted_only_count;
   return (
     <span className="mono">
-      {`워커 신고만으로 통과 ${summary.worker_asserted_only_count} / ${summary.task_count} · 없는 파일 ${summary.missing_file_count}`}
+      {`태스크 ${summary.task_count}개 중 파일 내용만 확인 ${inspected}`}
+      {` · 워커 신고만 ${summary.worker_asserted_only_count}`}
+      {` (검사는 모두 파일 읽기 — 빌드·테스트 실행 없음)`}
+      {` · 없는 파일 ${summary.missing_file_count}`}
     </span>
   );
 }
