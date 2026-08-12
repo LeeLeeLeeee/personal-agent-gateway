@@ -2646,9 +2646,50 @@ def test_an_unadjudicated_contest_appears_in_detail_with_a_null_kind(
             "kind": None,
             "reason": None,
             "supersedes": [],
+            "status": "queued",
+            "error_message": None,
             "created_at": detail["contests"][0]["created_at"],
         }
     ]
+
+
+def test_a_contest_whose_cycle_died_is_not_reported_as_awaiting_a_ruling(
+    tmp_path: Path,
+) -> None:
+    """kind is null for a contest still waiting and for one whose cycle failed,
+    and refiling the same objection is idempotent -- so without the request
+    status and the cycle's error message the UI shows a dead contest as pending
+    forever, which is what the live run did."""
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    run = _create_triggered_run(client, leader_id, [member_id])
+    client.post(
+        f"/api/team-runs/{run['id']}/contests",
+        json={"objection": "T-04 has no owner", "client_request_id": "c1"},
+    )
+    app = client.app
+    teams = app.state.team_run_service
+    cycles = app.state.team_cycle_service
+    claimed = cycles.claim_next(run["id"])
+    cycle = teams.create_cycle(
+        run["id"], claimed.source_type, claimed.source_id, request_id=claimed.id
+    )
+    teams.set_cycle_status(
+        cycle.id,
+        "failed",
+        error_message="Team run status 'draft' cannot be contested",
+    )
+    cycles.settle_cycle(cycle.id)
+
+    detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+
+    contest = detail["contests"][0]
+    assert contest["kind"] is None
+    assert contest["status"] == "settled"
+    assert contest["error_message"] == (
+        "Team run status 'draft' cannot be contested"
+    )
 
 
 def test_an_adjudicated_contest_reports_the_structured_verdict_not_prose(
@@ -2738,3 +2779,107 @@ def test_an_adjudicated_contest_reports_the_structured_verdict_not_prose(
     assert contest["supersedes"] == [
         {"document_path": "docs/plan.md", "decision": "revised; then re-reviewed"}
     ]
+
+
+def test_detail_reads_the_real_synthesis_not_the_question_it_asked_first(
+    tmp_path: Path,
+) -> None:
+    """A cycle whose synthesis asked the user holds two applied cycle_synthesis
+    operations: ordinal 0 carrying the question, ordinal 1 carrying the actual
+    summary and its coverage gaps. Taking the first applied one reported "did
+    not report" for a cycle where the leader did report."""
+    client = authenticated_client(tmp_path)
+    app = client.app
+    teams = app.state.team_run_service
+    cycles = app.state.team_cycle_service
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    run = _create_triggered_run(client, leader_id, [member_id])
+    enqueued = cycles.enqueue_request(
+        run["id"], "manual", "m1", "work", previous_cycle_id=None
+    )
+    cycles.claim_next(run["id"])
+    cycle = teams.create_cycle(
+        run["id"], "manual", enqueued.source_id, request_id=enqueued.id
+    )
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(run["id"], "running")
+    worker = next(
+        agent
+        for agent in teams.list_agents(run["id"])
+        if agent.id != run["leader_agent_id"]
+    )
+    task = teams.create_task(
+        run["id"], "work", "work", owner_agent_id=worker.id, cycle_id=cycle.id
+    )
+    teams.start_task(task.id, worker.id)
+    teams.finish_task(task.id, worker.id, "completed", result="done")
+    teams.set_run_status(run["id"], "summarizing")
+    operations = app.state.team_model_operation_service
+    effects = app.state.team_model_effect_service
+    actor = teams.get_agent(run["leader_agent_id"])
+
+    def complete_synthesis(ordinal, kind, payload):
+        reserved = operations.reserve(
+            OperationSpec(
+                operation_key=f"{cycle.id}:cycle_synthesis:{ordinal}",
+                team_run_id=run["id"],
+                cycle_id=cycle.id,
+                task_id=None,
+                agent_id=actor.id,
+                provider=actor.backend,
+                stage="cycle_synthesis",
+                stage_ordinal=ordinal,
+                request_digest=hashlib.sha256(
+                    f"cycle_synthesis:{ordinal}".encode()
+                ).hexdigest(),
+            )
+        )
+        invoking = operations.begin_attempt(reserved.id, "consumer-1")
+        return operations.complete(
+            invoking.id,
+            invoking.version,
+            ValidatedOperationResult(kind, payload),
+            upstream_session_id="lead-session",
+        )
+
+    question = complete_synthesis(
+        0,
+        "user_decision",
+        {
+            "kind": "ask_user",
+            "topic": "format",
+            "question": "Which final format?",
+            "why_needed": "The requested format is ambiguous.",
+            "options": [
+                {"id": "short", "label": "Short", "impact": "Keeps it concise."}
+            ],
+            "recommended_option_id": "short",
+            "blocking_scope": "run",
+        },
+    )
+    effects.apply_synthesis_decision(question.id)
+    teams.publish_decision_request(run["id"], cycle.id)
+    decision_request = teams.get_active_decision_request(run["id"], cycle.id)
+    teams.answer_decision_request(
+        run["id"],
+        decision_request.id,
+        decision_request.revision,
+        {decision_request.items[0]["id"]: "short"},
+    )
+    teams.set_run_status(run["id"], "summarizing")
+    teams.set_cycle_status(cycle.id, "running")
+    gaps = [
+        {"obligation": "T-04 discard", "document": "docs/plan.md §4", "note": ""}
+    ]
+    synthesis = complete_synthesis(
+        1, "synthesis", {"summary": "Built it.", "coverage_gaps": gaps}
+    )
+    effects.apply_synthesis(synthesis.id, "Built it.")
+
+    detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+
+    reported = next(
+        entry for entry in detail["cycles"] if entry["id"] == cycle.id
+    )
+    assert reported["coverage_gaps"] == gaps

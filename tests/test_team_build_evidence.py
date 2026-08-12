@@ -226,10 +226,46 @@ def test_run_rollup_counts_what_rests_on_the_workers_word(tmp_path):
     )
     ghost = _task(tmp_path, id="t3", outcome={"deliverables": [{"path": "ghost.md"}]})
 
-    rollup = run_build_evidence([asserted, inspected, ghost], tmp_path)
+    rollup = run_build_evidence(
+        [
+            task_build_evidence(task, tmp_path)
+            for task in (asserted, inspected, ghost)
+        ]
+    )
 
     assert rollup == {
         "task_count": 3,
         "worker_asserted_only_count": 2,
         "missing_file_count": 1,
     }
+
+
+def test_an_anchored_declared_path_is_refused_without_touching_the_disk(
+    tmp_path, monkeypatch
+):
+    """The declared path is model output. A UNC path made /detail open an SMB
+    connection to a host the model named, on every poll -- pathlib discards the
+    workspace root for any anchored path, and the containment check that would
+    have caught it ran after the stat."""
+    def forbidden(*args, **kwargs):
+        raise AssertionError("_is_missing touched the filesystem")
+
+    for name in ("is_symlink", "resolve", "is_file", "stat"):
+        monkeypatch.setattr(Path, name, forbidden)
+
+    task = _task(
+        tmp_path,
+        outcome={
+            "deliverables": [
+                {"path": "//10.0.0.1/share/x"},
+                {"path": "C:/Windows/System32/drivers/etc/hosts"},
+                {"path": "/etc/passwd"},
+            ]
+        },
+    )
+
+    assert task_build_evidence(task, tmp_path)["missing_files"] == [
+        "//10.0.0.1/share/x",
+        "/etc/passwd",
+        "C:/Windows/System32/drivers/etc/hosts",
+    ]

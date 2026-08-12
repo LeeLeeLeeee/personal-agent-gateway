@@ -280,6 +280,17 @@ async def contest_plan(
         raise HTTPException(status_code=404, detail="Team Run not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # Both, on purpose. team.contest.queued names what happened; the client
+    # keys its run-list refresh (and therefore the queue count) off
+    # team.cycle_request.queued, which every other enqueue publishes.
+    await request.app.state.event_bus.publish(
+        {
+            "type": "team.cycle_request.queued",
+            "team_run_id": team_run_id,
+            "cycle_request_id": created.id,
+            "source_type": "contest",
+        }
+    )
     await request.app.state.event_bus.publish(
         {
             "type": "team.contest.queued",
@@ -437,13 +448,21 @@ def get_team_run_detail(
     operations = request.app.state.team_model_operation_service
     failure_shapes = operations.latest_failure_shapes(team_run_id)
     coverage_by_cycle: dict[str, list[dict[str, str]] | None] = {}
+    verdict_payload_by_cycle: dict[str, dict[str, object]] = {}
     for cycle in cycles:
+        cycle_operations = operations.list_for_cycle(cycle.id)
+        # The last synthesis whose result actually is a synthesis. A cycle whose
+        # synthesis asked the user has cycle_synthesis:0 applied with
+        # result_kind "user_decision" and the real synthesis at the next
+        # ordinal, so taking the first applied one reported "did not report"
+        # for a cycle where the leader did. hook_runner picks the same way.
         synthesis = next(
             (
                 operation
-                for operation in operations.list_for_cycle(cycle.id)
+                for operation in reversed(cycle_operations)
                 if operation.stage in {"cycle_synthesis", "cycle_synthesis_repair"}
                 and operation.status == "applied"
+                and operation.result_kind == "synthesis"
             ),
             None,
         )
@@ -451,14 +470,12 @@ def get_team_run_detail(
             coverage_by_cycle[cycle.id] = (
                 (synthesis.result_json or {}).get("payload") or {}
             ).get("coverage_gaps")
-    verdict_payload_by_cycle: dict[str, dict[str, object]] = {}
-    for cycle in cycles:
         if cycle.source_type != "contest":
             continue
         verdict_operation = next(
             (
                 operation
-                for operation in operations.list_for_cycle(cycle.id)
+                for operation in cycle_operations
                 if operation.stage in {"cycle_contest", "cycle_contest_repair"}
                 and operation.status == "applied"
             ),
@@ -504,11 +521,20 @@ def get_team_run_detail(
         "active_request": _cycle_request_payload(
             cycle_service.get_dispatching(team_run_id)
         ),
-        "document_summary": _document_summary(_resolved_workspace(run)),
-        "build_evidence_summary": run_build_evidence(selected_tasks, workspace),
+        "document_summary": _document_summary(workspace),
+        # Rolled up from the per-task evidence already computed above, not
+        # recomputed: every declared path costs a filesystem round-trip and
+        # /detail is polled.
+        "build_evidence_summary": run_build_evidence(
+            list(task_evidence.values())
+        ),
         "truncated": {
             "tasks": len(tasks) > len(selected_tasks),
             "messages": len(messages) > len(selected_messages),
+            # The rollup covers the same window as tasks, so above the limit it
+            # is a tail, not a run total. Saying so is the only honest option
+            # while the label reads as one.
+            "build_evidence_summary": len(tasks) > len(selected_tasks),
         },
         "contests": _contests_payload(cycle_requests, cycles, verdict_payload_by_cycle),
     }
@@ -1557,6 +1583,13 @@ def _contests_payload(
     cycles: list[TeamRunCycle],
     verdict_payload_by_cycle: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
+    """Objection, verdict, and -- when there is no verdict -- why not.
+
+    kind alone cannot say whether a contest is still waiting or its cycle died:
+    both leave it null, and refiling the same objection is idempotent, so a dead
+    contest that reads as pending never resolves and never retries. The request
+    status and the cycle's error message are what separate the two.
+    """
     cycle_by_request_id = {
         cycle.request_id: cycle for cycle in cycles if cycle.request_id is not None
     }
@@ -1572,6 +1605,8 @@ def _contests_payload(
                 "kind": payload.get("kind") if payload else None,
                 "reason": payload.get("reason") if payload else None,
                 "supersedes": list(payload.get("supersedes") or []) if payload else [],
+                "status": cycle_request.status,
+                "error_message": cycle.error_message if cycle is not None else None,
                 "created_at": cycle_request.created_at,
             }
         )

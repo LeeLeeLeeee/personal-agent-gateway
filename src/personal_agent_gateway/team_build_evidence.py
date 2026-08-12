@@ -1,8 +1,16 @@
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from personal_agent_gateway.file_safety import is_sensitive_file
 from personal_agent_gateway.team_verification_checks import safe_workspace_file
 from personal_agent_gateway.teams import TeamTask
+
+
+def _is_anchored(relative_path: str) -> bool:
+    """A drive, a UNC share, or a leading separator, in either path flavour."""
+    return any(
+        bool(flavour(relative_path).anchor)
+        for flavour in (PurePosixPath, PureWindowsPath)
+    )
 
 
 def _is_missing(workspace: Path, relative_path: str) -> bool:
@@ -19,7 +27,20 @@ def _is_missing(workspace: Path, relative_path: str) -> bool:
     that runs first must not follow the link to its target for the same
     reason: safe_workspace_file refuses a symlink outright, and the report
     must agree with the gate about what is reachable.
+
+    An anchored declared path is refused before anything touches the disk. The
+    path comes from model output, and `Path('C:/ws') / '//10.0.0.1/share/x'` is
+    just `//10.0.0.1/share/x` -- pathlib drops the root for any absolute path,
+    UNC included -- so statting first let a worker-declared deliverable turn
+    every /detail poll into an outbound SMB connection to a host the model
+    named, blocking a threadpool worker until the mount timed out. The
+    containment check that would have caught it ran after the stat. Both path
+    flavours are tested, not just the running platform's: the drive letter or
+    UNC prefix that makes this dangerous on Windows is what a POSIX pathlib
+    reads as an ordinary relative name.
     """
+    if _is_anchored(relative_path):
+        return True
     if safe_workspace_file(workspace, relative_path) is not None:
         return False
     root = workspace.resolve()
@@ -76,14 +97,17 @@ def task_build_evidence(task: TeamTask, workspace: Path) -> dict[str, object]:
 
 
 def run_build_evidence(
-    tasks: list[TeamTask], workspace: Path
+    per_task: list[dict[str, object]],
 ) -> dict[str, object]:
     """The two numbers worth putting at the top of a run.
 
     Both say how much of the run's verdict rests on the workers' own word rather
     than on anything the gate looked at.
+
+    Takes the already-computed per-task reports rather than the tasks: every
+    caller renders those too, and recomputing them here doubled the filesystem
+    work for every declared path on a polled endpoint.
     """
-    per_task = [task_build_evidence(task, workspace) for task in tasks]
     return {
         "task_count": len(per_task),
         "worker_asserted_only_count": sum(
