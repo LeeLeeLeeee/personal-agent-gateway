@@ -340,15 +340,34 @@ def undeclared_retry_is_futile(
     outcome to declare fewer files -- which the worker can only do if it is told
     which ones to drop. Naming them is therefore a floor, not a preference.
 
-    This is a proxy, and a deliberately loose one: whether prose actually makes
-    the worker drop a file is not decidable here. A leader that writes "declare
-    outputs/extra.md along with the others" names the path and still keeps it, and
-    this rule lets it through. The cap-time escalation is what covers that.
+    This rule is a proxy for "the instruction names the path". It checks whether
+    each extra path appears as a whole token in the instruction text: splits on
+    whitespace, strips backticks, quotes, and trailing punctuation (,.:;)), and
+    compares tokens exactly to the path. This prevents substring collisions like
+    matching "a/b.md" against "x/a/b.md".
+
+    The rule does not establish whether prose actually makes the worker drop a
+    file -- a leader could write "declare outputs/extra.md along with the others"
+    (names the path, keeps it) and this rule lets it through. The cap-time
+    escalation is what covers that. Comparison is case-sensitive, matching the
+    gate's own set-difference logic in team_acceptance.py: on case-insensitive
+    filesystems a leader naming the path with different case is scored as not
+    having named it.
     """
     if resolution.kind != "retry_worker" or not extra_paths:
         return False
     instruction = resolution.instruction or ""
-    return any(path not in instruction for path in extra_paths)
+    tokens = set()
+    for token in instruction.split():
+        # Strip quotes and backticks from beginning
+        while token and token[0] in ('"', "'", "`"):
+            token = token[1:]
+        # Strip backticks and trailing punctuation from end
+        while token and token[-1] in ("`", ",", ".", ";", ":", ")"):
+            token = token[:-1]
+        if token:
+            tokens.add(token)
+    return any(path not in tokens for path in extra_paths)
 
 
 def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:

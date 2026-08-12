@@ -7015,3 +7015,42 @@ def test_no_extras_means_nothing_to_judge() -> None:
     )
 
     assert not undeclared_retry_is_futile(resolution, frozenset())
+
+
+def test_substring_match_does_not_count_as_named() -> None:
+    """A path that appears only as a substring of another token is not named.
+    This prevents false negatives like matching 'a/b.md' when the instruction
+    mentions only 'x/a/b.md'."""
+    extras = frozenset({"a/b.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete x/a/b.md and resubmit.",
+    )
+
+    assert undeclared_retry_is_futile(resolution, extras)
+
+
+def test_path_in_backticks_counts_as_named() -> None:
+    """A path wrapped in backticks is recognized as a whole token."""
+    extras = frozenset({"outputs/extra.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete `outputs/extra.md` and resubmit.",
+    )
+
+    assert not undeclared_retry_is_futile(resolution, extras)
+
+
+def test_path_followed_by_punctuation_counts_as_named() -> None:
+    """A path followed by punctuation is recognized as a whole token after
+    stripping the trailing punctuation."""
+    extras = frozenset({"outputs/extra.md"})
+    resolution = AcceptanceReviewResolution(
+        kind="retry_worker",
+        reason="r",
+        instruction="Delete outputs/extra.md, tests/test_extra.py and resubmit.",
+    )
+
+    assert not undeclared_retry_is_futile(resolution, extras)
