@@ -59,10 +59,23 @@ What is missing is guidance on which action resolves them.
 
 ### Part 2 — reject a review that cannot succeed, and be honest about the limit
 
-In the acceptance-review parser — the closure inside `_review_acceptance`, which
-has the task, the outcome and the rejection in scope — refuse a resolution where
-the reason is `undeclared_deliverable`, the action is `retry_worker`, and the
-instruction does not name every extra path.
+Refuse a resolution where the reason is `undeclared_deliverable`, the action is
+`retry_worker`, and the instruction does not name every extra path.
+
+**Where that check goes, corrected.** The live path is `_run_cycle_acceptance`,
+which invokes the leader through `_invoke_with_repair` with the **module-level**
+parser `_validated_acceptance_review` — a function that sees only the response and
+therefore cannot know the extras. The check needs a parser closure built at that
+call site, holding `task` and the rejected paths and delegating to
+`_validated_acceptance_review` before applying the extra rule. Several other stages
+already build their parser inline this way.
+
+`_review_acceptance` is a separate, older path that calls `model.complete`
+directly with its own single retry and no ledger operation. It is reached from
+`_recover_task_outcome`, not from the cycle path real runs take. The same check
+belongs there for consistency, and a raise is caught by that method's existing
+`except ValueError`, which retries once — equivalent behaviour by a different
+mechanism.
 
 **This narrows the failure; it does not prove coherence.** The check is a proxy
 for "will this instruction make the worker declare fewer files", which no
@@ -76,11 +89,11 @@ validator can decide from prose. Two residual cases:
   is enforcing a stated format rather than guessing at intent.
 
 The parser is the right home because a rejection there raises
-`InvalidOperationResult`, which the repair seam catches: the leader is asked once
-more with a message naming the extras and the fact that keeping them needs a
-widened contract. That costs no acceptance attempt, so a formatting mistake cannot
-kill the task. A second failure escalates to the operator the way any exhausted
-leader stage does.
+`InvalidOperationResult`, which the repair seam catches on the live path: the
+leader is asked once more with a message naming the extras and the fact that
+keeping them needs a widened contract. That costs no acceptance attempt, so a
+formatting mistake cannot kill the task. A second failure escalates to the
+operator through the `on_exhausted` hook already wired at that call site.
 
 It cannot live in `_valid_acceptance_resolution`: that validator receives only the
 leader's own JSON and has no access to the rejection or the extra paths.
@@ -138,7 +151,8 @@ futile loop to the operator; it does not make the leader right.
 | file | what changes |
 | --- | --- |
 | `team_runtime.py` — `ACCEPTANCE_REVIEW_PROMPT` (around line 145) | the `undeclared_deliverable` clause and the requirement to name paths |
-| `team_runtime.py` — the parser closure in `_review_acceptance` (around line 2525) | the Part 2 refusal, raising so the repair seam retries |
+| `team_runtime.py` — the `_invoke_with_repair` call in `_run_cycle_acceptance` (around line 2280) | replace the module-level `_validated_acceptance_review` with a closure that also applies the Part 2 refusal |
+| `team_runtime.py` — `_review_acceptance` (around line 2557) | the same refusal on the older direct-`model.complete` path, where its existing `except ValueError` provides the retry |
 | `team_runtime.py` — `_run_cycle_acceptance` (around line 2613) | Part 3 replaces the `attempts >= ACCEPTANCE_RECOVERY_CAP` return for this rejection, using the paths `_persisted_undeclared_paths` already carries |
 | `teams.py` — `raise_system_decision` | reused for Part 3's decision request; no change expected |
 
