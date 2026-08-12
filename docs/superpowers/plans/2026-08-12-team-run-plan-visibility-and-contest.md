@@ -903,7 +903,7 @@ async def test_synthesis_records_the_gaps_the_leader_reported(tmp_path):
     cycle = setup.teams.get_cycle(setup.cycle.id)
     assert cycle.summary == "Built the backend."
     operation = setup.operations.get_by_key(f"{setup.cycle.id}:cycle_synthesis:0")
-    assert operation.result_json["coverage_gaps"] == [
+    assert operation.result_json["payload"]["coverage_gaps"] == [
         {"obligation": "T-04 discard", "document": "docs/plan.md §4", "note": ""}
     ]
 
@@ -922,12 +922,13 @@ async def test_a_synthesis_with_no_block_still_completes_the_cycle(tmp_path):
 
     assert run.status == "completed"
     operation = setup.operations.get_by_key(f"{setup.cycle.id}:cycle_synthesis:0")
-    assert "coverage_gaps" not in operation.result_json
+    assert "coverage_gaps" not in operation.result_json["payload"]
 ```
 
-`operation.result_json` is the attribute name on `TeamModelOperation` holding the
-validated result; confirm it against
-`src/personal_agent_gateway/team_model_operations.py:95` and use the real name.
+The stored result is `operation.result_json`, and it is **nested**, not flat:
+`_result_serialization` writes `{"kind": ..., "payload": {...}}`, so the payload
+you want is `operation.result_json["payload"]["coverage_gaps"]`. Reading it flat
+gives a test that can never pass and an endpoint that always reports `None`.
 
 - [ ] **Step 2: Run and watch them fail**
 
@@ -968,10 +969,16 @@ through the parser first and carry the gaps alongside the summary:
             return ValidatedOperationResult("synthesis", payload)
 ```
 
-Apply the same to the contract branch: the block is stripped from the human
-summary while `contract_payload` keeps the content the contract validated, since
-the contract's own validator has already accepted that exact text and rewriting
-it would invalidate it.
+Apply the same to the contract branch — but validate and store the **stripped**
+text there, not the raw content. The leader is told to append the block after
+everything, and `archive.py`'s library-draft validator raises "Library Draft
+marker must be the final response content" for any text after its closing
+marker, so validating the raw content would break contract-mode synthesis for
+every leader that actually used the new block. `contract_payload` then holds the
+stripped text, which is exactly the string `contract.validate` accepted; its only
+consumer (`hook_runner.py:481`) re-parses it, so that still succeeds. Byte
+identity with the model's output was never preserved anyway —
+`_finalize_persona_content` transforms it first.
 
 Import `extract_coverage_gaps` at the top of the module.
 
@@ -1022,16 +1029,16 @@ operation before the payload is assembled:
             None,
         )
         if synthesis is not None:
-            coverage_by_cycle[cycle.id] = (synthesis.result_json or {}).get(
-                "coverage_gaps"
-            )
+            coverage_by_cycle[cycle.id] = (
+                (synthesis.result_json or {}).get("payload") or {}
+            ).get("coverage_gaps")
 ```
 
 and pass it in: `_cycle_payload(cycle, coverage_by_cycle.get(cycle.id))`.
 
-Use the real attribute name for the stored result — confirm it on
-`TeamModelOperation` at `team_model_operations.py:95` rather than assuming
-`result_json`.
+The frontend test needs a HISTORY tab click before its assertion: `activeTab`
+defaults to `"overview"` and the cycle list is gated on `"history"`, so without
+the click the query finds nothing whether or not the rendering works.
 
 - [ ] **Step 7: Write and pass the frontend test**
 
