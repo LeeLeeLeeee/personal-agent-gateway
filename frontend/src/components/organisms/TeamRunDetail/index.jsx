@@ -3,6 +3,7 @@ import { StatusBadge } from "../../atoms/StatusBadge/index.jsx";
 import { Button } from "../../atoms/Button/index.jsx";
 import { LoaderCube } from "../../molecules/LoaderCube/index.jsx";
 import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
+import { BuildEvidence, BuildEvidenceSummary } from "./BuildEvidence.jsx";
 import { DocumentPreview } from "../DocumentPreview/index.jsx";
 import { MarkdownContent } from "../MarkdownContent/index.jsx";
 import { elapsedSeconds, fmtDateTime, fmtElapsed } from "../../../lib/time.js";
@@ -231,6 +232,8 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
           ) : null}
 
           <FailureShape shape={task.failure_shape} />
+
+          <BuildEvidence evidence={task.build_evidence} />
 
           <div>
             <div className="mono team-task-dialog-label">
@@ -1360,6 +1363,7 @@ export function TeamRunDetail({
             <span className="mono team-section-count">
               {showAllTasks ? `${tasks.length} ALL CYCLES` : `${visibleTasks.length} CURRENT CYCLE`}
             </span>
+            <BuildEvidenceSummary summary={detail.build_evidence_summary} />
             <span className="team-section-rule" />
             {currentCycle && tasksHaveCycleIds ? (
               <Button size="btn-sm" onClick={() => setShowAllTasks((value) => !value)}>

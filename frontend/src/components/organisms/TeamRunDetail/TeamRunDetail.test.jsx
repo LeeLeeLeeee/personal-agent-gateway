@@ -1458,4 +1458,69 @@ describe("TeamRunDetail", () => {
     expect(within(dialog).getByText(/812/)).toBeInTheDocument();
     expect(within(dialog).getByText(/resolution/)).toBeInTheDocument();
   });
+
+  it("shows what a task promised against what it built", async () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "G", status: "completed", run_mode: "plan_and_execute" },
+          agents: [],
+          messages: [],
+          build_evidence_summary: {
+            task_count: 3,
+            worker_asserted_only_count: 2,
+            missing_file_count: 1,
+          },
+          tasks: [{
+            id: "t1",
+            title: "Write the guide",
+            status: "completed",
+            build_evidence: {
+              promised: ["kept.md", "forgotten.md"],
+              declared: ["kept.md", "ghost.md"],
+              undeclared_promises: ["forgotten.md"],
+              extra_declarations: ["ghost.md"],
+              missing_files: ["ghost.md"],
+              verifications: [
+                { name: "ran", mode: "verified", status: "passed" },
+                { name: "claimed", mode: "attested", status: "passed" }
+              ],
+              worker_asserted_only: false
+            }
+          }]
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    expect(screen.getByText(/워커 신고만으로 통과 2/)).toBeInTheDocument();
+    expect(screen.getByText(/없는 파일 1/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open task Write the guide" }));
+    const dialog = screen.getByRole("dialog", { name: "Task details: Write the guide" });
+
+    expect(within(dialog).getByText(/forgotten\.md/)).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/ghost\.md/).length).toBeGreaterThan(0);
+    expect(within(dialog).getByText(/파일 내용 확인/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/워커 신고/)).toBeInTheDocument();
+    expect(within(dialog).queryByText("검증됨")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing for a task with no build evidence", async () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
+          agents: [], messages: [],
+          tasks: [{ id: "t1", title: "Fresh task", status: "pending" }]
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Open task Fresh task" }));
+    const dialog = screen.getByRole("dialog", { name: "Task details: Fresh task" });
+
+    expect(within(dialog).queryByText(/약속한 파일/)).not.toBeInTheDocument();
+  });
 });
