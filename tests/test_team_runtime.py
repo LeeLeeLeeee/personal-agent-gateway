@@ -1046,6 +1046,58 @@ async def test_a_futile_retry_is_refused_even_when_named_only_by_lingering_evide
 
 
 @pytest.mark.asyncio
+async def test_a_stray_deliverable_on_an_unrelated_rejection_does_not_block_retry(
+    tmp_path,
+):
+    """extra_paths can be non-empty for reasons that have nothing to do with
+    undeclared_deliverable: evaluate() returns on outcome.status != "completed"
+    before it ever compares declared paths against the contract, so a blocked
+    outcome can declare a stray out-of-contract path while the real rejection
+    is something else entirely. The reason_code check is what decides whether
+    the futile-retry rule applies at all -- a retry_worker that addresses the
+    actual blocker and never mentions the stray path must still be accepted.
+    """
+    setup = make_undeclared_deliverable_acceptance_runtime(tmp_path)
+    blocked_with_stray_deliverable = json.dumps(
+        {
+            "status": "blocked",
+            "summary": "Missing citation source; cannot proceed.",
+            "reason_code": "missing_citation_source",
+            "deliverables": [{"path": "stray.txt", "kind": "note"}],
+            "verifications": [],
+        }
+    )
+    setup.worker_client.responses = [
+        ModelResponse(
+            blocked_with_stray_deliverable,
+            [],
+            upstream_session_id="worker-session",
+        ),
+        ModelResponse(
+            _outcome_json("draft-fixed"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+    ]
+    setup.lead_client.responses = [
+        ModelResponse(
+            _retry_review("Provide the missing citation source."), []
+        ),
+        ModelResponse("summary", []),
+    ]
+
+    completed = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:1"
+    ).status == "applied"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead_repair:1"
+    ) is None
+    assert completed.status == "completed"
+
+
+@pytest.mark.asyncio
 async def test_lead_acceptance_retry_uses_separate_worker_operation(tmp_path):
     setup = make_recoverable_acceptance_runtime(tmp_path)
     setup.lead_client.responses = [

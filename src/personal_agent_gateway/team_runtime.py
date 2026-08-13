@@ -407,10 +407,9 @@ def _extra_deliverable_paths(
     acceptance: AcceptanceResult,
     required_outputs: tuple[str, ...],
 ) -> frozenset[str]:
-    """Every out-of-contract path an undeclared_deliverable rejection is about.
+    """Every out-of-contract path an undeclared_deliverable rejection can name.
 
-    There are two ways to land on this reason code, and each carries its
-    extras differently:
+    There are two ways such a rejection carries its extras:
 
     - A fresh rejection from TeamAcceptanceService.evaluate() names them
       through outcome.deliverables -- this round's declared paths minus the
@@ -421,8 +420,16 @@ def _extra_deliverable_paths(
       (the worker stopped declaring the file; it just never deleted it).
 
     Unioning both means the caller does not have to know which mechanism
-    produced this particular acceptance. Only one is ever populated in
-    practice, since a fresh rejection's evidence is always {}.
+    produced this particular acceptance.
+
+    This function does not check reason_code, and a non-empty result is NOT
+    proof the rejection is actually about undeclared deliverables: evaluate()
+    returns early on outcome.status != "completed" before it ever compares
+    declared paths against the contract, so a blocked/failed outcome can
+    declare a stray out-of-contract path while the real rejection reason is
+    something else entirely (e.g. waiting_for_input). Callers MUST also check
+    acceptance.reason_code == "undeclared_deliverable" before treating this
+    result as meaningful.
     """
     extra = {
         item.path
@@ -2404,9 +2411,13 @@ class TeamRuntime:
             outcome, acceptance, task.acceptance.required_outputs
         )
 
+        is_undeclared_deliverable = (
+            extra_paths and acceptance.reason_code == "undeclared_deliverable"
+        )
+
         def review_parser(response: ModelResponse) -> ValidatedOperationResult:
             validated = _validated_acceptance_review(response)
-            if extra_paths:
+            if is_undeclared_deliverable:
                 resolution = _parse_acceptance_review_resolution(response.content)
                 if undeclared_retry_is_futile(resolution, extra_paths):
                     _raise_undeclared_retry_error(extra_paths)
@@ -2425,18 +2436,22 @@ class TeamRuntime:
             leader_agent,
             messages,
             review_parser,
-            # extra_paths is non-empty exactly when the persisted acceptance's
-            # reason_code is "undeclared_deliverable", whether it came fresh
-            # from evaluate() (named via outcome.deliverables) or was
-            # re-stamped by _reject_lingering_undeclared_paths (named via
-            # evidence["remaining_undeclared_paths"]) -- see
-            # _extra_deliverable_paths. Gating on extra_paths directly means a
-            # repair triggered by an unrelated parse failure still gets the
-            # generic _repair_messages prompt instead of one naming an empty
-            # path list.
+            # _extra_deliverable_paths unions both sources this rejection can
+            # carry its extras through -- outcome.deliverables for a fresh
+            # rejection, evidence["remaining_undeclared_paths"] for one
+            # _reject_lingering_undeclared_paths re-stamped -- but that union
+            # can be non-empty even when the rejection is about something
+            # else entirely: a blocked/failed outcome can still declare a
+            # stray out-of-contract path while its real reason_code is
+            # unrelated (e.g. waiting_for_input). The reason_code check is
+            # what decides whether this rule applies at all; extra_paths only
+            # says what to name if it does. Gating on both means a repair
+            # triggered by an unrelated cause still gets the generic
+            # _repair_messages prompt instead of one naming paths that are
+            # not the actual problem.
             repair_messages=(
                 _undeclared_retry_repair_messages(messages, extra_paths)
-                if extra_paths
+                if is_undeclared_deliverable
                 else None
             ),
             on_exhausted=lambda failed: self._escalate_unparsable_lead_output(
@@ -2698,8 +2713,16 @@ class TeamRuntime:
             changes=changes,
         )
         model = self._model(leader_agent, task.cycle_id)
+        # extra_paths (from _extra_deliverable_paths, unioning outcome.deliverables
+        # and any lingering evidence) only says what to name if this rejection is
+        # about undeclared deliverables at all; a blocked/failed outcome can
+        # declare a stray out-of-contract path while its real reason_code is
+        # unrelated, so reason_code still gates whether the rule applies.
         extra_paths = _extra_deliverable_paths(
             outcome, acceptance, task.acceptance.required_outputs
+        )
+        is_undeclared_deliverable = (
+            extra_paths and acceptance.reason_code == "undeclared_deliverable"
         )
         response = await model.complete(messages)
         if response.upstream_session_id:
@@ -2712,7 +2735,9 @@ class TeamRuntime:
         # response already gets.
         try:
             resolution = _parse_acceptance_review_resolution(response.content)
-            if extra_paths and undeclared_retry_is_futile(resolution, extra_paths):
+            if is_undeclared_deliverable and undeclared_retry_is_futile(
+                resolution, extra_paths
+            ):
                 _raise_undeclared_retry_error(extra_paths)
             return resolution
         except ValueError:
@@ -2733,7 +2758,9 @@ class TeamRuntime:
                     leader_agent.id, retry.upstream_session_id
                 )
             resolution = _parse_acceptance_review_resolution(retry.content)
-            if extra_paths and undeclared_retry_is_futile(resolution, extra_paths):
+            if is_undeclared_deliverable and undeclared_retry_is_futile(
+                resolution, extra_paths
+            ):
                 _raise_undeclared_retry_error(extra_paths)
             return resolution
 
