@@ -1175,6 +1175,33 @@ async def test_unparsable_review_on_an_undeclared_rejection_gets_the_parse_promp
 
 
 @pytest.mark.asyncio
+async def test_a_twice_refused_resolution_escalates_as_refused_not_unparsable(
+    tmp_path,
+):
+    """The operator is the only party who can widen the contract by hand, so the
+    question has to say what actually happened. A coherent resolution refused
+    twice reaches the ledger as invalid_structured_output like real garbage
+    does, and the parser's message is not carried on the operation.
+    """
+    setup = make_undeclared_deliverable_acceptance_runtime(tmp_path)
+    futile = _retry_review("Declare every file you produced and resubmit.")
+    setup.lead_client.responses = [
+        ModelResponse(futile, []),
+        ModelResponse(futile, []),
+    ]
+
+    run = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert run.status == "waiting_for_user"
+    request = setup.teams.get_active_decision_request(setup.run.id)
+    assert request is not None
+    item = request.items[0]
+    assert "could not be parsed" not in item["topic"]
+    assert "could not be parsed" not in item["question"]
+    assert "wrong-check" in item["question"]
+
+
+@pytest.mark.asyncio
 async def test_lead_acceptance_retry_uses_separate_worker_operation(tmp_path):
     setup = make_recoverable_acceptance_runtime(tmp_path)
     setup.lead_client.responses = [

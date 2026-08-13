@@ -792,6 +792,7 @@ class TeamRuntime:
         stage: OperationStage,
         agent: TeamAgent,
         failed: TeamModelOperation,
+        cause: str | None = None,
     ) -> None:
         """Pause rather than fail. A leader stage failing costs the whole run,
         and the work waiting for review is still good.
@@ -802,19 +803,35 @@ class TeamRuntime:
         of the next acceptance attempt. Resume does not need one -- the task is
         still in progress with its outcome persisted, so the acceptance flow
         re-enters at the next attempt on its own.
+
+        `cause` describes a resolution that parsed and was refused anyway. Both
+        failures reach the ledger as invalid_structured_output and the parser's
+        message is not carried on the operation, so without it the one person
+        who could widen the contract by hand is told the model emitted garbage.
         """
         if task is not None:
             self._teams.consume_acceptance_attempt(task.id)
         where = f" on task '{task.title}'" if task is not None else ""
-        self._teams.raise_system_decision(
-            run.id,
-            cycle_id,
-            topic=f"{stage} output could not be parsed",
-            question=(
+        if cause is None:
+            topic = f"{stage} output could not be parsed"
+            question = (
                 f"The leader's {stage} response failed to parse twice{where}. "
                 "The recorded failure shape is on the operation. Answer to retry "
                 "it; use Stop to end the run instead."
-            ),
+            )
+        else:
+            topic = f"{stage} resolution cannot clear the rejection"
+            question = (
+                f"The leader's {stage} resolution was refused twice{where}: "
+                f"{cause}. Answer to retry the review, or widen the task "
+                "contract to cover those paths yourself; use Stop to end the "
+                "run instead."
+            )
+        self._teams.raise_system_decision(
+            run.id,
+            cycle_id,
+            topic=topic,
+            question=question,
         )
         await self._publish(
             {
@@ -1076,6 +1093,7 @@ class TeamRuntime:
                         "acceptance_lead",
                         leader,
                         failed,
+                        cause=guard.refusal,
                     )
 
                 try:
@@ -2563,6 +2581,7 @@ class TeamRuntime:
                 "acceptance_lead",
                 leader_agent,
                 failed,
+                cause=guard.refusal,
             ),
         )
         resolution = _operation_acceptance_resolution(lead_operation)
