@@ -149,6 +149,61 @@ runs beyond the tests showed:
   promised-versus-declared mismatches — 2 tasks naming 5 undeclared promises
   between them (the three `.tsx` files this design came from, plus two QA docs).
 
+### What the whole-branch review caught that the per-task reviews could not
+
+Both findings were in the same blind spot: this document's coupling checklist named
+`BuildEvidence.jsx` as the only screen, and the numbers already on that screen were
+declared out of scope. Fixed in `54f3d64`.
+
+- **The task dialog renders verifications twice.** `BuildEvidence` reads the gate's
+  recorded evidence and said `미확인`; the acceptance list beside it
+  (`index.jsx:263`) read the worker's raw report and fell back to
+  `status || "missing"` — so an unchecked verification, whose status is `null` by
+  design, printed **`MISSING`**. That word meant exactly one thing until now: the
+  worker never reported this verification at all. Shipping this would have created
+  the very conflation the design exists to end, in the one screen it exists to
+  improve. The list now reads the gate's recorded status for that mode, as it
+  already did for a gate-run check. Confirmed by reverting the fix and watching the
+  new test fail on the literal string `MISSING`.
+- **Two older labels claimed the wrong thing.** `attested_only` is
+  `verified_count == 0` — the gate ran no check — which is not "the worker vouched
+  for it". A task whose only required verification came back `checked: false` sets
+  that flag while the worker vouched for nothing; it explicitly declined to. The
+  badge said `ATTESTED ONLY` and the rollup said `워커 신고만`. Both now name what
+  the gate did: `NO GATE CHECK` and `게이트 미검사`. The computation is untouched,
+  so every number keeps its meaning and no other reader changes. The three counts
+  overlap by design and the code now says so.
+
+### A floor on the new count, worth knowing before reading a 0
+
+The gate consults a worker's report only for a required verification carrying no
+`check`. For a contract where every required verification carries one, a worker
+could report `checked: false` on all of them and `unverified_task_count` would still
+read 0. Run `699c1915` is exactly that shape — all 11 of its tasks are 100%
+check-carrying, and 53 of the 70 required verifications stored in `data/app.sqlite`
+carry a check. So `미확인 0` means "nothing the worker was asked to self-report went
+unconfirmed", not "nothing went unchecked". Recorded in `run_build_evidence`'s
+docstring rather than left for a reader to discover.
+
+### Known and out of scope
+
+- A worker's `checked: false` on a verification that carries a `check` is
+  discarded: the gate records `mode: "verified"` with its own evidence and the
+  worker's reason survives only in the raw outcome JSON, which nothing renders.
+  The gate deciding alone is correct and pinned by a test; only the reporting loss
+  is a gap — the same "wrote it where nothing reads it" failure, in miniature.
+- Adding `unverified` to the accepted evidence changes `_worker_input_digest`, and
+  `checked` changes `asdict(outcome)`. A `task_outcome` operation applied by
+  pre-branch code and replayed after this lands raises `OperationConflict`. The
+  window is a run interrupted between apply and caller-progress across the deploy;
+  all runs in `data/app.sqlite` are terminal, so nothing is at risk today. This is
+  structural to any evidence-shape change.
+- Pre-existing, found while reviewing this: `team_outcomes.py`'s
+  `status not in {"passed", "failed"}` raises a bare `TypeError` for a model that
+  emits `"status": []`, and `_task_outcome` catches only `TaskOutcomeError`, so it
+  escapes unhandled instead of becoming `invalid_task_outcome`. Same expression
+  predates this branch.
+
 ### What could not be verified, and why
 
 - **The HTTP and browser leg.** `/api/team-runs/{id}/detail` now answers
