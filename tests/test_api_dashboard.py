@@ -18,6 +18,40 @@ def make_config(tmp_path: Path) -> AppConfig:
     )
 
 
+def _detected_available(*providers: str) -> dict[str, object]:
+    """`available` needs LMG-reported execution capabilities, not just a CLI probe.
+
+    8557c6d split capability from readiness, so `_availability` now requires a
+    capability snapshot with parseable `execution` (agents.py:526-537). A test
+    that wants an available agent has to say so the way the real gateway does,
+    and one that wants an unavailable agent simply leaves it out.
+    Kept minimal on purpose: no models, options or defaults, so the descriptor
+    still exercises its built-in fallbacks and only availability changes.
+    """
+    execution = {
+        "codex": {
+            "resume": True,
+            "external_read_only_roots": False,
+            "network_modes": ["unspecified", "denied", "required"],
+            "sandbox_modes": ["read-only", "workspace-write"],
+            "permission_modes": [],
+        },
+        "claude": {
+            "resume": True,
+            "external_read_only_roots": False,
+            "network_modes": ["unspecified"],
+            "sandbox_modes": [],
+            "permission_modes": ["default", "acceptEdits", "plan"],
+        },
+    }
+    return {
+        "providers": {
+            name: {"available": True, "ready": True, "execution": execution[name]}
+            for name in providers
+        }
+    }
+
+
 def test_dashboard_usage_requires_session(tmp_path: Path) -> None:
     client = TestClient(create_app(make_config(tmp_path)))
 
@@ -37,7 +71,9 @@ def test_dashboard_usage_returns_provider_usage(tmp_path: Path, monkeypatch) -> 
             None if binary == "codex-test" else "not found",
         ),
     )
-    monkeypatch.setattr(agents_module, "fetch_capabilities", lambda _config: None)
+    monkeypatch.setattr(
+        agents_module, "fetch_capabilities", lambda _config: _detected_available("codex")
+    )
     client = TestClient(create_app(make_config(tmp_path)))
     client.cookies.set("agent_session", client.app.state.auth_session_service.issue().token)
 
