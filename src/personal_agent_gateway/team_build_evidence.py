@@ -102,10 +102,16 @@ def task_build_evidence(task: TeamTask, workspace: Path) -> dict[str, object]:
 def run_build_evidence(
     per_task: list[dict[str, object]],
 ) -> dict[str, object]:
-    """The two numbers worth putting at the top of a run.
+    """The numbers worth putting at the top of a run.
 
-    Both say how much of the run's verdict rests on the workers' own word rather
-    than on anything the gate looked at.
+    Three of them say how much of the run's verdict rests on something other than
+    what the gate looked at, and they are not the same thing:
+    ``worker_asserted_only_count`` is the run's word-of-the-worker share, while
+    ``unverified_task_count`` counts tasks where neither the gate nor the worker
+    confirmed something the contract required -- a third category, not a heavier
+    version of the second. It is also the only one of the two that moves when a
+    check goes unrun, because ``attested_only`` is true only for a task with zero
+    runnable checks and so reads 0 for a run where every check was a file read.
 
     Takes the already-computed per-task reports rather than the tasks: every
     caller renders those too, and recomputing them here doubled the filesystem
