@@ -3412,6 +3412,17 @@ def test_worker_prompt_presents_a_complete_concrete_assignment() -> None:
     assert "final response must contain only" in prompt
 
 
+def test_the_worker_prompt_asks_whether_each_check_actually_ran() -> None:
+    """A field the worker is never told about will not get used. The motivating
+    run's worker had the fact and wrote it into a Markdown file instead."""
+    assert '"checked"' in WORKER_PROMPT
+    lowered = WORKER_PROMPT.lower()
+    assert "could not" in lowered or "not run" in lowered
+    # It must not offer a third status value -- the third state is a null status.
+    assert "skipped" not in lowered
+    assert "unavailable" not in lowered
+
+
 def test_planning_prompts_teach_the_check_vocabulary() -> None:
     for prompt in (PLANNING_PROMPT, ADD_WORK_PROMPT, ACCEPTANCE_REVIEW_PROMPT):
         assert "file_nonempty" in prompt

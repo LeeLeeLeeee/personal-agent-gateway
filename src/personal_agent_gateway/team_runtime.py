@@ -140,7 +140,11 @@ code fences:
 {{"status":"completed|blocked|failed","summary":"concise result",
 "reason_code":"stable-code or null","deliverables":[{{"path":"relative/path",
 "kind":"file kind"}}],"verifications":[{{"name":"verification name",
-"status":"passed|failed","evidence":"concrete evidence"}}]}}"""
+"checked":true,"status":"passed|failed","evidence":"concrete evidence"}}]}}
+Set "checked":false with "status":null when you could not actually confirm a
+verification -- a tool that is missing, a command that failed to run, a check you
+had no way to perform -- and say why in "evidence". Do not report a status you did
+not observe."""
 
 ACCEPTANCE_REVIEW_PROMPT = f"""You are the leader reviewing a rejected Team Run task outcome.
 Decide only from the goal, Cycle instruction, frozen rules, SPACE, Task contract,
