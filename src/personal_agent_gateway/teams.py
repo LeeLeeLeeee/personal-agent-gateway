@@ -3415,7 +3415,7 @@ class TeamRunService:
     def create_plan_revision(
         self,
         team_run_id: str,
-        cycle_id: str | None,
+        cycle_id: str,
         task_ids: Sequence[str],
         required_approver_agent_ids: Sequence[str],
     ) -> TeamPlanRevision | None:
@@ -3424,15 +3424,19 @@ class TeamRunService:
         The cap is enforced here and only here. Callers ask for a revision and
         handle None; they never compute the budget themselves, because the two
         loop defects already fixed in this repo were exactly that.
+
+        ``cycle_id`` is required: negotiation never runs without one, and
+        SQLite treats NULL as distinct from NULL in a unique index, so an
+        optional ``cycle_id`` of None would let the (team_run_id, cycle_id,
+        revision) index silently stop enforcing the cap.
         """
         self.get_team_run(team_run_id)
-        if cycle_id is not None:
-            self._require_cycle_for_run(team_run_id, cycle_id)
+        self._require_cycle_for_run(team_run_id, cycle_id)
         if not required_approver_agent_ids:
             raise ValueError("a plan revision needs at least one approver")
         row = self._db.fetchone(
             "select coalesce(max(revision), 0) as current from team_plan_revisions"
-            " where team_run_id = ? and cycle_id is ?",
+            " where team_run_id = ? and cycle_id = ?",
             (team_run_id, cycle_id),
         )
         revision = next_revision(int(row["current"]))
@@ -3440,23 +3444,26 @@ class TeamRunService:
             return None
         revision_id = uuid4().hex
         now = _now()
-        self._db.execute(
-            """
-            insert into team_plan_revisions (
-                id, team_run_id, cycle_id, revision, status,
-                task_ids_json, required_approver_agent_ids_json, created_at
-            ) values (?, ?, ?, ?, 'awaiting_approval', ?, ?, ?)
-            """,
-            (
-                revision_id,
-                team_run_id,
-                cycle_id,
-                revision,
-                json.dumps(list(task_ids)),
-                json.dumps(list(required_approver_agent_ids)),
-                now,
-            ),
-        )
+        try:
+            self._db.execute(
+                """
+                insert into team_plan_revisions (
+                    id, team_run_id, cycle_id, revision, status,
+                    task_ids_json, required_approver_agent_ids_json, created_at
+                ) values (?, ?, ?, ?, 'awaiting_approval', ?, ?, ?)
+                """,
+                (
+                    revision_id,
+                    team_run_id,
+                    cycle_id,
+                    revision,
+                    json.dumps(list(task_ids)),
+                    json.dumps(list(required_approver_agent_ids)),
+                    now,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("plan revision already created") from exc
         return self._get_plan_revision(revision_id)
 
     def record_plan_review(
@@ -3516,14 +3523,14 @@ class TeamRunService:
         }
 
     def get_active_plan_revision(
-        self, team_run_id: str, cycle_id: str | None
+        self, team_run_id: str, cycle_id: str
     ) -> TeamPlanRevision | None:
         self.get_team_run(team_run_id)
-        if cycle_id is not None:
-            self._require_cycle_for_run(team_run_id, cycle_id)
+        self._require_cycle_for_run(team_run_id, cycle_id)
         row = self._db.fetchone(
             "select * from team_plan_revisions"
-            " where team_run_id = ? and cycle_id is ? and status = 'awaiting_approval'",
+            " where team_run_id = ? and cycle_id = ? and status = 'awaiting_approval'"
+            " order by revision desc limit 1",
             (team_run_id, cycle_id),
         )
         return _team_plan_revision_from_row(row) if row is not None else None
@@ -3555,7 +3562,7 @@ class TeamRunService:
         self._db.execute(
             """
             update team_plan_revisions
-            set status = ?, decided_at = coalesce(?, decided_at)
+            set status = ?, decided_at = coalesce(decided_at, ?)
             where id = ?
             """,
             (status, decided_at, plan_revision_id),

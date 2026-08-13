@@ -2285,3 +2285,28 @@ def test_objections_survive_the_round_trip(tmp_path):
 
     stored = service.plan_review_objections(revision.id)
     assert stored == {workers[0].id: objections}
+
+
+def test_get_active_plan_revision_breaks_a_tie_toward_the_newest_revision(tmp_path):
+    """Two rows can be awaiting_approval at once before the older one is
+    superseded; the newest revision is the truth, never the one created first."""
+    service, run, cycle, workers = _negotiation_fixture(tmp_path)
+    first = service.create_plan_revision(run.id, cycle.id, ["t"], [workers[0].id])
+    second = service.create_plan_revision(run.id, cycle.id, ["t2"], [workers[0].id])
+
+    active = service.get_active_plan_revision(run.id, cycle.id)
+
+    assert first.revision == 1
+    assert second.revision == 2
+    assert active.id == second.id
+
+
+def test_decided_at_is_set_once_and_survives_a_later_transition(tmp_path):
+    service, run, cycle, workers = _negotiation_fixture(tmp_path)
+    revision = service.create_plan_revision(run.id, cycle.id, ["t"], [workers[0].id])
+
+    objected = service.set_plan_revision_status(revision.id, "objected")
+    superseded = service.set_plan_revision_status(revision.id, "superseded")
+
+    assert objected.decided_at is not None
+    assert superseded.decided_at == objected.decided_at
