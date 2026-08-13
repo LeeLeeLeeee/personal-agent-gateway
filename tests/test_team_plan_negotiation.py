@@ -24,6 +24,13 @@ def test_one_objection_decides_the_revision_without_waiting_for_the_rest():
     assert verdict_for(["a", "b", "c"], {"a": "approve", "b": "object"}) == "objected"
 
 
+def test_a_bare_string_of_ids_is_refused():
+    """str satisfies Sequence[str], so "ab" would iterate as two approvers named
+    "a" and "b" -- an approval nobody gave."""
+    with pytest.raises(TypeError):
+        verdict_for("ab", {"a": "approve", "b": "approve"})
+
+
 def test_an_empty_required_set_is_not_silently_approved():
     """No approvers means the caller computed the set wrongly. Returning
     'approved' here would execute an unreviewed plan."""
@@ -35,9 +42,14 @@ def test_a_review_from_someone_who_was_not_asked_is_ignored():
     assert verdict_for(["a"], {"a": "approve", "stranger": "object"}) == "approved"
 
 
+@pytest.mark.parametrize("value", ["aprove", "Approve", "objected", "", None])
+def test_a_review_value_that_is_not_the_exact_sentinel_is_not_consent(value):
+    assert verdict_for(["a", "b"], {"a": "approve", "b": value}) == "waiting"
+
+
 @pytest.mark.parametrize(
     ("current", "expected"),
-    [(1, 2), (2, 3), (3, None)],
+    [(0, 1), (1, 2), (2, 3), (3, None)],
 )
 def test_the_cap_is_three_revisions(current, expected):
     assert next_revision(current) == expected

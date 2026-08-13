@@ -24,6 +24,8 @@ def verdict_for(
     missing review is never consent -- reviews arrive one call at a time and a
     crash between them must not read as approval.
     """
+    if isinstance(required_approver_ids, str):
+        raise TypeError("required_approver_ids must be a collection of ids, not a string")
     if not required_approver_ids:
         raise ValueError("negotiation requires at least one approver")
     required = list(required_approver_ids)
@@ -37,10 +39,11 @@ def verdict_for(
 def next_revision(current: int) -> int | None:
     """The revision after ``current``, or None when the budget is spent.
 
-    Every caller goes through here. Both loop defects previously fixed in this
-    repo were a cap that one path checked and another did not, so this function
-    also refuses to hand out a budget for a stored revision that is already
-    past the cap rather than assuming it cannot happen.
+    Callers must obtain every revision number from here; both loop defects
+    previously fixed in this repo were a cap that one path checked and another
+    did not, so this function also refuses to hand out a budget for a stored
+    revision that is already past the cap rather than assuming it cannot
+    happen.
     """
     if current >= PLAN_NEGOTIATION_MAX_REVISIONS:
         return None
