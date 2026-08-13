@@ -218,3 +218,28 @@ untouched.
   without a schema change, and it is what caused Part 3 to be withdrawn.
 - A `retry_worker` that names the extras still works — the fix must not block the
   legitimate cleanup case, which is the reason the set-equality rule exists.
+
+## Follow-ups this work found but did not fix
+
+**An unparsable acceptance review never terminates.** Verified by execution, and
+reproduced identically against `main`, so it predates this work: a leader that
+keeps returning an unparsable review is asked, escalates, is answered, and asked
+again — `acceptance_recovery_attempts` climbs past `ACCEPTANCE_RECOVERY_CAP`
+because the cap is only consulted before the review and when a resolution is
+applied, never on the escalation path. The task dies only when the leader finally
+returns something valid, and it dies at that moment with "Acceptance recovery
+limit reached" — the run fails precisely when the leader gets it right. The
+docstring at `teams.py:2880` claims the cap bounds this; it does not.
+
+**A dead branch that claims to work.** In `_recover_open_operation`'s new
+`except InvalidOperationResult`, the `operation.stage == "acceptance_lead_repair"`
+arm is unreachable: resuming a prepared repair recomputes the digest over the base
+review messages while the stored row's digest covers the repair prompt, so
+`reserve` raises before any parse. The arm and its comment assert coverage that
+does not exist. Either wire the repair prompt into that resume or delete the arm
+with its comment.
+
+**Two ruffs disagree in this checkout.** `python -m ruff` is 0.15.20 and passes;
+`.venv/Scripts/ruff.exe` is 0.16.0 and reports ten findings on the same files —
+identical at this branch's base, so no new debt, but a reviewer using the wrong
+one will report lint failures that the project does not have.
