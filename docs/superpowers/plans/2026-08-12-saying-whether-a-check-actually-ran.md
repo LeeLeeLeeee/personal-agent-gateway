@@ -367,7 +367,7 @@ check-less one is built.
 - [ ] **Step 2: Run the tests and watch them fail**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_team_acceptance.py -q -p no:randomly -k "unchecked or missing_verification or reported_failure or gate_run_check"`
-Expected: the first two FAIL — today `reported.status != "passed"` rejects the task, so it is not accepted and no `unverified` key exists. The last three should already pass; if one fails, stop and say so, because the current behaviour is not what this plan assumes.
+Expected: three FAIL, two pass. The first two fail because today `reported.status != "passed"` rejects the task, so it is not accepted and no `unverified` key exists. `test_a_gate_run_check_ignores_the_worker_claim_entirely` fails for the same shallow reason — its first two assertions already hold, but its third reads `evidence["unverified"]`, which Step 3 is what adds. `test_a_missing_verification_still_fails_the_task` and `test_a_reported_failure_still_fails_the_task` must pass now; if either fails, stop and say so, because the current behaviour is not what this plan assumes.
 
 - [ ] **Step 3: Split the worker-reported branch**
 
