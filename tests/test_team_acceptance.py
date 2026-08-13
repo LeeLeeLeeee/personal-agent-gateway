@@ -399,7 +399,11 @@ def test_an_unchecked_verification_is_never_recorded_as_passed(tmp_path: Path) -
 
     recorded = TeamAcceptanceService().evaluate(task, outcome, workspace).evidence
 
-    assert recorded["verifications"]["frontend-typechecks"]["status"] != "passed"
+    assert recorded["verifications"]["frontend-typechecks"] == {
+        "mode": "unverified",
+        "status": "unknown",
+        "evidence": "unavailable",
+    }
 
 
 def test_a_missing_verification_still_fails_the_task(tmp_path: Path) -> None:
