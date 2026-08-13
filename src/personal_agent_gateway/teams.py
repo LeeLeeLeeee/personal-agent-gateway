@@ -2,7 +2,7 @@ import json
 import shutil
 import sqlite3
 from dataclasses import dataclass
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Literal
@@ -24,6 +24,7 @@ from personal_agent_gateway.team_lifecycle import (
     TaskStatus,
     TeamRunStatus,
 )
+from personal_agent_gateway.team_plan_negotiation import next_revision
 from personal_agent_gateway.team_verification_checks import (
     VerificationCheck,
     parse_verification_check,
@@ -213,6 +214,19 @@ class TeamDecisionRequest:
     answered_at: str | None
     updated_at: str
     cycle_id: str | None = None
+
+
+@dataclass(frozen=True)
+class TeamPlanRevision:
+    id: str
+    team_run_id: str
+    cycle_id: str | None
+    revision: int
+    status: str
+    task_ids: tuple[str, ...]
+    required_approver_agent_ids: tuple[str, ...]
+    created_at: str
+    decided_at: str | None
 
 
 class TeamRunService:
@@ -3398,6 +3412,164 @@ class TeamRunService:
         )
         return self._get_message(message_id)
 
+    def create_plan_revision(
+        self,
+        team_run_id: str,
+        cycle_id: str | None,
+        task_ids: Sequence[str],
+        required_approver_agent_ids: Sequence[str],
+    ) -> TeamPlanRevision | None:
+        """Open the next revision, or refuse when the budget is spent.
+
+        The cap is enforced here and only here. Callers ask for a revision and
+        handle None; they never compute the budget themselves, because the two
+        loop defects already fixed in this repo were exactly that.
+        """
+        self.get_team_run(team_run_id)
+        if cycle_id is not None:
+            self._require_cycle_for_run(team_run_id, cycle_id)
+        if not required_approver_agent_ids:
+            raise ValueError("a plan revision needs at least one approver")
+        row = self._db.fetchone(
+            "select coalesce(max(revision), 0) as current from team_plan_revisions"
+            " where team_run_id = ? and cycle_id is ?",
+            (team_run_id, cycle_id),
+        )
+        revision = next_revision(int(row["current"]))
+        if revision is None:
+            return None
+        revision_id = uuid4().hex
+        now = _now()
+        self._db.execute(
+            """
+            insert into team_plan_revisions (
+                id, team_run_id, cycle_id, revision, status,
+                task_ids_json, required_approver_agent_ids_json, created_at
+            ) values (?, ?, ?, ?, 'awaiting_approval', ?, ?, ?)
+            """,
+            (
+                revision_id,
+                team_run_id,
+                cycle_id,
+                revision,
+                json.dumps(list(task_ids)),
+                json.dumps(list(required_approver_agent_ids)),
+                now,
+            ),
+        )
+        return self._get_plan_revision(revision_id)
+
+    def record_plan_review(
+        self,
+        plan_revision_id: str,
+        agent_id: str,
+        decision: str,
+        objections: Sequence[dict[str, str]],
+    ) -> None:
+        """Record one agent's review, once.
+
+        The unique index on (plan_revision_id, agent_id) is the source of
+        truth for "once": we attempt the insert and translate the resulting
+        sqlite3.IntegrityError rather than checking first, because a
+        check-then-insert leaves a gap that resume can race through.
+        """
+        self._get_plan_revision(plan_revision_id)
+        try:
+            self._db.execute(
+                """
+                insert into team_plan_approvals (
+                    id, plan_revision_id, agent_id, decision, objections_json, created_at
+                ) values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    uuid4().hex,
+                    plan_revision_id,
+                    agent_id,
+                    decision,
+                    json.dumps(list(objections)),
+                    _now(),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("plan review already recorded") from exc
+
+    def plan_reviews(self, plan_revision_id: str) -> dict[str, str]:
+        return {
+            row["agent_id"]: row["decision"]
+            for row in self._db.fetchall(
+                "select agent_id, decision from team_plan_approvals"
+                " where plan_revision_id = ? order by created_at asc, id asc",
+                (plan_revision_id,),
+            )
+        }
+
+    def plan_review_objections(
+        self, plan_revision_id: str
+    ) -> dict[str, list[dict[str, str]]]:
+        return {
+            row["agent_id"]: json.loads(row["objections_json"])
+            for row in self._db.fetchall(
+                "select agent_id, objections_json from team_plan_approvals"
+                " where plan_revision_id = ? order by created_at asc, id asc",
+                (plan_revision_id,),
+            )
+        }
+
+    def get_active_plan_revision(
+        self, team_run_id: str, cycle_id: str | None
+    ) -> TeamPlanRevision | None:
+        self.get_team_run(team_run_id)
+        if cycle_id is not None:
+            self._require_cycle_for_run(team_run_id, cycle_id)
+        row = self._db.fetchone(
+            "select * from team_plan_revisions"
+            " where team_run_id = ? and cycle_id is ? and status = 'awaiting_approval'",
+            (team_run_id, cycle_id),
+        )
+        return _team_plan_revision_from_row(row) if row is not None else None
+
+    def list_plan_revisions(
+        self, team_run_id: str, cycle_id: str | None = None
+    ) -> list[TeamPlanRevision]:
+        self.get_team_run(team_run_id)
+        where = "team_run_id = ?"
+        parameters: tuple[object, ...] = (team_run_id,)
+        if cycle_id is not None:
+            self._require_cycle_for_run(team_run_id, cycle_id)
+            where += " and cycle_id = ?"
+            parameters += (cycle_id,)
+        return [
+            _team_plan_revision_from_row(row)
+            for row in self._db.fetchall(
+                f"select * from team_plan_revisions where {where} "
+                "order by created_at asc, revision asc, id asc",
+                parameters,
+            )
+        ]
+
+    def set_plan_revision_status(
+        self, plan_revision_id: str, status: str
+    ) -> TeamPlanRevision:
+        self._get_plan_revision(plan_revision_id)
+        decided_at = None if status == "awaiting_approval" else _now()
+        self._db.execute(
+            """
+            update team_plan_revisions
+            set status = ?, decided_at = coalesce(?, decided_at)
+            where id = ?
+            """,
+            (status, decided_at, plan_revision_id),
+        )
+        return self._get_plan_revision(plan_revision_id)
+
+    def _get_plan_revision(self, plan_revision_id: str) -> TeamPlanRevision:
+        row = self._db.fetchone(
+            "select * from team_plan_revisions where id = ?", (plan_revision_id,)
+        )
+        if row is None:
+            raise KeyError(f"Plan revision not found: {plan_revision_id}")
+        return _team_plan_revision_from_row(row)
+
     def record_operation_workspace_baseline(
         self,
         operation_id: str,
@@ -4108,6 +4280,22 @@ def _team_message_from_row(row: object) -> TeamMessage:
         metadata=json.loads(row["metadata_json"]),
         created_at=row["created_at"],
         cycle_id=row["cycle_id"] if "cycle_id" in row.keys() else None,
+    )
+
+
+def _team_plan_revision_from_row(row: object) -> TeamPlanRevision:
+    return TeamPlanRevision(
+        id=row["id"],
+        team_run_id=row["team_run_id"],
+        cycle_id=row["cycle_id"],
+        revision=row["revision"],
+        status=row["status"],
+        task_ids=tuple(json.loads(row["task_ids_json"])),
+        required_approver_agent_ids=tuple(
+            json.loads(row["required_approver_agent_ids_json"])
+        ),
+        created_at=row["created_at"],
+        decided_at=row["decided_at"],
     )
 
 

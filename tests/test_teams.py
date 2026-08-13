@@ -2193,3 +2193,95 @@ def test_reset_agents_for_new_cycle_only_clears_terminal_agents(tmp_path) -> Non
     assert by_id[leader.id].current_task_id is None
     assert by_id[leader.id].finished_at is None
     assert by_id[worker.id].status == "pending"
+
+
+def _negotiation_fixture(tmp_path: Path):
+    """A continuous plan_and_execute run with one leader and two workers.
+
+    Built directly rather than through make_cycle_services, which only ever
+    creates a single worker persona.
+    """
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    cycles = TeamCycleService(db)
+    teams = TeamRunService(
+        db,
+        personas,
+        workspace_root=tmp_path / "workspace",
+        cycle_service=cycles,
+    )
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    worker_a = personas.create_persona("Worker A", "worker", "d", [], [])
+    worker_b = personas.create_persona("Worker B", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker_a.id, worker_b.id],
+        "plan_and_execute",
+        2,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = make_queued_cycle(teams, cycles, run)
+    workers = [
+        agent for agent in teams.list_agents(run.id) if agent.id != run.leader_agent_id
+    ]
+    return teams, run, cycle, workers
+
+
+def test_the_first_revision_is_one_and_the_cap_stops_the_fourth(tmp_path):
+    """The cap lives in create_plan_revision, so no caller can spend a fourth
+    revision by forgetting to check."""
+    service, run, cycle, workers = _negotiation_fixture(tmp_path)
+
+    revisions = []
+    for _ in range(4):
+        created = service.create_plan_revision(
+            run.id, cycle.id, ["task-1"], [workers[0].id]
+        )
+        revisions.append(created)
+        if created is not None:
+            service.set_plan_revision_status(created.id, "superseded")
+
+    assert [r.revision for r in revisions[:3]] == [1, 2, 3]
+    assert revisions[3] is None
+
+
+def test_a_review_is_recorded_once_per_agent(tmp_path):
+    service, run, cycle, workers = _negotiation_fixture(tmp_path)
+    revision = service.create_plan_revision(
+        run.id, cycle.id, ["task-1"], [workers[0].id]
+    )
+
+    service.record_plan_review(revision.id, workers[0].id, "approve", [])
+
+    assert service.plan_reviews(revision.id) == {workers[0].id: "approve"}
+    with pytest.raises(ValueError):
+        service.record_plan_review(revision.id, workers[0].id, "object", [
+            {"kind": "gap", "task_ref": "T-01", "detail": "d"}
+        ])
+
+
+def test_only_an_awaiting_revision_is_active(tmp_path):
+    service, run, cycle, workers = _negotiation_fixture(tmp_path)
+    first = service.create_plan_revision(run.id, cycle.id, ["t"], [workers[0].id])
+
+    assert service.get_active_plan_revision(run.id, cycle.id).id == first.id
+
+    service.set_plan_revision_status(first.id, "superseded")
+
+    assert service.get_active_plan_revision(run.id, cycle.id) is None
+
+
+def test_objections_survive_the_round_trip(tmp_path):
+    """These are the only record of why nothing ran, so they must come back
+    exactly as written."""
+    service, run, cycle, workers = _negotiation_fixture(tmp_path)
+    revision = service.create_plan_revision(run.id, cycle.id, ["t"], [workers[0].id])
+    objections = [{"kind": "overlap", "task_ref": "T-02", "detail": "같은 파일"}]
+
+    service.record_plan_review(revision.id, workers[0].id, "object", objections)
+
+    stored = service.plan_review_objections(revision.id)
+    assert stored == {workers[0].id: objections}
