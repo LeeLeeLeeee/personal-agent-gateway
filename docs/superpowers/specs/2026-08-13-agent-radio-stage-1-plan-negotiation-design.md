@@ -117,14 +117,19 @@ Worker 리뷰는 모델 호출이므로 ledger에 들어가야 재개가 동작�
 
 Run은 `completed_with_failures`로 끝나고 `collaboration_plan_approval_incomplete`를 남긴다. 마지막 revision은 `abandoned`, 그 task는 `canceled`다. **미승인 계획으로 실행하지 않는다.**
 
-여기서 새로 생기는 모양이 하나 있다: **task가 전부 `canceled`이고 아무것도 실행되지 않은 Run.** 지금까지 없던 상태다. 다음 소비자가 이걸 견디는지 각각 확인해야 한다.
+여기서 새로 생기는 모양이 하나 있다: **task가 전부 `canceled`이고 아무것도 실행되지 않은 Run.** 지금까지 없던 상태다. 코드를 확인한 결과 두 가지가 이미 정해져 있다.
 
-- `_terminal_status(tasks, dependencies)` — 전부 canceled인 집합에 대해 무엇을 반환하는지.
+**terminal status를 파생에 맡길 수 없다.** `cycle_execution_disposition`(`team_lifecycle.py:161-167`)은 required task의 terminal 원인에 `canceled`가 있으면 terminal을 **`failed`** 로 판정한다. 즉 파생 규칙에 맡기면 이 Run은 `completed_with_failures`가 아니라 `failed`가 된다. 부모 설계가 정한 값은 `completed_with_failures`이므로, **협상 실패 경로는 상태를 명시적으로 설정하고 파생을 거치지 않는다.** 협상은 `_execute_and_synthesize` 앞에서 끝나므로 그 경로에서 `_terminal_status`는 애초에 호출되지 않는다.
+
+여기서 생기는 위험은 **나중에 누군가 다시 파생하면 두 값이 어긋난다**는 것이다. 구현 계획은 협상 실패로 끝난 Run에 대해 resume normalization과 cycle dispatcher가 상태를 재계산하지 않음을 실제로 확인해야 한다. 추측으로 넘기면 "완료로 표시된 Run이 재시작 뒤 failed가 되는" 결함이 된다.
+
+**superseded task를 `skipped`로 표시하면 안 된다.** `_required_terminal_cause`(`team_lifecycle.py:195-202`)는 `skipped` task에 prerequisite가 없으면 `LifecycleIntegrityError("Skipped task has no terminal prerequisite")`를 던진다. 계획 초안의 task는 대부분 dependency가 없으므로 `skipped`는 예외를 부른다. `canceled`를 쓴다. `_TASK_TRANSITIONS`(`team_lifecycle.py:63`)가 `pending → canceled`를 허용하므로 전이는 합법이다.
+
+남은 확인 대상은 구현 계획이 각각 실제 동작을 적어야 한다.
+
 - `run_build_evidence` 롤업 — `task_count`가 0이 아니라 canceled task 수가 된다. 약속-신고 비교가 canceled task에 대해 무엇을 말하는지.
 - `_package_results` / synthesis — 실행 결과가 없는 Run을 어떻게 정리하는지.
 - UI의 task 목록과 phase 스테퍼.
-
-이 목록은 추측이 아니라 확인 대상이다. 구현 계획이 각각에 대해 실제 동작을 적어야 한다.
 
 ## 사용자에게 보이는 것
 
@@ -149,6 +154,8 @@ Run은 `completed_with_failures`로 끝나고 `collaboration_plan_approval_incom
 - 켠 Run에서 worker 전원이 승인하면 승인 전에는 어떤 task도 `in_progress`가 되지 않고, 승인 후 정상 실행된다.
 - objection 하나면 그 revision의 task가 전부 `canceled`가 되고 revision+1이 생기며, Leader 프롬프트에 objection 전문이 들어간다.
 - revision 3이 승인되지 않으면 Run이 `completed_with_failures` + `collaboration_plan_approval_incomplete`로 끝나고, 미승인 계획의 task는 하나도 실행되지 않는다.
+- 협상 실패로 끝난 Run을 재개하거나 dispatcher가 다시 훑어도 상태가 `failed`로 바뀌지 않는다 — 파생 규칙은 required task가 canceled면 `failed`라고 말하므로, 명시 설정이 덮이지 않는지 실제로 확인한다.
+- superseded task를 `skipped`로 표시하지 않는다(`LifecycleIntegrityError`를 던진다).
 - **상한 검사가 재개 경로에서도 동작한다.** 협상 중간에 프로세스를 끊고 재개해도 revision이 3을 넘지 않는다.
 - required approver가 승인 도중 terminal이 되면 그 revision은 승인되지 않고, 재제안이 상한을 소모한다.
 - 리뷰가 끝까지 파싱되지 않는 agent는 승인하지 않은 것으로 처리된다.
