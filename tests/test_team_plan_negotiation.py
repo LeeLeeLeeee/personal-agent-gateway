@@ -168,3 +168,28 @@ def test_a_short_label_is_not_read_as_a_longer_one():
             ),
             _LABELS,
         )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"decision": ["approve"], "objections": []},
+        {"decision": {"x": 1}, "objections": []},
+        {"decision": "object", "objections": [
+            {"kind": ["overlap"], "task_ref": "T-01", "detail": "d"}]},
+        {"decision": "object", "objections": [
+            {"kind": {"a": 1}, "task_ref": "T-01", "detail": "d"}]},
+    ],
+)
+def test_an_unhashable_field_is_a_parse_error_not_a_crash(payload):
+    """`x in some_set` hashes x, so a list or dict here used to escape as
+    TypeError. The repair path catches PlanReviewError, not TypeError, so that
+    turned a retryable response into a dead run."""
+    with pytest.raises(PlanReviewError):
+        parse_plan_review(json.dumps(payload), _LABELS)
+
+
+@pytest.mark.parametrize("top_level", [[], "approve", 1, None])
+def test_a_non_object_top_level_value_is_rejected(top_level):
+    with pytest.raises(PlanReviewError):
+        parse_plan_review(json.dumps(top_level), _LABELS)

@@ -93,7 +93,7 @@ def parse_plan_review(text: str, allowed_labels: frozenset[str]) -> PlanReview:
         raise PlanReviewError("unexpected keys")
     decision = payload["decision"]
     raw_objections = payload["objections"]
-    if decision not in {"approve", "object"}:
+    if not isinstance(decision, str) or decision not in {"approve", "object"}:
         raise PlanReviewError("unknown decision")
     if not isinstance(raw_objections, list):
         raise PlanReviewError("objections must be a list")
@@ -113,7 +113,7 @@ def _objection(raw: object, allowed_labels: frozenset[str]) -> Objection:
     kind = raw["kind"]
     task_ref = raw["task_ref"]
     detail = raw["detail"]
-    if kind not in OBJECTION_KINDS:
+    if not isinstance(kind, str) or kind not in OBJECTION_KINDS:
         raise PlanReviewError(f"unknown objection kind: {kind!r}")
     if not isinstance(task_ref, str) or task_ref not in allowed_labels:
         # Exact set membership. A substring test would let T-1 stand in for T-10.
