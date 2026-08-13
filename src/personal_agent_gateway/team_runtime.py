@@ -449,20 +449,109 @@ def _extra_deliverable_paths(
     return frozenset(extra)
 
 
-def _raise_undeclared_retry_error(extra_paths: frozenset[str]) -> None:
-    """Raised by every acceptance-review parser that finds a futile retry.
-
-    `from None` unconditionally: two of the three call sites raise this from
-    inside an `except ValueError:` block (the older _review_acceptance path's
-    own retry), where it would otherwise chain to the parse failure that
-    triggered that block. The other call site raises with no exception being
-    handled, where `from None` is a no-op. Either way the caller only wants
-    this message.
-    """
-    raise ValueError(
+def _undeclared_retry_error_message(extra_paths: frozenset[str]) -> str:
+    """What a refused resolution is told, at the ledger and in the escalation."""
+    return (
         "retry_worker cannot clear undeclared_deliverable unless the "
         "instruction names every path to remove: " + ", ".join(sorted(extra_paths))
-    ) from None
+    )
+
+
+class _AcceptanceReviewGuard:
+    """One acceptance review's parser, its repair prompt, and what it refused.
+
+    There are three acceptance-review invocation sites -- _run_cycle_acceptance,
+    the prepared-operation branch of _recover_open_operation, and the
+    ledger-free _review_acceptance -- and the futile-retry refusal has to apply
+    at all of them. It first shipped as a closure inside _run_cycle_acceptance,
+    which left the resume branch invoking the module-level
+    _validated_acceptance_review: a run that crashed inside the review window
+    silently reverted to accepting a retry that cannot succeed. Binding the
+    three pieces to the task in one object is what makes the coverage
+    checkable, since a site that builds a guard cannot pick up the parser
+    without the prompt that answers it.
+    """
+
+    def __init__(
+        self,
+        task: TeamTask,
+        messages: list[dict[str, object]],
+        outcome: TaskOutcome | None = None,
+        acceptance: AcceptanceResult | None = None,
+    ) -> None:
+        outcome = outcome or _persisted_task_outcome_value(task)
+        acceptance = acceptance or _persisted_acceptance_value(task)
+        self._messages = messages
+        self._extra_paths = _extra_deliverable_paths(
+            outcome, acceptance, task.acceptance.required_outputs
+        )
+        # _extra_deliverable_paths unions both sources this rejection can carry
+        # its extras through -- outcome.deliverables for a fresh rejection,
+        # evidence["remaining_undeclared_paths"] for one
+        # _reject_lingering_undeclared_paths re-stamped -- but that union can be
+        # non-empty even when the rejection is about something else entirely: a
+        # blocked/failed outcome can still declare a stray out-of-contract path
+        # while its real reason_code is unrelated (e.g. waiting_for_input). The
+        # reason_code is what decides whether this rule applies at all;
+        # extra_paths only says what to name if it does.
+        self._applies = bool(self._extra_paths) and (
+            acceptance.reason_code == "undeclared_deliverable"
+        )
+        self.refusal: str | None = None
+        """Why the last parse refused, or None when it did not refuse.
+
+        Both failures reach the ledger as invalid_structured_output, so nothing
+        downstream can tell a resolution that parsed but cannot clear the
+        rejection from output that would not parse at all. The repair prompt and
+        the operator escalation both need that distinction, and both would
+        otherwise state a falsehood about one of the two.
+        """
+
+    def parse(self, response: ModelResponse) -> ValidatedOperationResult:
+        """Validate a review, refusing a retry that cannot clear the rejection."""
+        self.refusal = None
+        validated = _validated_acceptance_review(response)
+        if self._applies:
+            self.refuse_if_futile(
+                _parse_acceptance_review_resolution(response.content)
+            )
+        return validated
+
+    def refuse_if_futile(self, resolution: AcceptanceReviewResolution) -> None:
+        """Raise when this resolution cannot clear an undeclared rejection.
+
+        Separate from parse() for _review_acceptance, which has no ledger
+        operation to hand a parser to and so parses the resolution itself.
+
+        `from None` unconditionally: _review_acceptance's own retry calls this
+        from inside an `except ValueError:` block, where the refusal would
+        otherwise chain to the parse failure that triggered it. Elsewhere no
+        exception is being handled and `from None` is a no-op.
+        """
+        if not self._applies:
+            return
+        if undeclared_retry_is_futile(resolution, self._extra_paths):
+            self.refusal = _undeclared_retry_error_message(self._extra_paths)
+            raise ValueError(self.refusal) from None
+
+    def repair_messages(
+        self,
+        reason_code: str | None,
+    ) -> list[dict[str, object]]:
+        """The prompt that answers the failure that actually happened.
+
+        Passed to the repair seam as a callable, not a list: the seam builds the
+        prompt after the failure exists, which is the only moment the two causes
+        are distinguishable. A static undeclared-specific prompt would tell a
+        leader whose review was pure prose that its resolution cannot clear the
+        rejection -- there was no resolution -- and would drop the "no prose or
+        code fences" instruction that is what actually fixes prose.
+        """
+        if self.refusal is None:
+            return _repair_messages(reason_code)
+        return _undeclared_retry_repair_messages(
+            self._messages, self._extra_paths
+        )
 
 
 def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:
@@ -969,12 +1058,51 @@ class TeamRuntime:
             )
             recovered = operation
             if operation.status == "prepared":
-                recovered = await self._invoke_existing_operation(
-                    operation,
-                    leader,
-                    messages,
-                    _validated_acceptance_review,
-                )
+                # A prepared review is the third acceptance-review invocation
+                # site, and it has to apply the futile-retry refusal like the
+                # other two. Invoking the module-level parser here made a crash
+                # or provider park inside the review window the one condition
+                # under which a resolution that cannot clear the rejection was
+                # applied anyway -- silently, and only on the runs that
+                # hiccuped.
+                guard = _AcceptanceReviewGuard(task, messages)
+                acceptance_task = task
+
+                async def escalate(failed: TeamModelOperation) -> None:
+                    await self._escalate_unparsable_lead_output(
+                        run,
+                        cycle_id,
+                        acceptance_task,
+                        "acceptance_lead",
+                        leader,
+                        failed,
+                    )
+
+                try:
+                    recovered = await self._invoke_existing_operation(
+                        operation,
+                        leader,
+                        messages,
+                        guard.parse,
+                    )
+                except InvalidOperationResult as exc:
+                    failed_review = self._operations.get(exc.operation_id)
+                    if operation.stage == "acceptance_lead_repair":
+                        # The repair round itself is what failed, so the seam
+                        # has no second ask left to offer: pause on the operator
+                        # exactly as the seam's own on_exhausted would.
+                        await escalate(failed_review)
+                    recovered = await self._repair_operation(
+                        run.id,
+                        cycle_id,
+                        leader,
+                        "acceptance_lead",
+                        failed_review,
+                        guard.parse,
+                        repair_messages=guard.repair_messages,
+                        on_exhausted=escalate,
+                        task_id=task.id,
+                    )
             resolution = _operation_acceptance_resolution(recovered)
             effect = self._model_effects.apply_acceptance_lead(
                 recovered.id,
@@ -2412,23 +2540,7 @@ class TeamRuntime:
             worker_agent,
             task,
         )
-        outcome = _persisted_task_outcome_value(task)
-        acceptance = _persisted_acceptance_value(task)
-        extra_paths = _extra_deliverable_paths(
-            outcome, acceptance, task.acceptance.required_outputs
-        )
-
-        is_undeclared_deliverable = (
-            extra_paths and acceptance.reason_code == "undeclared_deliverable"
-        )
-
-        def review_parser(response: ModelResponse) -> ValidatedOperationResult:
-            validated = _validated_acceptance_review(response)
-            if is_undeclared_deliverable:
-                resolution = _parse_acceptance_review_resolution(response.content)
-                if undeclared_retry_is_futile(resolution, extra_paths):
-                    _raise_undeclared_retry_error(extra_paths)
-            return validated
+        guard = _AcceptanceReviewGuard(task, messages)
 
         lead_operation = await self._invoke_with_repair(
             _operation_spec(
@@ -2442,27 +2554,15 @@ class TeamRuntime:
             ),
             leader_agent,
             messages,
-            review_parser,
-            # _extra_deliverable_paths unions both sources this rejection can
-            # carry its extras through -- outcome.deliverables for a fresh
-            # rejection, evidence["remaining_undeclared_paths"] for one
-            # _reject_lingering_undeclared_paths re-stamped -- but that union
-            # can be non-empty even when the rejection is about something
-            # else entirely: a blocked/failed outcome can still declare a
-            # stray out-of-contract path while its real reason_code is
-            # unrelated (e.g. waiting_for_input). The reason_code check is
-            # what decides whether this rule applies at all; extra_paths only
-            # says what to name if it does. Gating on both means a repair
-            # triggered by an unrelated cause still gets the generic
-            # _repair_messages prompt instead of one naming paths that are
-            # not the actual problem.
-            repair_messages=(
-                _undeclared_retry_repair_messages(messages, extra_paths)
-                if is_undeclared_deliverable
-                else None
-            ),
+            guard.parse,
+            repair_messages=guard.repair_messages,
             on_exhausted=lambda failed: self._escalate_unparsable_lead_output(
-                run, task.cycle_id, task, "acceptance_lead", leader_agent, failed
+                run,
+                task.cycle_id,
+                task,
+                "acceptance_lead",
+                leader_agent,
+                failed,
             ),
         )
         resolution = _operation_acceptance_resolution(lead_operation)
@@ -2720,17 +2820,7 @@ class TeamRuntime:
             changes=changes,
         )
         model = self._model(leader_agent, task.cycle_id)
-        # extra_paths (from _extra_deliverable_paths, unioning outcome.deliverables
-        # and any lingering evidence) only says what to name if this rejection is
-        # about undeclared deliverables at all; a blocked/failed outcome can
-        # declare a stray out-of-contract path while its real reason_code is
-        # unrelated, so reason_code still gates whether the rule applies.
-        extra_paths = _extra_deliverable_paths(
-            outcome, acceptance, task.acceptance.required_outputs
-        )
-        is_undeclared_deliverable = (
-            extra_paths and acceptance.reason_code == "undeclared_deliverable"
-        )
+        guard = _AcceptanceReviewGuard(task, messages, outcome, acceptance)
         response = await model.complete(messages)
         if response.upstream_session_id:
             self._teams.set_agent_session(
@@ -2742,10 +2832,7 @@ class TeamRuntime:
         # response already gets.
         try:
             resolution = _parse_acceptance_review_resolution(response.content)
-            if is_undeclared_deliverable and undeclared_retry_is_futile(
-                resolution, extra_paths
-            ):
-                _raise_undeclared_retry_error(extra_paths)
+            guard.refuse_if_futile(resolution)
             return resolution
         except ValueError:
             retry = await model.complete(
@@ -2765,10 +2852,7 @@ class TeamRuntime:
                     leader_agent.id, retry.upstream_session_id
                 )
             resolution = _parse_acceptance_review_resolution(retry.content)
-            if is_undeclared_deliverable and undeclared_retry_is_futile(
-                resolution, extra_paths
-            ):
-                _raise_undeclared_retry_error(extra_paths)
+            guard.refuse_if_futile(resolution)
             return resolution
 
     async def _recover_task_outcome(

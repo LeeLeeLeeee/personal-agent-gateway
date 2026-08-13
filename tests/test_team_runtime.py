@@ -1098,6 +1098,83 @@ async def test_a_stray_deliverable_on_an_unrelated_rejection_does_not_block_retr
 
 
 @pytest.mark.asyncio
+async def test_a_prepared_review_refuses_a_futile_retry_after_a_restart(tmp_path):
+    """The refusal has to survive a crash inside the review window.
+
+    A prepared acceptance_lead is resumed by _recover_open_operation, a third
+    invocation site: while it invoked the module-level parser, the rule was
+    skipped on exactly the runs that hiccuped -- the futile resolution was
+    applied, no repair operation existed, and the recovery attempt was spent,
+    with nothing in the ledger saying the rule had been bypassed.
+    """
+    setup = make_undeclared_deliverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(_retry_review("Declare every file you produced and resubmit."), []),
+        ModelResponse(
+            _retry_review("Delete the files outside the contract: wrong-check."),
+            [],
+        ),
+        ModelResponse("summary", []),
+    ]
+    setup.runtime._model_invoker = CrashAfterOperationStage(
+        TeamModelInvoker(setup.operations, sleep=_no_sleep),
+        "acceptance_lead",
+        1,
+        "prepared",
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    prepared = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert prepared is not None
+    assert (prepared.stage, prepared.status) == ("acceptance_lead", "prepared")
+    assert setup.lead_client.calls == 0
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:1"
+    ).status == "failed"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead_repair:1"
+    ).status == "applied"
+    # The refusal must not have consumed a recovery attempt here either.
+    assert setup.teams.get_task(setup.task.id).acceptance_recovery_attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_unparsable_review_on_an_undeclared_rejection_gets_the_parse_prompt(
+    tmp_path,
+):
+    """The two failures need different prompts, and only one of them is a parse
+    failure. undeclared_deliverable together with unparsable lead output is the
+    recorded shape of run 699c1915, and normalize_json_envelope only unwraps a
+    well-formed json fence, so the anti-prose instruction is doing real work.
+    """
+    setup = make_undeclared_deliverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse("Sure! Here is my review of the task.", []),
+        ModelResponse(
+            _retry_review("Delete the files outside the contract: wrong-check."),
+            [],
+        ),
+        ModelResponse("summary", []),
+    ]
+
+    completed = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    repair_prompt = setup.lead_client.messages[1][0]["content"]
+    assert "could not be parsed" in repair_prompt
+    assert "No explanations, no Markdown, no code fences." in repair_prompt
+    assert completed.status == "completed"
+
+
+@pytest.mark.asyncio
 async def test_lead_acceptance_retry_uses_separate_worker_operation(tmp_path):
     setup = make_recoverable_acceptance_runtime(tmp_path)
     setup.lead_client.responses = [
