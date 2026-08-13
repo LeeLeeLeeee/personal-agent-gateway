@@ -7623,3 +7623,296 @@ def test_empty_instruction_is_futile() -> None:
     )
 
     assert undeclared_retry_is_futile(resolution, extras)
+
+
+# --- Plan negotiation -------------------------------------------------------
+
+
+def _approve() -> ModelResponse:
+    return ModelResponse('{"decision":"approve","objections":[]}', [])
+
+
+def _object(task_ref: str, kind: str, detail: str = "겹친다") -> ModelResponse:
+    return ModelResponse(
+        json.dumps(
+            {
+                "decision": "object",
+                "objections": [
+                    {"kind": kind, "task_ref": task_ref, "detail": detail}
+                ],
+            }
+        ),
+        [],
+    )
+
+
+def _negotiation_plan_json(owner_agent_ids) -> str:
+    return json.dumps(
+        [
+            {
+                "plan_task_id": f"plan-{index}",
+                "title": f"Task {index}",
+                "description": f"Do part {index} of the goal.",
+                "owner_agent_id": owner_agent_id,
+                "required": True,
+                "depends_on_task_ids": [],
+                "acceptance": {
+                    "required_outputs": [],
+                    "required_verifications": ["worker-result"],
+                },
+            }
+            for index, owner_agent_id in enumerate(owner_agent_ids)
+        ]
+    )
+
+
+class NegotiationLeadModel:
+    """The leader's client.
+
+    ``prompts`` holds the planning prompts only. A run that reaches execution
+    ends with a synthesis call, so ``prompts[-1]`` taken over every prompt
+    would always be the synthesis one and never the replan these tests are
+    about; ``all_prompts`` keeps the unfiltered record.
+    """
+
+    def __init__(self, plan_json: str) -> None:
+        self._plan_json = plan_json
+        self.prompts: list[str] = []
+        self.all_prompts: list[str] = []
+        self.call_count = 0
+
+    async def complete_operation(self, messages, *, consumer_run_id):
+        text = "\n".join(str(message.get("content", "")) for message in messages)
+        self.all_prompts.append(text)
+        self.call_count += 1
+        if "JSON array of task objects" in text:
+            self.prompts.append(text)
+            return ModelResponse(self._plan_json, [])
+        return ModelResponse("Negotiated summary.", [])
+
+    async def complete(self, messages):
+        return await self.complete_operation(messages, consumer_run_id="direct")
+
+
+class NegotiationWorkerModel:
+    """One worker's client.
+
+    ``responses`` scripts its plan reviews only; the work itself is always
+    answered with the same accepted outcome. That keeps a test which scripts
+    three review rounds from also having to script the execution, and makes
+    ``execution_calls`` a count of work that actually reached the worker. An
+    exhausted script answers with prose, which is a parse failure -- never a
+    silent approval.
+    """
+
+    def __init__(self) -> None:
+        self.responses: list[ModelResponse] = []
+        self.execution_calls = 0
+        self.call_count = 0
+
+    async def complete_operation(self, messages, *, consumer_run_id):
+        self.call_count += 1
+        if _is_worker_prompt(messages):
+            self.execution_calls += 1
+            return ModelResponse(_outcome_json("done"), [])
+        if self.responses:
+            return self.responses.pop(0)
+        return ModelResponse("판단을 내리지 못했습니다.", [])
+
+    async def complete(self, messages):
+        return await self.complete_operation(messages, consumer_run_id="direct")
+
+
+class NegotiationSetup(SimpleNamespace):
+    @property
+    def worker_execution_calls(self) -> int:
+        return sum(client.execution_calls for client in self.worker_clients)
+
+
+def make_negotiation_runtime(tmp_path, *, plan_negotiation: bool):
+    """A real continuous plan_and_execute run with two workers.
+
+    Nothing about negotiation is pre-created: no plan revision and no approval
+    row. The production code is the only thing allowed to write them.
+    """
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader_persona = personas.create_persona("Lead", "lead", "d", [], [])
+    worker_personas = [
+        personas.create_persona("Worker one", "worker-one", "d", [], []),
+        personas.create_persona("Worker two", "worker-two", "d", [], []),
+    ]
+    run = teams.create_team_run(
+        "goal",
+        leader_persona.id,
+        [persona.id for persona in worker_personas],
+        "plan_and_execute",
+        2,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+        plan_negotiation=plan_negotiation,
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    teams.set_cycle_status(cycle.id, "running")
+    workers = [
+        agent for agent in teams.list_agents(run.id) if agent.role != "leader"
+    ]
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+    )
+    lead_client = NegotiationLeadModel(
+        _negotiation_plan_json([worker.id for worker in workers])
+    )
+    worker_clients = [NegotiationWorkerModel() for _ in workers]
+    by_agent_id = {
+        worker.id: client for worker, client in zip(workers, worker_clients)
+    }
+
+    def model_factory(agent, _cycle_id=None):
+        if agent.role == "leader":
+            return lead_client
+        return by_agent_id[agent.id]
+
+    runtime = TeamRuntime(
+        teams,
+        model_factory,
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(db, teams, operations),
+    )
+    return NegotiationSetup(
+        db=db,
+        teams=teams,
+        run=run,
+        cycle=cycle,
+        workers=workers,
+        operations=operations,
+        lead_client=lead_client,
+        worker_clients=worker_clients,
+        runtime=runtime,
+    )
+
+
+@pytest.mark.asyncio
+async def test_negotiation_off_keeps_the_current_path(tmp_path) -> None:
+    """The opt-in guarantee. A run without the flag must reach execution with no
+    revision row and no extra model call."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=False)
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert setup.teams.list_plan_revisions(setup.run.id) == []
+    assert run.status in {"completed", "completed_with_failures", "running"}
+
+
+@pytest.mark.asyncio
+async def test_unanimous_approval_lets_execution_start(tmp_path) -> None:
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_approve()]
+    setup.worker_clients[1].responses = [_approve()]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    (revision,) = setup.teams.list_plan_revisions(setup.run.id)
+    assert revision.status == "approved"
+    assert all(
+        task.status != "canceled"
+        for task in setup.teams.list_tasks(setup.run.id, setup.cycle.id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_task_starts_before_the_plan_is_approved(tmp_path) -> None:
+    """The whole point. If a worker objects, nothing should have run yet."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_object("T-01", "overlap")]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert setup.worker_execution_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_an_objection_supersedes_the_revision_and_replans(tmp_path) -> None:
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_object("T-01", "gap"), _approve()]
+    setup.worker_clients[1].responses = [_approve(), _approve()]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    revisions = setup.teams.list_plan_revisions(setup.run.id)
+    assert [r.revision for r in revisions] == [1, 2]
+    assert revisions[0].status == "superseded"
+    assert revisions[1].status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_the_objection_text_reaches_the_leader(tmp_path) -> None:
+    """A replan that cannot see the objection is a re-roll, not a revision."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [
+        _object("T-01", "gap", detail="아무도 마이그레이션을 담당하지 않는다"),
+        _approve(),
+    ]
+    setup.worker_clients[1].responses = [_approve(), _approve()]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    replan_prompt = setup.lead_client.prompts[-1]
+    assert "아무도 마이그레이션을 담당하지 않는다" in replan_prompt
+
+
+@pytest.mark.asyncio
+async def test_three_unapproved_revisions_end_the_run_without_executing(
+    tmp_path,
+) -> None:
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_object("T-01", "gap")] * 3
+    setup.worker_clients[1].responses = [_approve()] * 3
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed_with_failures"
+    assert run.error_message == "collaboration_plan_approval_incomplete"
+    assert setup.worker_execution_calls == 0
+    revisions = setup.teams.list_plan_revisions(setup.run.id)
+    assert [r.status for r in revisions] == [
+        "superseded",
+        "superseded",
+        "abandoned",
+    ]
+    assert all(
+        task.status == "canceled"
+        for task in setup.teams.list_tasks(setup.run.id, setup.cycle.id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unparsable_review_is_not_counted_as_approval(tmp_path) -> None:
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [
+        ModelResponse("괜찮아 보입니다.", []),
+        ModelResponse("여전히 괜찮습니다.", []),
+    ]
+    setup.worker_clients[1].responses = [_approve()]
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed_with_failures"
+    assert setup.worker_execution_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_terminal_approver_cannot_approve(tmp_path) -> None:
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.teams.set_agent_status(setup.workers[1].id, "failed")
+    setup.worker_clients[0].responses = [_approve()]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    (revision,) = setup.teams.list_plan_revisions(setup.run.id)
+    assert setup.workers[1].id not in revision.required_approver_agent_ids
+    assert revision.status == "approved"

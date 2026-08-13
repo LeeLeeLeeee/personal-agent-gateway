@@ -22,6 +22,7 @@ REPAIR_STAGE: dict[OperationStage, OperationStage] = {
     "acceptance_worker": "acceptance_worker_repair",
     "cycle_synthesis": "cycle_synthesis_repair",
     "cycle_contest": "cycle_contest_repair",
+    "cycle_plan_review": "cycle_plan_review_repair",
 }
 
 

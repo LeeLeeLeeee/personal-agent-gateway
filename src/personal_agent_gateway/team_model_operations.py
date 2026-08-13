@@ -11,6 +11,7 @@ from typing import Literal
 from uuid import uuid4
 
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.team_plan_negotiation import OBJECTION_KINDS
 
 OperationStage = Literal[
     "cycle_planning",
@@ -29,6 +30,13 @@ OperationStage = Literal[
     "cycle_synthesis_repair",
     "cycle_contest",
     "cycle_contest_repair",
+    # Named cycle_* like every other stage that owns no task: the plan under
+    # review belongs to the cycle, not to one assignment. The prefix is load
+    # bearing -- team_provider_recovery groups every non-cycle stage as a
+    # Worker or Lead stage and both groups validate against a task the
+    # reviewer does not have.
+    "cycle_plan_review",
+    "cycle_plan_review_repair",
 ]
 
 OperationStatus = Literal[
@@ -371,6 +379,59 @@ class TeamModelOperationService:
             reason_code=reason_code,
         )
 
+    def mark_applied(
+        self,
+        operation_id: str,
+        expected_version: int,
+        *,
+        effect_type: str,
+        effect_ref: dict[str, object],
+    ) -> TeamModelOperation:
+        """Close a completed operation whose effect is written by the caller.
+
+        Every other stage is closed by TeamModelEffectService, which owns the
+        transaction that writes the effect and the applied row together. A plan
+        review has no row in that service's vocabulary, and leaving it
+        `completed` would leave the cycle holding an open operation -- the next
+        reviewer's reserve would be refused. Applying first and recording the
+        review after is deliberate: a crash in between re-reads the stored
+        result on resume instead of re-asking the model.
+        """
+        timestamp = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            operation = self._get(connection, operation_id)
+            if operation.status == "applied":
+                if operation.effect_type != effect_type:
+                    raise StaleOperation(
+                        "Operation was applied with a different effect"
+                    )
+                return operation
+            cursor = connection.execute(
+                """
+                update team_model_operations
+                set status = 'applied', version = version + 1, effect_type = ?,
+                    effect_ref_json = ?, applied_at = ?, updated_at = ?
+                where id = ? and status = 'completed' and version = ?
+                """,
+                (
+                    effect_type,
+                    json.dumps(
+                        effect_ref,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    timestamp,
+                    timestamp,
+                    operation_id,
+                    expected_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise StaleOperation("Operation changed before effect application")
+            return self._get(connection, operation_id)
+
     def get(self, operation_id: str) -> TeamModelOperation:
         with self._db.connection() as connection:
             return self._get(connection, operation_id)
@@ -637,7 +698,44 @@ def _built_in_result_validators() -> dict[
         "cycle_add_work": {"task_plan": _valid_task_plan},
         "cycle_contest": {"contest_verdict": _valid_contest_verdict},
         "cycle_contest_repair": {"contest_verdict": _valid_contest_verdict},
+        "cycle_plan_review": {"plan_review": _valid_plan_review},
+        "cycle_plan_review_repair": {"plan_review": _valid_plan_review},
     }
+
+
+def _valid_plan_review(payload: dict[str, object]) -> bool:
+    """Re-check the reviewer's verdict on the way into the ledger.
+
+    parse_plan_review already refused anything the leader cannot replan from,
+    but the persisted row is what a restart replays, so the shape is checked
+    again here rather than trusted from the caller.
+    """
+    if set(payload) != {"decision", "objections"}:
+        return False
+    decision = payload["decision"]
+    # isinstance first: a JSON list or dict is unhashable and `in` on a set
+    # raises TypeError instead of returning False.
+    if not isinstance(decision, str) or decision not in {"approve", "object"}:
+        return False
+    objections = payload["objections"]
+    if not isinstance(objections, list):
+        return False
+    for objection in objections:
+        if not isinstance(objection, dict) or set(objection) != {
+            "kind",
+            "task_ref",
+            "detail",
+        }:
+            return False
+        kind = objection["kind"]
+        if not isinstance(kind, str) or kind not in OBJECTION_KINDS:
+            return False
+        if not all(
+            isinstance(objection[field], str) and objection[field].strip()
+            for field in ("task_ref", "detail")
+        ):
+            return False
+    return bool(objections) == (decision == "object")
 
 
 def _valid_task_plan(payload: dict[str, object]) -> bool:

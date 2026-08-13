@@ -53,6 +53,13 @@ from personal_agent_gateway.team_model_operations import (
     TeamModelOperationService,
     ValidatedOperationResult,
 )
+from personal_agent_gateway.team_plan_negotiation import (
+    PlanReview,
+    next_revision,
+    parse_plan_review,
+    task_label,
+    verdict_for,
+)
 from personal_agent_gateway.team_provider_recovery import (
     ProviderOperationWaiting,
     TeamProviderRecovery,
@@ -76,6 +83,7 @@ from personal_agent_gateway.teams import (
     TeamAgent,
     TeamDecisionRequest,
     TeamMessage,
+    TeamPlanRevision,
     TeamRun,
     TeamRunService,
     TeamTask,
@@ -294,6 +302,29 @@ If the objection is that a finished task's acceptance criteria were too narrow,
 do not try to rewrite that task: create a follow-up task carrying the criteria
 that should have been there. A settled task's contract cannot be revised."""
 
+PLAN_REVIEW_PROMPT = """You are {agent_label} in a personal-agent-gateway Team Run.
+
+The leader proposed the task plan below. Review it before any work starts.
+You own the tasks marked YOURS.
+
+Goal: {goal}
+
+Plan:
+{plan_block}
+
+Report only these four kinds of problem:
+- overlap: two tasks would do the same work or write the same file
+- gap: the goal needs work that no task covers
+- dependency_conflict: a task assumes something another task has not produced yet
+- scope: a task assigned to you is not something you can carry out
+
+Do not object to wording, ordering, or style. If the plan is workable, approve it.
+
+The final response must contain only this JSON object and no prose or code fences:
+{{"decision":"approve|object","objections":[{{"kind":"overlap|gap|dependency_conflict|scope","task_ref":"T-01","detail":"what is wrong"}}]}}
+Use "objections":[] when you approve. Every objection needs a task_ref from the
+plan above and a concrete detail the leader can act on."""
+
 AGENT_REINVOCATION_CAP = 3
 _SESSION_UNSET = object()
 _PLANNING_REPAIR_INSTRUCTION = (
@@ -304,6 +335,12 @@ _PLANNING_REPAIR_INSTRUCTION = (
 _WORKER_REPAIR_INSTRUCTION = (
     "Return ONLY the required TaskOutcome JSON object or "
     "the exact needs_info JSON block."
+)
+_PLAN_REVIEW_REPAIR_INSTRUCTION = (
+    "The previous response was invalid. Return ONLY the JSON object with the "
+    'keys "decision" and "objections". Every objection needs exactly "kind", '
+    '"task_ref" and "detail", and task_ref must be one of the T-xx labels in '
+    "the plan above. No prose, no code fences."
 )
 
 
@@ -1665,6 +1702,16 @@ class TeamRuntime:
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
                 return run
 
+            # Opt-in. A run without the flag reaches execution exactly as it did
+            # before, with no revision row and no extra model call. The
+            # cycle_id guard is deliberate: the cycle-less planning branch
+            # bypasses the operation ledger, so negotiation there would not
+            # survive a restart.
+            if run.plan_negotiation_enabled and cycle_id is not None:
+                if not await self._negotiate_plan(run, leader, workers, cycle_id):
+                    return self._teams.get_team_run(run.id)
+                run = self._teams.get_team_run(run.id)
+
             run = self._teams.set_run_status(run.id, "running")
             await self._publish({"type": "team.run.executing", "team_run_id": run.id})
             return await self._execute_and_synthesize(run, leader, workers, cycle_id)
@@ -1682,12 +1729,15 @@ class TeamRuntime:
             await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
             return run
 
-    async def _plan(
-        self, run: TeamRun, leader: TeamAgent, cycle_id: str | None = None
-    ) -> list[dict[str, object]] | UserDecisionResolution:
-        leader_agent = self._teams.get_agent(leader.id)
-        members = _find_workers(self._teams.list_agents(run.id))
-        member_ids = {member.id for member in members}
+    def _planning_prompt(
+        self, run: TeamRun, leader_agent: TeamAgent, cycle_id: str | None
+    ) -> str:
+        """The prompt the leader plans from.
+
+        Extracted from _plan so that a replan after an objection asks the same
+        question with the objections appended, rather than a second prompt that
+        would drift away from this one.
+        """
         goal_context = self._goal_context(run, cycle_id)
         prompt = _space_block(
             run,
@@ -1702,7 +1752,9 @@ class TeamRuntime:
         ) + PLANNING_PROMPT.format(
             goal=goal_context,
             persona_snapshot_json=json.dumps(leader_agent.persona_snapshot, ensure_ascii=False),
-            team_roster_json=_assignment_roster_json(members),
+            team_roster_json=_assignment_roster_json(
+                _find_workers(self._teams.list_agents(run.id))
+            ),
         )
         if cycle_id is not None:
             prompt += _cycle_input_artifacts_block(
@@ -1716,6 +1768,30 @@ class TeamRuntime:
                 "\n\nResolved user decisions for planning:\n"
                 f"{decision_context}\nDo not ask these resolved questions again."
             )
+        return prompt
+
+    async def _apply_plan_operation(
+        self, run: TeamRun, operation: TeamModelOperation
+    ) -> list[TeamTask]:
+        """Turn a completed planning operation into tasks and announce them."""
+        created_tasks = self._model_effects.apply_plan(operation.id)
+        for created in created_tasks:
+            await self._publish(
+                {
+                    "type": "team.task.created",
+                    "team_run_id": run.id,
+                    "task_id": created.id,
+                }
+            )
+        return created_tasks
+
+    async def _plan(
+        self, run: TeamRun, leader: TeamAgent, cycle_id: str | None = None
+    ) -> list[dict[str, object]] | UserDecisionResolution:
+        leader_agent = self._teams.get_agent(leader.id)
+        members = _find_workers(self._teams.list_agents(run.id))
+        member_ids = {member.id for member in members}
+        prompt = self._planning_prompt(run, leader_agent, cycle_id)
         messages: list[dict[str, object]] = [{"role": "user", "content": prompt}]
         if cycle_id is not None:
             operation = await self._invoke_plan_with_repair(
@@ -1725,15 +1801,7 @@ class TeamRuntime:
                 "cycle_planning",
                 messages,
             )
-            created_tasks = self._model_effects.apply_plan(operation.id)
-            for created in created_tasks:
-                await self._publish(
-                    {
-                        "type": "team.task.created",
-                        "team_run_id": run.id,
-                        "task_id": created.id,
-                    }
-                )
+            await self._apply_plan_operation(run, operation)
             return _operation_task_specs(operation)
 
         model = self._model(leader_agent, cycle_id)
@@ -1818,6 +1886,275 @@ class TeamRuntime:
             validate_plan,
             repair_messages=_planning_repair_messages(messages),
             repair_ordinal=1 if stage == "cycle_planning" else 2,
+        )
+
+    async def _negotiate_plan(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        workers: list[TeamAgent],
+        cycle_id: str,
+    ) -> bool:
+        """Hold the plan until its owners agree, or end the run without executing.
+
+        Returns True when execution may proceed. Returns False only after
+        ``_abandon_negotiation`` has already settled the run, so the caller
+        returns immediately instead of deciding the terminal status a second
+        time.
+        """
+        while True:
+            tasks = _plan_under_review(
+                self._teams.list_tasks(run.id, cycle_id)
+            )
+            # Resume continues the open revision. Creating a second one here is
+            # how a restart would refresh the budget.
+            revision = self._teams.get_active_plan_revision(run.id, cycle_id)
+            if revision is None:
+                approvers = [
+                    worker.id
+                    for worker in _find_workers(self._teams.list_agents(run.id))
+                    if worker.status not in {"failed", "canceled"}
+                ]
+                if not approvers:
+                    return True
+                revision = self._teams.create_plan_revision(
+                    run.id, cycle_id, [task.id for task in tasks], approvers
+                )
+            if revision is None:
+                await self._abandon_negotiation(run, cycle_id, tasks)
+                return False
+
+            labels = {_plan_label(task): task for task in tasks}
+            self._teams.append_message(
+                run.id,
+                leader.id,
+                None,
+                "plan_proposed",
+                f"Plan revision {revision.revision} with {len(tasks)} tasks.",
+                {"revision": revision.revision, "labels": sorted(labels)},
+                cycle_id=cycle_id,
+            )
+
+            reviewed = self._teams.plan_reviews(revision.id)
+            for index, agent_id in enumerate(revision.required_approver_agent_ids):
+                if agent_id in reviewed:
+                    continue  # already answered; re-asking can flip an approval
+                review = await self._review_plan(
+                    run, revision, agent_id, index, tasks, frozenset(labels), cycle_id
+                )
+                if review is None:
+                    break  # unparsable after repair: not consent, stop asking
+                self._teams.record_plan_review(
+                    revision.id,
+                    agent_id,
+                    review.decision,
+                    [asdict(objection) for objection in review.objections],
+                )
+                self._teams.append_message(
+                    run.id,
+                    agent_id,
+                    leader.id,
+                    "plan_reviewed",
+                    review.decision,
+                    {
+                        "revision": revision.revision,
+                        "objections": [asdict(o) for o in review.objections],
+                    },
+                    cycle_id=cycle_id,
+                )
+                if review.decision == "object":
+                    break  # the revision is already dead
+
+            verdict = verdict_for(
+                revision.required_approver_agent_ids,
+                self._teams.plan_reviews(revision.id),
+            )
+            if verdict == "approved":
+                self._teams.set_plan_revision_status(revision.id, "approved")
+                return True
+
+            # "waiting" reaches here only when a review would not parse, which
+            # is not consent -- so it is treated the same as an objection.
+            if next_revision(revision.revision) is None:
+                # Out of budget. This revision is abandoned rather than
+                # superseded: nothing is going to replace it. The same rule
+                # create_plan_revision enforces is asked here, one step
+                # earlier, so the run does not spend a replan it cannot use.
+                await self._abandon_negotiation(run, cycle_id, tasks)
+                return False
+            self._teams.set_plan_revision_status(revision.id, "superseded")
+            for task in tasks:
+                if task.status == "pending":
+                    self._teams.set_task_status(task.id, "canceled")
+            await self._replan_after_objections(run, leader, revision, cycle_id)
+
+    async def _review_plan(
+        self,
+        run: TeamRun,
+        revision: TeamPlanRevision,
+        agent_id: str,
+        approver_index: int,
+        tasks: list[TeamTask],
+        labels: frozenset[str],
+        cycle_id: str,
+    ) -> PlanReview | None:
+        """Ask one owner to review the plan. None means it could not be read.
+
+        The operation is marked applied before the review row is written, not
+        after: a crash in between then replays the stored verdict on resume
+        instead of asking the model a second question it already answered.
+        """
+        agent = self._teams.get_agent(agent_id)
+        messages = self._plan_review_messages(run, agent, tasks, cycle_id)
+        spec = _operation_spec(
+            run,
+            cycle_id,
+            agent,
+            "cycle_plan_review",
+            _plan_review_ordinal(revision.revision, approver_index),
+            messages,
+        )
+
+        def parse(response: ModelResponse) -> ValidatedOperationResult:
+            return _validated_plan_review(response, labels)
+
+        try:
+            operation = await self._invoke_with_repair(
+                spec,
+                agent,
+                messages,
+                parse,
+                repair_messages=_plan_review_repair_messages(messages),
+            )
+        except InvalidOperationResult:
+            return None
+        self._operations.mark_applied(
+            operation.id,
+            operation.version,
+            effect_type="plan_review",
+            effect_ref={"plan_revision_id": revision.id, "agent_id": agent_id},
+        )
+        return _operation_plan_review(operation)
+
+    def _plan_review_messages(
+        self,
+        run: TeamRun,
+        agent: TeamAgent,
+        tasks: list[TeamTask],
+        cycle_id: str,
+    ) -> list[dict[str, object]]:
+        names = {
+            member.id: member.name
+            for member in self._teams.list_agents(run.id)
+        }
+        plan_block = "\n".join(
+            f"{_plan_label(task)} "
+            f"[{_plan_owner_label(task, agent.id, names)}] "
+            f"{task.title} — {task.description}"
+            for task in tasks
+        )
+        prompt = PLAN_REVIEW_PROMPT.format(
+            agent_label=agent.name,
+            goal=self._goal_context(run, cycle_id),
+            plan_block=plan_block,
+        )
+        return [{"role": "user", "content": prompt}]
+
+    async def _replan_after_objections(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        revision: TeamPlanRevision,
+        cycle_id: str,
+    ) -> None:
+        """Plan again, with the reasons the last plan was refused."""
+        leader_agent = self._teams.get_agent(leader.id)
+        prompt = (
+            self._planning_prompt(run, leader_agent, cycle_id)
+            + self._objection_block(revision)
+        )
+        messages: list[dict[str, object]] = [{"role": "user", "content": prompt}]
+        member_ids = {
+            member.id for member in _find_workers(self._teams.list_agents(run.id))
+        }
+
+        def validate_plan(response: ModelResponse) -> ValidatedOperationResult:
+            return _validated_task_plan(
+                response,
+                allowed_owner_agent_ids=member_ids,
+            )
+
+        ordinal, repair_ordinal = _replan_ordinals(revision.revision)
+        spec = _operation_spec(
+            run,
+            cycle_id,
+            leader_agent,
+            "cycle_planning",
+            ordinal,
+            messages,
+        )
+        operation = await self._invoke_with_repair(
+            spec,
+            leader_agent,
+            messages,
+            validate_plan,
+            repair_messages=_planning_repair_messages(messages),
+            repair_ordinal=repair_ordinal,
+        )
+        await self._apply_plan_operation(run, operation)
+
+    def _objection_block(self, revision: TeamPlanRevision) -> str:
+        names = {
+            member.id: member.name
+            for member in self._teams.list_agents(revision.team_run_id)
+        }
+        lines = [
+            f"- {objection['task_ref']} ({objection['kind']}), raised by "
+            f"{names.get(agent_id, agent_id)}: {objection['detail']}"
+            for agent_id, objections in (
+                self._teams.plan_review_objections(revision.id).items()
+            )
+            for objection in objections
+        ]
+        if not lines:
+            # A revision can also die because a reviewer's answer could not be
+            # read. Saying so beats replanning with no explanation at all.
+            lines = [
+                "- One owner could not return a usable review of the plan."
+            ]
+        return (
+            f"\n\nRevision {revision.revision} of this plan was refused by the "
+            "agents who own it. Produce a new complete plan that resolves every "
+            "point below. Do not simply restate the previous plan.\n"
+            + "\n".join(lines)
+        )
+
+    async def _abandon_negotiation(
+        self,
+        run: TeamRun,
+        cycle_id: str,
+        tasks: list[TeamTask],
+    ) -> None:
+        """End the run without executing an unapproved plan.
+
+        The status is set, not derived: cycle_execution_disposition would call a
+        run whose required tasks are canceled `failed`, and the design requires
+        completed_with_failures with a reason the operator can act on.
+        """
+        for task in tasks:
+            if task.status == "pending":
+                self._teams.set_task_status(task.id, "canceled")
+        active = self._teams.get_active_plan_revision(run.id, cycle_id)
+        if active is not None:
+            self._teams.set_plan_revision_status(active.id, "abandoned")
+        self._teams.set_cycle_status(cycle_id, "completed_with_failures")
+        self._teams.set_run_status(
+            run.id,
+            "completed_with_failures",
+            error_message="collaboration_plan_approval_incomplete",
+        )
+        await self._publish(
+            {"type": "team.run.completed", "team_run_id": run.id}
         )
 
     async def _execute(
@@ -4000,6 +4337,57 @@ def _find_workers(agents: list[TeamAgent]) -> list[TeamAgent]:
     return [agent for agent in agents if agent.role != "leader"]
 
 
+def _plan_under_review(tasks: list[TeamTask]) -> list[TeamTask]:
+    """The plan a reviewer is shown.
+
+    A replan leaves the superseded revision's tasks behind as canceled rows.
+    They are not part of the plan any more, so they are neither shown to a
+    reviewer nor listed on the next revision.
+    """
+    return [task for task in tasks if task.status != "canceled"]
+
+
+def _plan_label(task: TeamTask) -> str:
+    return task_label(task.plan_ordinal)
+
+
+def _plan_owner_label(
+    task: TeamTask, reviewer_id: str, names: dict[str, str]
+) -> str:
+    if task.owner_agent_id == reviewer_id:
+        return "YOURS"
+    if task.owner_agent_id is None:
+        return "unassigned"
+    return names.get(task.owner_agent_id, task.owner_agent_id)
+
+
+# One ledger key per reviewer per revision. The ledger refuses a second
+# reservation under a key already bound to another request, and the only part
+# of the key a review can vary is the ordinal: task_id must name a real task
+# row, which a revision is not. The revision is the high digits and the
+# reviewer's position in the revision's stored approver list is the low ones,
+# so the number is the same after a restart.
+_PLAN_REVIEW_ORDINAL_STRIDE = 100
+
+
+def _plan_review_ordinal(revision: int, approver_index: int) -> int:
+    if not 0 <= approver_index < _PLAN_REVIEW_ORDINAL_STRIDE:
+        raise ValueError("too many plan approvers to key a review operation")
+    return revision * _PLAN_REVIEW_ORDINAL_STRIDE + approver_index
+
+
+def _replan_ordinals(superseded_revision: int) -> tuple[int, int]:
+    """Where a replan sits in the cycle_planning ordinal space.
+
+    A replan has to run as cycle_planning because that is the only stage the
+    effect service will apply a plan from, so it needs ordinals that cannot
+    collide with the first plan (cycle_planning 0, cycle_planning_repair 1) or
+    with add-work's repair (cycle_planning_repair 2).
+    """
+    base = 10 * (superseded_revision + 1)
+    return base, base + 1
+
+
 def _assignment_roster_json(members: list[TeamAgent]) -> str:
     return json.dumps(
         [
@@ -4583,6 +4971,54 @@ def _persisted_acceptance_value(task: TeamTask) -> AcceptanceResult:
         raise OperationConflict(
             "Persisted acceptance result is invalid"
         ) from exc
+
+
+def _validated_plan_review(
+    response: ModelResponse,
+    allowed_labels: frozenset[str],
+) -> ValidatedOperationResult:
+    review = parse_plan_review(response.content, allowed_labels)
+    return ValidatedOperationResult(
+        "plan_review",
+        {
+            "decision": review.decision,
+            "objections": [asdict(objection) for objection in review.objections],
+        },
+    )
+
+
+def _operation_plan_review(operation: TeamModelOperation) -> PlanReview:
+    stored = operation.result_json
+    if (
+        not isinstance(stored, dict)
+        or stored.get("kind") != "plan_review"
+        or not isinstance(stored.get("payload"), dict)
+    ):
+        raise OperationConflict("Completed plan review is invalid")
+    payload = stored["payload"]
+    # Re-parsed rather than rebuilt field by field: the stored payload is the
+    # reviewer's answer, and parse_plan_review is the only thing that decides
+    # what a usable answer is. Every label in it was already checked, so no
+    # label set is needed to read it back.
+    return parse_plan_review(
+        json.dumps(payload, ensure_ascii=False),
+        frozenset(
+            objection["task_ref"] for objection in payload["objections"]
+        ),
+    )
+
+
+def _plan_review_repair_messages(
+    messages: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "role": "user",
+            "content": (
+                f"{messages[0]['content']}\n{_PLAN_REVIEW_REPAIR_INSTRUCTION}"
+            ),
+        }
+    ]
 
 
 def _operation_task_specs(
