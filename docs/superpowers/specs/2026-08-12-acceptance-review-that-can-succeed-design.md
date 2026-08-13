@@ -1,11 +1,21 @@
 # Stopping a task from dying on a review that could never work
 
-Run `699c1915` lost tasks 8 and 9 to the same sequence. Each worker wrote files
-beyond its contract, declared all of them honestly, and was rejected with
+Run `699c1915` lost tasks 8 and 9 after each worker wrote files beyond its
+contract, declared all of them honestly, and was rejected with
 `undeclared_deliverable`. The leader reviewed, chose `retry_worker`, and told the
-worker to declare everything. The contract still listed the original four, so the
-retry produced the identical rejection, the recovery cap ran out, and the run
-reported `Required task failed`.
+worker to declare everything — which cannot clear that rejection, because the
+contract still listed the original four.
+
+**Correction, from the database rather than from inference.** Those two tasks are
+recorded at `acceptance_recovery_attempts = 1` with
+`error_message = "invalid_structured_output"`. They did **not** run out of recovery
+attempts. What killed them was the leader's response failing to parse, which is a
+different defect and was fixed separately in
+`2026-08-11-team-run-structured-output-resilience-design.md`. The futile-retry
+sequence is real and observable in their acceptance results, but it is a
+plausible future failure rather than the cause of this incident. An earlier draft
+of this document said otherwise, and Part 3 below was scoped on that mistaken
+reading.
 
 This corrects a diagnosis as much as it fixes a defect. The findings document
 (`2026-08-11-team-run-completeness-findings.md`, Finding 1) recorded that
@@ -98,7 +108,40 @@ operator through the `on_exhausted` hook already wired at that call site.
 It cannot live in `_valid_acceptance_resolution`: that validator receives only the
 leader's own JSON and has no access to the rejection or the extra paths.
 
-### Part 3 — ask instead of dying when the attempts run out
+### Part 3 — NOT IMPLEMENTED: ask instead of dying when the attempts run out
+
+**Status: designed, attempted, reverted.** What follows is the design as written;
+the implementation was withdrawn and the reason is worth more than the code would
+have been.
+
+Reopening an acceptance round after the operator answers is **not possible on the
+path real runs take** without a schema change. `acceptance_recovery_attempts` is
+simultaneously the recovery *budget* and the operation *address*: the routing gate
+in `team_model_effects.py` only continues while `attempts < CAP`, the attempt's
+operation key is `{cycle}:{task}:acceptance_lead:{attempts + 1}`, and applying the
+result requires `attempts + 1 == stage_ordinal`. Lower the counter and the key is
+one already spent and applied; leave it and the budget check refuses. No value
+satisfies both, so this is not a matter of picking a better decrement.
+
+A working implementation landed only on the cycle-less legacy path, which is dead
+in this deployment: every task in the database carries a `cycle_id`, all runs are
+`continuous`, the only run-creation endpoint hardcodes that, and the two endpoints
+that would drive a cycle-less run refuse continuous runs. It was reverted rather
+than kept as a reference.
+
+Worse, the partial implementation made the live path *less* safe than leaving it
+alone. Because the escalation skipped `apply_worker_outcome`, the acceptance
+operation stayed `completed` — an open status — so the cycle could never advance,
+and because the cap guard's condition was unchanged, every answer produced another
+identical question. A permanent pause that accumulates duplicate requests is worse
+than the clean failure it replaced.
+
+Anyone picking this up faces a real choice: separate the budget from the address
+(a schema change), or change the cap comparisons for every rejection rather than
+this one. Both are larger than this design assumed. Given that the incident which
+motivated the work did not actually reach the cap, neither is urgent.
+
+The design as originally written:
 
 Today, when `attempts >= ACCEPTANCE_RECOVERY_CAP`, `_run_cycle_acceptance` returns
 and the task fails. That is where tasks 8 and 9 died, and where the run learned
@@ -167,11 +210,11 @@ untouched.
   extras is refused and repaired once; one that names them all is accepted.
 - A `revise_acceptance` resolution widening the contract leads to an accepted
   retry end to end through the runtime, not just through the gate.
-- Reaching the cap on `undeclared_deliverable` with the same extras publishes a
-  decision request naming them and leaves the run `waiting_for_user` with the task
-  still `in_progress`, rather than failing it. Reaching the cap on any other
-  rejection still fails the task as it does today — the change must not swallow
-  every acceptance failure into a question.
-- Answering that request resumes into an acceptance attempt that can succeed.
+- ~~Reaching the cap publishes a decision request~~ — Part 3 was not
+  implemented; see its section for why. The cap continues to fail the task, as it
+  did before this work.
+- ~~Answering that request resumes into an acceptance attempt that can
+  succeed.~~ — this is the requirement that proved impossible on the live path
+  without a schema change, and it is what caused Part 3 to be withdrawn.
 - A `retry_worker` that names the extras still works — the fix must not block the
   legitimate cleanup case, which is the reason the set-equality rule exists.
