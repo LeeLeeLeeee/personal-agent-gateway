@@ -104,14 +104,20 @@ def run_build_evidence(
 ) -> dict[str, object]:
     """The numbers worth putting at the top of a run.
 
-    Three of them say how much of the run's verdict rests on something other than
-    what the gate looked at, and they are not the same thing:
-    ``worker_asserted_only_count`` is the run's word-of-the-worker share, while
-    ``unverified_task_count`` counts tasks where neither the gate nor the worker
-    confirmed something the contract required -- a third category, not a heavier
-    version of the second. It is also the only one of the two that moves when a
-    check goes unrun, because ``attested_only`` is true only for a task with zero
-    runnable checks and so reads 0 for a run where every check was a file read.
+    They describe different things about the same tasks and deliberately overlap;
+    they are not disjoint buckets. ``worker_asserted_only_count`` counts tasks where
+    the gate ran no check at all (``attested_only`` is ``verified_count == 0``),
+    which is not the same as the worker vouching for them. ``unverified_task_count``
+    counts tasks where the worker said it could not confirm something the contract
+    required -- a third state, not a heavier version of the second.
+
+    ``unverified_task_count`` has a floor worth knowing before reading a 0 as
+    reassurance: the gate only ever consults a worker's report for a required
+    verification that carries no ``check``. For a contract where every required
+    verification carries one, a worker could report ``checked: false`` on all of
+    them and this count would still read 0, because ``evaluate`` decides those from
+    the file itself and never looks at the report. So 0 means "nothing the worker
+    was asked to self-report went unconfirmed", not "nothing went unchecked".
 
     Takes the already-computed per-task reports rather than the tasks: every
     caller renders those too, and recomputing them here doubled the filesystem

@@ -923,7 +923,7 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open task Draft library" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Draft library" });
 
-    expect(within(dialog).getByText("ATTESTED ONLY")).toBeInTheDocument();
+    expect(within(dialog).getByText("NO GATE CHECK")).toBeInTheDocument();
   });
 
   it("does not mark an attested badge on a task with a server-run check", async () => {
@@ -962,7 +962,7 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open task Draft library" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Draft library" });
 
-    expect(within(dialog).queryByText("ATTESTED ONLY")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("NO GATE CHECK")).not.toBeInTheDocument();
   });
 
   it("shows acceptance reviews only in the selected task details", async () => {
@@ -1525,8 +1525,8 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
     // "통과" would read as "acceptance was rigorous". Every check kind is a file
     // read, so the label has to say that and name its own scope.
-    expect(screen.getByText(/태스크 3개 중 파일 내용만 확인 1/)).toBeInTheDocument();
-    expect(screen.getByText(/워커 신고만 2/)).toBeInTheDocument();
+    expect(screen.getByText(/태스크 3개 중 게이트가 파일 확인 1/)).toBeInTheDocument();
+    expect(screen.getByText(/게이트 미검사 2/)).toBeInTheDocument();
     expect(screen.getByText(/검사는 모두 파일 읽기/)).toBeInTheDocument();
     expect(screen.queryByText(/워커 신고만으로 통과/)).not.toBeInTheDocument();
     expect(screen.getByText(/없는 파일 1/)).toBeInTheDocument();
@@ -1740,7 +1740,7 @@ describe("TeamRunDetail", () => {
 
     expect(screen.getByText(/기각 · task 7 covers it/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
-    expect(screen.getByText(/태스크 13개 중 파일 내용만 확인 0/)).toBeInTheDocument();
+    expect(screen.getByText(/태스크 13개 중 게이트가 파일 확인 0/)).toBeInTheDocument();
     expect(screen.getByText(/없는 파일 2/)).toBeInTheDocument();
   });
 
@@ -1778,5 +1778,57 @@ describe("TeamRunDetail", () => {
     expect(within(dialog).getByText(/미확인/)).toBeInTheDocument();
     expect(within(dialog).getByText(/파일 내용 확인/)).toBeInTheDocument();
     expect(within(dialog).queryByText("검증됨")).not.toBeInTheDocument();
+  });
+
+  it("does not call an unchecked verification MISSING in the acceptance list", async () => {
+    // The same dialog renders verifications twice: BuildEvidence from the gate's
+    // recorded evidence, and this list from the contract. The second one fell back
+    // to `status || "missing"`, so an unchecked verification -- whose reported
+    // status is null by design -- printed MISSING, which until now meant the one
+    // thing it is not: a verification the worker never reported at all. The task-4
+    // test above cannot catch this, because its fixture task carries no
+    // `acceptance` key and this list renders nothing without one.
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "G", status: "completed", run_mode: "plan_and_execute" },
+          agents: [], messages: [],
+          tasks: [{
+            id: "t1", title: "Build the screens", status: "completed",
+            acceptance: {
+              required_outputs: ["a.tsx"],
+              required_verifications: [{ name: "typecheck", check: null }]
+            },
+            outcome: {
+              verifications: [{
+                name: "typecheck", checked: false, status: null,
+                evidence: "npx --no-install tsc: typescript-unavailable"
+              }]
+            },
+            acceptance_result: {
+              evidence: {
+                unverified: ["typecheck"],
+                verifications: {
+                  typecheck: {
+                    mode: "unverified", status: "unknown",
+                    evidence: "npx --no-install tsc: typescript-unavailable"
+                  }
+                }
+              }
+            }
+          }]
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Open task Build the screens" }));
+    const dialog = screen.getByRole("dialog", { name: "Task details: Build the screens" });
+
+    expect(within(dialog).queryByText("MISSING")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("UNKNOWN")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/npx --no-install tsc: typescript-unavailable/)
+    ).toBeInTheDocument();
   });
 });

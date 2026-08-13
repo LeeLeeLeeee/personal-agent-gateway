@@ -240,8 +240,12 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
             <div className="mono team-task-dialog-label">
               {task.required === false ? "OPTIONAL TASK" : "REQUIRED TASK"}
             </div>
+            {/* attested_only is verified_count == 0 -- the gate ran no check.
+                It is NOT "the worker vouched for it": a task whose only required
+                verification came back checked: false sets this flag while the
+                worker vouched for nothing. The badge names what the gate did. */}
             {acceptanceResult.evidence?.attested_only ? (
-              <span className="mono team-task-attested">ATTESTED ONLY</span>
+              <span className="mono team-task-attested">NO GATE CHECK</span>
             ) : null}
             {reasonCode ? (
               <div className="team-task-dialog-copy">
@@ -267,7 +271,16 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
                     const serverEntry = verificationEvidence[name];
                     const mode = serverEntry?.mode;
                     const verified = mode === "verified";
-                    const status = verified ? serverEntry.status : verification?.status;
+                    // An unchecked verification must read the gate's recorded
+                    // status, not the worker's null one: `status || "missing"`
+                    // below would print MISSING, which until now meant the one
+                    // thing this is not -- a verification the worker never
+                    // reported at all. Collapsing those two is the confusion
+                    // this whole feature exists to end.
+                    const status =
+                      verified || mode === "unverified"
+                        ? serverEntry.status
+                        : verification?.status;
                     const evidenceText = verified ? serverEntry.evidence : verification?.evidence;
                     return (
                       <li key={name}>
