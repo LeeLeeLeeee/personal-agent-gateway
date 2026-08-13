@@ -724,7 +724,11 @@ the panel must not render `undefined`.
 - [ ] **Step 8: Run the frontend suite**
 
 Run: `npm --prefix frontend test`
-Expected: 41 files pass. Up to 2 `ArchiveView` timeout flakes are pre-existing; re-run once to confirm a failure is one of those before treating it as yours.
+Expected: **41 files, 400 tests, all passing** — the new test joins an existing
+file, so only the test count moves. The baseline measured on this
+branch immediately before this task was 41 files / 399 tests / 0 failures, and
+this task adds exactly one test. Any failure is yours; do not write one off as a
+flake without re-running and naming it.
 
 - [ ] **Step 9: Commit**
 
