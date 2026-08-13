@@ -175,9 +175,17 @@ git commit -m "feat(team-runs): recognise a retry that cannot clear an undeclare
 
 - [ ] **Step 1: Write the failing test**
 
-`make_recoverable_acceptance_runtime` already sets up a task whose worker
-declares a deliverable outside its contract; read it before writing the test to
-see which paths end up as extras.
+**`make_recoverable_acceptance_runtime` does NOT produce this rejection.** An
+earlier draft of this plan said it did. It sets `required_outputs=()` and its
+worker responses declare no deliverables at all, so `declared - expected` is
+always empty and the gate can never return `undeclared_deliverable` from it — the
+rejection it actually produces is `required_verification_failed`.
+
+Do not mutate it: about nineteen tests depend on that rejection reason. Task 2
+added `make_undeclared_deliverable_acceptance_runtime`, which declares a
+deliverable against empty `required_outputs` and so produces a real
+`undeclared_deliverable` with a known extra path. Use that one here and in Task 4,
+and read it before writing a test against it.
 
 ```python
 @pytest.mark.asyncio
@@ -403,7 +411,7 @@ async def test_the_cap_asks_the_operator_when_the_same_extras_keep_returning(
     """This is where run 699c1915's tasks 8 and 9 died, leaving the run with
     nothing but "Required task failed". The extras are known, so the operator can
     be asked whether to widen the contract or drop them."""
-    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup = make_undeclared_deliverable_acceptance_runtime(tmp_path)
     # Two reviews that pass the coherence rule and still fail to clear the
     # rejection: each names the extras but the worker re-declares them anyway.
     naming = _retry_review("Delete wrong-check and resubmit.")
