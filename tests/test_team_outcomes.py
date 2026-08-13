@@ -112,3 +112,110 @@ def test_rejects_malformed_or_unsafe_task_outcome(payload: str) -> None:
         parse_task_outcome(payload)
 
     assert error.value.code == "invalid_task_outcome"
+
+
+def test_a_worker_can_report_that_it_could_not_check():
+    """The motivating run's worker ran `npx --no-install tsc --version`, could not
+    use it, and had nowhere to say so -- the schema allowed only passed or failed,
+    so it wrote the fact into a Markdown file nothing reads."""
+    outcome = parse_task_outcome(
+        json.dumps(
+            {
+                "status": "completed",
+                "summary": "wrote the screens",
+                "reason_code": None,
+                "deliverables": [{"path": "a.tsx", "kind": "file"}],
+                "verifications": [
+                    {
+                        "name": "frontend-typechecks",
+                        "checked": False,
+                        "status": None,
+                        "evidence": "npx --no-install tsc: typescript-unavailable",
+                    }
+                ],
+            }
+        )
+    )
+
+    (verification,) = outcome.verifications
+    assert verification.checked is False
+    assert verification.status is None
+    assert "typescript-unavailable" in verification.evidence
+
+
+def test_a_checked_verification_still_carries_its_result():
+    outcome = parse_task_outcome(
+        json.dumps(
+            {
+                "status": "completed",
+                "summary": "s",
+                "reason_code": None,
+                "deliverables": [],
+                "verifications": [
+                    {
+                        "name": "pytest",
+                        "checked": True,
+                        "status": "passed",
+                        "evidence": "42 passed",
+                    }
+                ],
+            }
+        )
+    )
+
+    (verification,) = outcome.verifications
+    assert verification.checked is True
+    assert verification.status == "passed"
+
+
+def test_an_old_shape_report_reads_as_checked():
+    """Stored outcomes predate this field. At the time, a bare status *was* the
+    worker's claim to have checked, so reading it as checked=True preserves the
+    meaning and avoids a migration."""
+    outcome = parse_task_outcome(
+        json.dumps(
+            {
+                "status": "completed",
+                "summary": "s",
+                "reason_code": None,
+                "deliverables": [],
+                "verifications": [
+                    {"name": "pytest", "status": "passed", "evidence": "42 passed"}
+                ],
+            }
+        )
+    )
+
+    (verification,) = outcome.verifications
+    assert verification.checked is True
+    assert verification.status == "passed"
+
+
+@pytest.mark.parametrize(
+    "verification",
+    [
+        # checked with no result: trying to have it both ways.
+        {"name": "n", "checked": True, "status": None, "evidence": "e"},
+        # not checked, but claiming a result anyway.
+        {"name": "n", "checked": False, "status": "passed", "evidence": "e"},
+        # a status that is not one of the two allowed values.
+        {"name": "n", "checked": True, "status": "skipped", "evidence": "e"},
+        # checked is not a boolean.
+        {"name": "n", "checked": "yes", "status": "passed", "evidence": "e"},
+        # an unrelated extra key.
+        {"name": "n", "checked": True, "status": "passed", "evidence": "e", "x": 1},
+    ],
+)
+def test_incoherent_verification_reports_are_rejected(verification):
+    with pytest.raises(TaskOutcomeError):
+        parse_task_outcome(
+            json.dumps(
+                {
+                    "status": "completed",
+                    "summary": "s",
+                    "reason_code": None,
+                    "deliverables": [],
+                    "verifications": [verification],
+                }
+            )
+        )

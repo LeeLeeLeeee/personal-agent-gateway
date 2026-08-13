@@ -18,8 +18,9 @@ class Deliverable:
 @dataclass(frozen=True)
 class VerificationEvidence:
     name: str
-    status: VerificationStatus
+    status: VerificationStatus | None
     evidence: str
+    checked: bool = True
 
 
 @dataclass(frozen=True)
@@ -108,15 +109,26 @@ def _parse_verifications(value: object) -> tuple[VerificationEvidence, ...]:
     verifications: list[VerificationEvidence] = []
     names: set[str] = set()
     for raw in value:
-        if not isinstance(raw, dict) or set(raw) != {"name", "status", "evidence"}:
+        if not isinstance(raw, dict) or set(raw) not in (
+            {"name", "status", "evidence"},
+            {"name", "checked", "status", "evidence"},
+        ):
             raise TaskOutcomeError()
         name = raw["name"]
         status = raw["status"]
         evidence = raw["evidence"]
+        checked = raw.get("checked", True)
+        if not isinstance(checked, bool):
+            raise TaskOutcomeError()
+        # checked and status carry different facts, so the two have to agree:
+        # a check that ran has a result, and one that did not cannot have one.
+        if checked and status not in {"passed", "failed"}:
+            raise TaskOutcomeError()
+        if not checked and status is not None:
+            raise TaskOutcomeError()
         if (
             not isinstance(name, str)
             or not name.strip()
-            or status not in {"passed", "failed"}
             or not isinstance(evidence, str)
             or not evidence.strip()
         ):
@@ -126,7 +138,9 @@ def _parse_verifications(value: object) -> tuple[VerificationEvidence, ...]:
             raise TaskOutcomeError()
         names.add(normalized_name)
         verifications.append(
-            VerificationEvidence(normalized_name, status, evidence.strip())
+            VerificationEvidence(
+                normalized_name, status, evidence.strip(), checked=checked
+            )
         )
     return tuple(verifications)
 
