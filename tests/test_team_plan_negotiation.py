@@ -1,8 +1,12 @@
+import json
+
 import pytest
 
 from personal_agent_gateway.team_plan_negotiation import (
     PLAN_NEGOTIATION_MAX_REVISIONS,
+    PlanReviewError,
     next_revision,
+    parse_plan_review,
     task_label,
     verdict_for,
 )
@@ -72,3 +76,95 @@ def test_a_revision_beyond_the_cap_never_yields_another():
 )
 def test_labels_are_zero_padded_to_two_digits(ordinal, label):
     assert task_label(ordinal) == label
+
+
+_LABELS = frozenset({"T-01", "T-02", "T-10"})
+
+
+def test_an_approval_carries_no_objections():
+    review = parse_plan_review(
+        json.dumps({"decision": "approve", "objections": []}), _LABELS
+    )
+
+    assert review.decision == "approve"
+    assert review.objections == ()
+
+
+def test_an_objection_keeps_its_kind_reference_and_detail():
+    review = parse_plan_review(
+        json.dumps(
+            {
+                "decision": "object",
+                "objections": [
+                    {"kind": "overlap", "task_ref": "T-02", "detail": "같은 파일"}
+                ],
+            }
+        ),
+        _LABELS,
+    )
+
+    (objection,) = review.objections
+    assert (objection.kind, objection.task_ref, objection.detail) == (
+        "overlap",
+        "T-02",
+        "같은 파일",
+    )
+
+
+def test_a_fenced_response_still_parses():
+    """Models wrap JSON in code fences no matter what the prompt says."""
+    review = parse_plan_review(
+        '```json\n{"decision": "approve", "objections": []}\n```', _LABELS
+    )
+
+    assert review.decision == "approve"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # objecting with nothing to act on -- unusable for replanning
+        {"decision": "object", "objections": []},
+        # approving while objecting: the two fields contradict each other
+        {"decision": "approve", "objections": [
+            {"kind": "gap", "task_ref": "T-01", "detail": "d"}]},
+        # a kind outside the four the design allows
+        {"decision": "object", "objections": [
+            {"kind": "style", "task_ref": "T-01", "detail": "d"}]},
+        # a label that is not in this revision
+        {"decision": "object", "objections": [
+            {"kind": "gap", "task_ref": "T-99", "detail": "d"}]},
+        # empty detail gives the leader nothing to replan from
+        {"decision": "object", "objections": [
+            {"kind": "gap", "task_ref": "T-01", "detail": "   "}]},
+        # a decision value outside the two allowed
+        {"decision": "revise", "objections": []},
+        # missing key
+        {"decision": "approve"},
+        # extra key
+        {"decision": "approve", "objections": [], "confidence": 0.9},
+    ],
+)
+def test_incoherent_reviews_are_rejected(payload):
+    with pytest.raises(PlanReviewError):
+        parse_plan_review(json.dumps(payload), _LABELS)
+
+
+def test_prose_instead_of_json_is_rejected():
+    with pytest.raises(PlanReviewError):
+        parse_plan_review("계획이 괜찮아 보입니다.", _LABELS)
+
+
+def test_a_short_label_is_not_read_as_a_longer_one():
+    """T-1 must not be accepted as a reference to T-10. Substring matching is
+    how three separate path checks in this repo were wrong before."""
+    with pytest.raises(PlanReviewError):
+        parse_plan_review(
+            json.dumps(
+                {
+                    "decision": "object",
+                    "objections": [{"kind": "gap", "task_ref": "T-1", "detail": "d"}],
+                }
+            ),
+            _LABELS,
+        )
