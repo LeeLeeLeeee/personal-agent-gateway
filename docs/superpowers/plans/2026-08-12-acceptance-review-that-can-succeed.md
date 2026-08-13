@@ -392,7 +392,21 @@ git commit -m "feat(team-runs): tell the leader which action clears an undeclare
 
 ---
 
-## Task 4: Ask the operator instead of failing at the cap
+## Task 4: WITHDRAWN — Ask the operator instead of failing at the cap
+
+**Do not implement this task.** It was attempted and reverted. Reopening an
+acceptance round after the operator answers is impossible on the path real runs
+take without a schema change: `acceptance_recovery_attempts` is both the recovery
+budget and the operation address, so no counter value yields an operation key that
+is free *and* an attempt that is in budget. The only working implementation landed
+on the cycle-less legacy path, which no run in this deployment can enter, and the
+partial version left the live path worse than untouched — a permanent pause
+accumulating duplicate questions on a cycle that could never advance.
+
+See the spec's Part 3 section for the full reasoning. The steps below are kept as
+the record of what was designed, not as work to do.
+
+## Task 4 (withdrawn): Ask the operator instead of failing at the cap
 
 **Files:**
 - Modify: `src/personal_agent_gateway/team_runtime.py` — `_run_cycle_acceptance`'s cap return (around line 2613) and `_recover_task_outcome`'s equivalent
@@ -578,6 +592,8 @@ git commit -m "feat(team-runs): ask the operator when acceptance recovery runs o
 ---
 
 ## Task 5: Verify the whole path and finish
+
+Task 4 is withdrawn, so this task verifies Tasks 1-3 only.
 
 - [ ] **Step 1: Full backend suite, foreground**
 
