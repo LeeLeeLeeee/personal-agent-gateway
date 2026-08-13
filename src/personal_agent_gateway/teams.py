@@ -2877,8 +2877,14 @@ class TeamRunService:
         attempt is taken and cannot be re-invoked, and team_model_effects
         requires the operation ordinal to equal attempts + 1. Without this the
         retry after the operator answers would re-enter the same attempt and hit
-        the failed operation. ACCEPTANCE_RECOVERY_CAP then bounds a model that
-        keeps returning unparseable reviews, which is the behaviour to want.
+        the failed operation.
+
+        This increments without a ceiling on purpose -- the ceiling is enforced by
+        the caller. _escalate_unparsable_lead_output refuses to pause once
+        attempts reach ACCEPTANCE_RECOVERY_CAP, and that check is what bounds a
+        model returning unparseable reviews. An earlier version of this docstring
+        claimed the cap did the bounding by itself; it did not, and the run asked
+        the operator the same question forever.
         """
         now = _now()
         with self._db.connection() as connection:

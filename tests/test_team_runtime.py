@@ -65,6 +65,7 @@ from personal_agent_gateway.team_runtime import (
 from personal_agent_gateway.team_output_contracts import OutputContract
 from personal_agent_gateway.team_verification_checks import VerificationCheck
 from personal_agent_gateway.teams import (
+    ACCEPTANCE_RECOVERY_CAP,
     RequiredVerification,
     TaskAcceptance,
     TeamRunService,
@@ -1303,6 +1304,48 @@ def test_existing_repair_prompts_are_unchanged() -> None:
     )
     assert "did not satisfy the output contract" in synthesis[0]["content"]
     assert 'Return {"resolution": string}.' in synthesis[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_leader_that_never_parses_stops_asking_at_the_recovery_cap(tmp_path):
+    """The pause has to be bounded by the recovery budget, not by the operator.
+
+    Reproduced before this guard existed: a leader returning prose every round
+    was escalated, answered, and escalated again, with
+    acceptance_recovery_attempts climbing 1, 2, 3, 4... past
+    ACCEPTANCE_RECOVERY_CAP. The cap is only evaluated when a worker outcome is
+    applied, and the resume path re-enters acceptance through
+    _recover_applied_operation_chain, which trusts the next_stage stored back
+    when the counter was still low. So nothing ever stopped it and the operator
+    answered the same question forever.
+    """
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    asked = 0
+    gave_up = False
+
+    for _ in range(ACCEPTANCE_RECOVERY_CAP + 3):
+        setup.lead_client.responses = [
+            ModelResponse("Looks fine to me.", []),
+            ModelResponse("Still looks fine.", []),
+        ]
+        run = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+        request = setup.teams.get_active_decision_request(setup.run.id)
+        if request is None:
+            gave_up = True
+            break
+        asked += 1
+        setup.teams.answer_decision_request(
+            setup.run.id, request.id, request.revision, {request.items[0]["id"]: "retry"}
+        )
+
+    # gave_up is the load-bearing assertion. Checking only that no request is
+    # active would pass trivially, because the loop answers the last one it saw.
+    assert gave_up, f"still asking after {asked} answers"
+    assert asked == ACCEPTANCE_RECOVERY_CAP
+    task = setup.teams.get_task(setup.task.id)
+    assert task.status == "failed"
+    assert run.status in {"failed", "completed_with_failures"}
+    assert task.acceptance_recovery_attempts <= ACCEPTANCE_RECOVERY_CAP
 
 
 @pytest.mark.asyncio

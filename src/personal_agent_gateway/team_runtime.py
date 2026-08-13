@@ -809,8 +809,22 @@ class TeamRuntime:
         failures reach the ledger as invalid_structured_output and the parser's
         message is not carried on the operation, so without it the one person
         who could widen the contract by hand is told the model emitted garbage.
+
+        The pause is bounded by the recovery budget, and it has to be bounded
+        here. The only other cap check on this path lives in _apply_task_outcome,
+        which runs once when a worker outcome is applied -- and resume re-enters
+        acceptance through _recover_applied_operation_chain, which trusts the
+        next_stage stored back when the counter was still low. Before this guard
+        a leader returning prose every round was escalated, answered, escalated
+        again, with attempts climbing past the cap and the operator answering the
+        same question forever.
         """
         if task is not None:
+            current = self._teams.get_task(task.id)
+            if current.acceptance_recovery_attempts >= ACCEPTANCE_RECOVERY_CAP:
+                # Out of budget: stop asking and let the failed operation end the
+                # task, which is what an unrecoverable acceptance failure does.
+                return
             self._teams.consume_acceptance_attempt(task.id)
         where = f" on task '{task.title}'" if task is not None else ""
         if cause is None:
