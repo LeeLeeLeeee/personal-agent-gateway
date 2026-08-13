@@ -25,8 +25,6 @@ class _AgentRegistry:
     def get(self, provider: str):
         capabilities = (
             ProviderExecutionCapabilities(
-                ready=True,
-                readiness_error=None,
                 resume=True,
                 external_read_only_roots=False,
                 network_modes=("unspecified", "denied", "required"),
@@ -35,8 +33,6 @@ class _AgentRegistry:
             )
             if provider == "codex"
             else ProviderExecutionCapabilities(
-                ready=True,
-                readiness_error=None,
                 resume=True,
                 external_read_only_roots=False,
                 network_modes=("unspecified",),
