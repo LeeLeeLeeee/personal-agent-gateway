@@ -3,7 +3,7 @@ title: AgentRadio 기반 Team Run 협업 설계 계획
 type: todo
 domain: personal-agent-gateway
 feature: agent-radio-team-collaboration
-status: draft
+status: active
 aliases:
   - AgentRadio 적용 계획
   - PAG LMG passive awareness
@@ -22,7 +22,7 @@ updated_at: 2026-08-13
 # AgentRadio 기반 Team Run 협업 설계 계획
 
 작성일: 2026-08-12  
-상태: draft  
+상태: 결정 승인됨 — [ADR 2026-08-13](../adr/2026-08-13-agent-radio-team-collaboration.md)  
 범위: 아이디어 정리, 설계, 타당성 검증과 설계 수정만 포함한다. 구현과 커밋은 포함하지 않는다.
 
 ## 배경
@@ -1025,13 +1025,13 @@ git status --short
 ## Docs 승격
 
 - [x] 장기 보존 가치 있음
-- [ ] ADR로 승격 필요
+- [x] ADR로 승격 필요 → [`docs/adr/2026-08-13-agent-radio-team-collaboration.md`](../adr/2026-08-13-agent-radio-team-collaboration.md) (2026-08-13, decision_status: accepted)
 - [ ] Flow로 승격 필요
 - [ ] Report로 승격 필요
 - [x] Knowledge로 승격 필요
 
 승격 후보 경로:
 
-- 결정 승인 후 `docs/adr/YYYY-MM-DD-agent-radio-team-collaboration.md`
+- ~~결정 승인 후 `docs/adr/YYYY-MM-DD-agent-radio-team-collaboration.md`~~ → 완료: `docs/adr/2026-08-13-agent-radio-team-collaboration.md`
 - Stage 2 구현 후 `docs/flows/YYYY-MM-DD-team-collaboration-message-delivery.md`
 - ablation 완료 후 `docs/reports/YYYY-MM-DD-agent-radio-evaluation.md`
