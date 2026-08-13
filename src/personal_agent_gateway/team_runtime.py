@@ -151,12 +151,13 @@ Prefer Worker correction when the contract is valid. Revise acceptance only when
 contract itself is wrong. Ask the user only for a consequential choice the Team cannot
 infer. Never approve the current rejected outcome retroactively.
 
-When the failure reason is undeclared_deliverable the outcome declared files the
-contract does not list. Keeping them means the contract was too narrow: return
-revise_acceptance with required_outputs extended to include every declared path.
-Use retry_worker only to have the worker remove them, and name every path to
-remove in the instruction -- retry_worker leaves the contract unchanged, so
-without those paths the same rejection returns.
+When the failure reason is undeclared_deliverable, files that the contract does
+not list are counted against this task -- either declared by this outcome, or
+left in the workspace by an earlier round. Keeping them means the contract was
+too narrow: return revise_acceptance with required_outputs extended to include
+every such path. Use retry_worker only to have the worker remove them, and name
+every path to remove in the instruction -- retry_worker leaves the contract
+unchanged, so without those paths the same rejection returns.
 
 Return ONLY one JSON object in exactly one of these forms:
 {{"resolution":{{"kind":"retry_worker","instruction":"concrete correction", "reason":"why the current outcome was rejected"}}}}
@@ -358,8 +359,8 @@ def undeclared_retry_is_futile(
 
     The rule does not establish whether prose actually instructs the worker to
     drop a file -- a leader could write "declare outputs/extra.md along with
-    the others" (names the path, keeps it) and this rule lets it through. The
-    cap-time escalation is what covers that. Comparison is case-sensitive,
+    the others" (names the path, keeps it) and this rule lets it through:
+    naming every extra is necessary, not sufficient. Comparison is case-sensitive,
     matching the gate's own set-difference logic in team_acceptance.py: on
     case-insensitive filesystems a leader naming the path with different case
     is scored as not having named it. Path separators are also compared
@@ -4235,8 +4236,9 @@ def _undeclared_retry_repair_messages(
     rejection. Naming the extras gives the leader the one fact it is missing.
     """
     correction = (
-        "Your resolution cannot clear this rejection. The outcome declared these "
-        "paths, which the contract does not list:\n"
+        "Your resolution cannot clear this rejection. These paths are counted "
+        "against the task and the contract does not list them -- declared by "
+        "this outcome, or left in the workspace by an earlier round:\n"
         + "\n".join(f"- {path}" for path in sorted(extra_paths))
         + "\n\nTo keep them, return revise_acceptance with required_outputs "
         "extended to include every one. To have the worker remove them, return "
