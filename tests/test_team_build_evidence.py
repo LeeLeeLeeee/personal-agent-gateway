@@ -211,6 +211,64 @@ def test_a_task_with_no_outcome_yet_reports_empty_rather_than_raising(tmp_path):
     assert evidence["worker_asserted_only"] is False
 
 
+def test_evidence_reports_what_the_worker_could_not_check(tmp_path):
+    """The label carries the distinction the gate now records: a check the gate ran,
+    a check the worker asserted, and a check nobody confirmed."""
+    (tmp_path / "promised.md").write_text("x", encoding="utf-8")
+    task = _task(
+        tmp_path,
+        acceptance_result={
+            "evidence": {
+                "verifications": {
+                    "ran": {"mode": "verified", "status": "passed"},
+                    "typecheck": {"mode": "unverified", "status": "unknown"},
+                },
+                "attested_only": False,
+                "unverified": ["typecheck"],
+            }
+        },
+    )
+
+    evidence = task_build_evidence(task, tmp_path)
+
+    assert evidence["unverified"] == ["typecheck"]
+    assert {"name": "typecheck", "mode": "unverified", "status": "unknown"} in (
+        evidence["verifications"]
+    )
+
+
+def test_the_rollup_counts_tasks_with_something_unconfirmed(tmp_path):
+    """This is the number that moves when work goes unchecked. attested_only does
+    not: it is true only when a task had zero runnable checks, so it reads 0 for a
+    run where every check was a file read."""
+    (tmp_path / "promised.md").write_text("x", encoding="utf-8")
+    clean = _task(tmp_path, id="t1")
+    unconfirmed = _task(
+        tmp_path,
+        id="t2",
+        acceptance_result={
+            "evidence": {"verifications": {}, "attested_only": False, "unverified": ["typecheck"]}
+        },
+    )
+
+    # run_build_evidence takes the already-computed per-task reports, not the
+    # tasks, and takes no workspace -- recomputing here doubled the filesystem
+    # work on a polled endpoint.
+    rollup = run_build_evidence(
+        [task_build_evidence(task, tmp_path) for task in (clean, unconfirmed)]
+    )
+
+    assert rollup["unverified_task_count"] == 1
+
+
+def test_an_acceptance_result_without_the_key_reports_none(tmp_path):
+    """Every stored acceptance result predates this key."""
+    (tmp_path / "promised.md").write_text("x", encoding="utf-8")
+    task = _task(tmp_path)
+
+    assert task_build_evidence(task, tmp_path)["unverified"] == []
+
+
 def test_run_rollup_counts_what_rests_on_the_workers_word(tmp_path):
     (tmp_path / "promised.md").write_text("x", encoding="utf-8")
     asserted = _task(tmp_path)
@@ -237,6 +295,7 @@ def test_run_rollup_counts_what_rests_on_the_workers_word(tmp_path):
         "task_count": 3,
         "worker_asserted_only_count": 2,
         "missing_file_count": 1,
+        "unverified_task_count": 0,
     }
 
 

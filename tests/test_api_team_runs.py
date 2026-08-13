@@ -2560,6 +2560,7 @@ def test_team_run_detail_shows_what_each_task_built(tmp_path: Path) -> None:
         "task_count": 1,
         "worker_asserted_only_count": 1,
         "missing_file_count": 1,
+        "unverified_task_count": 0,
     }
 
 

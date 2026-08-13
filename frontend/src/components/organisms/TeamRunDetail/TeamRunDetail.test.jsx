@@ -1743,4 +1743,40 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText(/태스크 13개 중 파일 내용만 확인 0/)).toBeInTheDocument();
     expect(screen.getByText(/없는 파일 2/)).toBeInTheDocument();
   });
+
+  it("labels a verification nobody confirmed", async () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "G", status: "completed", run_mode: "plan_and_execute" },
+          agents: [], messages: [],
+          buildEvidenceSummary: {
+            task_count: 2, worker_asserted_only_count: 0,
+            missing_file_count: 0, unverified_task_count: 1
+          },
+          tasks: [{
+            id: "t1", title: "Build the screens", status: "completed",
+            build_evidence: {
+              promised: [], declared: [], undeclared_promises: [],
+              extra_declarations: [], missing_files: [],
+              verifications: [
+                { name: "ran", mode: "verified", status: "passed" },
+                { name: "typecheck", mode: "unverified", status: "unknown" }
+              ],
+              unverified: ["typecheck"], worker_asserted_only: false
+            }
+          }]
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    expect(screen.getByText(/미확인 1/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open task Build the screens" }));
+    const dialog = screen.getByRole("dialog", { name: "Task details: Build the screens" });
+    expect(within(dialog).getByText(/미확인/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/파일 내용 확인/)).toBeInTheDocument();
+    expect(within(dialog).queryByText("검증됨")).not.toBeInTheDocument();
+  });
 });

@@ -93,6 +93,9 @@ def task_build_evidence(task: TeamTask, workspace: Path) -> dict[str, object]:
             if isinstance(entry, dict)
         ],
         "worker_asserted_only": bool(evidence.get("attested_only")),
+        "unverified": sorted(
+            str(name) for name in (evidence.get("unverified") or [])
+        ),
     }
 
 
@@ -114,4 +117,5 @@ def run_build_evidence(
             1 for item in per_task if item["worker_asserted_only"]
         ),
         "missing_file_count": sum(len(item["missing_files"]) for item in per_task),
+        "unverified_task_count": sum(1 for item in per_task if item["unverified"]),
     }

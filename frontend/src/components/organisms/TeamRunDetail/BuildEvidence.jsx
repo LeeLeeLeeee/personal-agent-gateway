@@ -2,7 +2,7 @@
 // file_matches. Nothing compiles, runs a test, or executes a command. So
 // "verified" means the gate read the file and looked at its text, and labelling
 // it 검증됨 would tell the operator something untrue.
-const MODE_LABEL = { verified: "파일 내용 확인", attested: "워커 신고" };
+const MODE_LABEL = { verified: "파일 내용 확인", attested: "워커 신고", unverified: "미확인" };
 
 export function BuildEvidence({ evidence }) {
   if (!evidence) return null;
@@ -51,6 +51,7 @@ export function BuildEvidenceSummary({ summary }) {
       {` · 워커 신고만 ${summary.worker_asserted_only_count}`}
       {` (검사는 모두 파일 읽기 — 빌드·테스트 실행 없음)`}
       {` · 없는 파일 ${summary.missing_file_count}`}
+      {` · 미확인 ${summary.unverified_task_count ?? 0}`}
     </span>
   );
 }
