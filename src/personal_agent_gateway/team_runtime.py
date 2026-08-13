@@ -402,6 +402,55 @@ def undeclared_retry_is_futile(
     return any(not path_is_named(path) for path in extra_paths)
 
 
+def _extra_deliverable_paths(
+    outcome: TaskOutcome,
+    acceptance: AcceptanceResult,
+    required_outputs: tuple[str, ...],
+) -> frozenset[str]:
+    """Every out-of-contract path an undeclared_deliverable rejection is about.
+
+    There are two ways to land on this reason code, and each carries its
+    extras differently:
+
+    - A fresh rejection from TeamAcceptanceService.evaluate() names them
+      through outcome.deliverables -- this round's declared paths minus the
+      contract.
+    - A lingering rejection re-stamped by _reject_lingering_undeclared_paths
+      names them instead through evidence["remaining_undeclared_paths"],
+      because the round that triggered it can have declared nothing at all
+      (the worker stopped declaring the file; it just never deleted it).
+
+    Unioning both means the caller does not have to know which mechanism
+    produced this particular acceptance. Only one is ever populated in
+    practice, since a fresh rejection's evidence is always {}.
+    """
+    extra = {
+        item.path
+        for item in outcome.deliverables
+        if item.path not in required_outputs
+    }
+    lingering = acceptance.evidence.get("remaining_undeclared_paths")
+    if isinstance(lingering, list):
+        extra.update(path for path in lingering if isinstance(path, str))
+    return frozenset(extra)
+
+
+def _raise_undeclared_retry_error(extra_paths: frozenset[str]) -> None:
+    """Raised by every acceptance-review parser that finds a futile retry.
+
+    `from None` unconditionally: two of the three call sites raise this from
+    inside an `except ValueError:` block (the older _review_acceptance path's
+    own retry), where it would otherwise chain to the parse failure that
+    triggered that block. The other call site raises with no exception being
+    handled, where `from None` is a no-op. Either way the caller only wants
+    this message.
+    """
+    raise ValueError(
+        "retry_worker cannot clear undeclared_deliverable unless the "
+        "instruction names every path to remove: " + ", ".join(sorted(extra_paths))
+    ) from None
+
+
 def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:
     if not snapshot:
         return ""
@@ -2351,22 +2400,16 @@ class TeamRuntime:
         )
         outcome = _persisted_task_outcome_value(task)
         acceptance = _persisted_acceptance_value(task)
-        extra_paths = frozenset(
-            item.path
-            for item in outcome.deliverables
-            if item.path not in task.acceptance.required_outputs
+        extra_paths = _extra_deliverable_paths(
+            outcome, acceptance, task.acceptance.required_outputs
         )
 
         def review_parser(response: ModelResponse) -> ValidatedOperationResult:
             validated = _validated_acceptance_review(response)
-            if acceptance.reason_code == "undeclared_deliverable":
+            if extra_paths:
                 resolution = _parse_acceptance_review_resolution(response.content)
                 if undeclared_retry_is_futile(resolution, extra_paths):
-                    raise ValueError(
-                        "retry_worker cannot clear undeclared_deliverable unless "
-                        "the instruction names every path to remove: "
-                        + ", ".join(sorted(extra_paths))
-                    )
+                    _raise_undeclared_retry_error(extra_paths)
             return validated
 
         lead_operation = await self._invoke_with_repair(
@@ -2382,15 +2425,18 @@ class TeamRuntime:
             leader_agent,
             messages,
             review_parser,
-            # extra_paths is non-empty exactly when reason_code is
-            # "undeclared_deliverable" -- evaluate() in team_acceptance.py
-            # returns that reason_code before checking anything else whenever
-            # declared - expected is non-empty. Guarding here means a repair
-            # triggered by an unrelated parse failure still gets the generic
-            # _repair_messages prompt instead of one naming an empty path list.
+            # extra_paths is non-empty exactly when the persisted acceptance's
+            # reason_code is "undeclared_deliverable", whether it came fresh
+            # from evaluate() (named via outcome.deliverables) or was
+            # re-stamped by _reject_lingering_undeclared_paths (named via
+            # evidence["remaining_undeclared_paths"]) -- see
+            # _extra_deliverable_paths. Gating on extra_paths directly means a
+            # repair triggered by an unrelated parse failure still gets the
+            # generic _repair_messages prompt instead of one naming an empty
+            # path list.
             repair_messages=(
                 _undeclared_retry_repair_messages(messages, extra_paths)
-                if acceptance.reason_code == "undeclared_deliverable"
+                if extra_paths
                 else None
             ),
             on_exhausted=lambda failed: self._escalate_unparsable_lead_output(
@@ -2652,10 +2698,8 @@ class TeamRuntime:
             changes=changes,
         )
         model = self._model(leader_agent, task.cycle_id)
-        extra_paths = frozenset(
-            item.path
-            for item in outcome.deliverables
-            if item.path not in task.acceptance.required_outputs
+        extra_paths = _extra_deliverable_paths(
+            outcome, acceptance, task.acceptance.required_outputs
         )
         response = await model.complete(messages)
         if response.upstream_session_id:
@@ -2668,14 +2712,8 @@ class TeamRuntime:
         # response already gets.
         try:
             resolution = _parse_acceptance_review_resolution(response.content)
-            if acceptance.reason_code == "undeclared_deliverable" and (
-                undeclared_retry_is_futile(resolution, extra_paths)
-            ):
-                raise ValueError(
-                    "retry_worker cannot clear undeclared_deliverable unless "
-                    "the instruction names every path to remove: "
-                    + ", ".join(sorted(extra_paths))
-                )
+            if extra_paths and undeclared_retry_is_futile(resolution, extra_paths):
+                _raise_undeclared_retry_error(extra_paths)
             return resolution
         except ValueError:
             retry = await model.complete(
@@ -2695,14 +2733,8 @@ class TeamRuntime:
                     leader_agent.id, retry.upstream_session_id
                 )
             resolution = _parse_acceptance_review_resolution(retry.content)
-            if acceptance.reason_code == "undeclared_deliverable" and (
-                undeclared_retry_is_futile(resolution, extra_paths)
-            ):
-                raise ValueError(
-                    "retry_worker cannot clear undeclared_deliverable unless "
-                    "the instruction names every path to remove: "
-                    + ", ".join(sorted(extra_paths))
-                ) from None
+            if extra_paths and undeclared_retry_is_futile(resolution, extra_paths):
+                _raise_undeclared_retry_error(extra_paths)
             return resolution
 
     async def _recover_task_outcome(

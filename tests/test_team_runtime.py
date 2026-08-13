@@ -889,6 +889,70 @@ def make_undeclared_deliverable_acceptance_runtime(tmp_path):
     return SimpleNamespace(**values)
 
 
+def make_lingering_undeclared_deliverable_acceptance_runtime(tmp_path):
+    """A recoverable acceptance fixture whose *second* round is rejected with
+    reason_code "undeclared_deliverable" carried by
+    _reject_lingering_undeclared_paths, not by this round's own declared
+    deliverables.
+
+    Round 1: the worker declares "wrong-check" outside the contract and
+    actually writes it to disk -- a fresh undeclared_deliverable rejection,
+    extras named through outcome.deliverables. The leader's retry correctly
+    names it and is applied.
+    Round 2: the worker declares nothing (outcome.deliverables == []) but
+    never deleted the file, so evaluate() would accept this round on its own
+    terms and _reject_lingering_undeclared_paths overrides it back to
+    undeclared_deliverable, naming the extra only through
+    evidence["remaining_undeclared_paths"]. This is the case
+    _extra_deliverable_paths exists to cover.
+    Round 3 (via the repair correcting a vague round-2 retry): the worker
+    finally deletes the file, and the task completes.
+    """
+    setup = make_operation_runtime(tmp_path)
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Research",
+        "Research the request.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
+    )
+    working_root = Path(setup.run.working_root or setup.run.workspace_root)
+    lingering_path = working_root / "wrong-check"
+
+    def before_complete(call_index):
+        if call_index == 1:
+            lingering_path.write_text("extra", encoding="utf-8")
+        elif call_index == 3:
+            lingering_path.unlink()
+
+    setup.worker_client.responses = [
+        ModelResponse(
+            _outcome_json(
+                "draft",
+                deliverables=[{"path": "wrong-check", "kind": "note"}],
+            ),
+            [],
+            upstream_session_id="worker-session",
+        ),
+        ModelResponse(
+            _outcome_json("draft-2"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+        ModelResponse(
+            _outcome_json("draft-fixed"),
+            [],
+            upstream_session_id="worker-session",
+        ),
+    ]
+    setup.worker_client.before_complete = before_complete
+    values = vars(setup).copy()
+    values["task"] = task
+    values["lingering_path"] = lingering_path
+    return SimpleNamespace(**values)
+
+
 @pytest.mark.asyncio
 async def test_a_futile_retry_is_sent_back_to_the_leader_once(tmp_path):
     """The refusal has to reach the repair seam, not the recovery cap. A leader
@@ -938,6 +1002,47 @@ async def test_a_retry_naming_the_extras_is_accepted_first_time(tmp_path):
     assert setup.operations.get_by_key(
         f"{setup.cycle.id}:{setup.task.id}:acceptance_lead_repair:1"
     ) is None
+
+
+@pytest.mark.asyncio
+async def test_a_futile_retry_is_refused_even_when_named_only_by_lingering_evidence(
+    tmp_path,
+):
+    """The extras a rejection is about do not always live on outcome.deliverables.
+
+    _reject_lingering_undeclared_paths can re-stamp reason_code to
+    "undeclared_deliverable" for a round that declared nothing at all, naming
+    the extra only through evidence["remaining_undeclared_paths"]. A vague
+    retry_worker must be refused there too, or the guard is inert on exactly
+    the case it exists for.
+    """
+    setup = make_lingering_undeclared_deliverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse(
+            _retry_review("Delete wrong-check and resubmit the contract outputs."),
+            [],
+        ),
+        ModelResponse(_retry_review("Please try again."), []),
+        ModelResponse(_retry_review("Remove wrong-check and resubmit."), []),
+        ModelResponse("summary", []),
+    ]
+
+    completed = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:1"
+    ).status == "applied"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead:2"
+    ).status == "failed"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead_repair:2"
+    ).status == "applied"
+    # Two legitimate rounds, not three: the futile round did not cost an
+    # extra recovery attempt.
+    assert setup.teams.get_task(setup.task.id).acceptance_recovery_attempts == 2
+    assert completed.status == "completed"
+    assert not setup.lingering_path.exists()
 
 
 @pytest.mark.asyncio
@@ -4150,7 +4255,7 @@ async def test_acceptance_recovery_rejects_undeclared_path_left_on_disk(
         [
             plan,
             _retry_review("Remove docs/d3.md before resubmitting."),
-            _retry_review(),
+            _retry_review("Remove docs/d3.md before resubmitting again."),
             "completed",
         ]
     )
