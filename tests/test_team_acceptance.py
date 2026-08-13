@@ -355,3 +355,121 @@ def test_a_checked_verification_after_an_earlier_failure_is_not_blamed() -> None
         {},
         {"verifications": {"a": {"status": "failed"}}},
     ) == ["a"]
+
+
+def test_an_unchecked_required_verification_is_accepted_and_recorded(tmp_path: Path) -> None:
+    """The whole point: the task is not refused, but the admission survives.
+    Refusing would kill every run in an environment without the dependencies --
+    which is the environment run 699c1915 was in -- and the goal is to stop
+    unverified work passing *silently*."""
+    workspace = tmp_path / "workspace"
+    output = workspace / "outputs" / "report.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("report", encoding="utf-8")
+    task = _task(verifications=(RequiredVerification("frontend-typechecks"),))
+    outcome = _outcome(
+        verifications=(
+            VerificationEvidence(
+                "frontend-typechecks",
+                None,
+                "npx --no-install tsc: typescript-unavailable",
+                checked=False,
+            ),
+        )
+    )
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert result.accepted
+    assert result.evidence["unverified"] == ["frontend-typechecks"]
+    assert result.evidence["verifications"]["frontend-typechecks"]["mode"] == "unverified"
+
+
+def test_an_unchecked_verification_is_never_recorded_as_passed(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    output = workspace / "outputs" / "report.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("report", encoding="utf-8")
+    task = _task(verifications=(RequiredVerification("frontend-typechecks"),))
+    outcome = _outcome(
+        verifications=(
+            VerificationEvidence("frontend-typechecks", None, "unavailable", checked=False),
+        )
+    )
+
+    recorded = TeamAcceptanceService().evaluate(task, outcome, workspace).evidence
+
+    assert recorded["verifications"]["frontend-typechecks"]["status"] != "passed"
+
+
+def test_a_missing_verification_still_fails_the_task(tmp_path: Path) -> None:
+    """The new field must not turn an omitted report into a tolerated one."""
+    workspace = tmp_path / "workspace"
+    output = workspace / "outputs" / "report.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("report", encoding="utf-8")
+    task = _task(verifications=(RequiredVerification("frontend-typechecks"),))
+    outcome = _outcome(verifications=())
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert not result.accepted
+    assert result.reason_code == "required_verification_failed"
+
+
+def test_a_reported_failure_still_fails_the_task(tmp_path: Path) -> None:
+    """checked=True with status failed is a real negative result, not an excuse."""
+    workspace = tmp_path / "workspace"
+    output = workspace / "outputs" / "report.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("report", encoding="utf-8")
+    task = _task(verifications=(RequiredVerification("frontend-typechecks"),))
+    outcome = _outcome(
+        verifications=(
+            VerificationEvidence("frontend-typechecks", "failed", "3 errors", checked=True),
+        )
+    )
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert not result.accepted
+    assert result.reason_code == "required_verification_failed"
+
+
+def test_a_gate_run_check_ignores_the_worker_claim_entirely(tmp_path: Path) -> None:
+    """A required verification carrying a check is decided by the gate. A worker
+    saying checked=False must not turn that into unverified."""
+    workspace = tmp_path / "workspace"
+    output = workspace / "outputs" / "report.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("report", encoding="utf-8")
+    task = _task(
+        verifications=(
+            RequiredVerification(
+                "report-written",
+                check=VerificationCheck(type="file_contains", path="outputs/report.md", value="report"),
+            ),
+        )
+    )
+    outcome = _outcome(
+        verifications=(
+            VerificationEvidence("report-written", None, "did not run it", checked=False),
+        )
+    )
+
+    result = TeamAcceptanceService().evaluate(task, outcome, workspace)
+
+    assert result.accepted
+    assert result.evidence["verifications"]["report-written"]["mode"] == "verified"
+    assert result.evidence["unverified"] == []
+
+
+def test_an_unchecked_verification_counts_as_not_confirmed_passed() -> None:
+    """This list is what the worker is told to go fix. A verification nobody
+    confirmed belongs on it -- the review it appears in was triggered by some
+    other failure, so this adds a name rather than causing a rejection."""
+    names = rejected_verification_names(
+        [("typecheck", False)], {"typecheck": None}, {"verifications": {}}
+    )
+
+    assert names == ["typecheck"]

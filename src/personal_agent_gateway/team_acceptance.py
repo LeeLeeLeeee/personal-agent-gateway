@@ -101,6 +101,7 @@ class TeamAcceptanceService:
             verification.name: verification for verification in outcome.verifications
         }
         recorded: dict[str, dict[str, str]] = {}
+        unverified: list[str] = []
         verified_count = 0
         for required in task.acceptance.required_verifications:
             reported = verification_by_name.get(required.name)
@@ -119,7 +120,24 @@ class TeamAcceptanceService:
                     )
                 verified_count += 1
                 continue
-            if reported is None or reported.status != "passed":
+            if reported is None:
+                return _rejected(
+                    "failed",
+                    "required_verification_failed",
+                    evidence={"verifications": recorded},
+                )
+            if not reported.checked:
+                # Accepted, but recorded rather than counted. The worker told us
+                # it could not confirm this; the run should carry that forward
+                # instead of reading it as a pass.
+                unverified.append(required.name)
+                recorded[required.name] = {
+                    "mode": "unverified",
+                    "status": "unknown",
+                    "evidence": reported.evidence,
+                }
+                continue
+            if reported.status != "passed":
                 return _rejected(
                     "failed",
                     "required_verification_failed",
@@ -145,6 +163,7 @@ class TeamAcceptanceService:
                 "deliverables": sorted(declared),
                 "verifications": recorded,
                 "attested_only": verified_count == 0,
+                "unverified": unverified,
             },
         )
 
@@ -165,7 +184,7 @@ def _rejected(
 
 def rejected_verification_names(
     required_verifications: Iterable[tuple[str, bool]],
-    verification_status: dict[str, str],
+    verification_status: dict[str, str | None],
     acceptance_evidence: dict[str, object],
 ) -> list[str]:
     """Names of required verifications not confirmed passed.
