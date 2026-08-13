@@ -3284,6 +3284,19 @@ def test_planning_prompts_require_task_identity_and_dependency_fields() -> None:
         assert '"input_artifact_ids"' in prompt
 
 
+def test_the_review_prompt_says_how_to_resolve_an_undeclared_rejection() -> None:
+    """The prompt's general default is "prefer Worker correction when the contract
+    is valid", which for honest extra work points the leader at the one action
+    that cannot succeed. The exception has to be stated where the leader reads it.
+    """
+    assert "undeclared_deliverable" in ACCEPTANCE_REVIEW_PROMPT
+    assert "revise_acceptance" in ACCEPTANCE_REVIEW_PROMPT
+    # It must say that a retry has to name the paths, since that is what the
+    # parser now enforces.
+    lowered = ACCEPTANCE_REVIEW_PROMPT.lower()
+    assert "name" in lowered and "remove" in lowered
+
+
 def test_worker_prompt_uses_cycle_space_instead_of_run_space(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
     db.initialize()

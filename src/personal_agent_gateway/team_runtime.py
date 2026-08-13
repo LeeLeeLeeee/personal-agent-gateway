@@ -151,6 +151,13 @@ Prefer Worker correction when the contract is valid. Revise acceptance only when
 contract itself is wrong. Ask the user only for a consequential choice the Team cannot
 infer. Never approve the current rejected outcome retroactively.
 
+When the failure reason is undeclared_deliverable the outcome declared files the
+contract does not list. Keeping them means the contract was too narrow: return
+revise_acceptance with required_outputs extended to include every declared path.
+Use retry_worker only to have the worker remove them, and name every path to
+remove in the instruction -- retry_worker leaves the contract unchanged, so
+without those paths the same rejection returns.
+
 Return ONLY one JSON object in exactly one of these forms:
 {{"resolution":{{"kind":"retry_worker","instruction":"concrete correction", "reason":"why the current outcome was rejected"}}}}
 {{"resolution":{{"kind":"revise_acceptance","acceptance":{{"required_outputs":["relative/path"],"required_verifications":[{{"name":"verification-name","check":null}}]}},"instruction":"concrete resubmission instruction", "reason":"why the contract is wrong"}}}}
