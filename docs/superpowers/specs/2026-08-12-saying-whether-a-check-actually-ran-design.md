@@ -123,3 +123,42 @@ and both pointless while the contract only ever asks for file reads.
   renders `미확인` for it while still rendering `파일 내용 확인` for a gate-run check.
 - A required verification the worker omits entirely still fails the task as it does
   today — the new field must not turn a missing report into a tolerated one.
+
+## What the implementation actually showed
+
+Built on `feat/unchecked-verification-report` (`0621a13`, `d0ea82a`+`c43c652`,
+`c0c4ab0`, `c6cc311`+`7b278cf`). Every bullet above is covered by a test. What the
+runs beyond the tests showed:
+
+- **Backward compatibility is stronger than this document claimed.** The design
+  promised old outcomes parse as `checked: true`; verified against **every** stored
+  outcome in `data/app.sqlite`, not just run `699c1915`'s: 24 outcomes, 0
+  unparsable, and all 137 verifications read as `checked=True` with their original
+  `passed`/`failed` status. Run `699c1915` accounts for 11 outcomes / 44
+  verifications.
+- **Full backend suite: 21 failed, 1554 passed, 4 skipped** — exactly the
+  pre-existing baseline (`test_runtime_factory_headless.py` 16,
+  `test_api_agents.py` 4, `test_api_dashboard.py` 1), with passes up 18 from the
+  new tests. Frontend: 41 files / 400 tests / 0 failures against a baseline of
+  399 measured on this branch beforehand. `ruff check src/ tests/` clean.
+- **Run `699c1915`'s rollup reads `unverified_task_count: 0`**, which is the
+  correct answer, not a wiring failure: its stored acceptance results predate the
+  key. Rebuilding that run's evidence through the same functions `/detail` uses
+  gives `{"task_count": 13, "worker_asserted_only_count": 0,
+  "missing_file_count": 0, "unverified_task_count": 0}` and still reports the
+  promised-versus-declared mismatches — 2 tasks naming 5 undeclared promises
+  between them (the three `.tsx` files this design came from, plus two QA docs).
+
+### What could not be verified, and why
+
+- **The HTTP and browser leg.** `/api/team-runs/{id}/detail` now answers
+  `401 {"code":"http_401","detail":"OTP login required"}`, so the payload was
+  verified by rebuilding it from `data/app.sqlite` through the same
+  `task_build_evidence` / `run_build_evidence` calls the endpoint makes
+  (`api/team_runs.py:493` and `:528`) — everything except the auth and serialization
+  layers. Confirming the rendered `미확인` in a real browser needs an operator to
+  log in; the component test covers the rendering itself.
+- **A real `checked: false` from a live worker.** Producing one requires a model
+  running in an environment missing a tool it wants to use. Not forced. The path is
+  covered by tests at the parser, gate, evidence, and render layers, and the prompt
+  was checked line-by-line against what the parser accepts.
