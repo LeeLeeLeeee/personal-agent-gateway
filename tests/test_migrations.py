@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.migrations import (
     LATEST_SCHEMA_VERSION,
@@ -13,6 +15,7 @@ from personal_agent_gateway.migrations import (
     _migration_20_team_model_operations,
     _migration_21_knowledge_request_draft_failure,
     _migration_29_team_run_workspace_inheritance,
+    _migration_31_team_plan_negotiation,
 )
 
 
@@ -90,7 +93,7 @@ def test_migration_21_adds_knowledge_request_draft_failure_columns_idempotently(
         "last_draft_failed_at",
         "last_draft_cycle_id",
     } <= columns
-    assert LATEST_SCHEMA_VERSION == 30
+    assert LATEST_SCHEMA_VERSION == 31
 
 
 def test_migration_18_adds_nullable_cycle_space_snapshot() -> None:
@@ -208,6 +211,52 @@ def test_migration_17_preserves_historic_status_and_adds_acceptance_fields() -> 
 
 def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
     return {row["name"] for row in connection.execute(f"pragma table_info({table})")}
+
+
+def _plan_negotiation_connection() -> sqlite3.Connection:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.execute("pragma foreign_keys = on")
+    connection.executescript("create table team_runs (id text primary key);")
+    return connection
+
+
+def test_migration_31_creates_plan_negotiation_tables_idempotently() -> None:
+    """Two tables and one column. Migrations run on every startup against
+    databases at any version, so applying it twice must be a no-op."""
+    connection = _plan_negotiation_connection()
+
+    _migration_31_team_plan_negotiation(connection)
+    _migration_31_team_plan_negotiation(connection)
+
+    tables = {
+        row["name"]
+        for row in connection.execute("select name from sqlite_master where type='table'")
+    }
+    assert {"team_plan_revisions", "team_plan_approvals"} <= tables
+    assert "plan_negotiation_enabled" in _columns(connection, "team_runs")
+
+
+def test_one_review_per_agent_per_revision() -> None:
+    """Resume has to answer 'did this agent already review this revision'
+    atomically. A check-then-insert races; the index does not."""
+    connection = _plan_negotiation_connection()
+    _migration_31_team_plan_negotiation(connection)
+    connection.execute("insert into team_runs (id) values ('run-1')")
+    connection.execute(
+        "insert into team_plan_revisions (id, team_run_id, cycle_id, revision,"
+        " status, created_at) values ('r1', 'run-1', NULL, 1, 'awaiting_approval', 't')"
+    )
+    connection.execute(
+        "insert into team_plan_approvals (id, plan_revision_id, agent_id, decision,"
+        " objections_json, created_at) values ('a1','r1','agent-1','approve','[]','t')"
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "insert into team_plan_approvals (id, plan_revision_id, agent_id, decision,"
+            " objections_json, created_at) values ('a2','r1','agent-1','object','[]','t')"
+        )
 
 
 def _versions(db: Database) -> list[int]:

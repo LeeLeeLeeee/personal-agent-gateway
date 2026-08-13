@@ -966,6 +966,49 @@ def _migration_30_operation_failure_shape(
         )
 
 
+def _migration_31_team_plan_negotiation(
+    connection: sqlite3.Connection,
+) -> None:
+    if "plan_negotiation_enabled" not in _columns(connection, "team_runs"):
+        connection.execute(
+            "alter table team_runs add column plan_negotiation_enabled"
+            " integer not null default 0"
+        )
+    connection.executescript(
+        """
+        create table if not exists team_plan_revisions (
+            id text primary key,
+            team_run_id text not null,
+            cycle_id text,
+            revision integer not null,
+            status text not null,
+            task_ids_json text not null default '[]',
+            required_approver_agent_ids_json text not null default '[]',
+            created_at text not null,
+            decided_at text,
+            foreign key (team_run_id) references team_runs(id) on delete cascade
+        );
+
+        create unique index if not exists idx_team_plan_revisions_number
+        on team_plan_revisions(team_run_id, cycle_id, revision);
+
+        create table if not exists team_plan_approvals (
+            id text primary key,
+            plan_revision_id text not null,
+            agent_id text not null,
+            decision text not null,
+            objections_json text not null default '[]',
+            created_at text not null,
+            foreign key (plan_revision_id)
+                references team_plan_revisions(id) on delete cascade
+        );
+
+        create unique index if not exists idx_team_plan_approvals_one_per_agent
+        on team_plan_approvals(plan_revision_id, agent_id);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -997,6 +1040,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (28, "team-task-plan-ordinal", _migration_28_team_task_plan_ordinal),
     (29, "team-run-workspace-inheritance", _migration_29_team_run_workspace_inheritance),
     (30, "operation-failure-shape", _migration_30_operation_failure_shape),
+    (31, "team-plan-negotiation", _migration_31_team_plan_negotiation),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

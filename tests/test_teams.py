@@ -102,6 +102,46 @@ def _run_with_cycle_and_agents(tmp_path: Path):
     return teams, run, cycle
 
 
+def _leader_persona_id(teams: TeamRunService, team_run_id: str) -> str:
+    return next(
+        agent.persona_id
+        for agent in teams.list_agents(team_run_id)
+        if agent.role == "leader"
+    )
+
+
+def _member_persona_id(teams: TeamRunService, team_run_id: str) -> str:
+    return next(
+        agent.persona_id
+        for agent in teams.list_agents(team_run_id)
+        if agent.role != "leader"
+    )
+
+
+def test_a_run_defaults_to_negotiation_off(tmp_path: Path) -> None:
+    """Every stored run predates this column, and an existing run must keep
+    behaving exactly as it did."""
+    teams, run, _cycle = _run_with_cycle_and_agents(tmp_path)
+
+    assert teams.get_team_run(run.id).plan_negotiation_enabled is False
+
+
+def test_negotiation_can_be_requested_at_creation(tmp_path: Path) -> None:
+    teams, run, _cycle = _run_with_cycle_and_agents(tmp_path)
+    source = teams.get_team_run(run.id)
+
+    negotiated = teams.create_team_run(
+        source.goal,
+        _leader_persona_id(teams, run.id),
+        [_member_persona_id(teams, run.id)],
+        "plan_and_execute",
+        1,
+        plan_negotiation=True,
+    )
+
+    assert teams.get_team_run(negotiated.id).plan_negotiation_enabled is True
+
+
 def test_required_verifications_accept_plain_strings_and_objects() -> None:
     parsed = parse_required_verifications(
         [

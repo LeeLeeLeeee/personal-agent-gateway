@@ -71,6 +71,7 @@ class TeamRun:
     worktree_branch: str | None = None
     space_policy: dict | None = None
     parent_team_run_id: str | None = None
+    plan_negotiation_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -247,6 +248,7 @@ class TeamRunService:
         auto_repeat_count: int | None = None,
         auto_interval_seconds: int | None = None,
         parent_team_run_id: str | None = None,
+        plan_negotiation: bool = False,
     ) -> TeamRun:
         if (
             lifecycle_mode == "continuous"
@@ -305,9 +307,10 @@ class TeamRunService:
                         leader_agent_id, max_workers, rounds_budget, rounds_used,
                         workspace_root, working_root, artifact_root, worktree_branch,
                         space_policy_snapshot_json, summary, error_message, created_at,
-                        started_at, finished_at, updated_at, team_id, rules_snapshot_json
+                        started_at, finished_at, updated_at, team_id, rules_snapshot_json,
+                        plan_negotiation_enabled
                     )
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         team_run_id,
@@ -334,6 +337,7 @@ class TeamRunService:
                         now,
                         team_id,
                         rules_snapshot_json,
+                        1 if plan_negotiation else 0,
                     ),
                 )
                 leader_agent = self._insert_agent(
@@ -3832,6 +3836,11 @@ def _team_run_from_row(row: object) -> TeamRun:
         ),
         parent_team_run_id=(
             row["parent_team_run_id"] if "parent_team_run_id" in row.keys() else None
+        ),
+        plan_negotiation_enabled=(
+            bool(row["plan_negotiation_enabled"])
+            if "plan_negotiation_enabled" in row.keys()
+            else False
         ),
     )
 
