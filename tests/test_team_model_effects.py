@@ -1926,6 +1926,101 @@ def test_synthesis_replay_recomputes_terminal_status_from_cycle_tasks(tmp_path):
         services.effects.apply_synthesis(services.operation.id, summary)
 
 
+def add_canceled_required_task(services, title="Superseded"):
+    task = services.teams.create_task(
+        services.run.id,
+        title,
+        f"{title} description.",
+        cycle_id=services.cycle.id,
+    )
+    services.teams.set_task_status(task.id, "canceled")
+    return task
+
+
+def test_synthesis_ignores_the_tasks_of_a_discarded_plan_revision(tmp_path):
+    """A negotiation that succeeded after an objection completes.
+
+    Revision 1's tasks stay in the cycle as canceled rows, and a canceled
+    required task reads as terminal `blocked`, so the plan every owner
+    approved -- whose every task completed -- used to be reported blocked.
+    """
+    services = make_completed_synthesis_operation(tmp_path)
+    discarded = add_canceled_required_task(services)
+    superseded = services.teams.create_plan_revision(
+        services.run.id,
+        services.cycle.id,
+        [discarded.id],
+        [services.leader.id],
+    )
+    services.teams.set_plan_revision_status(superseded.id, "superseded")
+    approved = services.teams.create_plan_revision(
+        services.run.id,
+        services.cycle.id,
+        [services.task.id],
+        [services.leader.id],
+    )
+    services.teams.set_plan_revision_status(approved.id, "approved")
+    summary = "The draft is complete."
+
+    first = services.effects.apply_synthesis(services.operation.id, summary)
+    # The replay derives the status from the same scoped rows, so a resume of
+    # the finished cycle agrees with what was applied instead of raising.
+    second = services.effects.apply_synthesis(services.operation.id, summary)
+
+    assert first == second == summary
+    assert services.teams.get_team_run(services.run.id).status == "completed"
+    assert services.teams.get_cycle(services.cycle.id).status == "completed"
+    operation = services.operations.get(services.operation.id)
+    assert operation.effect_ref_json["status"] == "completed"
+
+
+def test_synthesis_without_negotiation_still_counts_canceled_tasks(tmp_path):
+    """The legacy path, which is every run in this system.
+
+    A run without plan negotiation has no plan revision row, so nothing is
+    scoped out and a canceled required task still blocks the cycle exactly as
+    it did before.
+    """
+    services = make_completed_synthesis_operation(tmp_path)
+    run = services.teams.get_team_run(services.run.id)
+    assert run.plan_negotiation_enabled is False
+    add_canceled_required_task(services)
+    summary = "The draft is complete."
+
+    first = services.effects.apply_synthesis(services.operation.id, summary)
+    second = services.effects.apply_synthesis(services.operation.id, summary)
+
+    assert first == second == summary
+    assert services.teams.get_team_run(services.run.id).status == "blocked"
+    assert services.teams.get_cycle(services.cycle.id).status == "blocked"
+    operation = services.operations.get(services.operation.id)
+    assert operation.effect_ref_json["status"] == "blocked"
+
+
+def test_synthesis_counts_a_canceled_task_a_live_revision_still_lists(tmp_path):
+    """Only what the discarded plan alone proposed is dropped."""
+    services = make_completed_synthesis_operation(tmp_path)
+    canceled = add_canceled_required_task(services)
+    superseded = services.teams.create_plan_revision(
+        services.run.id,
+        services.cycle.id,
+        [canceled.id],
+        [services.leader.id],
+    )
+    services.teams.set_plan_revision_status(superseded.id, "superseded")
+    approved = services.teams.create_plan_revision(
+        services.run.id,
+        services.cycle.id,
+        [services.task.id, canceled.id],
+        [services.leader.id],
+    )
+    services.teams.set_plan_revision_status(approved.id, "approved")
+
+    services.effects.apply_synthesis(services.operation.id, "The draft is complete.")
+
+    assert services.teams.get_team_run(services.run.id).status == "blocked"
+
+
 @pytest.mark.parametrize(
     "effect_kind",
     ["plan", "worker_outcome", "worker_decision", "synthesis"],
@@ -2437,3 +2532,203 @@ def test_applying_twice_is_idempotent(tmp_path):
         )
         == 1
     )
+
+
+def make_completed_plan_review_operation(
+    tmp_path,
+    *,
+    review=None,
+    stage="cycle_plan_review",
+):
+    db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, _cycles, run)
+    teams.set_cycle_status(cycle.id, "running")
+    leader = teams.get_agent(run.leader_agent_id)
+    worker = next(
+        candidate
+        for candidate in teams.list_agents(run.id)
+        if candidate.id != leader.id
+    )
+    task = teams.create_task(
+        run.id,
+        "Draft",
+        "Create a draft.",
+        owner_agent_id=worker.id,
+        cycle_id=cycle.id,
+    )
+    revision = teams.create_plan_revision(run.id, cycle.id, [task.id], [worker.id])
+    operations = TeamModelOperationService(db)
+    reserved = operations.reserve(
+        OperationSpec(
+            operation_key=f"{cycle.id}:{stage}:10",
+            team_run_id=run.id,
+            cycle_id=cycle.id,
+            task_id=None,
+            agent_id=worker.id,
+            provider=worker.backend,
+            stage=stage,
+            stage_ordinal=10,
+            request_digest=REQUEST_DIGEST,
+        )
+    )
+    invoking = operations.begin_attempt(reserved.id, "consumer-1")
+    operation = operations.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult(
+            "plan_review",
+            review or {"decision": "approve", "objections": []},
+        ),
+        upstream_session_id="worker-session",
+    )
+    return SimpleNamespace(
+        db=db,
+        teams=teams,
+        run=run,
+        cycle=cycle,
+        task=task,
+        leader=leader,
+        worker=worker,
+        revision=revision,
+        operations=operations,
+        operation=operation,
+        effects=TeamModelEffectService(db, teams, operations),
+    )
+
+
+def objecting_review():
+    return {
+        "decision": "object",
+        "objections": [
+            {
+                "kind": "gap",
+                "task_ref": "T-01",
+                "detail": "아무도 마이그레이션을 담당하지 않는다",
+            }
+        ],
+    }
+
+
+def test_plan_review_and_operation_are_atomic_and_idempotent(tmp_path):
+    """The verdict row and the applied flag are one transaction, and a resume
+    replays the stored verdict instead of asking the reviewer again."""
+    services = make_completed_plan_review_operation(
+        tmp_path,
+        review=objecting_review(),
+    )
+
+    first = services.effects.apply_plan_review(
+        services.operation.id,
+        services.revision.id,
+    )
+    second = services.effects.apply_plan_review(
+        services.operation.id,
+        services.revision.id,
+    )
+
+    assert second == first
+    assert first.decision == "object"
+    assert first.objections[0].detail == "아무도 마이그레이션을 담당하지 않는다"
+    assert services.teams.plan_reviews(services.revision.id) == {
+        services.worker.id: "object"
+    }
+    assert services.teams.plan_review_objections(services.revision.id) == {
+        services.worker.id: objecting_review()["objections"]
+    }
+    operation = services.operations.get(services.operation.id)
+    assert operation.status == "applied"
+    assert operation.effect_type == "plan_review"
+    assert operation.effect_ref_json == {
+        "plan_revision_id": services.revision.id,
+        "agent_id": services.worker.id,
+    }
+
+
+def test_plan_review_repair_stage_applies_the_same_way(tmp_path):
+    services = make_completed_plan_review_operation(
+        tmp_path,
+        stage="cycle_plan_review_repair",
+    )
+
+    review = services.effects.apply_plan_review(
+        services.operation.id,
+        services.revision.id,
+    )
+
+    assert review.decision == "approve"
+    assert services.teams.plan_reviews(services.revision.id) == {
+        services.worker.id: "approve"
+    }
+
+
+def test_plan_review_replay_rejects_a_removed_review_row(tmp_path):
+    services = make_completed_plan_review_operation(tmp_path)
+    services.effects.apply_plan_review(services.operation.id, services.revision.id)
+    services.db.execute(
+        "delete from team_plan_approvals where plan_revision_id = ?",
+        (services.revision.id,),
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_plan_review(
+            services.operation.id,
+            services.revision.id,
+        )
+
+
+def test_plan_review_refuses_a_second_verdict_from_the_same_reviewer(tmp_path):
+    services = make_completed_plan_review_operation(tmp_path)
+    services.teams.record_plan_review(
+        services.revision.id,
+        services.worker.id,
+        "object",
+        [{"kind": "gap", "task_ref": "T-01", "detail": "unowned"}],
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_plan_review(
+            services.operation.id,
+            services.revision.id,
+        )
+
+    assert services.operations.get(services.operation.id).status == "completed"
+
+
+def test_plan_review_refuses_a_revision_from_another_run(tmp_path):
+    services = make_completed_plan_review_operation(tmp_path)
+    other = make_completed_plan_review_operation(tmp_path / "other")
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_plan_review(
+            services.operation.id,
+            other.revision.id,
+        )
+
+
+def test_plan_review_refuses_a_decided_revision(tmp_path):
+    services = make_completed_plan_review_operation(tmp_path)
+    services.teams.set_plan_revision_status(services.revision.id, "superseded")
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_plan_review(
+            services.operation.id,
+            services.revision.id,
+        )
+
+
+def test_plan_review_refuses_an_operation_from_another_stage(tmp_path):
+    """The guard mark_applied's stage allow-list used to provide: aimed at a
+    synthesis id, this would close it under the wrong effect and lose the
+    cycle's summary."""
+    services = make_completed_synthesis_operation(tmp_path)
+    revision = services.teams.create_plan_revision(
+        services.run.id,
+        services.cycle.id,
+        [services.task.id],
+        [services.leader.id],
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_plan_review(services.operation.id, revision.id)
+
+    assert services.operations.get(services.operation.id).status == "completed"

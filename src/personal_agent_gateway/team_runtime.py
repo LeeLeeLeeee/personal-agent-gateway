@@ -1979,12 +1979,6 @@ class TeamRuntime:
                 )
                 if review is None:
                     break  # unparsable after repair: not consent, stop asking
-                self._teams.record_plan_review(
-                    revision.id,
-                    agent_id,
-                    review.decision,
-                    [asdict(objection) for objection in review.objections],
-                )
                 self._teams.append_message(
                     run.id,
                     agent_id,
@@ -2034,9 +2028,10 @@ class TeamRuntime:
     ) -> PlanReview | None:
         """Ask one owner to review the plan. None means it could not be read.
 
-        The operation is marked applied before the review row is written, not
-        after: a crash in between then replays the stored verdict on resume
-        instead of asking the model a second question it already answered.
+        The verdict is recorded and the operation closed by a single effect, so
+        there is no state in which the run holds a review nobody can see. A
+        resume re-enters an already-applied operation and replays the stored
+        verdict instead of asking the model a question it already answered.
         """
         agent = self._teams.get_agent(agent_id)
         messages = self._plan_review_messages(run, agent, labels, cycle_id)
@@ -2080,12 +2075,7 @@ class TeamRuntime:
                 )
         except InvalidOperationResult:
             return None
-        self._operations.mark_applied(
-            operation.id,
-            operation.version,
-            effect_type="plan_review",
-            effect_ref={"plan_revision_id": revision.id, "agent_id": agent_id},
-        )
+        review = self._model_effects.apply_plan_review(operation.id, revision.id)
         # The reviewer keeps the session it reviewed in, the same way every
         # effect in TeamModelEffectService promotes its actor's session. The
         # reviewer is the agent that will later be asked to do this work, so
@@ -2094,7 +2084,7 @@ class TeamRuntime:
         # and would cost the worker the context in which it read the plan.
         if operation.upstream_session_id is not None:
             self._teams.set_agent_session(agent_id, operation.upstream_session_id)
-        return _operation_plan_review(operation)
+        return review
 
     def _open_review_repair(
         self, cycle_id: str, spec: OperationSpec
@@ -5233,27 +5223,6 @@ def _validated_plan_review(
             "decision": review.decision,
             "objections": [asdict(objection) for objection in review.objections],
         },
-    )
-
-
-def _operation_plan_review(operation: TeamModelOperation) -> PlanReview:
-    stored = operation.result_json
-    if (
-        not isinstance(stored, dict)
-        or stored.get("kind") != "plan_review"
-        or not isinstance(stored.get("payload"), dict)
-    ):
-        raise OperationConflict("Completed plan review is invalid")
-    payload = stored["payload"]
-    # Re-parsed rather than rebuilt field by field: the stored payload is the
-    # reviewer's answer, and parse_plan_review is the only thing that decides
-    # what a usable answer is. Every label in it was already checked, so no
-    # label set is needed to read it back.
-    return parse_plan_review(
-        json.dumps(payload, ensure_ascii=False),
-        frozenset(
-            objection["task_ref"] for objection in payload["objections"]
-        ),
     )
 
 

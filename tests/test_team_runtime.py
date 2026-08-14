@@ -7920,9 +7920,9 @@ async def test_a_negotiation_that_succeeds_after_a_replan_reaches_synthesis(
     and cycle_execution_disposition reads a canceled required task as terminal
     `failed`. The discarded revision no longer decides that.
 
-    The terminal status itself is still wrong -- see the xfail below -- but the
-    run now produces its summary and its result package instead of being
-    stopped at the gate.
+    The run produces its summary and its result package instead of being
+    stopped at the gate; the terminal status it settles on is pinned by the
+    test below.
     """
     setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
     setup.worker_clients[0].responses = [_object("T-01", "gap"), _approve()]
@@ -7941,25 +7941,17 @@ async def test_a_negotiation_that_succeeds_after_a_replan_reaches_synthesis(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "team_model_effects.apply_synthesis re-derives the cycle's terminal "
-        "status from every team_tasks row of the cycle and writes it to the "
-        "run, the cycle and the synthesis operation's effect_ref, so the "
-        "superseded revision's canceled required tasks still make this "
-        "'blocked'. Correcting it from team_runtime after the fact would "
-        "desynchronise effect_ref, which _replay_synthesis verifies against "
-        "the live rows, so a later resume of the finished cycle would raise. "
-        "Fixing it needs apply_synthesis scoped to the approved plan, which "
-        "is outside the files this task may touch."
-    ),
-)
 @pytest.mark.asyncio
 async def test_a_negotiation_that_succeeds_after_a_replan_completes(
     tmp_path,
 ) -> None:
-    """The other half of "set, never derived". No crash anywhere in this."""
+    """The other half of "set, never derived". No crash anywhere in this.
+
+    apply_synthesis derives the terminal status from the cycle's live tasks --
+    the discarded revision's canceled rows dropped -- and both it and
+    _replay_synthesis read that same scoped set, so the applied effect_ref and
+    the rows still agree when a resume replays the finished cycle.
+    """
     setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
     setup.worker_clients[0].responses = [_object("T-01", "gap"), _approve()]
     setup.worker_clients[1].responses = [_approve(), _approve()]

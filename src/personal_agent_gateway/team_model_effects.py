@@ -26,6 +26,11 @@ from personal_agent_gateway.team_model_operations import (
     TeamModelOperation,
     TeamModelOperationService,
 )
+from personal_agent_gateway.team_plan_negotiation import (
+    PlanReview,
+    PlanReviewError,
+    parse_plan_review,
+)
 from personal_agent_gateway.team_repair_stages import REPAIR_STAGE
 from personal_agent_gateway.team_outcomes import TaskOutcomeError, parse_task_outcome
 from personal_agent_gateway.team_verification_checks import (
@@ -61,6 +66,10 @@ _PLAN_STAGES = {
 _SYNTHESIS_STAGES = {
     "cycle_synthesis",
     "cycle_synthesis_repair",
+}
+_PLAN_REVIEW_STAGES = {
+    "cycle_plan_review",
+    "cycle_plan_review_repair",
 }
 MediationResolution = Mapping[str, object]
 
@@ -885,14 +894,11 @@ class TeamModelEffectService:
                 or cycle["status"] != "running"
             ):
                 raise OperationConflict("Team state is not ready for synthesis")
-            task_rows = connection.execute(
-                """
-                select status, required from team_tasks
-                where team_run_id = ? and cycle_id = ?
-                order by created_at asc, id asc
-                """,
-                (operation.team_run_id, operation.cycle_id),
-            ).fetchall()
+            task_rows = _live_cycle_task_rows(
+                connection,
+                operation.team_run_id,
+                operation.cycle_id,
+            )
             terminal_status = _terminal_status(task_rows)
             message_id = uuid4().hex
             connection.execute(
@@ -967,6 +973,152 @@ class TeamModelEffectService:
                 now=now,
             )
             return stored_summary
+
+    def apply_plan_review(
+        self,
+        operation_id: str,
+        plan_revision_id: str,
+    ) -> PlanReview:
+        """Record one owner's verdict on a plan revision and close its operation.
+
+        The review row and the applied flag are written in one transaction, the
+        way every other stage's effect is: closing the operation first and
+        recording the review afterwards left a crash window in which the run
+        held a verdict nobody could see, and the review row is the only thing
+        the negotiation loop reads back.
+
+        Idempotent on replay: a second call on an already-applied operation
+        returns the stored verdict instead of asking the model again, after
+        checking that the row the first call wrote is still there and still
+        says the same thing.
+        """
+        now = _now()
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            operation = self._operations._get(connection, operation_id)
+            revision = self._validate_plan_review_operation(
+                connection,
+                operation,
+                plan_revision_id,
+            )
+            review = _plan_review(operation)
+            if operation.status == "applied":
+                return self._replay_plan_review(
+                    connection,
+                    operation,
+                    plan_revision_id,
+                    review,
+                )
+            if operation.status != "completed":
+                raise StaleOperation(
+                    f"Expected operation status completed, got {operation.status}"
+                )
+            if revision["status"] != "awaiting_approval":
+                raise OperationConflict(
+                    "Plan revision is no longer awaiting approval"
+                )
+            try:
+                connection.execute(
+                    """
+                    insert into team_plan_approvals (
+                        id, plan_revision_id, agent_id, decision,
+                        objections_json, created_at
+                    ) values (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        uuid4().hex,
+                        plan_revision_id,
+                        operation.agent_id,
+                        review.decision,
+                        _objections_json(review),
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                # The unique index on (plan_revision_id, agent_id) is the
+                # source of truth for "once". Re-asking a reviewer that already
+                # answered could flip an approval, so it is refused here rather
+                # than checked first.
+                raise OperationConflict(
+                    "Plan review is already recorded for this agent"
+                ) from exc
+            _mark_applied(
+                connection,
+                operation,
+                effect_type="plan_review",
+                effect_ref={
+                    "plan_revision_id": plan_revision_id,
+                    "agent_id": operation.agent_id,
+                },
+                now=now,
+            )
+            return review
+
+    def _validate_plan_review_operation(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        plan_revision_id: str,
+    ) -> sqlite3.Row:
+        if (
+            operation.stage not in _PLAN_REVIEW_STAGES
+            or operation.task_id is not None
+            or operation.result_kind != "plan_review"
+        ):
+            raise OperationConflict("Operation is not a plan review stage")
+        revision = connection.execute(
+            """
+            select status, team_run_id, cycle_id from team_plan_revisions
+            where id = ?
+            """,
+            (plan_revision_id,),
+        ).fetchone()
+        if (
+            revision is None
+            or revision["team_run_id"] != operation.team_run_id
+            or revision["cycle_id"] != operation.cycle_id
+        ):
+            raise OperationConflict(
+                "Plan revision does not belong to the review's cycle"
+            )
+        agent = self._teams._agent_from_connection(connection, operation.agent_id)
+        if agent.team_run_id != operation.team_run_id:
+            raise OperationConflict("Plan reviewer does not belong to the run")
+        return revision
+
+    def _replay_plan_review(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        plan_revision_id: str,
+        review: PlanReview,
+    ) -> PlanReview:
+        effect_ref = operation.effect_ref_json
+        if (
+            operation.effect_type != "plan_review"
+            or not isinstance(effect_ref, dict)
+            or set(effect_ref) != {"plan_revision_id", "agent_id"}
+            or effect_ref["plan_revision_id"] != plan_revision_id
+            or effect_ref["agent_id"] != operation.agent_id
+        ):
+            raise OperationConflict("Applied plan review effect reference is invalid")
+        row = connection.execute(
+            """
+            select decision, objections_json from team_plan_approvals
+            where plan_revision_id = ? and agent_id = ?
+            """,
+            (plan_revision_id, operation.agent_id),
+        ).fetchone()
+        if (
+            row is None
+            or row["decision"] != review.decision
+            or _loads_objections(row["objections_json"])
+            != [asdict(objection) for objection in review.objections]
+        ):
+            raise OperationConflict(
+                "Applied plan review rows do not match the operation"
+            )
+        return review
 
     def apply_synthesis_decision(
         self,
@@ -1102,15 +1254,13 @@ class TeamModelEffectService:
             or cycle["status"] != "running"
         ):
             raise OperationConflict("Team state is not ready for synthesis")
-        task_rows = connection.execute(
-            """
-            select status, required from team_tasks
-            where team_run_id = ? and cycle_id = ?
-            order by created_at asc, id asc
-            """,
-            (operation.team_run_id, operation.cycle_id),
-        ).fetchall()
-        _terminal_status(task_rows)
+        _terminal_status(
+            _live_cycle_task_rows(
+                connection,
+                operation.team_run_id,
+                operation.cycle_id,
+            )
+        )
 
     def _replay_synthesis_decision(
         self,
@@ -1220,15 +1370,13 @@ class TeamModelEffectService:
             connection,
             operation.agent_id,
         )
-        task_rows = connection.execute(
-            """
-            select status, required from team_tasks
-            where team_run_id = ? and cycle_id = ?
-            order by created_at asc, id asc
-            """,
-            (operation.team_run_id, operation.cycle_id),
-        ).fetchall()
-        terminal_status = _terminal_status(task_rows)
+        terminal_status = _terminal_status(
+            _live_cycle_task_rows(
+                connection,
+                operation.team_run_id,
+                operation.cycle_id,
+            )
+        )
         if (
             message.team_run_id != operation.team_run_id
             or message.cycle_id != operation.cycle_id
@@ -2642,6 +2790,41 @@ def _synthesis_summary(operation: TeamModelOperation) -> str:
     return payload["summary"]
 
 
+def _plan_review(operation: TeamModelOperation) -> PlanReview:
+    payload = _result_payload(operation, "plan_review")
+    # Re-parsed rather than rebuilt field by field: the stored payload is the
+    # reviewer's answer, and parse_plan_review is the only thing that decides
+    # what a usable answer is. Every label in it was already checked when the
+    # operation completed, so no label set is needed to read it back.
+    objections = payload.get("objections")
+    if not isinstance(objections, list) or not all(
+        isinstance(objection, dict) and isinstance(objection.get("task_ref"), str)
+        for objection in objections
+    ):
+        raise OperationConflict("Completed plan review is invalid")
+    try:
+        return parse_plan_review(
+            json.dumps(payload, ensure_ascii=False),
+            frozenset(objection["task_ref"] for objection in objections),
+        )
+    except PlanReviewError as exc:
+        raise OperationConflict("Completed plan review is invalid") from exc
+
+
+def _objections_json(review: PlanReview) -> str:
+    return json.dumps(
+        [asdict(objection) for objection in review.objections],
+        ensure_ascii=False,
+    )
+
+
+def _loads_objections(stored: str) -> object:
+    try:
+        return json.loads(stored)
+    except json.JSONDecodeError as exc:
+        raise OperationConflict("Stored plan review objections are unreadable") from exc
+
+
 def _result_payload(
     operation: TeamModelOperation,
     kind: str,
@@ -3489,6 +3672,85 @@ def _valid_synthesis(payload: dict[str, object]) -> bool:
         ):
             return False
     return True
+
+
+def _live_cycle_task_rows(
+    connection: sqlite3.Connection,
+    team_run_id: str,
+    cycle_id: str | None,
+) -> list[sqlite3.Row]:
+    """The cycle's task rows with every discarded plan proposal dropped.
+
+    A superseded or abandoned plan revision leaves its tasks behind as
+    canceled rows, and a canceled *required* task reads as terminal `blocked`.
+    So a negotiation that worked -- a plan every owner approved, every task of
+    which completed -- reported the cycle as blocked, because the plan nobody
+    agreed to was still being counted. team_runtime drops the same rows before
+    it decides whether to synthesize (``_live_plan_tasks``); this is the same
+    rule applied where the terminal status is actually written.
+
+    A run without plan negotiation has no revision row at all, so nothing is
+    ever dropped and its status is derived from exactly the rows it was
+    before -- pinned by
+    test_synthesis_without_negotiation_still_counts_canceled_tasks.
+
+    Both apply_synthesis and _replay_synthesis derive the status from here, so
+    the applied effect_ref and the live rows keep agreeing on resume.
+    """
+    rows = connection.execute(
+        """
+        select id, status, required from team_tasks
+        where team_run_id = ? and cycle_id = ?
+        order by created_at asc, id asc
+        """,
+        (team_run_id, cycle_id),
+    ).fetchall()
+    discarded = _discarded_plan_task_ids(connection, team_run_id, cycle_id)
+    if not discarded:
+        return rows
+    live = [row for row in rows if row["id"] not in discarded]
+    # A cycle whose every task belongs to a discarded revision has no plan
+    # left to judge, and _terminal_status refuses an empty cycle. Negotiation
+    # settles such a cycle before synthesis, so this is unreachable in
+    # practice; deriving from the unscoped rows keeps it a status rather than
+    # a raise if it ever is reached.
+    return live or rows
+
+
+def _discarded_plan_task_ids(
+    connection: sqlite3.Connection,
+    team_run_id: str,
+    cycle_id: str | None,
+) -> set[str]:
+    """Task ids only a discarded plan revision ever proposed.
+
+    A task a surviving revision also lists is not discarded, and work added to
+    the cycle afterwards sits on no revision at all, so both keep counting.
+    """
+    discarded: set[str] = set()
+    live: set[str] = set()
+    for row in connection.execute(
+        """
+        select status, task_ids_json from team_plan_revisions
+        where team_run_id = ? and cycle_id = ?
+        """,
+        (team_run_id, cycle_id),
+    ).fetchall():
+        try:
+            task_ids = json.loads(row["task_ids_json"])
+        except json.JSONDecodeError as exc:
+            raise OperationConflict("Plan revision task ids are unreadable") from exc
+        if not isinstance(task_ids, list):
+            raise OperationConflict("Plan revision task ids are unreadable")
+        target = (
+            discarded
+            if row["status"] in {"superseded", "abandoned"}
+            else live
+        )
+        target.update(
+            task_id for task_id in task_ids if isinstance(task_id, str)
+        )
+    return discarded - live
 
 
 def _terminal_status(rows: list[sqlite3.Row]) -> str:
