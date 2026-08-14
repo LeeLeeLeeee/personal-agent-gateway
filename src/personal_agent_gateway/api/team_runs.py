@@ -167,11 +167,6 @@ async def create_team_run(
 ) -> dict[str, object]:
     require_intake_open(request)
     try:
-        # NOTE: payload.plan_negotiation is accepted here but not forwarded.
-        # TeamRunService.create_team_run_from_team (teams.py) does not take a
-        # plan_negotiation parameter to pass through to create_team_run's, so
-        # wiring this flag end-to-end needs a change there, which is outside
-        # this file's scope -- see the task report.
         run = request.app.state.team_run_service.create_team_run_from_team(
             request.app.state.team_directory_service,
             request.app.state.rule_set_service,
@@ -188,6 +183,7 @@ async def create_team_run(
                 else None
             ),
             parent_team_run_id=payload.parent_team_run_id,
+            plan_negotiation=payload.plan_negotiation,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team not found") from exc

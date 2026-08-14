@@ -578,6 +578,52 @@ def _git(path: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+def test_requesting_negotiation_at_creation_actually_enables_it(tmp_path: Path) -> None:
+    """The flag was accepted by the endpoint and then dropped, because
+    create_team_run_from_team had no parameter to forward it through. A feature
+    that cannot be switched on from the only surface that creates runs is
+    unreachable -- which is exactly how a shipped feature goes unnoticed."""
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "QA Tester")
+    team_id = create_team(client, leader_id, [member_id])
+
+    response = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Design Agent Teams",
+            "execution_policy": "triggered",
+            "plan_negotiation": True,
+        },
+    )
+
+    assert response.status_code == 200
+    run_id = response.json()["team_run"]["id"]
+    stored = client.app.state.team_run_service.get_team_run(run_id)
+    assert stored.plan_negotiation_enabled is True
+
+
+def test_a_run_created_without_asking_leaves_negotiation_off(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "QA Tester")
+    team_id = create_team(client, leader_id, [member_id])
+
+    response = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Design Agent Teams",
+            "execution_policy": "triggered",
+        },
+    )
+
+    run_id = response.json()["team_run"]["id"]
+    stored = client.app.state.team_run_service.get_team_run(run_id)
+    assert stored.plan_negotiation_enabled is False
+
+
 def test_worktree_delivery_commits_and_applies_to_space_repository(
     tmp_path: Path,
 ) -> None:

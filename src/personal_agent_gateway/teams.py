@@ -410,6 +410,7 @@ class TeamRunService:
         auto_repeat_count: int | None = None,
         auto_interval_seconds: int | None = None,
         parent_team_run_id: str | None = None,
+        plan_negotiation: bool = False,
     ) -> TeamRun:
         team = team_service.get_team(team_id)
         snapshot = rule_set_service.snapshot_for_team(team_id)
@@ -429,6 +430,7 @@ class TeamRunService:
             auto_repeat_count=auto_repeat_count,
             auto_interval_seconds=auto_interval_seconds,
             parent_team_run_id=parent_team_run_id,
+            plan_negotiation=plan_negotiation,
         )
 
     def get_team_run(self, team_run_id: str) -> TeamRun:
