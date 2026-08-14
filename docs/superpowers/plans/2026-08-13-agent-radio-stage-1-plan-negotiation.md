@@ -1158,7 +1158,48 @@ Two things the spec demands proof of, neither of which Task 5's tests cover.
 
 - [ ] **Step 1: Write the failing tests**
 
+Task 5's review proved with a probe that `resume()` executes an unapproved plan: `_negotiate_plan` is called only from `start()`, and `resume()` delegates to `start()` only when the task list is empty — which it never is, because negotiation runs after the tasks are created. A run whose revision is still `awaiting_approval` with one of two approvals resumes straight into execution, runs everything, and reports `completed`. **This test must come first, because none of the other three catches it.**
+
 ```python
+async def test_resume_does_not_execute_an_unapproved_plan(tmp_path) -> None:
+    """The single property this feature provides, across a restart. One approver
+    answered, the process died before the second was asked, and no open operation
+    was left to trip the ledger guard."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_approve()]
+    setup.worker_clients[1].responses = []  # dies before reviewing
+
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    resumed = setup.new_runtime()
+    setup.worker_clients[1].responses = [_object("T-01", "gap")]
+
+    await resumed.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.worker_execution_calls == 0
+    (revision,) = setup.teams.list_plan_revisions(setup.run.id, setup.cycle.id)
+    assert revision.status != "approved"
+
+
+async def test_a_replan_interrupted_mid_flight_is_recoverable(tmp_path) -> None:
+    """Replans occupy cycle_planning at ordinals 20/30, but _recover_open_operation
+    still assumes planning means ordinal 0 (or 1/2 for its repair), so a crash during
+    a replan died with a message naming the wrong problem."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_object("T-01", "gap")]
+    setup.lead_client.fail_after_reserving_replan = True
+
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    resumed = setup.new_runtime()
+    run = await resumed.resume(setup.run.id, setup.cycle.id)
+
+    assert run.error_message != "Operation status invoking cannot be invoked"
+    assert setup.worker_execution_calls == 0
+
+
 async def test_the_cap_survives_a_restart(tmp_path) -> None:
     """The two loop defects already fixed here both resumed from stored state
     that the cap check trusted. Interrupt mid-negotiation and confirm the budget
