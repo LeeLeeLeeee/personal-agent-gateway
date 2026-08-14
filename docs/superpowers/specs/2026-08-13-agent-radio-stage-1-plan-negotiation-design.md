@@ -166,3 +166,33 @@ Run은 `completed_with_failures`로 끝나고 `collaboration_plan_approval_incom
 - 재개 시 이미 리뷰를 받은 agent에게 모델을 다시 호출하지 않는다.
 - task가 전부 canceled인 Run에서 `_terminal_status`, build evidence 롤업, `_package_results`, UI가 각각 무엇을 하는지 확인하고 기록한다.
 - 백엔드 스위트가 초록을 유지한다(2026-08-13 기준 1575 passed / 0 failed).
+
+## 구현이 실제로 보여준 것
+
+브랜치 `feat/plan-negotiation`, 10개 태스크. 각 태스크마다 리뷰를 붙였고, **리뷰가 찾은 결함 대부분이 이 spec과 그 구현 계획에서 온 것**이었다. 남길 가치가 있는 것만 적는다.
+
+### 계획 검증으로는 나오지 않고 실행이 잡은 것들
+
+- **`Sequence[str]`이 맨 문자열을 받는다.** `verdict_for("ab", {"a":"approve","b":"approve"})`가 `"approved"`를 반환했다 — 아무도 리뷰하지 않은 승인. 이 함수의 존재 이유가 그걸 막는 것이라 `TypeError`로 닫았다.
+- **`x in some_set`은 `x`를 해싱한다.** 모델이 값을 리스트로 감싸면(`{"decision": ["approve"]}`) `PlanReviewError`가 아니라 `TypeError`가 새어 나갔고, 복구 경로는 그걸 잡지 않으므로 재시도 대신 런이 죽었다. 통과하던 34개 테스트가 전부 평범한 문자열만 써서 못 봤다.
+- **SQLite는 unique index에서 NULL을 서로 다르게 본다.** `cycle_id = NULL`이면 `(team_run_id, cycle_id, revision)` 인덱스가 중복 revision 1을 막지 못해 상한이 조용히 무력화됐다. `cycle_id`를 필수로 만들어 닫았다.
+- **라벨 드리프트가 프롬프트 자기 예시를 독으로 만들었다.** `plan_ordinal`이 cycle 전체에서 이어지므로 revision 2의 라벨은 `T-02`부터인데 프롬프트에는 `T-01`이 박혀 있었다. 예시를 따라 쓰는 모델은 revision 2부터 파싱 불가가 되어 3개뿐인 예산을 태운다. revision 내 1-based 라벨로 바꿨다.
+- **재개가 미승인 계획을 실행했다.** `_negotiate_plan`은 `start()`에서만 호출되고 `resume()`은 태스크 목록이 빌 때만 `start()`로 위임하는데, 협상은 태스크 생성 뒤에 돌아 목록이 빌 일이 없다. 승인 1/2 상태에서 재시작하면 전체 계획이 실행되고 런이 `completed`로 보고됐다. 이 기능이 제공하는 유일한 속성이 재시작 한 번에 조용히 사라졌다.
+- **성공한 협상이 `failed`로 보고됐다.** 크래시조차 필요 없다. 반대 → 재계획 → 승인 → 정상 완료인데, 폐기된 revision의 취소 태스크가 `list_tasks`에 남아 파생 규칙이 "취소된 필수 태스크 → failed"로 매핑했다. **이 spec은 "종료 상태를 파생에 맡기지 말라"고 썼지만 폐기 분기만 막았다.**
+- **API가 플래그를 받고 버렸다.** `create_team_run_from_team`에 넘길 파라미터가 없어, 런을 만드는 유일한 표면에서 만든 모든 런이 협상 꺼짐이었다 — 기능 전체가 도달 불가인데 그 아래 테스트는 전부 통과했다.
+
+### 이 spec이 "확인 대상"으로 남긴 셋
+
+협상 실패로 끝난 런을 실제로 만들어 측정했다(revision 3개 전부 미승인, 태스크 6개 전부 `canceled`).
+
+- **`_package_results`**: 호출되지만 `summary`는 `None`이다. 실행 결과가 없으니 맞다.
+- **agent 상태**: 리더 `completed`, 워커 `pending`(시작된 적이 없음).
+- **build evidence 롤업**: `{"task_count": 6, "worker_asserted_only_count": 0, "missing_file_count": 0, "unverified_task_count": 0}` — **이건 운영자를 오도한다.** 문제 카운트가 전부 0이라 깨끗한 런처럼 읽히는데 실제로는 아무것도 실행되지 않았고, `task_count: 6`은 폐기된 revision들의 태스크까지 센 값이다(한 번에 제안된 건 2개다).
+
+  가장 작은 수정은 롤업을 승인된 계획으로 한정하는 것이지만, 그러면 "살아 있는 계획" 규칙이 **세 번째 사본**이 된다 — 이미 `_live_plan_tasks`(런타임)와 `_live_cycle_task_rows`(effects)에 두 벌 있다. 옳은 수정은 셋을 하나로 합치는 것이고 그건 `teams.py`가 필요하다. 후속으로 남긴다.
+
+### 알려진 빈틈
+
+- **"실제 리뷰 중 provider 블립" 종단 테스트가 없다.** `make_negotiation_runtime`의 cycle에 `team_cycle_requests` 행이 없어 더 이른 "cycle request is not dispatching" 가드에 걸리므로, 그 픽스처로는 park를 끝까지 몰 수 없다. park/unpark 자체는 recovery 파일의 픽스처로 양방향 검증했다.
+- **"살아 있는 계획" 규칙이 두 곳에 있다**(위 참조). 함께 바뀌어야 한다.
+- `apply_plan_review`가 추가한 두 거부(같은 리뷰어의 중복 판정, `awaiting_approval`이 아닌 revision)는 추적한 어떤 경로에서도 발생하지 않는다.
