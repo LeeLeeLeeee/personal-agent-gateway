@@ -1917,14 +1917,19 @@ class TeamRuntime:
                 ]
                 if not approvers:
                     return True
+                # Checked here rather than per reviewer: the ordinal scheme is
+                # what cannot express approver 100, and finding that out inside
+                # the review loop would first open a revision and spend a
+                # hundred real model calls.
+                _require_keyable_approvers(approvers)
                 revision = self._teams.create_plan_revision(
                     run.id, cycle_id, [task.id for task in tasks], approvers
                 )
             if revision is None:
-                await self._abandon_negotiation(run, cycle_id, tasks)
+                await self._abandon_negotiation(run, leader, cycle_id, tasks)
                 return False
 
-            labels = {_plan_label(task): task for task in tasks}
+            labels = _plan_labels(tasks)
             self._teams.append_message(
                 run.id,
                 leader.id,
@@ -1940,7 +1945,7 @@ class TeamRuntime:
                 if agent_id in reviewed:
                     continue  # already answered; re-asking can flip an approval
                 review = await self._review_plan(
-                    run, revision, agent_id, index, tasks, frozenset(labels), cycle_id
+                    run, revision, agent_id, index, labels, cycle_id
                 )
                 if review is None:
                     break  # unparsable after repair: not consent, stop asking
@@ -1980,7 +1985,7 @@ class TeamRuntime:
                 # superseded: nothing is going to replace it. The same rule
                 # create_plan_revision enforces is asked here, one step
                 # earlier, so the run does not spend a replan it cannot use.
-                await self._abandon_negotiation(run, cycle_id, tasks)
+                await self._abandon_negotiation(run, leader, cycle_id, tasks)
                 return False
             self._teams.set_plan_revision_status(revision.id, "superseded")
             for task in tasks:
@@ -1994,8 +1999,7 @@ class TeamRuntime:
         revision: TeamPlanRevision,
         agent_id: str,
         approver_index: int,
-        tasks: list[TeamTask],
-        labels: frozenset[str],
+        labels: dict[str, TeamTask],
         cycle_id: str,
     ) -> PlanReview | None:
         """Ask one owner to review the plan. None means it could not be read.
@@ -2005,7 +2009,7 @@ class TeamRuntime:
         instead of asking the model a second question it already answered.
         """
         agent = self._teams.get_agent(agent_id)
-        messages = self._plan_review_messages(run, agent, tasks, cycle_id)
+        messages = self._plan_review_messages(run, agent, labels, cycle_id)
         spec = _operation_spec(
             run,
             cycle_id,
@@ -2016,7 +2020,7 @@ class TeamRuntime:
         )
 
         def parse(response: ModelResponse) -> ValidatedOperationResult:
-            return _validated_plan_review(response, labels)
+            return _validated_plan_review(response, frozenset(labels))
 
         try:
             operation = await self._invoke_with_repair(
@@ -2034,13 +2038,21 @@ class TeamRuntime:
             effect_type="plan_review",
             effect_ref={"plan_revision_id": revision.id, "agent_id": agent_id},
         )
+        # The reviewer keeps the session it reviewed in, the same way every
+        # effect in TeamModelEffectService promotes its actor's session. The
+        # reviewer is the agent that will later be asked to do this work, so
+        # the alternative -- dropping it -- would open one upstream session per
+        # reviewer per revision that is never written back and never reused,
+        # and would cost the worker the context in which it read the plan.
+        if operation.upstream_session_id is not None:
+            self._teams.set_agent_session(agent_id, operation.upstream_session_id)
         return _operation_plan_review(operation)
 
     def _plan_review_messages(
         self,
         run: TeamRun,
         agent: TeamAgent,
-        tasks: list[TeamTask],
+        labels: dict[str, TeamTask],
         cycle_id: str,
     ) -> list[dict[str, object]]:
         names = {
@@ -2048,10 +2060,10 @@ class TeamRuntime:
             for member in self._teams.list_agents(run.id)
         }
         plan_block = "\n".join(
-            f"{_plan_label(task)} "
+            f"{label} "
             f"[{_plan_owner_label(task, agent.id, names)}] "
             f"{task.title} — {task.description}"
-            for task in tasks
+            for label, task in labels.items()
         )
         prompt = PLAN_REVIEW_PROMPT.format(
             agent_label=agent.name,
@@ -2132,6 +2144,7 @@ class TeamRuntime:
     async def _abandon_negotiation(
         self,
         run: TeamRun,
+        leader: TeamAgent,
         cycle_id: str,
         tasks: list[TeamTask],
     ) -> None:
@@ -2140,6 +2153,12 @@ class TeamRuntime:
         The status is set, not derived: cycle_execution_disposition would call a
         run whose required tasks are canceled `failed`, and the design requires
         completed_with_failures with a reason the operator can act on.
+
+        Everything else here is what every other terminal path in this class
+        does. Nobody failed -- the team refused a plan, which is the feature
+        working -- so the agents settle as `completed`, and the run is packaged
+        like any other finished run so the delivery and UI layers read "nothing
+        was produced" rather than "the package is missing".
         """
         for task in tasks:
             if task.status == "pending":
@@ -2147,12 +2166,16 @@ class TeamRuntime:
         active = self._teams.get_active_plan_revision(run.id, cycle_id)
         if active is not None:
             self._teams.set_plan_revision_status(active.id, "abandoned")
+        for agent in self._teams.list_agents(run.id):
+            if agent.status == "running":
+                self._teams.set_agent_status(agent.id, "completed")
         self._teams.set_cycle_status(cycle_id, "completed_with_failures")
-        self._teams.set_run_status(
+        run = self._teams.set_run_status(
             run.id,
             "completed_with_failures",
             error_message="collaboration_plan_approval_incomplete",
         )
+        self._package_results(run, leader, cycle_id)
         await self._publish(
             {"type": "team.run.completed", "team_run_id": run.id}
         )
@@ -4347,8 +4370,18 @@ def _plan_under_review(tasks: list[TeamTask]) -> list[TeamTask]:
     return [task for task in tasks if task.status != "canceled"]
 
 
-def _plan_label(task: TeamTask) -> str:
-    return task_label(task.plan_ordinal)
+def _plan_labels(tasks: list[TeamTask]) -> dict[str, TeamTask]:
+    """Name every task in the plan under review, and map the name back.
+
+    Numbered from 1 by position in *this* revision, not by plan_ordinal.
+    plan_ordinal continues across the cycle, so a replan would show T-02/T-03
+    and then T-04/T-05 -- and PLAN_REVIEW_PROMPT carries a literal "T-01" in
+    its schema example. A model that echoes the example is right on revision 1
+    and unparsable on every revision after it, which spends the revision
+    budget on a defect in the prompt. Position-based labels keep the example a
+    real label in every round.
+    """
+    return {task_label(index): task for index, task in enumerate(tasks, start=1)}
 
 
 def _plan_owner_label(
@@ -4370,9 +4403,12 @@ def _plan_owner_label(
 _PLAN_REVIEW_ORDINAL_STRIDE = 100
 
 
-def _plan_review_ordinal(revision: int, approver_index: int) -> int:
-    if not 0 <= approver_index < _PLAN_REVIEW_ORDINAL_STRIDE:
+def _require_keyable_approvers(approver_ids: list[str]) -> None:
+    if len(approver_ids) > _PLAN_REVIEW_ORDINAL_STRIDE:
         raise ValueError("too many plan approvers to key a review operation")
+
+
+def _plan_review_ordinal(revision: int, approver_index: int) -> int:
     return revision * _PLAN_REVIEW_ORDINAL_STRIDE + approver_index
 
 

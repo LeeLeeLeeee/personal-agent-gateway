@@ -55,6 +55,10 @@ OperationResultValidatorRegistry = Mapping[
     Mapping[str, OperationResultValidator],
 ]
 
+# The only stages whose effect is written by the caller rather than by
+# TeamModelEffectService, and therefore the only ones mark_applied will close.
+_SELF_APPLIED_STAGES = frozenset({"cycle_plan_review", "cycle_plan_review_repair"})
+
 _OPEN_STATUSES = {
     "prepared",
     "invoking",
@@ -386,6 +390,7 @@ class TeamModelOperationService:
         *,
         effect_type: str,
         effect_ref: dict[str, object],
+        allowed_stages: frozenset[str] = _SELF_APPLIED_STAGES,
     ) -> TeamModelOperation:
         """Close a completed operation whose effect is written by the caller.
 
@@ -396,11 +401,21 @@ class TeamModelOperationService:
         reviewer's reserve would be refused. Applying first and recording the
         review after is deliberate: a crash in between re-reads the stored
         result on resume instead of re-asking the model.
+
+        The stage allow-list is the guard rail. Without it this method closes
+        any completed operation under any effect name, and a caller that aimed
+        it at, say, a cycle_synthesis id would leave apply_synthesis raising
+        StaleOperation and the cycle's summary silently lost. A caller that
+        genuinely owns another stage's effect passes allowed_stages and says so.
         """
         timestamp = _now()
         with self._db.connection() as connection:
             connection.execute("begin immediate")
             operation = self._get(connection, operation_id)
+            if operation.stage not in allowed_stages:
+                raise OperationConflict(
+                    f"Stage {operation.stage} is not applied by its caller"
+                )
             if operation.status == "applied":
                 if operation.effect_type != effect_type:
                     raise StaleOperation(

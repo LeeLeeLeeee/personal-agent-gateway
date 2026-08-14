@@ -7805,6 +7805,10 @@ async def test_negotiation_off_keeps_the_current_path(tmp_path) -> None:
     run = await setup.runtime.start(setup.run.id, setup.cycle.id)
 
     assert setup.teams.list_plan_revisions(setup.run.id) == []
+    # The guarantee is about calls, not just rows: one plan and one synthesis
+    # for the leader, one execution each for the workers, and nothing else.
+    assert setup.lead_client.call_count == 2
+    assert [client.call_count for client in setup.worker_clients] == [1, 1]
     assert run.status in {"completed", "completed_with_failures", "running"}
 
 
@@ -7884,6 +7888,18 @@ async def test_three_unapproved_revisions_end_the_run_without_executing(
         "superseded",
         "abandoned",
     ]
+    # Three real objections, not three parse failures. Labels are numbered per
+    # revision, so "T-01" is a live label in every round; without this the test
+    # reached the same terminal state for the wrong reason.
+    assert all(
+        any(
+            objections
+            for objections in setup.teams.plan_review_objections(
+                revision.id
+            ).values()
+        )
+        for revision in revisions
+    )
     assert all(
         task.status == "canceled"
         for task in setup.teams.list_tasks(setup.run.id, setup.cycle.id)
