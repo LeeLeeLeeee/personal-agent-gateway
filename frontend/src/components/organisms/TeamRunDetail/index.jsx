@@ -5,6 +5,7 @@ import { LoaderCube } from "../../molecules/LoaderCube/index.jsx";
 import { TeamTaskCard } from "../../molecules/TeamTaskCard/index.jsx";
 import { BuildEvidence, BuildEvidenceSummary } from "./BuildEvidence.jsx";
 import { ContestPanel } from "./ContestPanel.jsx";
+import { PlanNegotiation } from "./PlanNegotiation.jsx";
 import { DocumentPreview } from "../DocumentPreview/index.jsx";
 import { MarkdownContent } from "../MarkdownContent/index.jsx";
 import { elapsedSeconds, fmtDateTime, fmtElapsed } from "../../../lib/time.js";
@@ -1230,6 +1231,11 @@ export function TeamRunDetail({
           </div>
         )
       ) : null}
+
+      {/* PlanNegotiation is the workers' objections to the leader's plan;
+          ContestPanel below is the user's objection to it. Kept apart so it is
+          always clear who objected. */}
+      <PlanNegotiation revisions={detail.planRevisions || []} agents={agents} />
 
       <ContestPanel runId={run.id} contests={detail.contests} onContestPlan={onContestPlan} />
 

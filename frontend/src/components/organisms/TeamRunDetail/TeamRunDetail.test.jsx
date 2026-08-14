@@ -1831,4 +1831,25 @@ describe("TeamRunDetail", () => {
       within(dialog).getByText(/npx --no-install tsc: typescript-unavailable/)
     ).toBeInTheDocument();
   });
+
+  it("explains that a plan was never approved", async () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "G", status: "completed_with_failures", run_mode: "plan_and_execute" },
+          agents: [{ id: "w1", name: "Worker One", role: "member", status: "pending", current_task_id: null }],
+          messages: [], tasks: [],
+          planRevisions: [{
+            revision: 1, status: "abandoned",
+            required_approver_agent_ids: ["w1"],
+            reviews: { w1: "object" },
+            objections: { w1: [{ kind: "gap", task_ref: "T-01", detail: "마이그레이션 담당 없음" }] }
+          }]
+        }}
+      />
+    );
+
+    expect(screen.getByText(/합의 실패/)).toBeInTheDocument();
+    expect(screen.getByText(/마이그레이션 담당 없음/)).toBeInTheDocument();
+  });
 });

@@ -57,6 +57,7 @@ class CreateTeamRunRequest(BaseModel):
     auto_repeat_count: Annotated[int | None, Field(ge=1)] = None
     auto_interval_minutes: Annotated[int | None, Field(ge=1)] = None
     parent_team_run_id: str | None = None
+    plan_negotiation: bool = False
 
     @model_validator(mode="after")
     def validate_policy_settings(self) -> Self:
@@ -166,6 +167,11 @@ async def create_team_run(
 ) -> dict[str, object]:
     require_intake_open(request)
     try:
+        # NOTE: payload.plan_negotiation is accepted here but not forwarded.
+        # TeamRunService.create_team_run_from_team (teams.py) does not take a
+        # plan_negotiation parameter to pass through to create_team_run's, so
+        # wiring this flag end-to-end needs a change there, which is outside
+        # this file's scope -- see the task report.
         run = request.app.state.team_run_service.create_team_run_from_team(
             request.app.state.team_directory_service,
             request.app.state.rule_set_service,
@@ -537,6 +543,18 @@ def get_team_run_detail(
             "build_evidence_summary": len(tasks) > len(selected_tasks),
         },
         "contests": _contests_payload(cycle_requests, cycles, verdict_payload_by_cycle),
+        "plan_revisions": [
+            {
+                "revision": revision.revision,
+                "status": revision.status,
+                "required_approver_agent_ids": list(
+                    revision.required_approver_agent_ids
+                ),
+                "reviews": service.plan_reviews(revision.id),
+                "objections": service.plan_review_objections(revision.id),
+            }
+            for revision in service.list_plan_revisions(team_run_id)
+        ],
     }
 
 

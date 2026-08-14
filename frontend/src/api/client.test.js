@@ -268,6 +268,13 @@ describe("api client", () => {
           supersedes: [],
           created_at: "2026-08-12T00:00:00+00:00"
         }],
+        plan_revisions: [{
+          revision: 1,
+          status: "superseded",
+          required_approver_agent_ids: ["w1"],
+          reviews: { w1: "object" },
+          objections: { w1: [{ kind: "gap", task_ref: "T-01", detail: "마이그레이션 담당 없음" }] }
+        }],
         truncated: { tasks: true, messages: false, build_evidence_summary: true }
       }));
 
@@ -297,6 +304,13 @@ describe("api client", () => {
         error_message: null,
         supersedes: [],
         created_at: "2026-08-12T00:00:00+00:00"
+      }],
+      planRevisions: [{
+        revision: 1,
+        status: "superseded",
+        required_approver_agent_ids: ["w1"],
+        reviews: { w1: "object" },
+        objections: { w1: [{ kind: "gap", task_ref: "T-01", detail: "마이그레이션 담당 없음" }] }
       }],
       // The rollup covers only the returned task window, so whether it was cut
       // has to be readable, not just present in the response.
@@ -338,6 +352,7 @@ describe("api client", () => {
       activeRequest: null,
       buildEvidenceSummary: null,
       contests: [],
+      planRevisions: [],
       truncated: null
     });
   });

@@ -614,6 +614,7 @@ export const api = {
         // which pass through wholesale; these two do not.
         buildEvidenceSummary: body?.build_evidence_summary || null,
         contests: body?.contests || [],
+        planRevisions: body?.plan_revisions || [],
         // Same reason: truncated says which of tasks, messages and the build
         // evidence rollup were cut to the limit, and none of it was readable
         // from here either.
@@ -641,6 +642,7 @@ export const api = {
         activeRequest: null,
         buildEvidenceSummary: null,
         contests: [],
+        planRevisions: [],
         truncated: null
       };
     }

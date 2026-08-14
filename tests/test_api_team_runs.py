@@ -2564,6 +2564,40 @@ def test_team_run_detail_shows_what_each_task_built(tmp_path: Path) -> None:
     }
 
 
+def test_detail_reports_why_nothing_ran(tmp_path: Path) -> None:
+    """When negotiation ends a run, the objections are the only explanation the
+    operator gets, so /detail must carry them in full."""
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    team_id = create_team(client, leader_id, [member_id])
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Negotiate the plan",
+            "execution_policy": "triggered",
+            "plan_negotiation": True,
+        },
+    ).json()["team_run"]
+
+    service = client.app.state.team_run_service
+    cycle = service.create_cycle(run["id"], "manual", "manual-1")
+    worker = next(
+        agent for agent in service.list_agents(run["id"]) if agent.role != "leader"
+    )
+    revision = service.create_plan_revision(run["id"], cycle.id, ["t"], [worker.id])
+    objections = [{"kind": "gap", "task_ref": "T-01", "detail": "마이그레이션 담당 없음"}]
+    service.record_plan_review(revision.id, worker.id, "object", objections)
+    service.set_plan_revision_status(revision.id, "superseded")
+
+    detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+
+    (revision_payload,) = detail["plan_revisions"]
+    assert revision_payload["status"] == "superseded"
+    assert revision_payload["objections"] != {}
+
+
 def _create_triggered_run(client: TestClient, leader_id: str, member_ids: list[str]) -> dict[str, object]:
     """A contest can only ever be filed against the shape real runs have:
     plan_and_execute + continuous lifecycle. POST /api/team-runs hardcodes
