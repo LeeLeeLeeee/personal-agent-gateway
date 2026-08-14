@@ -60,6 +60,7 @@ export function BuildEvidenceSummary({ summary }) {
       {` (검사는 모두 파일 읽기 — 빌드·테스트 실행 없음)`}
       {` · 없는 파일 ${summary.missing_file_count}`}
       {` · 미확인 ${summary.unverified_task_count ?? 0}`}
+      {` · 신고 안 된 약속 ${summary.undeclared_promise_count ?? 0}`}
     </span>
   );
 }

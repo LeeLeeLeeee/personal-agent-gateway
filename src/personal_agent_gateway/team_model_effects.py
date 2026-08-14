@@ -29,6 +29,7 @@ from personal_agent_gateway.team_model_operations import (
 from personal_agent_gateway.team_plan_negotiation import (
     PlanReview,
     PlanReviewError,
+    discarded_task_ids,
     parse_plan_review,
 )
 from personal_agent_gateway.team_repair_stages import REPAIR_STAGE
@@ -3721,14 +3722,13 @@ def _discarded_plan_task_ids(
     connection: sqlite3.Connection,
     team_run_id: str,
     cycle_id: str | None,
-) -> set[str]:
-    """Task ids only a discarded plan revision ever proposed.
+) -> frozenset[str]:
+    """Read this cycle's revisions and ask the shared rule which tasks died.
 
-    A task a surviving revision also lists is not discarded, and work added to
-    the cycle afterwards sits on no revision at all, so both keep counting.
+    The rule itself lives in team_plan_negotiation so the runtime, this service
+    and the read model cannot drift apart; this function only supplies the rows.
     """
-    discarded: set[str] = set()
-    live: set[str] = set()
+    revisions: list[tuple[str, list[str]]] = []
     for row in connection.execute(
         """
         select status, task_ids_json from team_plan_revisions
@@ -3742,15 +3742,8 @@ def _discarded_plan_task_ids(
             raise OperationConflict("Plan revision task ids are unreadable") from exc
         if not isinstance(task_ids, list):
             raise OperationConflict("Plan revision task ids are unreadable")
-        target = (
-            discarded
-            if row["status"] in {"superseded", "abandoned"}
-            else live
-        )
-        target.update(
-            task_id for task_id in task_ids if isinstance(task_id, str)
-        )
-    return discarded - live
+        revisions.append((row["status"], [str(task_id) for task_id in task_ids]))
+    return discarded_task_ids(revisions)
 
 
 def _terminal_status(rows: list[sqlite3.Row]) -> str:

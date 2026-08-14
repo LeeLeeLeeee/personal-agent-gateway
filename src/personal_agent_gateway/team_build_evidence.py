@@ -130,4 +130,12 @@ def run_build_evidence(
         ),
         "missing_file_count": sum(len(item["missing_files"]) for item in per_task),
         "unverified_task_count": sum(1 for item in per_task if item["unverified"]),
+        # Without this, a run that produced nothing reads as clean: every other
+        # count here is about what a task *reported*, so a task that reported
+        # nothing at all -- a plan the team never agreed to, work that never
+        # started -- scored zero on all of them. This one counts the promises
+        # no deliverable was ever declared for.
+        "undeclared_promise_count": sum(
+            len(item["undeclared_promises"]) for item in per_task
+        ),
     }

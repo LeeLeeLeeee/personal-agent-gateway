@@ -55,6 +55,7 @@ from personal_agent_gateway.team_model_operations import (
 )
 from personal_agent_gateway.team_plan_negotiation import (
     PlanReview,
+    discarded_task_ids,
     next_revision,
     parse_plan_review,
     task_label,
@@ -3901,16 +3902,10 @@ class TeamRuntime:
         """
         if cycle_id is None:
             return tasks
-        discarded: set[str] = set()
-        live: set[str] = set()
-        for revision in self._teams.list_plan_revisions(run.id, cycle_id):
-            target = (
-                discarded
-                if revision.status in {"superseded", "abandoned"}
-                else live
-            )
-            target.update(revision.task_ids)
-        discarded -= live
+        discarded = discarded_task_ids(
+            (revision.status, revision.task_ids)
+            for revision in self._teams.list_plan_revisions(run.id, cycle_id)
+        )
         if not discarded:
             return tasks
         return [task for task in tasks if task.id not in discarded]

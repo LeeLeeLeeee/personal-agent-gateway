@@ -7731,7 +7731,13 @@ class NegotiationWorkerModel:
             return ModelResponse(_outcome_json("done"), [])
         self.review_calls += 1
         if self.responses:
-            return self.responses.pop(0)
+            scripted = self.responses.pop(0)
+            # A scripted exception is raised, not returned: a provider blip is
+            # how the real client reports itself, and returning it left the
+            # runtime asking a RemoteRunFailedError for its .content.
+            if isinstance(scripted, BaseException):
+                raise scripted
+            return scripted
         return ModelResponse("판단을 내리지 못했습니다.", [])
 
     async def complete(self, messages):
@@ -7781,7 +7787,9 @@ class NegotiationSetup(SimpleNamespace):
         self.runtime._review_plan = review
 
 
-def make_negotiation_runtime(tmp_path, *, plan_negotiation: bool):
+def make_negotiation_runtime(
+    tmp_path, *, plan_negotiation: bool, cycle_instruction=None
+):
     """A real continuous plan_and_execute run with two workers.
 
     Nothing about negotiation is pre-created: no plan revision and no approval
@@ -7806,7 +7814,29 @@ def make_negotiation_runtime(tmp_path, *, plan_negotiation: bool):
         execution_policy="triggered",
         plan_negotiation=plan_negotiation,
     )
-    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    cycle_request = None
+    if cycle_instruction is None:
+        cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    else:
+        # A parked operation needs a dispatching request behind its cycle --
+        # _validate_operation_source refuses one without it, which is why the
+        # plain fixture cannot drive a park at all.
+        cycles = TeamCycleService(db)
+        cycles.enqueue_request(
+            run.id,
+            "manual",
+            "manual-1",
+            cycle_instruction,
+            previous_cycle_id=None,
+        )
+        cycle_request = cycles.claim_next(run.id)
+        assert cycle_request is not None
+        cycle = teams.create_cycle(
+            run.id,
+            "manual",
+            cycle_request.source_id,
+            request_id=cycle_request.id,
+        )
     teams.set_cycle_status(cycle.id, "running")
     workers = [
         agent for agent in teams.list_agents(run.id) if agent.role != "leader"
@@ -7849,9 +7879,47 @@ def make_negotiation_runtime(tmp_path, *, plan_negotiation: bool):
         model_factory=model_factory,
         lead_client=lead_client,
         worker_clients=worker_clients,
+        cycle_request=cycle_request,
     )
     setup.runtime = setup.new_runtime()
     return setup
+
+
+@pytest.mark.asyncio
+async def test_a_provider_blip_parks_a_plan_review_instead_of_failing_the_cycle(
+    tmp_path,
+) -> None:
+    """The same regression team_provider_recovery documents for contests.
+
+    A review in flight matches no branch _validate_active_source knew, so it fell
+    to `valid = False` and wait_for_operation raised OperationConflict from inside
+    the only path that can park -- turning a provider blip during a review into a
+    failed cycle and a discarded plan. This drives it end to end rather than
+    rebuilding the source state by hand, which is what the recovery file's own
+    tests do.
+    """
+    setup = make_negotiation_runtime(
+        tmp_path, plan_negotiation=True, cycle_instruction="negotiate the plan"
+    )
+    setup.worker_clients[0].responses = _blip()
+    setup.runtime._provider_recovery = TeamProviderRecovery(
+        setup.teams,
+        SimpleNamespace(),
+        setup.operations,
+    )
+
+    with pytest.raises(ProviderOperationWaiting):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    operation = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert operation is not None
+    assert operation.stage == "cycle_plan_review"
+    assert operation.status == "waiting_for_provider"
+    assert setup.teams.get_team_run(setup.run.id).status == "waiting_for_provider"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "waiting_for_provider"
+    # The plan is not lost: its revision is still awaiting the reviews.
+    (revision,) = setup.teams.list_plan_revisions(setup.run.id, setup.cycle.id)
+    assert revision.status == "awaiting_approval"
 
 
 @pytest.mark.asyncio

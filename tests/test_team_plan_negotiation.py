@@ -9,6 +9,7 @@ from personal_agent_gateway.team_plan_negotiation import (
     parse_plan_review,
     task_label,
     verdict_for,
+    discarded_task_ids,
 )
 
 
@@ -193,3 +194,34 @@ def test_an_unhashable_field_is_a_parse_error_not_a_crash(payload):
 def test_a_non_object_top_level_value_is_rejected(top_level):
     with pytest.raises(PlanReviewError):
         parse_plan_review(json.dumps(top_level), _LABELS)
+
+
+def test_only_a_discarded_revisions_own_tasks_are_dropped():
+    assert discarded_task_ids(
+        [("superseded", ["t1", "t2"]), ("approved", ["t3"])]
+    ) == frozenset({"t1", "t2"})
+
+
+def test_a_task_a_surviving_revision_also_lists_is_kept():
+    """A leader that reproposes the same task must not have it dropped, or an
+    approved plan loses a task it actually owns."""
+    assert discarded_task_ids(
+        [("superseded", ["t1", "t2"]), ("approved", ["t2", "t3"])]
+    ) == frozenset({"t1"})
+
+
+def test_work_that_sits_on_no_revision_is_never_discarded():
+    """add_work adds tasks to the cycle after the plan is settled. They belong
+    to no revision, so nothing here can drop them -- add_work's own failure
+    handling depends on them still counting."""
+    assert discarded_task_ids([("approved", ["t1"])]) == frozenset()
+    assert discarded_task_ids([]) == frozenset()
+
+
+def test_an_abandoned_revision_discards_like_a_superseded_one():
+    assert discarded_task_ids([("abandoned", ["t1"])]) == frozenset({"t1"})
+
+
+@pytest.mark.parametrize("status", ["awaiting_approval", "approved"])
+def test_a_revision_still_in_play_never_discards(status):
+    assert discarded_task_ids([(status, ["t1"])]) == frozenset()

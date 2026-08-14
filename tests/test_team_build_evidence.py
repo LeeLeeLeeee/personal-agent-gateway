@@ -296,6 +296,9 @@ def test_run_rollup_counts_what_rests_on_the_workers_word(tmp_path):
         "worker_asserted_only_count": 2,
         "missing_file_count": 1,
         "unverified_task_count": 0,
+        # ghost.md was declared, so its promise is met on paper; promised.md is
+        # promised and declared by the other two.
+        "undeclared_promise_count": 1,
     }
 
 
@@ -328,3 +331,17 @@ def test_an_anchored_declared_path_is_refused_without_touching_the_disk(
         "/etc/passwd",
         "C:/Windows/System32/drivers/etc/hosts",
     ]
+
+
+def test_a_run_that_produced_nothing_does_not_read_as_clean(tmp_path):
+    """Every other count in the rollup is about what a task reported, so a task
+    that reported nothing at all scored zero on all of them -- a run whose plan
+    was never agreed and whose tasks were all canceled looked identical to a
+    clean one."""
+    task = _task(tmp_path, status="canceled", outcome=None, acceptance_result=None)
+
+    rollup = run_build_evidence([task_build_evidence(task, tmp_path)])
+
+    assert rollup["undeclared_promise_count"] == 1
+    assert rollup["missing_file_count"] == 0
+    assert rollup["unverified_task_count"] == 0

@@ -6,7 +6,7 @@ every combination without a database, a model client, or an event loop.
 """
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -137,3 +137,34 @@ def _json_object(text: str) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise PlanReviewError("response is not a JSON object")
     return payload
+
+
+DISCARDED_REVISION_STATUSES = frozenset({"superseded", "abandoned"})
+
+
+def discarded_task_ids(
+    revisions: Iterable[tuple[str, Iterable[str]]],
+) -> frozenset[str]:
+    """Task ids that only a discarded plan revision ever proposed.
+
+    A superseded revision leaves its tasks behind as canceled rows, and a
+    canceled *required* task reads as terminal ``failed`` -- so a negotiation
+    that worked reported the run as failed, because the plan nobody agreed to
+    was still being counted.
+
+    Two exclusions are load bearing. A task a surviving revision also lists is
+    not discarded, and work added to the cycle afterwards sits on no revision
+    at all, so both keep deciding the outcome.
+
+    Takes ``(status, task_ids)`` pairs rather than rows or dataclasses because
+    three layers apply this rule to three different shapes -- the runtime to
+    ``TeamTask`` objects, the effect service to SQL rows, and the read model to
+    per-task reports. The rule lives here once; each layer feeds it its own
+    shape.
+    """
+    discarded: set[str] = set()
+    live: set[str] = set()
+    for status, task_ids in revisions:
+        target = discarded if status in DISCARDED_REVISION_STATUSES else live
+        target.update(task_ids)
+    return frozenset(discarded - live)

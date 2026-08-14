@@ -2732,3 +2732,39 @@ def test_plan_review_refuses_an_operation_from_another_stage(tmp_path):
         services.effects.apply_plan_review(services.operation.id, revision.id)
 
     assert services.operations.get(services.operation.id).status == "completed"
+
+
+def test_a_review_is_refused_once_the_revision_stops_awaiting_approval(tmp_path):
+    """No traced runtime path reaches this, but it guards a write: a verdict
+    landing on a revision that was already superseded or abandoned would record
+    an approval for a plan nobody can execute any more."""
+    services = make_completed_plan_review_operation(tmp_path)
+    services.teams.set_plan_revision_status(services.revision.id, "superseded")
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_plan_review(
+            services.operation.id,
+            services.revision.id,
+        )
+
+    assert services.teams.plan_reviews(services.revision.id) == {}
+
+
+def test_a_second_verdict_from_the_same_reviewer_is_refused(tmp_path):
+    """The unique index is the source of truth for 'once'. A reviewer answering
+    twice on the same revision could flip an approval, so a second verdict from
+    a different operation is refused rather than allowed to overwrite."""
+    services = make_completed_plan_review_operation(tmp_path)
+    services.teams.record_plan_review(
+        services.revision.id, services.worker.id, "object", objecting_review()["objections"]
+    )
+
+    with pytest.raises(OperationConflict):
+        services.effects.apply_plan_review(
+            services.operation.id,
+            services.revision.id,
+        )
+
+    assert services.teams.plan_reviews(services.revision.id) == {
+        services.worker.id: "object"
+    }
