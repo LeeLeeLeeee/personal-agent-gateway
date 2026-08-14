@@ -722,6 +722,24 @@ def _validate_active_source(operation, run, cycle, task, actor, worker) -> None:
             and cycle["status"] == "running"
             and actor["status"] == "running"
         )
+    elif operation.stage in {"cycle_plan_review", "cycle_plan_review_repair"}:
+        # A plan review in flight is the second state that matches no other
+        # stage: negotiation runs after the plan is applied but before the run
+        # is promoted, so the run is still "planning" while the cycle runs, the
+        # actor is a *worker* that has not been given work yet and so is still
+        # "pending", and there is no task because the review is about the whole
+        # revision -- pinned by
+        # test_a_parked_plan_review_restores_the_state_it_was_parked_from.
+        # Without this branch the fallback below refused the source,
+        # wait_for_operation raised OperationConflict instead of parking, and a
+        # provider blip during a worker's review failed the cycle.
+        valid = (
+            operation.task_id is None
+            and run["status"] == "planning"
+            and cycle["status"] == "running"
+            and actor["status"] == "pending"
+            and actor["current_task_id"] is None
+        )
     elif operation.stage in {"cycle_contest", "cycle_contest_repair"}:
         # A contest in flight looks like nothing else: the run and cycle are
         # both "running", there is no task, and the leader is still "pending"
@@ -765,6 +783,14 @@ def _restore_operation_source(
         run_status = "summarizing"
         cycle_status = "running"
         actor_status = "running"
+    elif operation.stage in {"cycle_plan_review", "cycle_plan_review_repair"}:
+        # The state _validate_active_source accepts for a plan review, restored
+        # exactly: the generic fallback would promote the run to "running" and
+        # the reviewing worker to "running", neither of which a review ever had,
+        # and the validator would then refuse the source this just wrote.
+        run_status = "planning"
+        cycle_status = "running"
+        actor_status = "pending"
     elif operation.stage in {"cycle_contest", "cycle_contest_repair"}:
         # The state _validate_active_source accepts for a contest, restored
         # exactly: the generic fallback would put the leader back as "running",

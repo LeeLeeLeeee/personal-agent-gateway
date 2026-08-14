@@ -46,9 +46,41 @@ def _digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def make_invoking_operation(tmp_path, stage, *, lead_actor=False, preplanning=False):
+def make_invoking_operation(
+    tmp_path,
+    stage,
+    *,
+    lead_actor=False,
+    preplanning=False,
+    plan_review=False,
+):
     db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
-    if preplanning:
+    if plan_review:
+        # The source state a plan review is actually asked from, read off a real
+        # negotiation (make_negotiation_runtime in tests/test_team_runtime.py)
+        # at the moment the review call was made: run "planning", cycle
+        # "running", the reviewing worker still "pending" with no current task,
+        # the leader "running" from planning, the plan's tasks applied but not
+        # started, and no task on the operation.
+        cycle = make_queued_cycle(teams, cycles, run)
+        teams.set_cycle_status(cycle.id, "running")
+        teams.set_run_status(run.id, "planning")
+        teams.set_agent_status(run.leader_agent_id, "running")
+        worker = next(
+            agent
+            for agent in teams.list_agents(run.id)
+            if agent.id != run.leader_agent_id
+        )
+        teams.create_task(
+            run.id,
+            "planned",
+            "planned work",
+            owner_agent_id=worker.id,
+            cycle_id=cycle.id,
+        )
+        task = None
+        actor = worker
+    elif preplanning:
         cycle = make_queued_cycle(teams, cycles, run)
         task = None
         actor = teams.get_agent(run.leader_agent_id)
@@ -181,6 +213,106 @@ def test_claim_waiting_operation_restores_worker_and_preplanning_sources(
     else:
         assert setup.teams.get_task(setup.task.id).status == "in_progress"
         assert setup.teams.get_agent(setup.worker.id).status == "running"
+
+
+def _review_source_state(setup):
+    return {
+        "run": setup.teams.get_team_run(setup.run.id).status,
+        "cycle": setup.teams.get_cycle(setup.cycle.id).status,
+        "actor": setup.teams.get_agent(setup.actor.id).status,
+        "actor_task": setup.teams.get_agent(setup.actor.id).current_task_id,
+        "leader": setup.teams.get_agent(setup.run.leader_agent_id).status,
+        "tasks": [
+            task.status
+            for task in setup.teams.list_tasks(setup.run.id, setup.cycle.id)
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["cycle_plan_review", "cycle_plan_review_repair"],
+)
+def test_a_provider_blip_parks_a_plan_review_instead_of_failing_the_cycle(
+    tmp_path,
+    stage,
+):
+    """A review in flight matched no branch _validate_active_source knew, so it
+    fell to valid = False and wait_for_operation raised OperationConflict from
+    inside the only path that can park an operation -- failing the cycle over a
+    provider blip while the workers were still negotiating the plan."""
+    setup = make_invoking_operation(tmp_path, stage, plan_review=True)
+
+    claim = setup.recovery.wait_for_operation(
+        setup.operation.id,
+        reason_code="provider_unavailable",
+        now=dt("2026-07-31T00:00:00+00:00"),
+    )
+
+    assert claim.operation_id == setup.operation.id
+    assert claim.task_id is None
+    assert setup.operations.get(
+        setup.operation.id
+    ).status == "waiting_for_provider"
+    assert setup.teams.get_team_run(setup.run.id).status == "waiting_for_provider"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "waiting_for_provider"
+    assert setup.teams.get_agent(setup.actor.id).status == "waiting"
+    # The plan under review is not touched: parking a review must not look like
+    # the plan was retracted.
+    assert [
+        task.status
+        for task in setup.teams.list_tasks(setup.run.id, setup.cycle.id)
+    ] == ["pending"]
+    assert setup.cycles.get_request(setup.cycle.request_id).status == "dispatching"
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["cycle_plan_review", "cycle_plan_review_repair"],
+)
+def test_a_parked_plan_review_restores_the_state_it_was_parked_from(
+    tmp_path,
+    stage,
+):
+    """The pinned fact this pair rests on: negotiation happens after the plan is
+    applied but before the run is promoted, and the reviewer is a worker with no
+    assignment -- so the source is run "planning", cycle "running", actor
+    "pending", task None. The generic restore fallback claimed a "running" run
+    and a "running" actor, which _validate_active_source would then have refused:
+    the restore would have written a source its own validator rejects."""
+    setup = make_invoking_operation(tmp_path, stage, plan_review=True)
+    parked_from = _review_source_state(setup)
+    assert parked_from == {
+        "run": "planning",
+        "cycle": "running",
+        "actor": "pending",
+        "actor_task": None,
+        "leader": "running",
+        "tasks": ["pending"],
+    }
+    setup.recovery.wait_for_operation(
+        setup.operation.id,
+        reason_code="provider_unavailable",
+        now=dt("2026-07-31T00:00:00+00:00"),
+    )
+
+    claim = setup.recovery.claim_operation(
+        setup.cycle.id,
+        now=dt("2026-07-31T00:00:30+00:00"),
+    )
+
+    assert claim.operation_id == setup.operation.id
+    assert setup.operations.get(setup.operation.id).status == "prepared"
+    assert _review_source_state(setup) == parked_from
+    assert setup.cycles.get_request(setup.cycle.request_id).status == "dispatching"
+    # And the restored source is one the validator accepts, so the retry parks
+    # again instead of raising out of recovery.
+    reclaimed = setup.operations.begin_attempt(setup.operation.id, "consumer-2")
+    assert setup.recovery.wait_for_operation(
+        reclaimed.id,
+        reason_code="provider_unavailable",
+        now=dt("2026-07-31T00:01:00+00:00"),
+    ).operation_id == setup.operation.id
 
 
 def test_recover_due_claims_a_ready_provider_once(tmp_path):
