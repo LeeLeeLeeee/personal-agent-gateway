@@ -1914,11 +1914,31 @@ class TeamRuntime:
                 # A restart between superseding a revision and reserving its
                 # replan leaves the cycle with no live plan and nothing open to
                 # finish. Opening a revision over zero tasks would ask the
-                # owners to approve nothing and then execute nothing, so the
-                # run ends with the reason code that says the plan was never
-                # agreed.
-                await self._abandon_negotiation(run, leader, cycle_id, tasks)
-                return False
+                # owners to approve nothing, so the replan is reissued from the
+                # objections instead -- they are still on the ledger, and the
+                # budget the crash did not spend is still there.
+                revisions = self._teams.list_plan_revisions(run.id, cycle_id)
+                superseded = [
+                    candidate
+                    for candidate in revisions
+                    if candidate.status == "superseded"
+                ]
+                if superseded and next_revision(revisions[-1].revision) is not None:
+                    await self._replan_after_objections(
+                        run, leader, superseded[-1], cycle_id
+                    )
+                    continue
+                if revisions:
+                    # Every revision this cycle could hold was proposed and
+                    # refused, so the reason code is the true one.
+                    await self._abandon_negotiation(run, leader, cycle_id, tasks)
+                    return False
+                # No plan was ever proposed to anyone, so no approval is
+                # missing. Saying otherwise would send the operator looking
+                # for a negotiation that never happened.
+                raise LifecycleIntegrityError(
+                    "Plan negotiation was reached with no plan to review"
+                )
             if revision is None:
                 approvers = [
                     worker.id
@@ -2032,14 +2052,32 @@ class TeamRuntime:
         def parse(response: ModelResponse) -> ValidatedOperationResult:
             return _validated_plan_review(response, frozenset(labels))
 
+        repair = self._open_review_repair(cycle_id, spec)
         try:
-            operation = await self._invoke_with_repair(
-                spec,
-                agent,
-                messages,
-                parse,
-                repair_messages=_plan_review_repair_messages(messages),
-            )
+            if repair is None:
+                operation = await self._invoke_with_repair(
+                    spec,
+                    agent,
+                    messages,
+                    parse,
+                    repair_messages=_plan_review_repair_messages(messages),
+                )
+            else:
+                # A restart caught the repair round. The repair reuses this
+                # ordinal under its own stage name, so reserving the base spec
+                # first would find an open operation whose key differs and
+                # raise "Cycle already has an open model operation" -- on this
+                # resume and on every resume after it, with nothing ever
+                # draining the operation. Enter at the repair instead.
+                operation = await self._repair_operation(
+                    run.id,
+                    cycle_id,
+                    agent,
+                    "cycle_plan_review",
+                    repair,
+                    parse,
+                    repair_messages=_plan_review_repair_messages(messages),
+                )
         except InvalidOperationResult:
             return None
         self._operations.mark_applied(
@@ -2057,6 +2095,27 @@ class TeamRuntime:
         if operation.upstream_session_id is not None:
             self._teams.set_agent_session(agent_id, operation.upstream_session_id)
         return _operation_plan_review(operation)
+
+    def _open_review_repair(
+        self, cycle_id: str, spec: OperationSpec
+    ) -> TeamModelOperation | None:
+        """The failed review this resume has to re-enter through its repair.
+
+        Returns the *base* operation, which is what _repair_operation needs;
+        None when nothing is open or what is open is this review's own base
+        operation, which reserving handles by itself.
+        """
+        operation = self._operations.get_open_for_cycle(cycle_id)
+        if (
+            operation is None
+            or operation.stage != repair_stage_for("cycle_plan_review")
+            or operation.stage_ordinal != spec.stage_ordinal
+        ):
+            return None
+        failed = self._operations.get_by_key(spec.operation_key)
+        if failed is None or failed.status != "failed":
+            return None
+        return failed
 
     def _plan_review_messages(
         self,
@@ -3749,7 +3808,9 @@ class TeamRuntime:
             if request is not None and request.status == "collecting":
                 return await self._publish_user_decision_request(run, cycle_id)
             self._teams.skip_pending_dependency_failures(run.id, cycle_id)
-            tasks = self._teams.list_tasks(run.id, cycle_id)
+            tasks = self._live_plan_tasks(
+                run, cycle_id, self._teams.list_tasks(run.id, cycle_id)
+            )
             dependencies = self._teams.list_task_dependency_map(run.id, cycle_id)
             status = _terminal_status(tasks, dependencies)
             if status is None:
@@ -3828,6 +3889,41 @@ class TeamRuntime:
             self._package_results(run, leader, cycle_id)
             await self._publish({"type": "team.run.completed", "team_run_id": run.id})
             return run
+
+    def _live_plan_tasks(
+        self,
+        run: TeamRun,
+        cycle_id: str | None,
+        tasks: list[TeamTask],
+    ) -> list[TeamTask]:
+        """The cycle's tasks with every discarded proposal dropped.
+
+        A superseded revision leaves its tasks behind as canceled rows, and
+        cycle_execution_disposition reads a canceled *required* task as
+        terminal `failed`. So a negotiation that worked -- a plan every owner
+        approved, every task of which completed -- reported the run as failed,
+        because the plan nobody agreed to was still being counted.
+
+        Only tasks a discarded revision proposed are dropped, and only when no
+        surviving revision also lists them. Work added to the cycle afterwards
+        sits on no revision at all and keeps deciding the outcome, which is
+        what add_work's own failures depend on.
+        """
+        if cycle_id is None:
+            return tasks
+        discarded: set[str] = set()
+        live: set[str] = set()
+        for revision in self._teams.list_plan_revisions(run.id, cycle_id):
+            target = (
+                discarded
+                if revision.status in {"superseded", "abandoned"}
+                else live
+            )
+            target.update(revision.task_ids)
+        discarded -= live
+        if not discarded:
+            return tasks
+        return [task for task in tasks if task.id not in discarded]
 
     def _plan_awaits_negotiation(self, run: TeamRun, cycle_id: str) -> bool:
         """Whether this cycle's plan still has no approval behind it.

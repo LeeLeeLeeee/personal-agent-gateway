@@ -7719,6 +7719,10 @@ class NegotiationWorkerModel:
         # followed by the work itself: "was this agent asked to review again"
         # cannot be read off a total that execution also moves.
         self.review_calls = 0
+        # Set to N to die when the runtime fetches this client for the N+1th
+        # time, which is after that operation is reserved.
+        self.fetches = 0
+        self.die_after_fetches: int | None = None
 
     async def complete_operation(self, messages, *, consumer_run_id):
         self.call_count += 1
@@ -7822,7 +7826,18 @@ def make_negotiation_runtime(tmp_path, *, plan_negotiation: bool):
     def model_factory(agent, _cycle_id=None):
         if agent.role == "leader":
             return lead_client
-        return by_agent_id[agent.id]
+        client = by_agent_id[agent.id]
+        client.fetches += 1
+        if (
+            client.die_after_fetches is not None
+            and client.fetches > client.die_after_fetches
+        ):
+            # The client is fetched after the operation is reserved and before
+            # the call is made, so dying here leaves a `prepared` operation --
+            # the state a restart actually finds, and the one no client-side
+            # raise can produce.
+            raise RuntimeError("process died before the call was made")
+        return client
 
     setup = NegotiationSetup(
         db=db,
@@ -7894,6 +7909,65 @@ async def test_an_objection_supersedes_the_revision_and_replans(tmp_path) -> Non
     assert [r.revision for r in revisions] == [1, 2]
     assert revisions[0].status == "superseded"
     assert revisions[1].status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_a_negotiation_that_succeeds_after_a_replan_reaches_synthesis(
+    tmp_path,
+) -> None:
+    """A plan every owner approved, whose every task completed, used to stop
+    before synthesis: revision 1's tasks stay in the cycle as canceled rows,
+    and cycle_execution_disposition reads a canceled required task as terminal
+    `failed`. The discarded revision no longer decides that.
+
+    The terminal status itself is still wrong -- see the xfail below -- but the
+    run now produces its summary and its result package instead of being
+    stopped at the gate.
+    """
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_object("T-01", "gap"), _approve()]
+    setup.worker_clients[1].responses = [_approve(), _approve()]
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert setup.worker_execution_calls == 2
+    assert run.error_message is None
+    assert run.summary
+    approved = setup.teams.list_plan_revisions(setup.run.id, setup.cycle.id)[-1]
+    assert approved.status == "approved"
+    assert all(
+        setup.teams.get_task(task_id).status == "completed"
+        for task_id in approved.task_ids
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "team_model_effects.apply_synthesis re-derives the cycle's terminal "
+        "status from every team_tasks row of the cycle and writes it to the "
+        "run, the cycle and the synthesis operation's effect_ref, so the "
+        "superseded revision's canceled required tasks still make this "
+        "'blocked'. Correcting it from team_runtime after the fact would "
+        "desynchronise effect_ref, which _replay_synthesis verifies against "
+        "the live rows, so a later resume of the finished cycle would raise. "
+        "Fixing it needs apply_synthesis scoped to the approved plan, which "
+        "is outside the files this task may touch."
+    ),
+)
+@pytest.mark.asyncio
+async def test_a_negotiation_that_succeeds_after_a_replan_completes(
+    tmp_path,
+) -> None:
+    """The other half of "set, never derived". No crash anywhere in this."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_object("T-01", "gap"), _approve()]
+    setup.worker_clients[1].responses = [_approve(), _approve()]
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    assert setup.teams.get_cycle(setup.cycle.id).status == "completed"
 
 
 @pytest.mark.asyncio
@@ -8014,11 +8088,18 @@ async def test_resume_does_not_execute_an_unapproved_plan(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_replan_interrupted_mid_flight_is_recoverable(tmp_path) -> None:
+async def test_an_interrupted_replan_fails_with_an_accurate_message(
+    tmp_path,
+) -> None:
     """Replans occupy cycle_planning at ordinals 20/30, but
     _recover_open_operation still assumes planning means ordinal 0 (or 1/2 for
     its repair), so a crash during a replan died with a message naming the
-    wrong problem."""
+    wrong problem.
+
+    A call interrupted mid-flight cannot be re-asked from here -- whether the
+    leader answered is exactly what startup reconciliation exists to decide --
+    so the run still fails. What changes is that the failure names the replan.
+    """
     setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
     setup.worker_clients[0].responses = [_object("T-01", "gap")]
     setup.lead_client.fail_after_reserving_replan = True
@@ -8032,6 +8113,72 @@ async def test_a_replan_interrupted_mid_flight_is_recoverable(tmp_path) -> None:
     assert run.error_message != "Operation status invoking cannot be invoked"
     assert "Replan of plan revision 1" in (run.error_message or "")
     assert setup.worker_execution_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_an_open_plan_review_repair_is_drained_on_resume(tmp_path) -> None:
+    """A repair reuses its base review's ordinal under its own stage name, so
+    reserving the base spec found an open operation whose key differed and
+    raised "Cycle already has an open model operation" -- on that resume and on
+    every resume after it, with nothing ever draining the operation."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    # Prose fails the base review; the repair is reserved and the process dies
+    # before its call is made.
+    setup.worker_clients[0].responses = [ModelResponse("괜찮아 보입니다.", [])]
+    setup.worker_clients[0].die_after_fetches = 1
+
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    stranded = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert stranded is not None
+    assert stranded.stage == "cycle_plan_review_repair"
+    assert stranded.status == "prepared"
+
+    resumed = setup.new_runtime()
+    setup.worker_clients[0].die_after_fetches = None
+    setup.worker_clients[0].responses = [_approve()]
+    setup.worker_clients[1].responses = [_approve()]
+
+    run = await resumed.resume(setup.run.id, setup.cycle.id)
+
+    assert run.error_message != "Cycle already has an open model operation"
+    assert setup.operations.get_open_for_cycle(setup.cycle.id) is None
+    (revision,) = setup.teams.list_plan_revisions(setup.run.id, setup.cycle.id)
+    assert revision.status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_a_supersede_interrupted_before_its_replan_keeps_the_budget(
+    tmp_path,
+) -> None:
+    """Revision 1 superseded, its tasks canceled, nothing open, two revisions
+    still available. The objections are on the ledger, so the replan is
+    reissued rather than the run abandoned with budget left."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_object("T-01", "gap")]
+
+    async def die(*_args, **_kwargs):
+        raise RuntimeError("process died before the replan was reserved")
+
+    setup.runtime._replan_after_objections = die
+
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    (crashed,) = setup.teams.list_plan_revisions(setup.run.id, setup.cycle.id)
+    assert crashed.status == "superseded"
+    assert setup.operations.get_open_for_cycle(setup.cycle.id) is None
+
+    resumed = setup.new_runtime()
+    setup.worker_clients[0].responses = [_approve()]
+    setup.worker_clients[1].responses = [_approve()]
+
+    await resumed.resume(setup.run.id, setup.cycle.id)
+
+    revisions = setup.teams.list_plan_revisions(setup.run.id, setup.cycle.id)
+    assert [revision.revision for revision in revisions] == [1, 2]
+    assert revisions[1].status == "approved"
 
 
 @pytest.mark.asyncio
