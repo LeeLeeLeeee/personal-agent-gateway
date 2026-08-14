@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -7680,6 +7681,9 @@ class NegotiationLeadModel:
         self.prompts: list[str] = []
         self.all_prompts: list[str] = []
         self.call_count = 0
+        # Die inside the replan call, which is what a process death during a
+        # replan leaves behind: the operation reserved and left mid-invocation.
+        self.fail_after_reserving_replan = False
 
     async def complete_operation(self, messages, *, consumer_run_id):
         text = "\n".join(str(message.get("content", "")) for message in messages)
@@ -7687,6 +7691,8 @@ class NegotiationLeadModel:
         self.call_count += 1
         if "JSON array of task objects" in text:
             self.prompts.append(text)
+            if self.fail_after_reserving_replan and "was refused by the" in text:
+                raise RuntimeError("process died during the replan")
             return ModelResponse(self._plan_json, [])
         return ModelResponse("Negotiated summary.", [])
 
@@ -7709,12 +7715,17 @@ class NegotiationWorkerModel:
         self.responses: list[ModelResponse] = []
         self.execution_calls = 0
         self.call_count = 0
+        # Reviews are counted apart from call_count because an approved plan is
+        # followed by the work itself: "was this agent asked to review again"
+        # cannot be read off a total that execution also moves.
+        self.review_calls = 0
 
     async def complete_operation(self, messages, *, consumer_run_id):
         self.call_count += 1
         if _is_worker_prompt(messages):
             self.execution_calls += 1
             return ModelResponse(_outcome_json("done"), [])
+        self.review_calls += 1
         if self.responses:
             return self.responses.pop(0)
         return ModelResponse("판단을 내리지 못했습니다.", [])
@@ -7727,6 +7738,43 @@ class NegotiationSetup(SimpleNamespace):
     @property
     def worker_execution_calls(self) -> int:
         return sum(client.execution_calls for client in self.worker_clients)
+
+    def new_runtime(self) -> TeamRuntime:
+        """A second runtime over the same database, as a restart would build.
+
+        Nothing in-process carries over: the ledger, the plan revisions and the
+        review rows are the only state the new runtime can read.
+        """
+        return TeamRuntime(
+            self.teams,
+            self.model_factory,
+            operations=self.operations,
+            model_invoker=TeamModelInvoker(self.operations, sleep=_no_sleep),
+            model_effects=TeamModelEffectService(
+                self.db, self.teams, self.operations
+            ),
+        )
+
+    def die_before_review(self, ordinal: int) -> None:
+        """Kill the run just before the ``ordinal``-th plan review is asked.
+
+        Not by making a client raise: that would reserve the review operation
+        first and leave it open, and an open operation is exactly what stops
+        resume through the ledger guard. The defect being pinned is the one
+        where nothing is left open. Dying here leaves the earlier reviews
+        applied and recorded and the revision still awaiting_approval.
+        """
+        asked = 0
+        ask = self.runtime._review_plan
+
+        async def review(*args, **kwargs):
+            nonlocal asked
+            asked += 1
+            if asked >= ordinal:
+                raise RuntimeError("process died before this review")
+            return await ask(*args, **kwargs)
+
+        self.runtime._review_plan = review
 
 
 def make_negotiation_runtime(tmp_path, *, plan_negotiation: bool):
@@ -7776,24 +7824,19 @@ def make_negotiation_runtime(tmp_path, *, plan_negotiation: bool):
             return lead_client
         return by_agent_id[agent.id]
 
-    runtime = TeamRuntime(
-        teams,
-        model_factory,
-        operations=operations,
-        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
-        model_effects=TeamModelEffectService(db, teams, operations),
-    )
-    return NegotiationSetup(
+    setup = NegotiationSetup(
         db=db,
         teams=teams,
         run=run,
         cycle=cycle,
         workers=workers,
         operations=operations,
+        model_factory=model_factory,
         lead_client=lead_client,
         worker_clients=worker_clients,
-        runtime=runtime,
     )
+    setup.runtime = setup.new_runtime()
+    return setup
 
 
 @pytest.mark.asyncio
@@ -7932,3 +7975,128 @@ async def test_a_terminal_approver_cannot_approve(tmp_path) -> None:
     (revision,) = setup.teams.list_plan_revisions(setup.run.id)
     assert setup.workers[1].id not in revision.required_approver_agent_ids
     assert revision.status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_resume_does_not_execute_an_unapproved_plan(tmp_path) -> None:
+    """The single property this feature provides, across a restart.
+
+    One approver answered, the process died before the second was asked, and
+    no open operation was left to trip the ledger guard.
+    """
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_approve()]
+    setup.die_before_review(2)
+
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    # The state the resume hole was found in, asserted rather than assumed:
+    # one approval short, and nothing open for the ledger to refuse.
+    (crashed,) = setup.teams.list_plan_revisions(setup.run.id, setup.cycle.id)
+    assert crashed.status == "awaiting_approval"
+    assert len(setup.teams.plan_reviews(crashed.id)) == 1
+    assert setup.operations.get_open_for_cycle(setup.cycle.id) is None
+
+    resumed = setup.new_runtime()
+    setup.worker_clients[1].responses = [_object("T-01", "gap")]
+
+    run = await resumed.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.worker_execution_calls == 0
+    assert run.status != "completed"
+    assert all(
+        revision.status != "approved"
+        for revision in setup.teams.list_plan_revisions(
+            setup.run.id, setup.cycle.id
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_replan_interrupted_mid_flight_is_recoverable(tmp_path) -> None:
+    """Replans occupy cycle_planning at ordinals 20/30, but
+    _recover_open_operation still assumes planning means ordinal 0 (or 1/2 for
+    its repair), so a crash during a replan died with a message naming the
+    wrong problem."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_object("T-01", "gap")]
+    setup.lead_client.fail_after_reserving_replan = True
+
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    resumed = setup.new_runtime()
+    run = await resumed.resume(setup.run.id, setup.cycle.id)
+
+    assert run.error_message != "Operation status invoking cannot be invoked"
+    assert "Replan of plan revision 1" in (run.error_message or "")
+    assert setup.worker_execution_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_the_cap_survives_a_restart(tmp_path) -> None:
+    """The two loop defects already fixed here both resumed from stored state
+    that the cap check trusted. Interrupt mid-negotiation and confirm the
+    budget is not refreshed."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_object("T-01", "gap")]
+    setup.worker_clients[1].responses = [_approve()]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    # A second runtime over the same database, as a restart would produce.
+    resumed = setup.new_runtime()
+    setup.worker_clients[0].responses = [_object("T-01", "gap")] * 5
+    setup.worker_clients[1].responses = [_approve()] * 5
+
+    run = await resumed.resume(setup.run.id, setup.cycle.id)
+
+    revisions = setup.teams.list_plan_revisions(setup.run.id)
+    assert len(revisions) <= 3
+    assert run.status == "completed_with_failures"
+
+
+@pytest.mark.asyncio
+async def test_an_already_reviewed_agent_is_not_asked_again_after_a_restart(
+    tmp_path,
+) -> None:
+    """Re-asking spends a model call and can flip a recorded approval."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_approve()]
+    setup.die_before_review(2)
+
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    reviews_before = setup.worker_clients[0].review_calls
+    resumed = setup.new_runtime()
+    setup.worker_clients[1].responses = [_approve()]
+
+    await resumed.resume(setup.run.id, setup.cycle.id)
+
+    assert setup.worker_clients[0].review_calls == reviews_before
+    # Without this the first assertion is also satisfied by a resume that
+    # never negotiated at all, which is the defect above.
+    (revision,) = setup.teams.list_plan_revisions(setup.run.id, setup.cycle.id)
+    assert revision.status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_negotiation_stays_completed_with_failures(
+    tmp_path,
+) -> None:
+    """The derived rule says a run whose required tasks are canceled is
+    `failed`. The explicit status must not be overwritten by a later
+    re-derivation."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_object("T-01", "gap")] * 3
+    setup.worker_clients[1].responses = [_approve()] * 3
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+    resumed = setup.new_runtime()
+    await resumed.resume(setup.run.id, setup.cycle.id)
+
+    run = setup.teams.get_team_run(setup.run.id)
+    assert run.status == "completed_with_failures"
+    assert run.error_message == "collaboration_plan_approval_incomplete"

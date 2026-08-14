@@ -1903,12 +1903,22 @@ class TeamRuntime:
         time.
         """
         while True:
+            await self._resume_interrupted_replan(run, leader, cycle_id)
             tasks = _plan_under_review(
                 self._teams.list_tasks(run.id, cycle_id)
             )
             # Resume continues the open revision. Creating a second one here is
             # how a restart would refresh the budget.
             revision = self._teams.get_active_plan_revision(run.id, cycle_id)
+            if revision is None and not tasks:
+                # A restart between superseding a revision and reserving its
+                # replan leaves the cycle with no live plan and nothing open to
+                # finish. Opening a revision over zero tasks would ask the
+                # owners to approve nothing and then execute nothing, so the
+                # run ends with the reason code that says the plan was never
+                # agreed.
+                await self._abandon_negotiation(run, leader, cycle_id, tasks)
+                return False
             if revision is None:
                 approvers = [
                     worker.id
@@ -2114,6 +2124,67 @@ class TeamRuntime:
             repair_ordinal=repair_ordinal,
         )
         await self._apply_plan_operation(run, operation)
+
+    async def _resume_interrupted_replan(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        cycle_id: str,
+    ) -> None:
+        """Finish a replan a restart caught mid-flight.
+
+        A replan runs as cycle_planning at ordinal 20 or 30, which
+        _recover_open_operation's planning branch cannot read: it takes
+        planning to mean ordinal 0, with 1 or 2 for a repair, so it refuses an
+        interrupted replan with "Open planning operation requires its source
+        request". The request is not missing -- it is the superseded revision's
+        objections, which are on the ledger -- so it is reissued here, before
+        the loop decides whether a revision needs creating.
+
+        Reissuing means calling _replan_after_objections again. It builds the
+        same operation key, so the ledger returns this very operation: a
+        prepared one is invoked with its repair round intact, and a completed
+        one is applied as it stands. Nothing is asked twice.
+        """
+        operation = self._operations.get_open_for_cycle(cycle_id)
+        if operation is None or operation.stage not in {
+            "cycle_planning",
+            "cycle_planning_repair",
+        }:
+            return
+        superseded = _replan_source_revision(
+            operation.stage, operation.stage_ordinal
+        )
+        if superseded is None:
+            return  # the first plan, which _invoke_plan_with_repair recovers
+        if operation.stage != "cycle_planning" or operation.status not in {
+            "prepared",
+            "completed",
+        }:
+            # An interrupted call, or a repair round whose own source response
+            # is not on this path. Neither can be re-asked from here, but the
+            # message should at least name the replan instead of describing it
+            # as a first plan with a missing request.
+            raise OperationConflict(
+                f"Replan of plan revision {superseded} was interrupted "
+                f"({operation.stage} {operation.status}) and cannot be "
+                "reissued from here"
+            )
+        revision = next(
+            (
+                candidate
+                for candidate in self._teams.list_plan_revisions(
+                    run.id, cycle_id
+                )
+                if candidate.revision == superseded
+            ),
+            None,
+        )
+        if revision is None:
+            raise OperationConflict(
+                "Open replan operation has no superseded plan revision"
+            )
+        await self._replan_after_objections(run, leader, revision, cycle_id)
 
     def _objection_block(self, revision: TeamPlanRevision) -> str:
         names = {
@@ -3758,6 +3829,19 @@ class TeamRuntime:
             await self._publish({"type": "team.run.completed", "team_run_id": run.id})
             return run
 
+    def _plan_awaits_negotiation(self, run: TeamRun, cycle_id: str) -> bool:
+        """Whether this cycle's plan still has no approval behind it.
+
+        Asked of the stored revisions, because that is the only record a
+        restarted process has. Anything other than an approved revision --
+        none at all, one still awaiting approval, or a negotiation that ended
+        without one -- means execution must not start.
+        """
+        return not any(
+            revision.status == "approved"
+            for revision in self._teams.list_plan_revisions(run.id, cycle_id)
+        )
+
     def _package_results(
         self,
         run: TeamRun,
@@ -3820,6 +3904,25 @@ class TeamRuntime:
                 run = self._settle_failed(run, error, cycle_id)
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
                 return run
+            # Negotiation runs after the tasks exist, so the empty-task
+            # delegation to start() above never covers it: without this, a
+            # restart mid-negotiation walked straight into execution with an
+            # unapproved plan and reported success. The same three conditions
+            # start() applies, plus the stored revisions -- the question is
+            # whether this cycle's plan was ever approved, not whether this
+            # process happened to ask.
+            if (
+                run.plan_negotiation_enabled
+                and cycle_id is not None
+                and run.run_mode == "plan_and_execute"
+                and self._plan_awaits_negotiation(run, cycle_id)
+            ):
+                if not await self._negotiate_plan(run, leader, workers, cycle_id):
+                    # Settled already, and settled explicitly:
+                    # _execute_and_synthesize would re-derive `failed` from the
+                    # canceled tasks and lose the reason code.
+                    return self._teams.get_team_run(run.id)
+                run = self._teams.get_team_run(run.id)
             return await self._execute_and_synthesize(run, leader, workers, cycle_id)
         except asyncio.CancelledError:
             if run is not None:
@@ -4422,6 +4525,20 @@ def _replan_ordinals(superseded_revision: int) -> tuple[int, int]:
     """
     base = 10 * (superseded_revision + 1)
     return base, base + 1
+
+
+def _replan_source_revision(stage: str, stage_ordinal: int) -> int | None:
+    """Which revision an open planning operation is replanning, if any.
+
+    The inverse of _replan_ordinals. The first plan (cycle_planning 0,
+    cycle_planning_repair 1) and add-work's repair (cycle_planning_repair 2)
+    are not replans and return None, so they stay with the recovery that
+    already knows how to rebuild them.
+    """
+    base = stage_ordinal - 1 if stage == "cycle_planning_repair" else stage_ordinal
+    if base < 10 or base % 10 != 0:
+        return None
+    return base // 10 - 1
 
 
 def _assignment_roster_json(members: list[TeamAgent]) -> str:
