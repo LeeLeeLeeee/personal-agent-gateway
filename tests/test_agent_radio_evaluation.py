@@ -6,9 +6,13 @@ import pytest
 from agent_radio import fixture as fixture_module
 from agent_radio.fixture import (
     FixtureError,
+    Record,
+    is_stale,
     load_fixture,
     load_fixtures,
+    load_records,
     parse_fixture,
+    parse_record,
 )
 
 _ANY_COMMIT = lambda ref: True  # noqa: E731 - a stub, not production code
@@ -212,6 +216,91 @@ def test_a_goal_naming_a_hyphenated_script_is_allowed():
     )
 
     assert "git-push" in fixture.goal
+
+
+def _record(**overrides) -> dict:
+    payload = {
+        "schema": "gateway.eval-record/v1",
+        "fixture_id": "understand-acceptance-gate",
+        "fixture_sha256": "abc",
+        "mode": "legacy",
+        "repeat": 1,
+        "harness_version": "0.1.0",
+        "started_at": "2026-08-14T01:00:00Z",
+        "finished_at": "2026-08-14T01:06:20Z",
+        "wall_ms": 380000,
+        "cost": {"provider": "codex", "input_tokens": 41200, "output_tokens": 3100},
+        "rubric_results": [
+            {"id": "R1", "passed": True, "note": "n"},
+            {"id": "R2", "passed": True, "note": "n"},
+            {"id": "R3", "passed": True, "note": "n"},
+        ],
+        "rework_count": 0,
+        "conflict_count": 0,
+        "critical_defects_found": 0,
+        "mode_metrics": {},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_a_record_with_every_item_passed_counts_as_a_success():
+    assert parse_record(_record()).succeeded is True
+
+
+def test_one_failed_item_is_not_a_partial_success():
+    """Items are binary and there is no partial credit, so a task succeeds only
+    when all of them passed."""
+    results = _record()["rubric_results"]
+    results[1] = {"id": "R2", "passed": False, "note": "빠짐"}
+
+    assert parse_record(_record(rubric_results=results)).succeeded is False
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"schema": "gateway.eval-record/v2"},
+        {"mode": "negotiation"},
+        {"rubric_results": []},
+        {"wall_ms": -1},
+        {"repeat": 0},
+        {"critical_defects_found": -2},
+        {"mode_metrics": []},
+    ],
+)
+def test_a_record_that_cannot_be_counted_is_refused(overrides):
+    with pytest.raises(FixtureError):
+        parse_record(_record(**overrides))
+
+
+def test_a_record_is_stale_when_its_fixture_changed_underneath_it():
+    """This is what catches 'edit the definition quietly and re-measure'."""
+    fixture = parse_fixture(_definition(), sha256="def", commit_exists=_ANY_COMMIT)
+    record = parse_record(_record(fixture_sha256="abc"))
+
+    assert is_stale(record, {fixture.id: fixture}) is True
+    assert is_stale(parse_record(_record(fixture_sha256="def")), {fixture.id: fixture}) is False
+
+
+def test_a_record_for_an_unknown_fixture_is_stale():
+    assert is_stale(parse_record(_record()), {}) is True
+
+
+def test_loading_records_from_a_directory(tmp_path: Path):
+    (tmp_path / "run-1.json").write_text(json.dumps(_record()), encoding="utf-8")
+
+    records = load_records(tmp_path)
+
+    assert [record.fixture_id for record in records] == ["understand-acceptance-gate"]
+    assert isinstance(records[0], Record)
+
+
+def test_loading_records_reports_malformed_json_as_a_fixture_error(tmp_path: Path):
+    (tmp_path / "run-1.json").write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(FixtureError):
+        load_records(tmp_path)
 
 
 def test_git_not_on_path_is_reported_as_a_fixture_error(monkeypatch):

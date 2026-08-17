@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -205,3 +205,114 @@ def _required_text(payload: dict, key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise FixtureError(f"{key} is missing or empty")
     return value.strip()
+
+
+RECORD_SCHEMA = "gateway.eval-record/v1"
+MODES = frozenset({"single_agent", "legacy", "radio_lite", "passive"})
+
+
+@dataclass(frozen=True)
+class RubricResult:
+    id: str
+    passed: bool
+    note: str
+
+
+@dataclass(frozen=True)
+class Record:
+    fixture_id: str
+    fixture_sha256: str
+    mode: str
+    repeat: int
+    harness_version: str
+    started_at: str
+    finished_at: str
+    wall_ms: int
+    cost: dict[str, object]
+    rubric_results: tuple[RubricResult, ...]
+    rework_count: int
+    conflict_count: int
+    critical_defects_found: int
+    mode_metrics: dict[str, object]
+
+    @property
+    def succeeded(self) -> bool:
+        """Every item passed. Items are binary, so there is no middle."""
+        return all(result.passed for result in self.rubric_results)
+
+
+def parse_record(payload: dict) -> Record:
+    if not isinstance(payload, dict):
+        raise FixtureError("record is not an object")
+    if payload.get("schema") != RECORD_SCHEMA:
+        raise FixtureError(f"unknown record schema: {payload.get('schema')!r}")
+    mode = _required_text(payload, "mode")
+    if mode not in MODES:
+        raise FixtureError(f"unknown mode: {mode!r}")
+    results = payload.get("rubric_results")
+    if not isinstance(results, list) or not results:
+        raise FixtureError("a record needs at least one rubric result")
+    for key in ("cost", "mode_metrics"):
+        if not isinstance(payload.get(key), dict):
+            raise FixtureError(f"{key} must be an object")
+    return Record(
+        fixture_id=_required_text(payload, "fixture_id"),
+        fixture_sha256=_required_text(payload, "fixture_sha256"),
+        mode=mode,
+        repeat=_positive_int(payload, "repeat"),
+        harness_version=_required_text(payload, "harness_version"),
+        started_at=_required_text(payload, "started_at"),
+        finished_at=_required_text(payload, "finished_at"),
+        wall_ms=_counter(payload, "wall_ms"),
+        cost=dict(payload["cost"]),
+        rubric_results=tuple(_parse_result(raw) for raw in results),
+        rework_count=_counter(payload, "rework_count"),
+        conflict_count=_counter(payload, "conflict_count"),
+        critical_defects_found=_counter(payload, "critical_defects_found"),
+        mode_metrics=dict(payload["mode_metrics"]),
+    )
+
+
+def load_records(directory: Path) -> list[Record]:
+    records: list[Record] = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            payload = json.loads(path.read_bytes())
+        except json.JSONDecodeError as exc:
+            raise FixtureError(f"{path.name} is not JSON") from exc
+        records.append(parse_record(payload))
+    return records
+
+
+def is_stale(record: Record, fixtures: Mapping[str, Fixture]) -> bool:
+    """Whether this record was measured against a definition that no longer
+    exists in that form.
+
+    An unknown fixture counts as stale rather than as an error: a definition
+    can legitimately be retired, and the records it produced then describe an
+    experiment nobody can reproduce.
+    """
+    fixture = fixtures.get(record.fixture_id)
+    return fixture is None or fixture.sha256 != record.fixture_sha256
+
+
+def _parse_result(raw: object) -> RubricResult:
+    if not isinstance(raw, dict) or set(raw) != {"id", "passed", "note"}:
+        raise FixtureError("malformed rubric result")
+    if not isinstance(raw["passed"], bool):
+        raise FixtureError("rubric result passed must be a boolean")
+    return RubricResult(_required_text(raw, "id"), raw["passed"], str(raw["note"]))
+
+
+def _counter(payload: dict, key: str) -> int:
+    value = payload.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise FixtureError(f"{key} must be a non-negative integer")
+    return value
+
+
+def _positive_int(payload: dict, key: str) -> int:
+    value = _counter(payload, key)
+    if value < 1:
+        raise FixtureError(f"{key} must be at least 1")
+    return value
