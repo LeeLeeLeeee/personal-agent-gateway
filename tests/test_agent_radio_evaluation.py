@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 
 from agent_radio.fixture import (
-    Fixture,  # noqa: F401 - part of the public interface under test
     FixtureError,
     load_fixture,
     load_fixtures,
