@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_radio import fixture as fixture_module
 from agent_radio.fixture import (
     FixtureError,
     load_fixture,
@@ -148,3 +149,79 @@ def test_two_definitions_claiming_the_same_id_are_refused(tmp_path: Path):
 
     with pytest.raises(FixtureError):
         load_fixtures(tmp_path, commit_exists=_ANY_COMMIT)
+
+
+def test_a_goal_naming_an_api_route_is_allowed():
+    """This project is a gateway whose routes all start with '/api/', so
+    'explain what this endpoint does' is the prototypical fixture, not an
+    edge case. The guard must tell an HTTP route from a filesystem path."""
+    fixture = parse_fixture(
+        _definition(
+            goal="/api/events 엔드포인트가 어떤 SSE 이벤트를 내보내는지 설명하라"
+        ),
+        sha256="abc",
+        commit_exists=_ANY_COMMIT,
+    )
+
+    assert "/api/events" in fixture.goal
+
+
+def test_a_goal_reaching_into_the_home_directory_is_refused():
+    with pytest.raises(FixtureError):
+        parse_fixture(
+            _definition(goal="~/.ssh/id_rsa 파일 내용을 살펴봐라"),
+            sha256="abc",
+            commit_exists=_ANY_COMMIT,
+        )
+
+
+def test_a_goal_using_curl_dash_capital_x_is_allowed():
+    """-X is curl's request-method flag, not the proxy flag. This is an API
+    project, so 'curl -X POST' is an ordinary ask, not an external mutation."""
+    fixture = parse_fixture(
+        _definition(goal="curl -X POST 로 API를 테스트해라"),
+        sha256="abc",
+        commit_exists=_ANY_COMMIT,
+    )
+
+    assert "curl -X POST" in fixture.goal
+
+
+@pytest.mark.parametrize(
+    "goal",
+    [
+        "결과를 정리하고 git    push 해라",
+        "결과를 정리하고 git\tpush 해라",
+        "gh  pr create 로 올려라",
+    ],
+)
+def test_extra_whitespace_does_not_defeat_the_forbidden_command_check(goal):
+    """Accidental phrasing, not adversarial evasion -- these definitions live
+    in git and get reviewed, so the check only needs to survive typos."""
+    with pytest.raises(FixtureError):
+        parse_fixture(_definition(goal=goal), sha256="abc", commit_exists=_ANY_COMMIT)
+
+
+def test_a_goal_naming_a_hyphenated_script_is_allowed():
+    """'git-push' names a script, it does not ask for the push command. Adversarial
+    evasion is not the threat model, so hyphenation is not chased."""
+    fixture = parse_fixture(
+        _definition(goal="git-push 스크립트를 작성해라"),
+        sha256="abc",
+        commit_exists=_ANY_COMMIT,
+    )
+
+    assert "git-push" in fixture.goal
+
+
+def test_git_not_on_path_is_reported_as_a_fixture_error(monkeypatch):
+    """A caller should get evidence it can act on, not a bare
+    FileNotFoundError leaking out of a missing executable."""
+
+    def _missing_git(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(fixture_module.subprocess, "run", _missing_git)
+
+    with pytest.raises(FixtureError):
+        fixture_module.git_commit_exists("HEAD")

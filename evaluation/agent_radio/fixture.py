@@ -23,6 +23,9 @@ RUBRIC_SIZE = range(3, 7)
 
 # The ADR's Stage 0 gate is that evaluation makes no real external mutation.
 # These are the commands that reach past this machine; a local commit does not.
+# "curl -x" is deliberately absent: -X is the request-method flag, and this is
+# an API project where "curl -X POST" is an ordinary ask, not a mutation past
+# this machine.
 FORBIDDEN_GOAL_COMMANDS = (
     "git push",
     "git remote add",
@@ -31,10 +34,20 @@ FORBIDDEN_GOAL_COMMANDS = (
     "twine upload",
     "gh pr",
     "gh release",
-    "curl -x",
     "rm -rf /",
 )
-_ABSOLUTE_PATH = re.compile(r"(?:^|\s)(?:/[\w.]|[A-Za-z]:[\\/])")
+# A bare leading "/" cannot be refused here: this project is a gateway whose
+# routes all start with "/api/", so "/api/events 가 어떤 이벤트를 내보내는지
+# 설명하라" is the prototypical fixture, not an edge case. Only refuse a path
+# whose first segment names a real filesystem root, so an HTTP route stays
+# distinguishable from a filesystem path.
+_POSIX_ROOTS = (
+    "etc", "usr", "var", "home", "root", "bin", "sbin", "tmp",
+    "proc", "sys", "dev", "opt", "mnt", "media",
+)
+_ABSOLUTE_PATH = re.compile(
+    r"(?:^|\s)(?:[A-Za-z]:[\\/]|~[\\/]|/(?:" + "|".join(_POSIX_ROOTS) + r")(?:[\\/]|$))"
+)
 _PARENT_ESCAPE = re.compile(r"(?:^|[\s(\"'])\.\.[\\/]")
 
 
@@ -67,11 +80,14 @@ def git_commit_exists(ref: str) -> bool:
     Injected everywhere it is used so the rules can be tested without a git
     repository, and so a caller working on a different checkout can say so.
     """
-    result = subprocess.run(
-        ["git", "cat-file", "-e", f"{ref}^{{commit}}"],
-        capture_output=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "cat-file", "-e", f"{ref}^{{commit}}"],
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise FixtureError("git is not available on PATH") from exc
     return result.returncode == 0
 
 
@@ -169,7 +185,12 @@ def _refuse_unsafe_goal(goal: str) -> None:
     this repository, so a rule that rejects those would be switched off within
     a week -- which is worse than no rule.
     """
-    lowered = goal.lower()
+    # Runs of whitespace are normalized to a single space so "git    push" and
+    # "git\tpush" match the same as "git push". This is about accidental
+    # phrasing, not adversarial evasion -- these definitions live in git and
+    # get reviewed, so "git-push" (a hyphenated script name, not the command)
+    # is deliberately left alone.
+    lowered = re.sub(r"\s+", " ", goal.lower())
     for command in FORBIDDEN_GOAL_COMMANDS:
         if command in lowered:
             raise FixtureError(f"goal asks for an external mutation: {command!r}")
