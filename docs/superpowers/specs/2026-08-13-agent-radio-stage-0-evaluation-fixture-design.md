@@ -125,7 +125,8 @@ ADR의 Stage 0 gate는 "평가 실행이 user data나 실제 외부 mutation을 
 
 - **HTTP API로는 못 돈다.** `/api/team-runs/{id}/detail`이 `401 OTP login required`를 반환한다. 하니스가 OTP 로그인을 자동화하는 것은 인증을 우회하는 방향이라 택하지 않는다.
 - **in-process 구동이 유력하다.** 기존 테스트가 `TeamRunService`/`TeamRuntime`을 직접 만들어 돌린다. 같은 경로를 쓰면 API 인증을 건드리지 않는다.
-- **위험:** `runtime_factory`의 헤드리스 경로 테스트 16건이 현재 실패 중이다. 원인은 `tests/test_runtime_factory_headless.py`가 `ProviderExecutionCapabilities(ready=…, readiness_error=…)`로 생성하는데 그 두 필드가 agent descriptor(`agents.py:54`)로 옮겨간 것 — 프로덕션 결함이 아니라 낡은 테스트다. 실행기 spec을 시작하기 전에 고쳐야 한다. 하니스가 의지할 경로에 테스트 커버리지가 없는 상태이기 때문이다.
+- ~~**위험:** `runtime_factory`의 헤드리스 경로 테스트 16건이 현재 실패 중이다.~~ **해소됨(2026-08-13, `7802300`).** 낡은 테스트였고 프로덕션 코드는 손대지 않았다. 하니스가 의지할 경로에 이제 커버리지가 있다.
+- **협상은 이미 있다(2026-08-14).** Stage 1의 plan 협상이 구현돼 `plan_negotiation_enabled` 플래그로 켜진다. 기록의 `mode` 어휘에는 아직 이에 해당하는 값이 없다 — ADR의 넷(`single_agent`·`legacy`·`radio_lite`·`passive`)은 watcher 축이고 협상은 그와 직교하기 때문이다. 실행기 spec이 협상 켠 런을 어떤 mode로 기록할지 정해야 한다. 지금 발명하지 않는다.
 
 ## 이번 범위가 아닌 것
 
