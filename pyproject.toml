@@ -17,7 +17,8 @@ dependencies = [
 dev = [
   "pytest>=8.4.0",
   "pytest-asyncio>=1.0.0",
-  "ruff>=0.12.0"
+  "ruff>=0.15.20",
+  "pytest-xdist>=3.8.0"
 ]
 
 [tool.pytest.ini_options]
@@ -28,3 +29,13 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+# Selected explicitly, not inherited. ruff's default rule set changes between
+# versions -- 0.15 reports nothing on this tree while 0.16 reports 254, almost
+# all of it newly-default import sorting -- so leaving selection implicit means
+# the answer depends on whichever ruff an environment happened to resolve. These
+# four are 0.15's defaults, pinned here so every checkout agrees. Adopting 0.16's
+# stricter set is a real decision with 254 findings behind it, not a side effect
+# of an upgrade.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
