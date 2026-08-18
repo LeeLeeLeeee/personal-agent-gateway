@@ -1,0 +1,45 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "understand-acceptance-gate",
+  "fixture_sha256": "00d718d48b0606762d3418234f649fac7174759597da6cdc55bdac1c5d2c858d",
+  "mode": "legacy",
+  "repeat": 1,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-18T04:56:32.059045Z",
+  "finished_at": "2026-08-18T05:00:55.054349Z",
+  "wall_ms": 262995,
+  "cost": {
+    "provider": "codex"
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "네 종류를 이름으로 모두 들었고 CHECK_TYPES와 일치. 지어낸 이름 없음"
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "네 종류를 모두 파일 읽기로 서술하고 명령 실행형은 없다고 명시. 답에 있는 pytest 실행은 게이트가 아니라 조사자 자신의 검증"
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "mode verified 와 mode attested 를 코드와 같은 이름으로 구분"
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "check 분기가 워커 보고를 읽지 않고 continue 하는 것을 정확히 서술"
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "checked=false 를 거절 없이 unverified/unknown 으로 기록한다고 서술"
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {}
+}

@@ -1,0 +1,45 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-operation-stage",
+  "fixture_sha256": "b7e190c8a89eca826375aa9e05ad10bc2196dd5375cf0126ff1f82ae9fde89a8",
+  "mode": "legacy",
+  "repeat": 1,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-18T05:00:57.396703Z",
+  "finished_at": "2026-08-18T05:06:23.437353Z",
+  "wall_ms": 326040,
+  "cost": {
+    "provider": "codex"
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "team_model_operations.py 의 OperationStage Literal 을 이름으로 지목"
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "team_repair_stages.py 의 REPAIR_STAGE 를 이름으로 지목하고 새 매핑을 제시"
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "_WORKER_STAGES/_LEAD_STAGES 를 이름으로 들고, cycle_ 접두사 면제를 명시적으로 판단. 면제는 실제 completeness 테스트 동작과 일치"
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "함수 이름은 쓰지 않았으나 인용한 줄 범위가 요구된 함수 둘을 정확히 가리킴. 지목으로 인정한다는 채점자 판단"
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "cycle_ stage 라는 자기 가정 안에서 실패 방식을 구분한 것으로 인정한다는 채점자 판단. 코드 주석의 '조용히 약화' 대비와는 방향이 다름"
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {}
+}

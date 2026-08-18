@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "add-a-verification-check-kind",
+  "fixture_sha256": "c6f7811e192551a882d344093abebcf83dc3d8bfc9b8c1791b0879b5f652362b",
+  "mode": "legacy",
+  "repeat": 1,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-18T05:06:26.128247Z",
+  "finished_at": "2026-08-18T05:10:18.928659Z",
+  "wall_ms": 232800,
+  "cost": {
+    "provider": "codex"
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "CHECK_TYPES 와 _VALUE_TYPES 에 추가되어 file_contains 와 같은 필드로 파싱"
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "run_verification_check 에 분기 추가, value not in text 로 방향이 반대"
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "값이 존재할 때 passed=False 를 단언하는 새 테스트가 제출물에 존재"
+    },
+    {
+      "id": "R4",
+      "passed": false,
+      "note": "줄바꿈이 CRLF 에서 혼합으로 바뀌어 diff 에 기존 file_contains 분기 7줄이 잡힌다. 로직은 동일하나 'diff 에 수정이 없어야 한다'를 문자 그대로 적용"
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "새 분기가 text 를 읽은 뒤에 위치하고 경로 검증 코드는 변경되지 않음"
+    },
+    {
+      "id": "R6",
+      "passed": true,
+      "note": "채점자가 직접 실행: 14 passed"
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {}
+}
