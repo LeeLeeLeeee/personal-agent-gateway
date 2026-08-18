@@ -229,6 +229,12 @@ class Record:
     # for the same fixture become indistinguishable.
     run_id: str
     mode: str
+    # Whether the run negotiated its plan. Its own axis rather than a mode
+    # value: the ADR's modes describe what a peer's message rides on, and
+    # negotiation is independent of that. Spending a mode name on it would leave
+    # no way to say "radio-lite with negotiation", which is the comparison
+    # Stage 2 is promoted against.
+    plan_negotiation: bool
     repeat: int
     harness_version: str
     started_at: str
@@ -255,6 +261,9 @@ def parse_record(payload: dict) -> Record:
     mode = _required_text(payload, "mode")
     if mode not in MODES:
         raise FixtureError(f"unknown mode: {mode!r}")
+    negotiation = payload.get("plan_negotiation")
+    if not isinstance(negotiation, bool):
+        raise FixtureError("plan_negotiation must be a boolean")
     results = payload.get("rubric_results")
     if not isinstance(results, list) or not results:
         raise FixtureError("a record needs at least one rubric result")
@@ -266,6 +275,7 @@ def parse_record(payload: dict) -> Record:
         fixture_sha256=_required_text(payload, "fixture_sha256"),
         run_id=_required_text(payload, "run_id"),
         mode=mode,
+        plan_negotiation=negotiation,
         repeat=_positive_int(payload, "repeat"),
         harness_version=_required_text(payload, "harness_version"),
         started_at=_required_text(payload, "started_at"),

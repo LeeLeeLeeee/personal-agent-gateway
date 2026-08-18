@@ -4,6 +4,7 @@
   "fixture_id": "which-repair-stage-repairs-what",
   "fixture_sha256": "af6af52f20ac23d76747490f34ae9451e03512660672142d01025f43f7f4bc64",
   "mode": "legacy",
+  "plan_negotiation": false,
   "execution_profile": "read_only",
   "backend": "codex",
   "model": "default",

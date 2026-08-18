@@ -61,6 +61,7 @@ def _artifact(**overrides) -> dict:
         "fixture_id": "understand-acceptance-gate",
         "fixture_sha256": "abc",
         "mode": "legacy",
+        "plan_negotiation": False,
         "execution_profile": "read_only",
         "backend": "codex",
         "model": "default",
@@ -996,6 +997,33 @@ async def test_a_provider_that_kept_no_transcript_leaves_the_model_unknown(
     )
 
     assert artifact.resolved_model is None
+
+
+@pytest.mark.parametrize("negotiation", [True, False])
+async def test_the_negotiation_axis_reaches_the_run_and_the_artefact(
+    tmp_path: Path, negotiation
+):
+    """Both halves, because either alone is a silent lie.
+
+    An artefact that records the axis while the run ignored it labels a
+    negotiated arm on a run that never negotiated -- and the comparison the axis
+    exists for would then be legacy against itself. This project has already
+    shipped that exact bug once, where plan_negotiation was accepted by the API
+    and dropped before it reached the run.
+    """
+    harness, repo = _stub_harness(tmp_path)
+
+    artifact = await run_fixture(
+        harness,
+        _understanding_fixture(),
+        mode="legacy",
+        repo_root=repo,
+        plan_negotiation=negotiation,
+    )
+
+    assert artifact.plan_negotiation is negotiation
+    run = harness.teams.get_team_run(artifact.run_id)
+    assert run.plan_negotiation_enabled is negotiation
 
 
 async def test_the_run_records_the_commit_it_read(tmp_path: Path):

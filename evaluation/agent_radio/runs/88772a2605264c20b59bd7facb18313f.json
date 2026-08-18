@@ -4,6 +4,7 @@
   "fixture_id": "impact-of-letting-a-check-run-a-command",
   "fixture_sha256": "86aaf6c10ecca88e42e077fa9e067520c5816965b8d5c33856226d336536937e",
   "mode": "legacy",
+  "plan_negotiation": false,
   "execution_profile": "read_only",
   "backend": "codex",
   "model": "default",

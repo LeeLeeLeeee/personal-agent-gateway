@@ -4,6 +4,7 @@
   "fixture_id": "add-a-file-absent-verification-check",
   "fixture_sha256": "4b7ba38ede0010d9ccdfbf4d89facb4b1f11dab5c33bad8034370d6f9fac6429",
   "mode": "legacy",
+  "plan_negotiation": false,
   "execution_profile": "bounded_write",
   "backend": "codex",
   "model": "default",

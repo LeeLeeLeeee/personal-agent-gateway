@@ -4,6 +4,7 @@
   "fixture_id": "premise-attested-only-records-worker-vouching",
   "fixture_sha256": "06aef0bd8afae392285dc68ad241c4bd80ada67cbaaa326c6e1eb680e671498e",
   "mode": "legacy",
+  "plan_negotiation": false,
   "execution_profile": "read_only",
   "backend": "codex",
   "model": "default",

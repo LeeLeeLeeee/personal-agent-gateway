@@ -373,6 +373,7 @@ async def run_fixture(
     repo_root: Path,
     now: Callable[[], datetime] = utc_now,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    plan_negotiation: bool = False,
     backend: str = DEFAULT_BACKEND,
     model: str = DEFAULT_MODEL,
 ) -> RunArtifact:
@@ -467,6 +468,7 @@ async def run_fixture(
             max_workers=1,
             lifecycle_mode="continuous",
             execution_policy="triggered",
+            plan_negotiation=plan_negotiation,
         )
         # A task that asks for an edit needs something it is allowed to edit.
         # The staged snapshot is not it: acceptance verifies it byte for byte
@@ -555,6 +557,7 @@ async def run_fixture(
         fixture_id=fixture.id,
         fixture_sha256=fixture.sha256,
         mode=mode,
+        plan_negotiation=plan_negotiation,
         execution_profile=fixture.execution_profile,
         backend=backend,
         model=model,
@@ -747,6 +750,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m agent_radio.runner")
     parser.add_argument("--fixture", required=True, help="fixture id to run")
     parser.add_argument("--mode", required=True, help="mode to run it under")
+    parser.add_argument(
+        "--negotiation",
+        action="store_true",
+        help="negotiate the plan before executing it (its own axis, not a mode)",
+    )
     parser.add_argument("--backend", default=DEFAULT_BACKEND)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument(
@@ -782,6 +790,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mode=args.mode,
                 repo_root=_REPO_ROOT,
                 timeout_seconds=args.timeout_seconds,
+                plan_negotiation=args.negotiation,
                 backend=args.backend,
                 model=args.model,
             )

@@ -36,6 +36,9 @@ class RunArtifact:
     fixture_id: str
     fixture_sha256: str
     mode: str
+    # See Record.plan_negotiation. Recorded here because it is a fact about what
+    # the run did, not a verdict about it.
+    plan_negotiation: bool
     execution_profile: str
     backend: str
     model: str
@@ -104,6 +107,9 @@ def parse_artifact(payload: dict) -> RunArtifact:
     profile = _required_text(payload, "execution_profile")
     if profile not in EXECUTION_PROFILES:
         raise FixtureError(f"unknown execution profile: {profile!r}")
+    negotiation = payload.get("plan_negotiation")
+    if not isinstance(negotiation, bool):
+        raise FixtureError("plan_negotiation must be a boolean")
     unchanged = payload.get("repository_unchanged")
     if not isinstance(unchanged, bool):
         raise FixtureError("repository_unchanged must be a boolean")
@@ -125,6 +131,7 @@ def parse_artifact(payload: dict) -> RunArtifact:
         fixture_id=_required_text(payload, "fixture_id"),
         fixture_sha256=_required_text(payload, "fixture_sha256"),
         mode=mode,
+        plan_negotiation=negotiation,
         execution_profile=profile,
         # Which provider and which model produced the answer. Required, not
         # optional: once the measurement is paid for, an artefact that does not

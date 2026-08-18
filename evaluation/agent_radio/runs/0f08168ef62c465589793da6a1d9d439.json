@@ -4,6 +4,7 @@
   "fixture_id": "impact-of-a-new-verification-check-type",
   "fixture_sha256": "82071ac2d4fe44704e93085dae03025a10c68037c4787c00e7a2c27069aa2df9",
   "mode": "legacy",
+  "plan_negotiation": false,
   "execution_profile": "read_only",
   "backend": "codex",
   "model": "default",

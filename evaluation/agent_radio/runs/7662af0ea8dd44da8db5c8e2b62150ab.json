@@ -4,6 +4,7 @@
   "fixture_id": "where-the-provider-snapshot-comes-from",
   "fixture_sha256": "49abc9302586d9bde1dfe82ba96a0cff1f3594c84673c85f4813a7c2dd378731",
   "mode": "legacy",
+  "plan_negotiation": false,
   "execution_profile": "read_only",
   "backend": "codex",
   "model": "default",

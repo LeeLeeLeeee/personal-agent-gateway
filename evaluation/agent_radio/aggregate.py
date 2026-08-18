@@ -19,8 +19,32 @@ P95_MINIMUM_SAMPLES = 5
 
 
 @dataclass(frozen=True)
-class Cell:
+class Arm:
+    """One configuration being compared.
+
+    Two axes, kept apart. `mode` is the ADR's watcher vocabulary -- what a
+    peer's message rides on. `plan_negotiation` is independent of it: a run can
+    negotiate with or without a watcher. Folding them into one label would make
+    "radio-lite with negotiation" unsayable, and that is the comparison Stage 2
+    is promoted against.
+    """
+
     mode: str
+    plan_negotiation: bool
+
+    @property
+    def label(self) -> str:
+        return f"{self.mode}+협상" if self.plan_negotiation else self.mode
+
+
+# The baseline is legacy with the feature *off*. Legacy that negotiated is a
+# different arm and must not stand in as the thing it is being measured against.
+BASELINE_ARM = Arm(BASELINE_MODE, False)
+
+
+@dataclass(frozen=True)
+class Cell:
+    arm: Arm
     samples: int
     tasks: int
     success_rate: float
@@ -57,15 +81,14 @@ def build_report(
     ]
     unreported_dropped = len(fresh) - len(live)
 
-    by_type: dict[str, dict[str, list[Record]]] = {}
+    by_type: dict[str, dict[Arm, list[Record]]] = {}
     for record in live:
         fixture_type = fixtures[record.fixture_id].type
-        by_type.setdefault(fixture_type, {}).setdefault(record.mode, []).append(record)
+        arm = Arm(record.mode, record.plan_negotiation)
+        by_type.setdefault(fixture_type, {}).setdefault(arm, []).append(record)
 
     rows = {
-        fixture_type: tuple(
-            _cell(mode, group[mode]) for mode in _mode_order(group)
-        )
+        fixture_type: tuple(_cell(arm, group[arm]) for arm in _arm_order(group))
         for fixture_type, group in sorted(by_type.items())
     }
     return Report(
@@ -78,24 +101,24 @@ def render(report: Report) -> str:
     for fixture_type, cells in report.rows.items():
         lines.append(f"## {fixture_type}")
         lines.append(
-            "| mode | n | tasks | success | defects/task | rework/task | "
+            "| arm | n | tasks | success | defects/task | rework/task | "
             "tokens/task | p50 ms | p95 ms |"
         )
         lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         for cell in cells:
             p95 = "n/a" if cell.p95_ms is None else str(cell.p95_ms)
             lines.append(
-                f"| {cell.mode} | {cell.samples} | {cell.tasks} | "
+                f"| {cell.arm.label} | {cell.samples} | {cell.tasks} | "
                 f"{cell.success_rate:.0%} | {cell.critical_defects_per_task:.2f} | "
                 f"{cell.rework_per_task:.2f} | {cell.cost_tokens_per_task:.1f} | "
                 f"{cell.p50_ms} | {p95} |"
             )
-        if BASELINE_MODE not in {cell.mode for cell in cells}:
+        if BASELINE_ARM not in {cell.arm for cell in cells}:
             # A reader must not have to cross-reference the warnings section to
             # see this: a type with no baseline row looks fully vetted on its
             # own if this line isn't here too.
             lines.append(
-                f"베이스라인 없음: {fixture_type} 타입에 {BASELINE_MODE} 기록이 "
+                f"베이스라인 없음: {fixture_type} 타입에 {BASELINE_ARM.label} 기록이 "
                 "없어 판단 불가"
             )
         lines.append("")
@@ -113,11 +136,11 @@ def render(report: Report) -> str:
     return "\n".join(lines)
 
 
-def _cell(mode: str, records: list[Record]) -> Cell:
+def _cell(arm: Arm, records: list[Record]) -> Cell:
     durations = sorted(record.wall_ms for record in records)
     sample_count = len(records)
     return Cell(
-        mode=mode,
+        arm=arm,
         samples=sample_count,
         tasks=len({record.fixture_id for record in records}),
         success_rate=sum(record.succeeded for record in records) / sample_count,
@@ -153,19 +176,19 @@ def _percentile(durations: list[int], percent: int) -> int:
     return int(round(quantiles(durations, n=100, method="inclusive")[percent - 1]))
 
 
-def _mode_order(group: Mapping[str, list[Record]]) -> list[str]:
-    """The baseline first, always: every gate is stated against legacy."""
-    modes = sorted(group)
-    if BASELINE_MODE in modes:
-        modes.remove(BASELINE_MODE)
-        return [BASELINE_MODE, *modes]
-    return modes
+def _arm_order(group: Mapping[Arm, list[Record]]) -> list[Arm]:
+    """The baseline first, always: every gate is stated against it."""
+    arms = sorted(group, key=lambda arm: (arm.mode, arm.plan_negotiation))
+    if BASELINE_ARM in arms:
+        arms.remove(BASELINE_ARM)
+        return [BASELINE_ARM, *arms]
+    return arms
 
 
 def _warnings(
     fixtures: Mapping[str, Fixture],
     live: Sequence[Record],
-    by_type: Mapping[str, Mapping[str, list[Record]]],
+    by_type: Mapping[str, Mapping[Arm, list[Record]]],
 ) -> tuple[str, ...]:
     tasks = {record.fixture_id for record in live}
     thin_types = [
@@ -181,7 +204,7 @@ def _warnings(
     no_baseline_types = [
         fixture_type
         for fixture_type, group in by_type.items()
-        if BASELINE_MODE not in group
+        if BASELINE_ARM not in group
     ]
     if len(tasks) >= MINIMUM_TASKS and not thin_types and not no_baseline_types:
         return ()

@@ -133,7 +133,9 @@ ADR의 Stage 0 gate는 "평가 실행이 user data나 실제 외부 mutation을 
 - **HTTP API로는 못 돈다.** `/api/team-runs/{id}/detail`이 `401 OTP login required`를 반환한다. 하니스가 OTP 로그인을 자동화하는 것은 인증을 우회하는 방향이라 택하지 않는다.
 - **in-process 구동이 유력하다.** 기존 테스트가 `TeamRunService`/`TeamRuntime`을 직접 만들어 돌린다. 같은 경로를 쓰면 API 인증을 건드리지 않는다.
 - ~~**위험:** `runtime_factory`의 헤드리스 경로 테스트 16건이 현재 실패 중이다.~~ **해소됨(2026-08-13, `7802300`).** 낡은 테스트였고 프로덕션 코드는 손대지 않았다. 하니스가 의지할 경로에 이제 커버리지가 있다.
-- **협상은 이미 있다(2026-08-14).** Stage 1의 plan 협상이 구현돼 `plan_negotiation_enabled` 플래그로 켜진다. 기록의 `mode` 어휘에는 아직 이에 해당하는 값이 없다 — ADR의 넷(`single_agent`·`legacy`·`radio_lite`·`passive`)은 watcher 축이고 협상은 그와 직교하기 때문이다. 실행기 spec이 협상 켠 런을 어떤 mode로 기록할지 정해야 한다. 지금 발명하지 않는다.
+- **협상은 별도 축으로 기록한다(2026-08-18 결정).** ADR의 모드 넷은 **watcher 축** — peer의 message가 무엇에 실려 오는가 — 이고 협상은 그와 직교한다. 모드 어휘에 값을 하나 쓰면 "radio-lite + 협상"을 말할 방법이 없어지는데, 그게 정확히 Stage 2가 비교돼야 하는 조합이다(ADR: "Stage 1~4는 고정 baseline과 **직전 stage**에 각각 비교"). 그래서 기록과 산출물이 `plan_negotiation` 불리언을 따로 들고, 집계는 `Arm(mode, plan_negotiation)` 단위로 행을 나눈다.
+- **baseline은 legacy + 협상 off다.** 협상을 켠 legacy가 baseline 자리를 대신하면 Stage 1이 자기 자신과 비교되어 게이트가 숫자와 무관하게 충족된 것으로 읽힌다. `BASELINE_ARM`이 그것을 막고, 테스트가 그 구분을 고정한다.
+- ~~**협상은 이미 있다(2026-08-14).**~~ Stage 1의 plan 협상이 구현돼 `plan_negotiation_enabled` 플래그로 켜진다. 기록의 `mode` 어휘에는 아직 이에 해당하는 값이 없다 — ADR의 넷(`single_agent`·`legacy`·`radio_lite`·`passive`)은 watcher 축이고 협상은 그와 직교하기 때문이다. 실행기 spec이 협상 켠 런을 어떤 mode로 기록할지 정해야 한다. 지금 발명하지 않는다.
 
 ## 이번 범위가 아닌 것
 

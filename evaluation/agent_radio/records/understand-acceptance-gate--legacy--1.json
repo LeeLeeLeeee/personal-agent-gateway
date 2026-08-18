@@ -4,6 +4,7 @@
   "fixture_sha256": "00d718d48b0606762d3418234f649fac7174759597da6cdc55bdac1c5d2c858d",
   "run_id": "de9564df21e548afb39e75f43afbec77",
   "mode": "legacy",
+  "plan_negotiation": false,
   "repeat": 1,
   "harness_version": "0.1.0",
   "started_at": "2026-08-18T04:56:32.059045Z",

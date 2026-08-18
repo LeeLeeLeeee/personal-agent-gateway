@@ -4,6 +4,7 @@
   "fixture_id": "understand-acceptance-gate",
   "fixture_sha256": "00d718d48b0606762d3418234f649fac7174759597da6cdc55bdac1c5d2c858d",
   "mode": "legacy",
+  "plan_negotiation": false,
   "execution_profile": "read_only",
   "backend": "codex",
   "model": "default",

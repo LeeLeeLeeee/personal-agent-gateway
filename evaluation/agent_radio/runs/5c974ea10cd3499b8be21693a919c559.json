@@ -4,6 +4,7 @@
   "fixture_id": "impact-of-a-new-operation-stage",
   "fixture_sha256": "b7e190c8a89eca826375aa9e05ad10bc2196dd5375cf0126ff1f82ae9fde89a8",
   "mode": "legacy",
+  "plan_negotiation": false,
   "execution_profile": "read_only",
   "backend": "codex",
   "model": "default",

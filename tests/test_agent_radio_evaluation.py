@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from agent_radio import fixture as fixture_module
-from agent_radio.aggregate import _mode_order, build_report, render
+from agent_radio.aggregate import BASELINE_ARM, Arm, _arm_order, build_report, render
 from agent_radio.fixture import (
     FixtureError,
     Record,
@@ -242,6 +242,7 @@ def _record(**overrides) -> dict:
         "fixture_sha256": "abc",
         "run_id": "72f188589eb747e3aef45d1d3ca68a9d",
         "mode": "legacy",
+        "plan_negotiation": False,
         "repeat": 1,
         "harness_version": "0.1.0",
         "started_at": "2026-08-14T01:00:00Z",
@@ -403,7 +404,7 @@ def test_the_baseline_column_is_always_legacy():
     )
 
     (row,) = report.rows.values()
-    assert row[0].mode == "legacy"
+    assert row[0].arm == BASELINE_ARM
 
 
 def test_results_are_split_by_type_rather_than_averaged():
@@ -580,12 +581,27 @@ def test_repeats_of_a_single_task_show_up_as_one_task_not_five():
     (row,) = report.rows.values()
     assert row[0].samples == 5
     assert row[0].tasks == 1
-    assert "| mode | n | tasks |" in render(report)
+    assert "| arm | n | tasks |" in render(report)
 
 
-def test_mode_order_puts_the_baseline_first_even_against_the_alphabet():
+def test_arm_order_puts_the_baseline_first_even_against_the_alphabet():
     """Every mode in the real vocabulary already sorts after 'legacy', so a
     test built only from real modes would still pass if the baseline-first
-    promotion in _mode_order were deleted outright. A synthetic mode name
-    that sorts before 'legacy' is what actually exercises the promotion."""
-    assert _mode_order({"aardvark": [], "legacy": []}) == ["legacy", "aardvark"]
+    promotion in _arm_order were deleted outright. A synthetic mode name that
+    sorts before 'legacy' is what actually exercises the promotion."""
+    other = Arm("aardvark", False)
+
+    assert _arm_order({other: [], BASELINE_ARM: []}) == [BASELINE_ARM, other]
+
+
+def test_legacy_that_negotiated_is_not_the_baseline():
+    """The baseline is legacy with the feature off.
+
+    If a negotiated legacy run could stand in as the baseline, Stage 1 would be
+    compared against itself and its gate -- "improves on legacy" -- would read
+    as met no matter what the numbers said.
+    """
+    negotiated = Arm("legacy", True)
+
+    assert negotiated != BASELINE_ARM
+    assert _arm_order({negotiated: []}) == [negotiated]

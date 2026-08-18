@@ -4,6 +4,7 @@
   "fixture_id": "add-a-line-budget-verification-check",
   "fixture_sha256": "ae342458a94b431e44ae94ead84fe5f51b37185bbd2dcef902730c557a9abe97",
   "mode": "legacy",
+  "plan_negotiation": false,
   "execution_profile": "bounded_write",
   "backend": "codex",
   "model": "default",

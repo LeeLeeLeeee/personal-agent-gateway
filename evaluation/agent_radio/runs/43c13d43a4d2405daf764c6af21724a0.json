@@ -4,6 +4,7 @@
   "fixture_id": "impact-of-trusting-a-worker-computed-check-result",
   "fixture_sha256": "cbd1e3e7b596bbb2afb493c6a6a0a98644749720d45fc00e70e18c8cc5309d80",
   "mode": "legacy",
+  "plan_negotiation": false,
   "execution_profile": "read_only",
   "backend": "codex",
   "model": "default",
