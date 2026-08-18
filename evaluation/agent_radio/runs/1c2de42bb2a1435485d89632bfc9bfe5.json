@@ -1,0 +1,19 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "1c2de42bb2a1435485d89632bfc9bfe5",
+  "fixture_id": "add-a-verification-check-kind",
+  "fixture_sha256": "c6f7811e192551a882d344093abebcf83dc3d8bfc9b8c1791b0879b5f652362b",
+  "mode": "legacy",
+  "execution_profile": "bounded_write",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "started_at": "2026-08-18T04:17:43.061945Z",
+  "finished_at": "2026-08-18T04:23:56.976738Z",
+  "wall_ms": 373914,
+  "run_status": "failed",
+  "summary": null,
+  "workspace_path": "C:\\pag-eval\\workspace\\1c2de42bb2a1435485d89632bfc9bfe5\\workspace",
+  "repository_unchanged": true,
+  "error": "Required task failed"
+}

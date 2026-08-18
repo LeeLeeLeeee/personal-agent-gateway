@@ -1,0 +1,19 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "03bbd20620094fa1a064ff91774a62c3",
+  "fixture_id": "impact-of-a-new-operation-stage",
+  "fixture_sha256": "b7e190c8a89eca826375aa9e05ad10bc2196dd5375cf0126ff1f82ae9fde89a8",
+  "mode": "legacy",
+  "execution_profile": "read_only",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "started_at": "2026-08-18T04:08:31.045855Z",
+  "finished_at": "2026-08-18T04:17:40.564447Z",
+  "wall_ms": 549518,
+  "run_status": "completed",
+  "summary": "OperationStage 신규 값(`cycle_new_thing`) 추가 시 필요한 실제 변경 지점을 전수 조사하고, 실행 흐름 기준으로 누락을 교차 검증한 최종 영향 보고서를 작성했습니다. 코드 수정은 수행하지 않았으며, 작업 실패는 보고되지 않았습니다.",
+  "workspace_path": "C:\\pag-eval\\workspace\\03bbd20620094fa1a064ff91774a62c3\\workspace",
+  "repository_unchanged": true,
+  "error": null
+}

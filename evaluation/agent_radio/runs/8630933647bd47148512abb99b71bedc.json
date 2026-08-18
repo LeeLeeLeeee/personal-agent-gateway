@@ -1,0 +1,19 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "8630933647bd47148512abb99b71bedc",
+  "fixture_id": "understand-acceptance-gate",
+  "fixture_sha256": "00d718d48b0606762d3418234f649fac7174759597da6cdc55bdac1c5d2c858d",
+  "mode": "legacy",
+  "execution_profile": "read_only",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "started_at": "2026-08-18T04:02:47.086126Z",
+  "finished_at": "2026-08-18T04:08:28.601536Z",
+  "wall_ms": 341515,
+  "run_status": "completed",
+  "summary": "수용 게이트는 `required_verifications`의 각 항목을 서버 검사 결과로 판정하며, 필수 검사가 모두 통과해야 수용됩니다. `check: null`은 파일 검사로 결정할 수 없는 항목에만 사용됩니다.\n\n실제로 실행되는 파일 검사는 4종입니다: `file_nonempty`, `file_contains`, `file_matches`, `json_parses`. 판정 흐름과 근거 위치를 담은 보고서를 작성했으며, 실패 사항은 없습니다.",
+  "workspace_path": "C:\\pag-eval\\workspace\\8630933647bd47148512abb99b71bedc\\workspace",
+  "repository_unchanged": false,
+  "error": null
+}
