@@ -16,13 +16,16 @@ from agent_radio.artifact import (
 )
 from agent_radio.fixture import Fixture, FixtureError, RubricItem
 from agent_radio.runner import (
+    EVAL_DATA_ROOT,
     Harness,
     RunnerError,
+    _evaluation_config,
     main,
     repository_is_unchanged,
     repository_status,
     run_fixture,
 )
+from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
@@ -963,3 +966,27 @@ def test_the_entry_point_refuses_an_unknown_fixture(capsys):
 
     assert exit_code != 0
     assert "no-such-task" in capsys.readouterr().err
+
+
+def test_the_evaluation_config_does_not_point_at_the_products_data():
+    """A measurement run must not create personas, teams, runs or workspaces
+    inside the user's real database, and must not depend on whatever that
+    database already holds -- two sweeps a week apart would otherwise start
+    from different states with nobody the wiser."""
+    product_config = AppConfig(
+        workspace_root=Path("/product/data/workspace"),
+        session_dir=Path("/product/data/sessions"),
+        app_db_path=Path("/product/data/app.sqlite"),
+        lmg_base_url="http://127.0.0.1:9999",
+    )
+
+    eval_config = _evaluation_config(product_config)
+
+    assert eval_config.app_db_path != product_config.app_db_path
+    assert eval_config.workspace_root != product_config.workspace_root
+    assert EVAL_DATA_ROOT in eval_config.app_db_path.parents
+    assert EVAL_DATA_ROOT in eval_config.workspace_root.parents
+    # Isolating storage is the whole point -- everything else must still come
+    # from the caller's real configuration.
+    assert eval_config.lmg_base_url == product_config.lmg_base_url
+    assert eval_config.session_dir == product_config.session_dir

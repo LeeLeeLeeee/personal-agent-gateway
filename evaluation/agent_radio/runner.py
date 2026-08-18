@@ -394,6 +394,33 @@ def _isoformat(value: datetime) -> str:
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TASKS_DIR = Path(__file__).resolve().parent / "tasks"
 _RUNS_DIR = Path(__file__).resolve().parent / "runs"
+# Isolated from the product's real data on purpose. build_harness stands up
+# personas, teams, runs and workspaces through the same services the running
+# product uses, so pointing that at .env's AGENT_APP_DB_PATH /
+# AGENT_WORKSPACE_ROOT would create evaluation clutter inside the user's
+# actual database, visible in the UI next to their real work -- and it would
+# also make a sweep's outcome depend on whatever that database already
+# happens to hold, so two sweeps a week apart would not be measuring the same
+# thing. `data/` is already gitignored, and repository_status deliberately
+# never looks there (see its docstring), so `data/eval/` is invisible to the
+# isolation check for the same reason `data/workspace/` already is.
+EVAL_DATA_ROOT = _REPO_ROOT / "data" / "eval"
+
+
+def _evaluation_config(config: AppConfig) -> AppConfig:
+    """Point storage at an evaluation-only database and workspace root.
+
+    Everything else -- the LMG base URL, provider settings, and the rest of
+    what `.env` configures -- passes through from `config` unchanged.
+    Isolating storage is the whole point; building a second configuration is
+    not.
+    """
+    return config.model_copy(
+        update={
+            "app_db_path": EVAL_DATA_ROOT / "app.sqlite",
+            "workspace_root": EVAL_DATA_ROOT / "workspace",
+        }
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -433,8 +460,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: no such fixture: {args.fixture!r}", file=sys.stderr)
         return 1
 
+    config = _evaluation_config(load_config())
+    print(f"database: {config.app_db_path}")
+    print(f"workspace: {config.workspace_root}")
+
     try:
-        harness = build_harness(load_config())
+        harness = build_harness(config)
         artifact = asyncio.run(
             run_fixture(
                 harness,
