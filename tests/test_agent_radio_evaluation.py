@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from agent_radio import fixture as fixture_module
+from agent_radio.aggregate import build_report, render
 from agent_radio.fixture import (
     FixtureError,
     Record,
@@ -357,3 +358,96 @@ def test_git_not_on_path_is_reported_as_a_fixture_error(monkeypatch):
 
     with pytest.raises(FixtureError):
         fixture_module.git_commit_exists("HEAD")
+
+
+def _fixtures():
+    fixture = parse_fixture(_definition(), sha256="abc", commit_exists=_ANY_COMMIT)
+    return {fixture.id: fixture}
+
+
+def test_the_baseline_column_is_always_legacy():
+    report = build_report(
+        _fixtures(),
+        [parse_record(_record(mode="legacy")), parse_record(_record(mode="radio_lite"))],
+    )
+
+    (row,) = report.rows.values()
+    assert row[0].mode == "legacy"
+
+
+def test_results_are_split_by_type_rather_than_averaged():
+    """Winning at understanding and losing at implementation must not hide
+    behind one total."""
+    understanding = parse_fixture(_definition(), sha256="abc", commit_exists=_ANY_COMMIT)
+    building = parse_fixture(
+        _definition(id="build-a-thing", type="bounded_implementation"),
+        sha256="def",
+        commit_exists=_ANY_COMMIT,
+    )
+    records = [
+        parse_record(_record()),
+        parse_record(_record(fixture_id="build-a-thing", fixture_sha256="def")),
+    ]
+
+    report = build_report(
+        {understanding.id: understanding, building.id: building}, records
+    )
+
+    assert set(report.rows) == {"understanding", "bounded_implementation"}
+
+
+def test_a_stale_record_is_dropped_and_counted_rather_than_ignored():
+    report = build_report(_fixtures(), [parse_record(_record(fixture_sha256="old"))])
+
+    assert report.stale_dropped == 1
+    assert report.rows == {}
+
+
+def test_p95_is_refused_below_five_samples():
+    report = build_report(_fixtures(), [parse_record(_record()) for _ in range(4)])
+
+    (row,) = report.rows.values()
+    assert row[0].samples == 4
+    assert row[0].p95_ms is None
+    assert "n/a" in render(report)
+
+
+def test_p95_is_reported_at_five_samples():
+    report = build_report(_fixtures(), [parse_record(_record()) for _ in range(5)])
+
+    (row,) = report.rows.values()
+    assert row[0].p95_ms is not None
+
+
+def test_a_thin_sample_says_it_cannot_decide_activation():
+    """The ADR's gate is 20 tasks or five repeats per type. Leaving that to a
+    reader's memory is how a thin sample becomes a decision."""
+    report = build_report(_fixtures(), [parse_record(_record())])
+
+    assert any("기본 활성화 판단 불가" in warning for warning in report.warnings)
+    assert "기본 활성화 판단 불가" in render(report)
+
+
+def test_success_needs_every_item_to_pass():
+    failed = _record()
+    failed["rubric_results"][0] = {"id": "R1", "passed": False, "note": "n"}
+    report = build_report(
+        _fixtures(), [parse_record(_record()), parse_record(failed)]
+    )
+
+    (row,) = report.rows.values()
+    assert row[0].success_rate == 0.5
+
+
+def test_a_partially_scored_record_is_dropped_and_counted_separately():
+    """Omitting the item you know failed would otherwise be indistinguishable
+    from a full pass. It is counted apart from stale because "the definition
+    changed" and "only part of it was scored" are different problems."""
+    partial = _record(rubric_results=[{"id": "R1", "passed": True, "note": "n"}])
+
+    report = build_report(_fixtures(), [parse_record(partial)])
+
+    assert report.unreported_dropped == 1
+    assert report.stale_dropped == 0
+    assert report.rows == {}
+    assert "미완 채점" in render(report)
