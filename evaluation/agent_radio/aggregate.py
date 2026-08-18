@@ -22,10 +22,11 @@ P95_MINIMUM_SAMPLES = 5
 class Cell:
     mode: str
     samples: int
+    tasks: int
     success_rate: float
-    critical_defects: int
-    rework: int
-    cost_tokens: int
+    critical_defects_per_task: float
+    rework_per_task: float
+    cost_tokens_per_task: float
     p50_ms: int
     p95_ms: int | None
 
@@ -77,15 +78,25 @@ def render(report: Report) -> str:
     for fixture_type, cells in report.rows.items():
         lines.append(f"## {fixture_type}")
         lines.append(
-            "| mode | n | success | critical defects | rework | tokens | p50 ms | p95 ms |"
+            "| mode | n | tasks | success | defects/task | rework/task | "
+            "tokens/task | p50 ms | p95 ms |"
         )
-        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         for cell in cells:
             p95 = "n/a" if cell.p95_ms is None else str(cell.p95_ms)
             lines.append(
-                f"| {cell.mode} | {cell.samples} | {cell.success_rate:.0%} | "
-                f"{cell.critical_defects} | {cell.rework} | {cell.cost_tokens} | "
+                f"| {cell.mode} | {cell.samples} | {cell.tasks} | "
+                f"{cell.success_rate:.0%} | {cell.critical_defects_per_task:.2f} | "
+                f"{cell.rework_per_task:.2f} | {cell.cost_tokens_per_task:.1f} | "
                 f"{cell.p50_ms} | {p95} |"
+            )
+        if BASELINE_MODE not in {cell.mode for cell in cells}:
+            # A reader must not have to cross-reference the warnings section to
+            # see this: a type with no baseline row looks fully vetted on its
+            # own if this line isn't here too.
+            lines.append(
+                f"베이스라인 없음: {fixture_type} 타입에 {BASELINE_MODE} 기록이 "
+                "없어 판단 불가"
             )
         lines.append("")
     if report.stale_dropped:
@@ -104,17 +115,28 @@ def render(report: Report) -> str:
 
 def _cell(mode: str, records: list[Record]) -> Cell:
     durations = sorted(record.wall_ms for record in records)
+    sample_count = len(records)
     return Cell(
         mode=mode,
-        samples=len(records),
-        success_rate=sum(record.succeeded for record in records) / len(records),
-        critical_defects=sum(record.critical_defects_found for record in records),
-        rework=sum(record.rework_count for record in records),
-        cost_tokens=sum(
+        samples=sample_count,
+        tasks=len({record.fixture_id for record in records}),
+        success_rate=sum(record.succeeded for record in records) / sample_count,
+        # Raw sums compare wrongly across groups with different n -- 2 defects
+        # over 4 samples looks better than 3 over 10 at a glance, and every ADR
+        # criterion using these numbers is a per-task comparison against the
+        # baseline. Reported per task; `samples` stays visible so the raw total
+        # is still recoverable by multiplying back through.
+        critical_defects_per_task=sum(
+            record.critical_defects_found for record in records
+        )
+        / sample_count,
+        rework_per_task=sum(record.rework_count for record in records) / sample_count,
+        cost_tokens_per_task=sum(
             int(record.cost.get("input_tokens", 0) or 0)
             + int(record.cost.get("output_tokens", 0) or 0)
             for record in records
-        ),
+        )
+        / sample_count,
         p50_ms=_percentile(durations, 50),
         p95_ms=(
             _percentile(durations, 95)
@@ -151,10 +173,25 @@ def _warnings(
         for fixture_type, group in by_type.items()
         if min(len(records) for records in group.values()) < MINIMUM_REPEATS_PER_TYPE
     ]
-    if len(tasks) >= MINIMUM_TASKS and not thin_types:
+    # A type measured under zero legacy records has nothing to have beaten --
+    # the ADR's whole gate is "beats a fixed baseline" -- regardless of how
+    # many samples the other modes have. Checked separately from thin_types,
+    # because a type can clear the repeats-per-type count entirely on modes
+    # other than legacy and still have no baseline to compare against.
+    no_baseline_types = [
+        fixture_type
+        for fixture_type, group in by_type.items()
+        if BASELINE_MODE not in group
+    ]
+    if len(tasks) >= MINIMUM_TASKS and not thin_types and not no_baseline_types:
         return ()
     return (
         "기본 활성화 판단 불가: "
         f"태스크 {len(tasks)}/{MINIMUM_TASKS}"
-        + (f", 반복 부족 {', '.join(sorted(thin_types))}" if thin_types else ""),
+        + (f", 반복 부족 {', '.join(sorted(thin_types))}" if thin_types else "")
+        + (
+            f", 베이스라인 없음 {', '.join(sorted(no_baseline_types))}"
+            if no_baseline_types
+            else ""
+        ),
     )

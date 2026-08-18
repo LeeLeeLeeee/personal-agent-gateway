@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from agent_radio import fixture as fixture_module
-from agent_radio.aggregate import build_report, render
+from agent_radio.aggregate import _mode_order, build_report, render
 from agent_radio.fixture import (
     FixtureError,
     Record,
@@ -451,3 +451,110 @@ def test_a_partially_scored_record_is_dropped_and_counted_separately():
     assert report.stale_dropped == 0
     assert report.rows == {}
     assert "미완 채점" in render(report)
+
+
+def test_a_type_with_no_baseline_gets_a_visible_refusal():
+    """Twenty distinct tasks and five-plus samples everywhere is not enough:
+    a type measured only under radio_lite, with zero legacy records, has
+    nothing to have beaten. Looking fully vetted -- green rows, no warning --
+    would defeat the ADR's "beats a fixed baseline" gate silently."""
+    fixtures: dict = {}
+    records = []
+    for i in range(15):
+        fixture = parse_fixture(
+            _definition(id=f"u{i}"), sha256=f"u{i}-sha", commit_exists=_ANY_COMMIT
+        )
+        fixtures[fixture.id] = fixture
+        for mode in ("legacy", "radio_lite"):
+            records.append(
+                parse_record(
+                    _record(
+                        fixture_id=fixture.id,
+                        fixture_sha256=fixture.sha256,
+                        mode=mode,
+                    )
+                )
+            )
+    for i in range(5):
+        fixture = parse_fixture(
+            _definition(id=f"b{i}", type="bounded_implementation"),
+            sha256=f"b{i}-sha",
+            commit_exists=_ANY_COMMIT,
+        )
+        fixtures[fixture.id] = fixture
+        records.append(
+            parse_record(
+                _record(
+                    fixture_id=fixture.id,
+                    fixture_sha256=fixture.sha256,
+                    mode="radio_lite",
+                )
+            )
+        )
+
+    report = build_report(fixtures, records)
+
+    # Enough tasks and enough repeats everywhere -- the only thing wrong is
+    # the missing baseline, so this isolates that reason from the others.
+    assert any(
+        "베이스라인 없음" in warning and "bounded_implementation" in warning
+        for warning in report.warnings
+    )
+    assert not any("반복 부족" in warning for warning in report.warnings)
+    rendered = render(report)
+    assert "베이스라인 없음: bounded_implementation" in rendered
+
+
+def test_defect_rework_and_cost_columns_are_reported_per_task():
+    """Raw sums compare wrongly across groups with different n -- 2 defects
+    over 4 samples looks better than 3 over 10 at a glance -- and every ADR
+    criterion using these numbers is a per-task comparison against the
+    baseline."""
+    records = [
+        parse_record(
+            _record(
+                critical_defects_found=1,
+                rework_count=2,
+                cost={"provider": "codex", "input_tokens": 100, "output_tokens": 50},
+            )
+        ),
+        parse_record(
+            _record(
+                critical_defects_found=3,
+                rework_count=0,
+                cost={"provider": "codex", "input_tokens": 300, "output_tokens": 50},
+            )
+        ),
+    ]
+
+    report = build_report(_fixtures(), records)
+
+    (row,) = report.rows.values()
+    cell = row[0]
+    assert cell.samples == 2
+    assert cell.critical_defects_per_task == 2.0
+    assert cell.rework_per_task == 1.0
+    assert cell.cost_tokens_per_task == 250.0
+    assert "defects/task" in render(report)
+    assert "rework/task" in render(report)
+    assert "tokens/task" in render(report)
+
+
+def test_repeats_of_a_single_task_show_up_as_one_task_not_five():
+    """The repeats-per-type gate counts records, not distinct fixtures, so one
+    task run five times clears it. This does not invent a new threshold --
+    it makes the shape of the sample visible so a reader can judge it."""
+    report = build_report(_fixtures(), [parse_record(_record()) for _ in range(5)])
+
+    (row,) = report.rows.values()
+    assert row[0].samples == 5
+    assert row[0].tasks == 1
+    assert "| mode | n | tasks |" in render(report)
+
+
+def test_mode_order_puts_the_baseline_first_even_against_the_alphabet():
+    """Every mode in the real vocabulary already sorts after 'legacy', so a
+    test built only from real modes would still pass if the baseline-first
+    promotion in _mode_order were deleted outright. A synthetic mode name
+    that sorts before 'legacy' is what actually exercises the promotion."""
+    assert _mode_order({"aardvark": [], "legacy": []}) == ["legacy", "aardvark"]
