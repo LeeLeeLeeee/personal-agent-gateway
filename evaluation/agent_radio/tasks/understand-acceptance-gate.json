@@ -9,8 +9,8 @@
   "rubric": [
     {
       "id": "R1",
-      "criterion": "검사 종류를 이름으로 든다",
-      "check": "답변이 file_nonempty · file_contains · file_matches · json_parses 중 둘 이상을 이름으로 언급한다"
+      "criterion": "검사 종류를 정확히, 그 넷으로만 든다",
+      "check": "답변이 file_nonempty · file_contains · file_matches · json_parses 중 둘 이상을 이름으로 언급하고, 이 넷 외의 검사 종류(예: build_passes, test_passes 등 존재하지 않는 이름)를 실재하는 것처럼 언급하지 않는다. 하나라도 지어낸 이름이 있으면 실패"
     },
     {
       "id": "R2",
@@ -21,6 +21,16 @@
       "id": "R3",
       "criterion": "게이트가 실행한 검사와 워커가 신고한 것을 구분한다",
       "check": "답변이 verified 와 attested(또는 같은 뜻의 두 경로)를 구분해 설명한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "체크가 있는 필수 검증에서 워커 자신의 보고가 아예 쓰이지 않음을 안다",
+      "check": "답변이, required_verifications 항목에 check가 있는 경우 게이트가 워커가 보고한 verification(outcome.verifications)을 참조하지 않고 오직 run_verification_check 의 결과만으로 판정한다는 점을 명시한다. '워커 보고와 대조해 확인한다'는 서술이 있으면 실패"
+    },
+    {
+      "id": "R5",
+      "criterion": "체크가 없는 필수 검증에서 checked=False 보고가 실패가 아니라는 것을 안다",
+      "check": "답변이, check가 없는 필수 검증에서 워커가 checked=False 로 보고하면 그 항목은 실패로 처리되지 않고 unverified로 기록되며 태스크가 그대로 accepted될 수 있다는 점을 설명한다. '확인되지 않으면 태스크가 실패한다'는 서술만 있으면 실패"
     }
   ]
 }
