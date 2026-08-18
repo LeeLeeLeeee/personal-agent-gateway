@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from agent_radio.artifact import (
     write_artifact,
 )
 from agent_radio.fixture import FixtureError
+from agent_radio.runner import RunnerError, repository_is_unchanged
 
 
 def _artifact(**overrides) -> dict:
@@ -153,3 +155,60 @@ def test_writing_into_a_path_that_is_a_file_raises_fixture_error(tmp_path: Path)
 
     with pytest.raises(FixtureError):
         write_artifact(not_a_directory, artifact)
+
+
+def _git(path: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(path), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _initialised_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "t@e.com")
+    _git(repo, "config", "user.name", "T")
+    (repo / "a.txt").write_text("x", encoding="utf-8")
+    _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-m", "initial")
+    return repo
+
+
+def test_a_clean_repository_reads_as_unchanged(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "t@e.com")
+    _git(repo, "config", "user.name", "T")
+    (repo / "a.txt").write_text("x", encoding="utf-8")
+    _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-m", "initial")
+
+    assert repository_is_unchanged(repo) is True
+
+
+def test_an_untracked_file_counts_as_changed(tmp_path: Path):
+    """A read-only fixture that dropped a scratch file into the repository did
+    not run under the isolation the other runs had."""
+    repo = _initialised_repo(tmp_path)
+    (repo / "scratch.txt").write_text("x", encoding="utf-8")
+
+    assert repository_is_unchanged(repo) is False
+
+
+def test_a_modified_tracked_file_counts_as_changed(tmp_path: Path):
+    repo = _initialised_repo(tmp_path)
+    (repo / "a.txt").write_text("changed", encoding="utf-8")
+
+    assert repository_is_unchanged(repo) is False
+
+
+def test_a_path_that_is_not_a_repository_is_an_error(tmp_path: Path):
+    """Silently answering 'unchanged' for a non-repository would report
+    isolation held when nothing was checked."""
+    with pytest.raises(RunnerError):
+        repository_is_unchanged(tmp_path / "nothing")
