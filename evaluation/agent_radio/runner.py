@@ -66,10 +66,16 @@ def build_harness(config: AppConfig) -> Harness:
     )
 
 
-def repository_is_unchanged(repo_root: Path) -> bool:
-    """Whether the tracked working tree has no uncommitted changes.
+def repository_status(repo_root: Path) -> str:
+    """What git says the tracked working tree currently looks like.
 
-    This checks the tracked working tree only. Anything gitignored is
+    Returned as git's own porcelain text rather than a boolean, because the
+    interesting question a run asks is not "is this tree clean" but "is this
+    tree the same tree it was before the run". Two different dirty states are
+    not the same tree, and collapsing them to "dirty then, dirty now" would
+    hide exactly the escape this check exists to catch.
+
+    This reads the tracked working tree only. Anything gitignored is
     invisible to it by design, not by oversight: `data/app.sqlite` is
     written on essentially every request the product serves, so a check that
     counted ignored paths would flag every run against itself and be
@@ -121,7 +127,17 @@ def repository_is_unchanged(repo_root: Path) -> bool:
         raise RunnerError(
             f"cannot read git status for {repo_root}: {result.stderr.strip()}"
         )
-    return result.stdout.strip() == ""
+    return result.stdout
+
+
+def repository_is_unchanged(repo_root: Path) -> bool:
+    """Whether the tracked working tree has no uncommitted changes at all.
+
+    An absolute question, and the one a caller wants when it needs to know the
+    tree is pristine. A *run* asks the relative question instead -- see
+    repository_status.
+    """
+    return repository_status(repo_root).strip() == ""
 
 
 def utc_now() -> datetime:
@@ -150,12 +166,16 @@ async def run_fixture(
     """
     if mode not in IMPLEMENTED_MODES:
         raise RunnerError(f"mode is not implemented: {mode!r}")
-    # Before anything is created and before any provider call is spent: this
-    # refuses a repo_root that is not a repository root, which is the one
+    # Read before anything is created and before any provider call is spent.
+    # Two jobs: it refuses a repo_root that is not a repository root -- the one
     # condition that would make the isolation check silently answer about a
-    # different tree. Its answer here is deliberately unused -- a tree that was
-    # already dirty is not this run's doing.
-    repository_is_unchanged(repo_root)
+    # different tree -- and it is the baseline the run is judged against. The
+    # question `repository_unchanged` answers is "did this run change the
+    # tree", not "is the tree clean": a checkout with uncommitted work in it is
+    # the normal state of this repository, and grading against "clean" would
+    # mark every run of a mid-development sweep unscoreable for something no
+    # run did.
+    status_before = repository_status(repo_root)
 
     try:
         leader = harness.personas.create_persona(
@@ -232,7 +252,7 @@ async def run_fixture(
         run_status=final.status,
         summary=final.summary,
         workspace_path=final.working_root or final.workspace_root,
-        repository_unchanged=repository_is_unchanged(repo_root),
+        repository_unchanged=repository_status(repo_root) == status_before,
         error=error,
     )
 

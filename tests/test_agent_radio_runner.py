@@ -17,6 +17,7 @@ from agent_radio.runner import (
     Harness,
     RunnerError,
     repository_is_unchanged,
+    repository_status,
     run_fixture,
 )
 from personal_agent_gateway.db import Database
@@ -227,6 +228,18 @@ def test_a_modified_tracked_file_counts_as_changed(tmp_path: Path):
     repo = _initialised_repo(tmp_path)
     (repo / "a.txt").write_text("changed", encoding="utf-8")
 
+    assert repository_is_unchanged(repo) is False
+
+
+def test_two_different_dirty_states_read_as_different_statuses(tmp_path: Path):
+    """The whole point of comparing status text rather than a dirty/clean
+    boolean: a file added to an already-dirty tree has to be visible."""
+    repo = _initialised_repo(tmp_path)
+    (repo / "wip.txt").write_text("uncommitted work", encoding="utf-8")
+    before = repository_status(repo)
+    (repo / "scratch.txt").write_text("dropped by a run", encoding="utf-8")
+
+    assert repository_status(repo) != before
     assert repository_is_unchanged(repo) is False
 
 
@@ -467,6 +480,42 @@ async def test_a_read_only_fixture_that_dirtied_the_repository_is_not_scoreable(
     fixture = _understanding_fixture()
 
     artifact = await run_fixture(harness, fixture, mode="legacy", repo_root=repo)
+
+    assert artifact.repository_unchanged is False
+    assert artifact.scoreable is False
+
+
+async def test_a_run_that_changes_nothing_in_an_already_dirty_tree_is_scoreable(
+    tmp_path: Path,
+):
+    """repository_unchanged asks whether *this run* changed the tree, not
+    whether the tree is clean. A checkout with uncommitted work in it is the
+    normal state of this repository, and grading against "clean" would mark
+    every run of a mid-development sweep unscoreable for something no run
+    did."""
+    harness, repo = _stub_harness(tmp_path, answer="…")
+    (repo / "wip.txt").write_text("someone's uncommitted work", encoding="utf-8")
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert artifact.repository_unchanged is True
+    assert artifact.scoreable is True
+
+
+async def test_a_run_that_adds_to_an_already_dirty_tree_is_not_scoreable(
+    tmp_path: Path,
+):
+    """The comparison is on the status text, not on a dirty/clean boolean:
+    two different dirty states are not the same tree, and collapsing them
+    would hide exactly the escape this check exists to catch."""
+    harness, repo = _stub_harness(tmp_path, answer="…", dirty_repo=True)
+    (repo / "wip.txt").write_text("someone's uncommitted work", encoding="utf-8")
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
 
     assert artifact.repository_unchanged is False
     assert artifact.scoreable is False
