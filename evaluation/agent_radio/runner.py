@@ -8,8 +8,11 @@ assembly would drift from the real one without anyone noticing.
 
 import argparse
 import asyncio
+import io
+import shutil
 import subprocess
 import sys
+import tarfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -57,6 +60,11 @@ class Harness:
     directory: object
     rules: object
     personas: object
+    recovery: object
+    # Where pinned source exports live. Environment wiring, like the database:
+    # a per-run argument would let a test that forgot it write into the real
+    # sweep's export directory.
+    exports: Path
 
 
 def build_harness(config: AppConfig) -> Harness:
@@ -89,6 +97,8 @@ def build_harness(config: AppConfig) -> Harness:
         directory=state.team_directory_service,
         rules=state.rule_set_service,
         personas=state.persona_service,
+        recovery=state.team_provider_recovery,
+        exports=EVAL_SOURCE_ROOT,
     )
 
 
@@ -265,6 +275,9 @@ async def run_fixture(
     status_before = repository_status(repo_root)
 
     try:
+        # What the run reads: a pinned export of HEAD, not the working tree it
+        # was launched from. See export_source.
+        source, source_commit = export_source(repo_root, Path(harness.exports))
         leader = harness.personas.create_persona(
             f"Eval Lead ({fixture.id})",
             "lead",
@@ -290,14 +303,14 @@ async def run_fixture(
             [member.id],
         )
         # The isolation the ADR requires, set before the run is created: the
-        # run reads the repository and writes only to its own workspace.
+        # run reads the pinned export and writes only to its own workspace.
         # create_team_run snapshots the policy, so a later change cannot
         # retroactively alter what this run was allowed to do.
         harness.policies.upsert(
             "team",
             team.id,
             read_mode="selected",
-            read_path=str(repo_root),
+            read_path=str(source),
             write_mode="isolated",
             workspace_path=None,
         )
@@ -312,6 +325,21 @@ async def run_fixture(
             execution_policy="triggered",
         )
         cycle = harness.teams.create_cycle(run.id, "manual", f"eval-{fixture.id}")
+        # The rest of the dispatcher's prologue. TeamCycleDispatcher.run_one
+        # creates the cycle and then freezes the provider snapshot onto it,
+        # because the model factory reads that snapshot back out of the cycle
+        # rather than off the registry -- pinning what the run was allowed to do
+        # to the moment it started. Creating a cycle without freezing it leaves
+        # the run unable to build a single model client, and the refusal names
+        # the provider ("codex: capabilities_unavailable") for a gateway that is
+        # reporting it as ready, which reads as an outage rather than a missing
+        # step here.
+        #
+        # A freeze failure belongs to setup: no provider call has been paid for,
+        # so there is no run to describe, and a sweep that turned this into a
+        # recorded "failed run" would bill a broken provider as evidence about
+        # the modes under test.
+        cycle = harness.recovery.freeze_cycle(cycle.id)
     except Exception as exc:
         raise RunnerError(f"could not set up a run for {fixture.id}: {exc}") from exc
 
@@ -369,6 +397,7 @@ async def run_fixture(
         execution_profile=fixture.execution_profile,
         backend=backend,
         model=model,
+        source_commit=source_commit,
         started_at=_isoformat(started),
         finished_at=_isoformat(finished),
         wall_ms=max(int((finished - started).total_seconds() * 1000), 0),
@@ -405,6 +434,78 @@ _RUNS_DIR = Path(__file__).resolve().parent / "runs"
 # never looks there (see its docstring), so `data/eval/` is invisible to the
 # isolation check for the same reason `data/workspace/` already is.
 EVAL_DATA_ROOT = _REPO_ROOT / "data" / "eval"
+# Outside the repository, unlike the database, and not by preference: source
+# staging refuses a source root that contains the execution workspace, because
+# staging it would copy the workspace into itself. This repository is the source
+# every fixture reads, so a workspace anywhere beneath it fails every read_only
+# run with "The selected source could not be staged" before a model is called.
+# Adjacent rather than in a temporary directory so that a staged snapshot is
+# still there to inspect when an answer needs explaining, and so that deleting
+# it is one obvious `rm -rf`.
+# Short, and on the drive the user's home is on. Not cosmetic: a staged file's
+# destination is <workspace>/<run id>/workspace/._inputs-<32 hex>/01-<root
+# name>/<path in the repository>, which spends about 110 characters before the
+# repository's own paths start, and Windows stops at 260. The obvious home for
+# this -- beside the repository, under `playground/` -- overruns that limit for
+# the deepest documents in `docs/`.
+_EVAL_ROOT = Path(Path.home().anchor) / "pag-eval"
+EVAL_WORKSPACE_ROOT = _EVAL_ROOT / "workspace"
+EVAL_SOURCE_ROOT = _EVAL_ROOT / "source"
+
+
+def export_source(repo_root: Path, exports_root: Path) -> tuple[Path, str]:
+    """A pristine checkout of HEAD, and the commit it is.
+
+    What a run reads has to be a commit rather than a working tree, for two
+    reasons of unequal weight. The lesser one is mechanical: staging this
+    repository's working tree copies 2629 files, including nested checkouts
+    under `.worktrees` and browser caches under `data/backups`, with relative
+    paths up to 189 characters -- which no workspace location can fit inside
+    Windows' path limit. HEAD is 679 files and 96 characters.
+
+    The greater one is that a sweep reading uncommitted work measures something
+    nobody can repeat. `git archive` gives exactly the tracked files at HEAD,
+    with no `.git` directory for a model to go spelunking in.
+
+    Reused across runs of the same commit, and the completion marker sits beside
+    the export rather than inside it: a directory left half-written by a killed
+    run must not be mistaken for a source tree, and the export the model reads
+    must contain nothing this harness put there.
+    """
+    commit = _git_output(repo_root, "rev-parse", "HEAD")
+    destination = exports_root / f"pag-{commit[:7]}"
+    marker = exports_root / f"pag-{commit[:7]}.complete"
+    if marker.exists():
+        return destination, commit
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True)
+    archive = _git_bytes(repo_root, "archive", "--format=tar", commit)
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        tar.extractall(destination, filter="data")
+    marker.write_text(f"{commit}\n", encoding="utf-8")
+    return destination, commit
+
+
+def _git_output(repo_root: Path, *args: str) -> str:
+    return _git_bytes(repo_root, *args).decode("utf-8").strip()
+
+
+def _git_bytes(repo_root: Path, *args: str) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), *args],
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RunnerError("git is not available on PATH") from exc
+    if result.returncode != 0:
+        raise RunnerError(
+            f"git {' '.join(args)} failed in {repo_root}: "
+            f"{result.stderr.decode('utf-8', 'replace').strip()}"
+        )
+    return result.stdout
 
 
 def _evaluation_config(config: AppConfig) -> AppConfig:
@@ -418,7 +519,7 @@ def _evaluation_config(config: AppConfig) -> AppConfig:
     return config.model_copy(
         update={
             "app_db_path": EVAL_DATA_ROOT / "app.sqlite",
-            "workspace_root": EVAL_DATA_ROOT / "workspace",
+            "workspace_root": EVAL_WORKSPACE_ROOT,
         }
     )
 

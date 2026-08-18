@@ -39,6 +39,10 @@ class RunArtifact:
     execution_profile: str
     backend: str
     model: str
+    # The commit the run was allowed to read. Required for the same reason
+    # `backend` is: the source is half of what a run is, and two answers about
+    # different trees are not two measurements of the same thing.
+    source_commit: str
     started_at: str
     finished_at: str
     wall_ms: int
@@ -105,6 +109,7 @@ def parse_artifact(payload: dict) -> RunArtifact:
         # name what produced it cannot be compared with anything.
         backend=_required_text(payload, "backend"),
         model=_required_text(payload, "model"),
+        source_commit=_required_text(payload, "source_commit"),
         started_at=_required_text(payload, "started_at"),
         finished_at=_required_text(payload, "finished_at"),
         wall_ms=wall_ms,

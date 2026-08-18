@@ -110,10 +110,14 @@ LMG의 `/v1/usage`는 **계정 전체 스냅샷**이지 런별 토큰이 아니�
 
 과제 3개를 `legacy`로 돌릴 계획이었으나 **첫 과제에서 멈췄다.** 계획이 "첫 결과가 하니스 문제를 드러내면 멈추라"고 했고, 같은 실패가 반복될 것이 분명했다.
 
-- **모든 런이 provider preflight에서 실패한다.** 산출물: `run_status="failed"`, `error="codex: capabilities_unavailable"`, `wall_ms` 156~165. 연산 행은 `prepared`·시도 **0회** — 모델은 한 번도 호출되지 않았다.
-- **그 메시지는 원인을 잘못 지목한다.** LMG는 codex를 `available=True, ready=True, execution=True`로 보고하고, 실행기 자신의 앱에서 `registry.get("codex")`도 성공한다. `capabilities_unavailable`은 `team_provider_recovery._recovery_reason`이 스냅샷에 `readiness_error`가 없을 때 쓰는 **기본 문자열**이지 관측된 사실이 아니다.
-- **세션 로더는 원인이 아니다.** 한때 그렇게 적었으나 틀렸다. `fetch_sessions_strict`는 결과 객체가 아니라 **`list[dict]`를 반환**하며(`lmg_client.py:383-392`), 실패 시에는 조용히 빈 값을 주는 게 아니라 `LMGQueryError`를 던진다. `.status`/`.data`를 읽은 프로브가 리스트에서 없는 속성을 읽어 `None`과 빈 값을 출력한 것이고, 그 호출은 성공한 것이었다. 잘못된 진단을 지운다.
-- **따라서 원인은 아직 모른다.** 확실한 것만 적는다: LMG는 codex를 `available/ready/execution` 모두 정상으로 보고하고, 실행기 자신의 앱에서 `registry.get("codex")`도 성공하며, 연산 행은 `prepared`·시도 0회이고, 에러 문자열은 `_recovery_reason`이 스냅샷에 `readiness_error`가 없을 때 쓰는 기본값이다. 다음 조사는 **그 스냅샷이 어디서 만들어져 무엇을 담고 있는지**(연산의 `provider_snapshot_json`, 그리고 `team_provider_recovery`의 분류 코드)에서 시작해야 한다.
+모든 런이 preflight에서 실패했고, 원인은 **하니스 결함 3건**이었다. 제품·환경 문제가 아니었다. 세 건 모두 회귀 테스트로 고정했다.
+
+1. **사이클을 동결하지 않았다.** `TeamCycleDispatcher.run_one`은 `create_cycle` 다음에 `freeze_cycle`로 provider 스냅샷을 사이클에 새기고, 모델 팩토리는 그 스냅샷을 **레지스트리가 아니라 사이클에서** 읽는다(`capabilities_for_cycle`). 실행기는 디스패처의 이 도입부를 다시 구현하면서 동결 단계를 빼먹었다. 그래서 실패한 세 사이클의 `execution_metadata_json`은 전부 빈 `{}`였고, 스냅샷이 없으니 파서가 던지고, `_recovery_reason(None)`이 기본 문자열 `capabilities_unavailable`을 골랐다 — 게이트웨이가 정상이라고 보고하는 provider 이름을 붙여서. 파일의 다른 테스트는 모두 모델 팩토리를 대체하므로 이 읽기를 건드리지 않았고, 그래서 스위트는 전부 통과하면서 실제 실행은 전부 실패했다.
+2. **평가 워크스페이스가 레포 안에 있었다.** 소스 스테이징은 실행 워크스페이스를 품은 소스 루트를 (자기 자신을 복사하게 되므로) 올바르게 거부한다. 레포가 곧 과제가 읽는 소스이므로, `data/eval/workspace`는 모든 `read_only` 과제를 `The selected source could not be staged`로 죽였다. DB는 스테이징되지 않으므로 레포 안에 남아도 된다.
+3. **작업 트리를 스테이징하려 했다.** 이 레포의 작업 트리는 `iter_safe_files` 기준 **2629개 파일**이고 최장 상대경로가 **189자**다(`.worktrees`의 중첩 체크아웃, `data/backups`의 브라우저 캐시). 대상 경로가 Windows 260자 한계를 넘어 `copyfile`이 `FileNotFoundError`로 죽었다. HEAD는 **679개 파일·최장 96자**다. 그래서 런이 읽는 것을 **HEAD의 정결한 export**(`git archive`, 추적 파일만, `.git` 없음)로 바꿨다. 경로 길이는 부차적 이유이고, 더 큰 이유는 재현성이다: 커밋되지 않은 작업을 읽는 sweep은 누구도 다시 만들 수 없는 측정이다. 워크스페이스도 짧은 절대경로(`<드라이브>\pag-eval`)로 옮겼다 — 스테이징 대상 경로는 레포 경로가 시작되기 전에 이미 110자쯤을 쓴다.
+
+- **세션 로더는 원인이 아니었다.** 한때 그렇게 적었으나 틀렸다. `fetch_sessions_strict`는 결과 객체가 아니라 `list[dict]`를 반환하며(`lmg_client.py:383-392`), 실패 시 조용히 빈 값을 주는 게 아니라 `LMGQueryError`를 던진다. `.status`/`.data`를 읽은 프로브가 리스트에서 없는 속성을 읽어 `None`과 빈 값을 출력한 것이고, 그 호출은 성공한 것이었다.
+- **첫 실측이 나왔다.** `understand-acceptance-gate` / `legacy` / codex: `completed`, wall 321초, 레포 무변경, 5.7KB 한국어 분석이 file:line 근거와 함께 나왔다. 산출물은 어느 커밋을 읽었는지도 기록한다(`source_commit`).
 
 ### 하니스가 지킨 약속 (실제 실행으로 확인)
 
@@ -124,6 +128,7 @@ LMG의 `/v1/usage`는 **계정 전체 스냅샷**이지 런별 토큰이 아니�
 
 ### 후속
 
-- **provider preflight가 왜 막는지** 밝히기 전에는 실측을 진행할 수 없다. 이것이 baseline으로 가는 유일한 차단 요인이다. 위에 적은 네 가지 확실한 사실에서 출발하되, 세션 로더는 이미 배제됐다.
-- **`capabilities_unavailable`이 원인을 잘못 지목한다.** 스냅샷에 사유가 없을 때 실제로 무엇이 막았는지를 담도록 고쳐야 한다 — 지금은 진단이 코드를 읽어야만 가능하다.
+- **`capabilities_unavailable`이 원인을 잘못 지목한다.** 스냅샷에 사유가 없을 때 실제로 무엇이 막았는지를 담도록 고쳐야 한다. 이번 진단이 코드를 읽어야만 가능했던 이유가 이것이고, `The selected source could not be staged`도 근본 예외를 삼켜서 같은 값을 치렀다 — 둘 다 같은 부류다.
+- **`summary`가 답을 담지 않는다.** 첫 실측의 요약은 "보고서로 정리했습니다"였고, 실제 답 5.7KB는 워크스페이스의 산출물 파일에 있다. `scoreable`은 "빈 요약이 아님"을 답의 존재로 취급하는데, 채점자는 워크스페이스를 열어야 한다. 채점 절차가 그 경로를 반드시 따라가게 하거나, 판정 기준을 고쳐야 한다.
+- **실행기가 디스패처의 도입부를 복제한다.** 이번 결함 1이 그 복제에서 나왔다. 남은 복제(지시문 설정·preparer)는 지금은 무해하다 — `_goal_context`가 `run.goal`로 대체하므로 — 그러나 같은 부류의 다음 결함이 여기서 나올 것이다.
 - `cost`는 여전히 비어 있다(LMG는 계정 단위 usage만 보고).

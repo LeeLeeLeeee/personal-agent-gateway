@@ -16,10 +16,14 @@ from agent_radio.artifact import (
 )
 from agent_radio.fixture import Fixture, FixtureError, RubricItem
 from agent_radio.runner import (
+    DEFAULT_BACKEND,
     EVAL_DATA_ROOT,
+    EVAL_WORKSPACE_ROOT,
     Harness,
     RunnerError,
+    _REPO_ROOT,
     _evaluation_config,
+    export_source,
     main,
     repository_is_unchanged,
     repository_status,
@@ -27,6 +31,7 @@ from agent_radio.runner import (
 )
 from personal_agent_gateway.config import AppConfig
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.lmg_client import ProviderExecutionCapabilities
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.rule_sets import RuleSetService
@@ -39,6 +44,10 @@ from personal_agent_gateway.team_model_effects import (
 )
 from personal_agent_gateway.team_model_invoker import TeamModelInvoker
 from personal_agent_gateway.team_model_operations import TeamModelOperationService
+from personal_agent_gateway.team_provider_recovery import (
+    TeamProviderRecovery,
+    capabilities_for_cycle,
+)
 from personal_agent_gateway.team_runtime import TeamRuntime
 from personal_agent_gateway.teams import TeamRunService
 
@@ -53,6 +62,7 @@ def _artifact(**overrides) -> dict:
         "execution_profile": "read_only",
         "backend": "codex",
         "model": "default",
+        "source_commit": "9e711fa0c0ffee0000000000000000000000beef",
         "started_at": "2026-08-14T01:00:00Z",
         "finished_at": "2026-08-14T01:06:20Z",
         "wall_ms": 380000,
@@ -535,6 +545,31 @@ class _StubModel:
         return json.dumps(plan)
 
 
+class _StubRegistry:
+    """A provider that has been detected, shaped like the real registry's answer.
+
+    Deliberately not a healthy-by-default stub of freeze_cycle itself: the
+    snapshot it produces goes through the real TeamProviderRecovery and is read
+    back by the real parser, so a runner that freezes the wrong shape fails here
+    rather than in production.
+    """
+
+    def get(self, provider: str):
+        return types.SimpleNamespace(
+            ready=True,
+            readiness_error=None,
+            snapshot_status="fresh",
+            detected_at="2026-08-18T00:00:00+00:00",
+            execution_capabilities=ProviderExecutionCapabilities(
+                resume=True,
+                external_read_only_roots=False,
+                network_modes=("denied",),
+                sandbox_modes=("workspace-write",),
+                permission_modes=(),
+            ),
+        )
+
+
 def _stub_harness(
     tmp_path: Path,
     *,
@@ -596,6 +631,8 @@ def _stub_harness(
         directory=directory,
         rules=rules,
         personas=personas,
+        recovery=TeamProviderRecovery(teams, _StubRegistry(), operations),
+        exports=tmp_path / "exports",
     )
     return harness, repo
 
@@ -615,6 +652,86 @@ async def test_a_completed_run_produces_a_scoreable_artefact(tmp_path: Path):
     assert artifact.repository_unchanged is True
     assert artifact.error is None
     assert artifact.scoreable is True
+
+
+def test_the_exported_source_is_head_and_nothing_else(tmp_path: Path):
+    """What a run is allowed to read is a commit, not a working tree.
+
+    Staging the working tree of this repository copies 2629 files -- nested
+    checkouts under .worktrees, browser caches under data/backups -- with
+    relative paths up to 189 characters, which overruns Windows' path limit
+    before it overruns patience. HEAD is 679 files and 96 characters. The
+    reproducibility argument is the stronger one though: a sweep that reads
+    whatever happened to be uncommitted is not a measurement anyone can repeat.
+    """
+    repo = _initialised_repo(tmp_path)
+    (repo / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore rules")
+    (repo / "uncommitted.txt").write_text("not committed", encoding="utf-8")
+    (repo / "ignored").mkdir()
+    (repo / "ignored" / "junk.bin").write_text("junk", encoding="utf-8")
+
+    source, commit = export_source(repo, tmp_path / "exports")
+
+    assert (source / "a.txt").read_text(encoding="utf-8") == "x"
+    assert not (source / "uncommitted.txt").exists()
+    assert not (source / "ignored").exists()
+    assert not (source / ".git").exists()
+    assert commit == _git(repo, "rev-parse", "HEAD")
+
+
+def test_exporting_the_same_commit_twice_reuses_the_export(tmp_path: Path):
+    """Otherwise the second run of a sweep dies on its predecessor's directory."""
+    repo = _initialised_repo(tmp_path)
+
+    first, first_commit = export_source(repo, tmp_path / "exports")
+    second, second_commit = export_source(repo, tmp_path / "exports")
+
+    assert first == second
+    assert first_commit == second_commit
+    assert (second / "a.txt").read_text(encoding="utf-8") == "x"
+
+
+async def test_the_run_reads_the_pinned_export_and_records_its_commit(
+    tmp_path: Path,
+):
+    """An artefact that cannot say which source produced its answer is not
+    comparable with anything, and the source is half of what a run is."""
+    harness, repo = _stub_harness(tmp_path)
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert artifact.source_commit == _git(repo, "rev-parse", "HEAD")
+    policy = harness.policies.resolve(team_id=_only_team_id(harness)).policy
+    read_path = Path(policy.read_path).resolve()
+    assert read_path != repo.resolve()
+    assert harness.exports.resolve() in read_path.parents
+
+
+async def test_the_run_freezes_provider_capabilities_onto_its_cycle(tmp_path: Path):
+    """The half of the dispatcher's prologue this runner had dropped.
+
+    TeamCycleDispatcher.run_one creates the cycle and then freezes the provider
+    snapshot onto it, and the model factory reads that snapshot back through
+    capabilities_for_cycle (app.py). Every other test in this file substitutes
+    the model factory, so none of them exercise that read -- which is how a
+    runner that froze nothing passed this whole suite and then failed every real
+    run at preflight with "codex: capabilities_unavailable", a message that
+    names a provider the gateway was reporting as ready.
+    """
+    harness, repo = _stub_harness(tmp_path)
+    fixture = _understanding_fixture()
+
+    artifact = await run_fixture(harness, fixture, mode="legacy", repo_root=repo)
+
+    cycle = harness.teams.get_cycle(
+        harness.teams.list_cycles(artifact.run_id)[0].id
+    )
+    capabilities = capabilities_for_cycle(cycle, DEFAULT_BACKEND)
+    assert capabilities.sandbox_modes == ("workspace-write",)
 
 
 async def test_a_failed_run_still_produces_an_artefact(tmp_path: Path):
@@ -833,7 +950,11 @@ async def test_a_relative_repo_root_is_resolved(tmp_path: Path, monkeypatch):
 
     assert artifact.run_status == "completed"
     policy = harness.policies.resolve(team_id=_only_team_id(harness))
-    assert policy.policy.read_path == str(repo.resolve())
+    # Absolute, and pointing at the export of the repository the relative path
+    # named -- a relative read_path fails deep inside the space policy.
+    assert policy.policy.read_path == str(
+        harness.exports / f"pag-{artifact.source_commit[:7]}"
+    )
 
 
 async def test_the_run_is_isolated_from_the_repository(tmp_path: Path):
@@ -846,7 +967,10 @@ async def test_the_run_is_isolated_from_the_repository(tmp_path: Path):
 
     policy = harness.policies.resolve(team_id=_only_team_id(harness))
     assert policy.policy.write_mode == "isolated"
-    assert policy.policy.read_path == str(repo)
+    # Not the repository itself: the run reads a pinned export of it, so the
+    # working tree it was launched from is not even in scope.
+    assert Path(policy.policy.read_path) != repo
+    assert harness.exports in Path(policy.policy.read_path).parents
 
 
 async def test_the_run_writes_into_its_own_workspace_not_the_repository(
@@ -985,8 +1109,31 @@ def test_the_evaluation_config_does_not_point_at_the_products_data():
     assert eval_config.app_db_path != product_config.app_db_path
     assert eval_config.workspace_root != product_config.workspace_root
     assert EVAL_DATA_ROOT in eval_config.app_db_path.parents
-    assert EVAL_DATA_ROOT in eval_config.workspace_root.parents
+    assert eval_config.workspace_root == EVAL_WORKSPACE_ROOT
     # Isolating storage is the whole point -- everything else must still come
     # from the caller's real configuration.
     assert eval_config.lmg_base_url == product_config.lmg_base_url
     assert eval_config.session_dir == product_config.session_dir
+
+
+def test_the_evaluation_workspace_lives_outside_the_repository():
+    """Because the repository is the source the fixtures read.
+
+    Source staging refuses a source root that contains the execution workspace
+    -- staging it would copy the workspace into itself -- so a workspace under
+    this repository makes every read_only fixture fail with "The selected source
+    could not be staged" before a single model call is made. The database is free
+    to stay inside the repository: it is never staged.
+    """
+    eval_config = _evaluation_config(
+        AppConfig(
+            workspace_root=Path("/product/data/workspace"),
+            session_dir=Path("/product/data/sessions"),
+            app_db_path=Path("/product/data/app.sqlite"),
+            lmg_base_url="http://127.0.0.1:9999",
+        )
+    )
+
+    workspace = eval_config.workspace_root.resolve()
+    with pytest.raises(ValueError):
+        workspace.relative_to(_REPO_ROOT)
