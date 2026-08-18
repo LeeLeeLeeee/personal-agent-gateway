@@ -18,6 +18,7 @@ from agent_radio.fixture import Fixture, FixtureError, RubricItem
 from agent_radio.runner import (
     Harness,
     RunnerError,
+    main,
     repository_is_unchanged,
     repository_status,
     run_fixture,
@@ -923,3 +924,42 @@ async def test_the_artefact_a_run_produces_survives_a_round_trip(tmp_path: Path)
 
     write_artifact(tmp_path / "artefacts", artifact)
     assert load_artifacts(tmp_path / "artefacts") == [artifact]
+
+
+def test_the_runner_cannot_build_a_record():
+    """The central promise. A record carries a human's verdict; nothing here
+    has judged anything, so there must be no way for this code to produce one.
+
+    Asserted on identifiers, not on prose: an earlier draft of this test failed
+    because a docstring used the word "records" in a sentence. What matters is
+    that the record vocabulary is unreachable from here.
+    """
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "evaluation/agent_radio/runner.py"
+    ).read_text(encoding="utf-8")
+
+    for identifier in ("parse_record", "RECORD_SCHEMA", "rubric_results", "Record("):
+        assert identifier not in source, identifier
+
+
+def test_a_full_run_leaves_the_records_directory_untouched(tmp_path):
+    """The inspection above proves the vocabulary is absent; this proves the
+    behaviour, because a module can always reach a directory by string."""
+    records = tmp_path / "records"
+    records.mkdir()
+    harness, repo = _stub_harness(tmp_path, answer="…")
+
+    artifact = asyncio.run(
+        run_fixture(harness, _understanding_fixture(), mode="legacy", repo_root=repo)
+    )
+    write_artifact(tmp_path / "runs", artifact)
+
+    assert list(records.iterdir()) == []
+
+
+def test_the_entry_point_refuses_an_unknown_fixture(capsys):
+    exit_code = main(["--fixture", "no-such-task", "--mode", "legacy"])
+
+    assert exit_code != 0
+    assert "no-such-task" in capsys.readouterr().err

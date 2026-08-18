@@ -6,9 +6,11 @@ TeamRuntime has more than ten collaborators and a second copy of that
 assembly would drift from the real one without anyone noticing.
 """
 
+import argparse
 import asyncio
 import subprocess
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,10 +19,11 @@ from agent_radio.artifact import (
     ANSWERING_RUN_STATUSES,
     IMPLEMENTED_MODES,
     RunArtifact,
+    write_artifact,
 )
-from agent_radio.fixture import Fixture
+from agent_radio.fixture import Fixture, FixtureError, load_fixtures
 from personal_agent_gateway.app import create_app
-from personal_agent_gateway.config import AppConfig
+from personal_agent_gateway.config import AppConfig, load_config
 
 # Generous on purpose. This is not a performance budget -- wall_ms is the
 # measurement -- it is the bound that stops one hung run from stalling a whole
@@ -30,6 +33,15 @@ DEFAULT_TIMEOUT_SECONDS = 1800.0
 # artefact can say what produced its answer. See run_fixture.
 DEFAULT_BACKEND = "codex"
 DEFAULT_MODEL = "default"
+# Deliberately far below DEFAULT_TIMEOUT_SECONDS. A worker that cleanly
+# declares a failure does not just fail its task -- the product opens a user
+# decision and the run parks at waiting_for_user, and with no human present to
+# resolve it, run_fixture then waits out its whole timeout before recording
+# anything. At 1800s that is 30 minutes of nothing per such run, and a sweep
+# of a handful of fixtures cannot absorb that. Five minutes is still generous
+# for one fixture actually making progress, and --timeout-seconds overrides it
+# for a run expected to take longer.
+CLI_DEFAULT_TIMEOUT_SECONDS = 300.0
 
 
 class RunnerError(RuntimeError):
@@ -376,3 +388,77 @@ def _joined(first: str | None, second: str | None) -> str | None:
 
 def _isoformat(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# evaluation/agent_radio/runner.py -> repo root is two levels up.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_TASKS_DIR = Path(__file__).resolve().parent / "tasks"
+_RUNS_DIR = Path(__file__).resolve().parent / "runs"
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run one fixture once against the real product and write its artefact.
+
+    Returns non-zero only when the run could not be *set up*: an unknown
+    fixture, a fixture directory that fails to load, or anything run_fixture
+    itself raises for. Returns zero for a run that ran and failed -- a failed
+    run is a successful measurement, and the artefact this writes is where
+    that failure gets counted. Do not "fix" this to return non-zero whenever
+    the artefact's run_status is not a success: that would make a failing
+    mode look like a broken tool, which inverts exactly the distinction this
+    harness exists to draw.
+    """
+    parser = argparse.ArgumentParser(prog="python -m agent_radio.runner")
+    parser.add_argument("--fixture", required=True, help="fixture id to run")
+    parser.add_argument("--mode", required=True, help="mode to run it under")
+    parser.add_argument("--backend", default=DEFAULT_BACKEND)
+    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=CLI_DEFAULT_TIMEOUT_SECONDS,
+        help="wall-clock bound for the run, in seconds "
+        f"(default: {CLI_DEFAULT_TIMEOUT_SECONDS:g})",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        fixtures = load_fixtures(_TASKS_DIR)
+    except FixtureError as exc:
+        print(f"error: could not load fixtures: {exc}", file=sys.stderr)
+        return 1
+
+    fixture = fixtures.get(args.fixture)
+    if fixture is None:
+        print(f"error: no such fixture: {args.fixture!r}", file=sys.stderr)
+        return 1
+
+    try:
+        harness = build_harness(load_config())
+        artifact = asyncio.run(
+            run_fixture(
+                harness,
+                fixture,
+                mode=args.mode,
+                repo_root=_REPO_ROOT,
+                timeout_seconds=args.timeout_seconds,
+                backend=args.backend,
+                model=args.model,
+            )
+        )
+    except RunnerError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        path = write_artifact(_RUNS_DIR, artifact)
+    except FixtureError as exc:
+        print(f"error: could not write the artefact: {exc}", file=sys.stderr)
+        return 1
+
+    print(path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
