@@ -153,7 +153,14 @@ code fences:
 Set "checked":false with "status":null when you could not actually confirm a
 verification -- a tool that is missing, a command that failed to run, a check you
 had no way to perform -- and say why in "evidence". Do not report a status you did
-not observe."""
+not observe.
+
+The same rule applies to what your result says, not just to its verifications.
+When you state something as fact about this repository, name the file that shows
+it, with the line when you can. If the assignment appears to take something for
+granted that you could not confirm, say that instead of asserting it. A claim
+nobody checked, written as fact, is worse than a stated gap: it reads as an
+answer and cannot be told apart from one."""
 
 ACCEPTANCE_REVIEW_PROMPT = f"""You are the leader reviewing a rejected Team Run task outcome.
 Decide only from the goal, Cycle instruction, frozen rules, SPACE, Task contract,
@@ -313,13 +320,17 @@ Goal: {goal}
 Plan:
 {plan_block}
 
-Report only these four kinds of problem:
+Report only these five kinds of problem:
 - overlap: two tasks would do the same work or write the same file
 - gap: the goal needs work that no task covers
 - dependency_conflict: a task assumes something another task has not produced yet
 - scope: a task assigned to you is not something you can carry out
+- unverified_premise: the goal states something as fact and no task checks it
+  before the answer would rely on it. Name the task that would rely on it.
 
-Do not object to wording, ordering, or style. If the plan is workable, approve it.
+Do not object to wording, ordering, or style. Approve a plan that can be carried
+out and whose answer will rest on facts some task establishes. A plan you can
+execute while stating unchecked claims as fact is not workable.
 
 The final response must contain only this JSON object and no prose or code fences:
 {{"decision":"approve|object","objections":[{{"kind":"overlap|gap|dependency_conflict|scope","task_ref":"T-01","detail":"what is wrong"}}]}}

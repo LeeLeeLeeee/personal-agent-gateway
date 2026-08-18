@@ -122,10 +122,11 @@ class ProviderTrace:
     model: str | None
     effort: str | None
     input_tokens: int | None
+    cached_input_tokens: int | None
     output_tokens: int | None
 
 
-EMPTY_TRACE = ProviderTrace(None, None, None, None)
+EMPTY_TRACE = ProviderTrace(None, None, None, None, None)
 
 
 def provider_trace(sessions: object, run_id: str) -> ProviderTrace:
@@ -167,11 +168,13 @@ def provider_trace(sessions: object, run_id: str) -> ProviderTrace:
     models: set[str] = set()
     efforts: set[str] = set()
     input_tokens: int | None = None
+    cached_tokens: int | None = None
     output_tokens: int | None = None
     for path in paths:
         if not isinstance(path, str) or not path:
             continue
         session_input: int | None = None
+        session_cached: int | None = None
         session_output: int | None = None
         try:
             with Path(path).open(encoding="utf-8") as stream:
@@ -183,17 +186,20 @@ def provider_trace(sessions: object, run_id: str) -> ProviderTrace:
                     efforts.update(_texts(entry, ("effort", "reasoning_effort")))
                     usage = _token_usage(entry)
                     if usage is not None:
-                        session_input, session_output = usage
+                        session_input, session_cached, session_output = usage
         except OSError:
             continue
         if session_input is not None:
             input_tokens = (input_tokens or 0) + session_input
+        if session_cached is not None:
+            cached_tokens = (cached_tokens or 0) + session_cached
         if session_output is not None:
             output_tokens = (output_tokens or 0) + session_output
     return ProviderTrace(
         model=_only(models),
         effort=_only(efforts),
         input_tokens=input_tokens,
+        cached_input_tokens=cached_tokens,
         output_tokens=output_tokens,
     )
 
@@ -224,8 +230,14 @@ def _texts(entry: dict, keys: tuple[str, ...]) -> set[str]:
     return found
 
 
-def _token_usage(entry: dict) -> tuple[int, int] | None:
-    """This entry's cumulative session totals, if it carries them."""
+def _token_usage(entry: dict) -> tuple[int, int, int] | None:
+    """This entry's cumulative session totals, if it carries them.
+
+    Cached input comes back as its own number rather than folded into the total,
+    so a later reader can tell context carried from context newly processed.
+    Absent cache reporting counts as zero cached, not as unknown: the provider
+    reported a usage record and simply had no cache reads in it.
+    """
     payload = entry.get("payload")
     if not isinstance(payload, dict):
         return None
@@ -241,7 +253,10 @@ def _token_usage(entry: dict) -> tuple[int, int] | None:
         return None
     if not isinstance(produced, int) or isinstance(produced, bool):
         return None
-    return given, produced
+    cached = totals.get("cached_input_tokens")
+    if not isinstance(cached, int) or isinstance(cached, bool) or cached < 0:
+        cached = 0
+    return given, min(cached, given), produced
 
 
 def repository_status(repo_root: Path) -> str:
@@ -565,6 +580,7 @@ async def run_fixture(
         resolved_model=trace.model,
         resolved_effort=trace.effort,
         input_tokens=trace.input_tokens,
+        cached_input_tokens=trace.cached_input_tokens,
         output_tokens=trace.output_tokens,
         started_at=_isoformat(started),
         finished_at=_isoformat(finished),

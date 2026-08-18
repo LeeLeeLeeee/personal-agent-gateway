@@ -102,7 +102,7 @@ def render(report: Report) -> str:
         lines.append(f"## {fixture_type}")
         lines.append(
             "| arm | n | tasks | success | defects/task | rework/task | "
-            "tokens/task | p50 ms | p95 ms |"
+            "신규토큰/task | p50 ms | p95 ms |"
         )
         lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         for cell in cells:
@@ -136,6 +136,27 @@ def render(report: Report) -> str:
     return "\n".join(lines)
 
 
+def _fresh_tokens(record: Record) -> int:
+    """What the run newly processed, not what it carried.
+
+    A provider's input total counts every re-sent token, so a run that takes
+    more turns over a growing context reads as proportionally more expensive
+    even when nearly all of the growth is cache reads. The Stage 1 sweep is the
+    case in point: totals put negotiation at 1.98x legacy, one hundredth under
+    the ADR's opt-in gate, while freshly processed input put it at 1.15x. Cost
+    here is the number the gate should be read against, and the totals stay in
+    the artefacts for anyone who wants the other view.
+
+    Missing cache reporting is treated as no cache reads rather than as unknown,
+    which is the conservative direction: it can only make a run look more
+    expensive, never less.
+    """
+    given = int(record.cost.get("input_tokens", 0) or 0)
+    cached = int(record.cost.get("cached_input_tokens", 0) or 0)
+    produced = int(record.cost.get("output_tokens", 0) or 0)
+    return max(given - cached, 0) + produced
+
+
 def _cell(arm: Arm, records: list[Record]) -> Cell:
     durations = sorted(record.wall_ms for record in records)
     sample_count = len(records)
@@ -154,11 +175,7 @@ def _cell(arm: Arm, records: list[Record]) -> Cell:
         )
         / sample_count,
         rework_per_task=sum(record.rework_count for record in records) / sample_count,
-        cost_tokens_per_task=sum(
-            int(record.cost.get("input_tokens", 0) or 0)
-            + int(record.cost.get("output_tokens", 0) or 0)
-            for record in records
-        )
+        cost_tokens_per_task=sum(_fresh_tokens(record) for record in records)
         / sample_count,
         p50_ms=_percentile(durations, 50),
         p95_ms=(

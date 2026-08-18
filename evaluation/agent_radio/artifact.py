@@ -63,6 +63,12 @@ class RunArtifact:
     # a per-run number exists. Null rather than zero when unrecoverable: a run
     # averaged in as free would make every mode look cheaper than it is.
     input_tokens: int | None
+    # The part of input_tokens the provider served from cache. Kept apart because
+    # the two answer different questions: total input says how much context was
+    # carried, fresh input (total minus this) says how much was newly processed.
+    # A run with more turns over a growing context inflates the first without
+    # spending proportionally more on the second.
+    cached_input_tokens: int | None
     output_tokens: int | None
     started_at: str
     finished_at: str
@@ -125,7 +131,14 @@ def parse_artifact(payload: dict) -> RunArtifact:
     resolved_model = _recovered_text(payload, "resolved_model")
     resolved_effort = _recovered_text(payload, "resolved_effort")
     input_tokens = _recovered_count(payload, "input_tokens")
+    cached_input_tokens = _recovered_count(payload, "cached_input_tokens")
     output_tokens = _recovered_count(payload, "output_tokens")
+    if (
+        input_tokens is not None
+        and cached_input_tokens is not None
+        and cached_input_tokens > input_tokens
+    ):
+        raise FixtureError("cached_input_tokens cannot exceed input_tokens")
     return RunArtifact(
         run_id=_required_text(payload, "run_id"),
         fixture_id=_required_text(payload, "fixture_id"),
@@ -142,6 +155,7 @@ def parse_artifact(payload: dict) -> RunArtifact:
         resolved_model=resolved_model,
         resolved_effort=resolved_effort,
         input_tokens=input_tokens,
+        cached_input_tokens=cached_input_tokens,
         output_tokens=output_tokens,
         started_at=_required_text(payload, "started_at"),
         finished_at=_required_text(payload, "finished_at"),

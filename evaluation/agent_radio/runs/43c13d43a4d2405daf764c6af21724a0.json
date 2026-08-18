@@ -12,6 +12,7 @@
   "resolved_model": "gpt-5.6-terra",
   "resolved_effort": "high",
   "input_tokens": 190787,
+  "cached_input_tokens": 166656,
   "output_tokens": 4793,
   "started_at": "2026-08-18T07:13:36.535453Z",
   "finished_at": "2026-08-18T07:16:20.835596Z",

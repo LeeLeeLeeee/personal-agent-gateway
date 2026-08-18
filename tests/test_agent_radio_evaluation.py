@@ -248,7 +248,12 @@ def _record(**overrides) -> dict:
         "started_at": "2026-08-14T01:00:00Z",
         "finished_at": "2026-08-14T01:06:20Z",
         "wall_ms": 380000,
-        "cost": {"provider": "codex", "input_tokens": 41200, "output_tokens": 3100},
+        "cost": {
+            "provider": "codex",
+            "input_tokens": 41200,
+            "cached_input_tokens": 30000,
+            "output_tokens": 3100,
+        },
         "rubric_results": [
             {"id": "R1", "passed": True, "note": "n"},
             {"id": "R2", "passed": True, "note": "n"},
@@ -569,7 +574,8 @@ def test_defect_rework_and_cost_columns_are_reported_per_task():
     assert cell.cost_tokens_per_task == 250.0
     assert "defects/task" in render(report)
     assert "rework/task" in render(report)
-    assert "tokens/task" in render(report)
+    # Named for what it holds: freshly processed tokens, not carried context.
+    assert "신규토큰/task" in render(report)
 
 
 def test_repeats_of_a_single_task_show_up_as_one_task_not_five():

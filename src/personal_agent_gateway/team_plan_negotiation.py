@@ -61,7 +61,15 @@ def task_label(plan_ordinal: int) -> str:
     return f"T-{plan_ordinal:02d}"
 
 
-OBJECTION_KINDS = frozenset({"overlap", "gap", "dependency_conflict", "scope"})
+# The first four ask whether the plan can be carried out. `unverified_premise`
+# asks something the others cannot: whether the plan is about to build on a claim
+# nobody checked. Added after a measured sweep where the reviewer approved every
+# plan and the resulting answers confidently described behaviour the code does
+# not have -- the goal had asserted it, no task verified it, and none of overlap,
+# gap, dependency_conflict or scope can say so.
+OBJECTION_KINDS = frozenset(
+    {"overlap", "gap", "dependency_conflict", "scope", "unverified_premise"}
+)
 
 
 class PlanReviewError(ValueError):

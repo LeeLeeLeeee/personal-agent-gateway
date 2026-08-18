@@ -3,6 +3,7 @@ import json
 import pytest
 
 from personal_agent_gateway.team_plan_negotiation import (
+    OBJECTION_KINDS,
     PLAN_NEGOTIATION_MAX_REVISIONS,
     PlanReviewError,
     next_revision,
@@ -110,6 +111,41 @@ def test_an_objection_keeps_its_kind_reference_and_detail():
         "T-02",
         "같은 파일",
     )
+
+
+def test_an_unverified_premise_objection_is_accepted():
+    """The four original kinds all ask whether the plan can be carried out. None
+    of them can say the plan is about to build on a claim nobody checked, which
+    is what a measured sweep found the reviewer unable to report: it approved
+    every plan while the answers went on to describe behaviour the code does not
+    have, because the goal had asserted it and no task verified it."""
+    review = parse_plan_review(
+        json.dumps(
+            {
+                "decision": "object",
+                "objections": [
+                    {
+                        "kind": "unverified_premise",
+                        "task_ref": "T-01",
+                        "detail": "목표가 단정한 동작을 확인하는 태스크가 없다",
+                    }
+                ],
+            }
+        ),
+        _LABELS,
+    )
+
+    (objection,) = review.objections
+    assert objection.kind == "unverified_premise"
+
+
+def test_the_review_prompt_offers_the_premise_objection():
+    """A kind the parser accepts but the prompt never mentions is a kind no
+    reviewer will ever send."""
+    from personal_agent_gateway.team_runtime import PLAN_REVIEW_PROMPT
+
+    for kind in OBJECTION_KINDS:
+        assert kind in PLAN_REVIEW_PROMPT, kind
 
 
 def test_a_fenced_response_still_parses():

@@ -1269,6 +1269,20 @@ async def test_a_synthesis_with_no_block_still_completes_the_cycle(tmp_path):
     assert "coverage_gaps" not in operation.result_json["payload"]
 
 
+def test_the_worker_prompt_demands_grounding_for_claims_about_the_repository():
+    """Measured, not assumed: a sweep produced answers that described fields the
+    code does not have, with zero file references in the whole document. The
+    prompt asked for evidence behind each *verification* and said nothing about
+    the claims in the result itself, so an unchecked assertion was never against
+    the rules."""
+    from personal_agent_gateway.team_runtime import WORKER_PROMPT
+
+    # Matched within one line: the prompt wraps, so a longer phrase would fail on
+    # a newline rather than on a missing requirement.
+    assert "name the file that shows" in WORKER_PROMPT
+    assert "could not confirm" in WORKER_PROMPT
+
+
 def test_existing_repair_prompts_are_unchanged() -> None:
     """Collapsing four hand-wired sites onto one seam must not reword them.
 

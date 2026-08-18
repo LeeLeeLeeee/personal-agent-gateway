@@ -13,7 +13,8 @@
   "cost": {
     "provider": "codex",
     "input_tokens": 502849,
-    "output_tokens": 6627
+    "output_tokens": 6627,
+    "cached_input_tokens": 459776
   },
   "rubric_results": [
     {

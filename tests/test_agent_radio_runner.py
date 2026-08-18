@@ -69,6 +69,7 @@ def _artifact(**overrides) -> dict:
         "resolved_model": "gpt-5.6-terra",
         "resolved_effort": "high",
         "input_tokens": 18271,
+        "cached_input_tokens": 14080,
         "output_tokens": 564,
         "started_at": "2026-08-14T01:00:00Z",
         "finished_at": "2026-08-14T01:06:20Z",
@@ -185,6 +186,9 @@ def test_a_completed_run_with_a_blank_summary_is_not_scoreable():
         {"input_tokens": -1},
         {"output_tokens": "many"},
         {"input_tokens": True},
+        # Cache reads are a part of the input, so more cached than input at all
+        # is not a small inconsistency -- it makes fresh input negative.
+        {"input_tokens": 10, "cached_input_tokens": 11},
     ],
 )
 def test_an_artefact_that_cannot_be_trusted_is_refused(overrides):
@@ -194,7 +198,13 @@ def test_an_artefact_that_cannot_be_trusted_is_refused(overrides):
 
 @pytest.mark.parametrize(
     "key",
-    ["resolved_model", "resolved_effort", "input_tokens", "output_tokens"],
+    [
+        "resolved_model",
+        "resolved_effort",
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+    ],
 )
 def test_an_artefact_missing_a_recovered_fact_is_refused(key):
     """Absent is not the same as null. A field that can be left out silently
@@ -227,7 +237,9 @@ def test_facts_the_provider_did_not_keep_are_recorded_as_unknown():
 def test_a_run_that_really_cost_nothing_is_not_an_unknown():
     """Zero is a measurement. Collapsing it into null would lose the difference
     between a run that spent nothing and one nobody measured."""
-    artifact = parse_artifact(_artifact(input_tokens=0, output_tokens=0))
+    artifact = parse_artifact(
+        _artifact(input_tokens=0, cached_input_tokens=0, output_tokens=0)
+    )
 
     assert artifact.input_tokens == 0
     assert artifact.output_tokens == 0
@@ -854,7 +866,7 @@ def _transcript(path: Path, *entries: dict) -> str:
     return str(path)
 
 
-def _token_count(given: int, produced: int) -> dict:
+def _token_count(given: int, produced: int, cached: int = 0) -> dict:
     return {
         "type": "event_msg",
         "payload": {
@@ -862,6 +874,7 @@ def _token_count(given: int, produced: int) -> dict:
             "info": {
                 "total_token_usage": {
                     "input_tokens": given,
+                    "cached_input_tokens": cached,
                     "output_tokens": produced,
                 }
             },
@@ -895,6 +908,35 @@ def test_a_runs_cost_is_summed_across_its_sessions(tmp_path: Path):
 
     assert (trace.input_tokens, trace.output_tokens) == (1000, 100)
     assert (trace.model, trace.effort) == ("m", "high")
+
+
+def test_cached_input_is_recorded_apart_from_the_total(tmp_path: Path):
+    """Reporting only the total turns a run that carried more context into a run
+    that cost proportionally more. The Stage 1 sweep read as 1.98x legacy on
+    totals and 1.15x on freshly processed input, and the ADR's cost gate sits at
+    2x, so which number is reported decides the verdict."""
+    first = _transcript(tmp_path / "a.jsonl", _token_count(1000, 10, cached=800))
+    second = _transcript(tmp_path / "b.jsonl", _token_count(500, 5, cached=400))
+    sessions = [
+        {"consumer_session_id": "run-1", "storage_path": first},
+        {"consumer_session_id": "run-1", "storage_path": second},
+    ]
+
+    trace = provider_trace(lambda: sessions, "run-1")
+
+    assert trace.input_tokens == 1500
+    assert trace.cached_input_tokens == 1200
+    # What the run newly processed, which is the number the gate is read against.
+    assert trace.input_tokens - trace.cached_input_tokens == 300
+
+
+def test_a_provider_that_reports_no_cache_reads_counts_as_none_cached(tmp_path: Path):
+    """Zero, not unknown. The provider did report usage; it simply had no cache
+    reads in it, and treating that as unknown would drop a real measurement."""
+    path = _transcript(tmp_path / "a.jsonl", _token_count(100, 10))
+    sessions = [{"consumer_session_id": "run-1", "storage_path": path}]
+
+    assert provider_trace(lambda: sessions, "run-1").cached_input_tokens == 0
 
 
 def test_a_run_whose_sessions_disagree_reports_no_single_model(tmp_path: Path):
