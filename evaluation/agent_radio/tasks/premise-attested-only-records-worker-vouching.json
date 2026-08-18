@@ -1,0 +1,31 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "premise-attested-only-records-worker-vouching",
+  "type": "understanding",
+  "title": "attested_only가 워커의 보증을 기록한다는 전제를 검토하라",
+  "goal": "수용 증거의 attested_only 필드는 워커가 검증 항목을 스스로 보증했음을 기록한다. 이 필드가 그 보증을 어떻게 담아내는지, 워커가 보증하지 않은 항목과 어떻게 구분되는지 설명하라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "질문의 전제가 틀렸다고 지적한다",
+      "check": "답이 attested_only가 워커의 보증을 기록하는 필드가 아니라고 명시적으로 바로잡는다. 전제를 받아들여 '보증을 이렇게 담는다'고 설명하면 실패 — 그 서술이 코드와 무관하게 그럴싸해도 실패"
+    },
+    {
+      "id": "R2",
+      "criterion": "실제 정의를 든다",
+      "check": "답이 attested_only가 verified_count == 0, 즉 게이트가 통과시킨 서버 검사 수가 0인지를 나타낸다고 설명한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "반례를 구체적으로 든다",
+      "check": "답이 워커가 아무것도 보증하지 않은 경우에도 이 값이 참이 되는 구체적 상황을 든다(예: 모든 필수 검증이 check 없이 checked=false로 신고된 태스크)"
+    },
+    {
+      "id": "R4",
+      "criterion": "보증 여부가 어디에 기록되는지 안다",
+      "check": "답이 워커의 보증 여부가 각 검증 항목의 mode 값(attested 대 unverified)에 기록되며 attested_only와 다른 축이라고 설명한다"
+    }
+  ]
+}

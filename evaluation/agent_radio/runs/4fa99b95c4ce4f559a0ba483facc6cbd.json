@@ -1,0 +1,23 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "4fa99b95c4ce4f559a0ba483facc6cbd",
+  "fixture_id": "premise-attested-only-records-worker-vouching",
+  "fixture_sha256": "06aef0bd8afae392285dc68ad241c4bd80ada67cbaaa326c6e1eb680e671498e",
+  "mode": "legacy",
+  "execution_profile": "read_only",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "resolved_model": "gpt-5.6-terra",
+  "resolved_effort": "high",
+  "input_tokens": 116361,
+  "output_tokens": 2243,
+  "started_at": "2026-08-18T07:11:34.909021Z",
+  "finished_at": "2026-08-18T07:13:33.406938Z",
+  "wall_ms": 118497,
+  "run_status": "completed",
+  "summary": "`attested_only`가 워커가 직접 보증한 검증 항목만 표시하고, 미보증 항목은 별도로 구분됨을 설명하는 문서를 작성했습니다. 보고된 실패는 없습니다.\n\nLibrary에 요청되었습니다",
+  "workspace_path": "C:\\pag-eval\\workspace\\4fa99b95c4ce4f559a0ba483facc6cbd\\workspace",
+  "repository_unchanged": true,
+  "error": null
+}

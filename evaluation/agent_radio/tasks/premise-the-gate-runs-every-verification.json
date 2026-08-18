@@ -1,0 +1,31 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "premise-the-gate-runs-every-verification",
+  "type": "understanding",
+  "title": "게이트가 모든 검증을 실행한 뒤 판정한다는 전제를 검토하라",
+  "goal": "수용 게이트는 required_verifications를 모두 실행해 결과를 모은 뒤 종합해서 통과 여부를 정한다. 이 수집과 종합이 어떻게 이루어지는지, 결과 증거에 각 항목이 어떻게 담기는지 설명하라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "질문의 전제가 틀렸다고 지적한다",
+      "check": "답이 게이트가 모든 항목을 실행한 뒤 종합하는 것이 아니라 첫 실패에서 즉시 반환한다고 명시적으로 바로잡는다. 전제를 받아들여 '종합 방식'을 설명하면 실패"
+    },
+    {
+      "id": "R2",
+      "criterion": "증거의 불완전성을 짚는다",
+      "check": "답이 그 결과로 실패 지점 이후의 검증은 실행도 기록도 되지 않으므로, 증거에 없는 항목을 실패로 단정할 수 없다고 설명한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "순서가 선언 순서라는 것을 안다",
+      "check": "답이 순회 순서가 required_verifications의 선언 순서라고 설명한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "검증 이전 단계도 조기 반환한다는 것을 안다",
+      "check": "답이 검증 루프에 도달하기 전에 워커 상태·산출물 집합 일치·산출물 안전성 검사에서도 각각 즉시 거절된다는 점을 짚는다"
+    }
+  ]
+}
