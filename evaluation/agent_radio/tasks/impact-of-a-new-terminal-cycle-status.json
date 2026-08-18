@@ -1,0 +1,31 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "impact-of-a-new-terminal-cycle-status",
+  "type": "architecture_impact",
+  "title": "새 종단 cycle 상태를 추가할 때 바뀌어야 하는 지점을 전부 들라",
+  "goal": "cycle이 끝났음을 뜻하는 새 상태 하나를 추가한다고 할 때, 코드를 수정하지 말고 실제로 바뀌어야 하는 지점을 전부 설명하라. 어떤 판정들이 '종단'이라는 집합에 의존하는지 밝히라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "종단 집합을 이름으로 든다",
+      "check": "답이 team_lifecycle.py의 TERMINAL_CYCLE_STATUSES를 이름으로 들며 새 값을 넣어야 한다고 말한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "디스패처가 그 집합으로 정산 여부를 가린다는 것을 안다",
+      "check": "답이 team_cycle_dispatcher가 종단 여부에 따라 정산과 이벤트 발행을 달리한다는 점을 짚는다"
+    },
+    {
+      "id": "R3",
+      "criterion": "상태별 파생 판정이 따로 있음을 안다",
+      "check": "답이 종단 집합에 넣는 것만으로는 부족하고, cycle 실행 결과를 run 상태로 옮기는 판정 로직에도 새 상태의 의미를 정의해야 한다고 설명한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "대기 상태와 구분한다",
+      "check": "답이 waiting_for_user·waiting_for_provider 같은 대기 상태가 종단이 아니며 새 상태가 그 둘과 어떻게 다른지 정해야 한다고 지적한다"
+    }
+  ]
+}

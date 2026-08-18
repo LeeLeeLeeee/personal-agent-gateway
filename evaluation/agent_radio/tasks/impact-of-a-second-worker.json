@@ -1,0 +1,31 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "impact-of-a-second-worker",
+  "type": "architecture_impact",
+  "title": "워커를 둘 이상으로 늘릴 때 실제로 달라지는 것을 설명하라",
+  "goal": "한 cycle에서 동시에 일하는 워커 수를 늘린다고 할 때, 코드를 수정하지 말고 실제로 달라지는 지점을 설명하라. 이미 여러 워커를 전제한 부분과 그렇지 않은 부분을 구분하라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "이미 다중 워커를 전제한 곳을 든다",
+      "check": "답이 팀 구성과 태스크 소유(owner_agent_id), 계획 시 담당 배정처럼 이미 여러 워커를 전제한 구조를 근거와 함께 지목한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "동시 실행과 순차 실행을 구분한다",
+      "check": "답이 여러 워커가 존재하는 것과 그들이 동시에 실행되는 것이 다른 문제라는 점을 구분하고, 현재 실행이 어느 쪽인지 근거로 판단한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "작업 공간 귀속 문제를 든다",
+      "check": "답이 파일 변경을 어느 워커에게 귀속시킬지가 워크스페이스 baseline에 의존한다는 점을 짚고, 동시 쓰기가 그 귀속을 어떻게 흔드는지 설명한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "연산 키 충돌 가능성을 판단한다",
+      "check": "답이 연산 키가 cycle·task·stage·ordinal로 구성된다는 점을 근거로 동시 실행이 키 충돌을 일으키는지 여부를 판단한다"
+    }
+  ]
+}

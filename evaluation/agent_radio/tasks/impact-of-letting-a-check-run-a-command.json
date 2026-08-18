@@ -1,0 +1,31 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "impact-of-letting-a-check-run-a-command",
+  "type": "architecture_impact",
+  "title": "검증 검사가 명령을 실행할 수 있게 하려면 무엇이 무너지는지 설명하라",
+  "goal": "검증 검사가 셸 명령이나 테스트를 실행할 수 있게 만든다고 할 때, 코드를 수정하지 말고 무엇이 바뀌어야 하고 지금의 어떤 보장이 깨지는지 설명하라. 현재 설계가 왜 파일 읽기만 허용하는지도 근거와 함께 밝히라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "현재 경계를 정확히 진술한다",
+      "check": "답이 현재 모든 검사가 워크스페이스 내부 파일 읽기이며 명령 실행 경로가 존재하지 않는다고 명시한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "무엇이 검사 결과를 신뢰 가능하게 만드는지 안다",
+      "check": "답이 지금의 검사가 결정적이고 워커의 주장과 무관하게 서버가 재현할 수 있다는 점을 짚고, 명령 실행이 그 성질을 어떻게 약화시키는지 설명한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "경로 안전 검증만으로는 부족함을 안다",
+      "check": "답이 safe_workspace_file류의 경로 검증은 읽기 대상만 제한하며 명령 실행에는 sandbox·network·타임아웃 같은 별도 제약이 필요하다고 지적한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "제품이 이미 가진 실행 제약 계층을 든다",
+      "check": "답이 execution_contract 또는 provider 실행 능력(sandbox_modes, network_modes)처럼 이미 존재하는 실행 제약 계층을 지목하고, 새 검사가 그것을 재사용해야 한다고 말한다"
+    }
+  ]
+}

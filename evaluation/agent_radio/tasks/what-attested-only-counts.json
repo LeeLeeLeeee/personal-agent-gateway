@@ -1,0 +1,26 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "what-attested-only-counts",
+  "type": "understanding",
+  "title": "수용 증거의 attested_only가 정확히 무엇을 세는지 설명하라",
+  "goal": "수용 결과 증거에 담기는 attested_only 값이 정확히 무엇을 뜻하는지, 어떤 조건에서 참이 되는지 설명하라. 워커의 신고와 어떤 관계인지도 분명히 하라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "정의를 정확히 든다",
+      "check": "답이 attested_only가 verified_count == 0, 즉 게이트가 통과시킨 서버 실행 검사의 수가 0인지를 나타낸다고 설명한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "워커가 보증했다는 뜻이 아님을 안다",
+      "check": "답이 attested_only가 참이라고 해서 워커가 항목을 보증한 것은 아니라는 점을 명시한다. 예를 들어 워커가 checked=false로 신고한 태스크도 이 값이 참이 된다. '워커가 신고만 한 경우'로만 설명하면 실패"
+    },
+    {
+      "id": "R3",
+      "criterion": "무엇이 verified_count를 늘리는지 안다",
+      "check": "답이 check가 있는 required_verification의 서버 검사가 통과할 때만 verified_count가 증가한다고 설명한다"
+    }
+  ]
+}

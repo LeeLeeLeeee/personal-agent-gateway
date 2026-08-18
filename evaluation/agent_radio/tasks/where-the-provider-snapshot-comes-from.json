@@ -1,0 +1,31 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "where-the-provider-snapshot-comes-from",
+  "type": "understanding",
+  "title": "모델 클라이언트가 provider 능력을 어디서 읽는지 설명하라",
+  "goal": "cycle에 속한 모델 클라이언트를 만들 때 provider의 실행 능력을 어디서 가져오는지, 그 값이 언제 정해지는지 설명하라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "레지스트리가 아니라 cycle에서 읽음을 안다",
+      "check": "답이 모델 팩토리가 cycle의 실행 메타데이터에 동결된 스냅샷을 읽는다고 설명한다(capabilities_for_cycle 지목 또는 동등한 서술). 그 시점에 레지스트리에 직접 질의한다고 서술하면 실패"
+    },
+    {
+      "id": "R2",
+      "criterion": "동결이 언제 일어나는지 안다",
+      "check": "답이 cycle 생성 직후 freeze_cycle이 스냅샷을 cycle에 기록한다고 설명하며, 그 호출 지점을 지목한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "동결이 없으면 무슨 일이 나는지 안다",
+      "check": "답이 스냅샷이 없는 cycle에서는 능력 파싱이 실패해 provider 복구가 요구된다고 설명한다. 레지스트리로 대체 조회한다고 서술하면 실패"
+    },
+    {
+      "id": "R4",
+      "criterion": "왜 동결하는지 안다",
+      "check": "답이 실행 중 provider 상태가 바뀌어도 cycle이 시작 시점 조건으로 판단되도록 고정하는 것이라고 설명한다"
+    }
+  ]
+}

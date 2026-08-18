@@ -1,0 +1,31 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "how-a-run-resumes-after-a-crash",
+  "type": "understanding",
+  "title": "프로세스가 죽은 뒤 열린 연산이 어떻게 회복되는지 설명하라",
+  "goal": "cycle 실행 중 프로세스가 종료된 뒤 재개될 때, 원장에 열려 있는 연산이 어떻게 처리되는지 설명하라. 연산 상태에 따라 처리가 어떻게 갈리는지 구체적으로 밝히라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "상태에 따라 갈린다는 것을 안다",
+      "check": "답이 열린 연산의 status가 prepared인 경우와 completed인 경우의 처리가 다르다고 구분해 설명한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "completed는 모델을 다시 부르지 않음을 안다",
+      "check": "답이 completed 연산은 저장된 결과의 효과를 적용하며 모델을 다시 호출하지 않는다고 명시한다. 모든 열린 연산을 재호출한다고 서술하면 실패"
+    },
+    {
+      "id": "R3",
+      "criterion": "prepared는 저장된 입력으로 재호출됨을 안다",
+      "check": "답이 prepared 연산은 원장에 남은 입력으로 프롬프트를 재구성해 다시 호출된다고 설명한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "등록되지 않은 stage가 회복 불가라는 것을 안다",
+      "check": "답이 _recover_open_operation이 명시적으로 분기된 stage만 회복하며, 그 밖의 stage는 회복 불가로 실패한다는 점을 짚는다 (에러 문구 인용 또는 마지막 fallback 지목 중 하나면 인정)"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "which-repair-stage-repairs-what",
+  "type": "understanding",
+  "title": "어느 stage가 어느 stage로 복구되는지 설명하라",
+  "goal": "구조화된 출력 파싱이 실패했을 때 각 OperationStage가 어떤 stage로 복구되는지, 그 대응이 어떻게 정해지는지 설명하라. 이름 규칙에서 벗어나는 경우가 있으면 그것도 밝히라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "대응이 파생이 아니라 선언이라는 것을 안다",
+      "check": "답이 team_repair_stages.py의 REPAIR_STAGE 딕셔너리를 이름으로 들며, 복구 stage 이름이 f\"{stage}_repair\" 같은 규칙으로 계산되지 않고 표에 직접 적혀 있다고 설명한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "worker_execution이 자기 자신으로 복구된다는 것을 안다",
+      "check": "답이 worker_execution의 복구 대상이 worker_execution 자신이며 별도 _repair stage가 없다고 명시한다. worker_execution_repair가 존재하는 것처럼 서술하면 실패"
+    },
+    {
+      "id": "R3",
+      "criterion": "cycle_add_work가 자기 이름의 repair를 쓰지 않음을 안다",
+      "check": "답이 cycle_add_work의 복구 대상이 cycle_planning_repair라고 명시한다. cycle_add_work_repair라고 답하면 실패"
+    },
+    {
+      "id": "R4",
+      "criterion": "대응이 없을 때 무엇이 터지는지 안다",
+      "check": "답이 repair_stage_for가 기본값 없이 색인하므로 등재되지 않은 stage는 KeyError로 실패한다는 점, 또는 그 조회가 _repair_operation 경로에서 일어난다는 점을 짚는다"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "impact-of-a-new-write-mode",
+  "type": "architecture_impact",
+  "title": "새 write mode를 추가할 때 바뀌어야 하는 지점을 전부 들라",
+  "goal": "space policy의 write mode에 새 값 하나를 추가한다고 할 때, 코드를 수정하지 말고 실제로 바뀌어야 하는 지점을 전부 설명하라. 저장 계층과 실행 계약 중 무엇이 값을 검증하는지 분명히 하라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "Literal 정의를 이름으로 든다",
+      "check": "답이 space_policies.py의 WriteMode Literal에 값을 추가해야 한다고 이름으로 말한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "실행 계약이 모드별로 갈린다는 것을 안다",
+      "check": "답이 execution_contract.py가 write mode에 따라 워크스페이스와 승인 정책을 다르게 계산하므로 새 모드의 동작을 여기서 정의해야 한다고 설명한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "저장 계층의 제약 여부를 확인한다",
+      "check": "답이 migrations.py에서 write_mode 컬럼이 값 목록을 제약하는지 확인하고 그 결과에 따라 migration 필요 여부를 판단한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "worktree 모드가 추가로 무엇을 요구하는지 안다",
+      "check": "답이 기존 worktree 모드가 브랜치 준비·정리 같은 별도 수명주기를 가진다는 점을 근거로, 새 모드가 그런 수명주기를 필요로 하는지 판단해야 한다고 지적한다"
+    },
+    {
+      "id": "R5",
+      "criterion": "API와 화면 계층을 든다",
+      "check": "답이 api/spaces.py의 요청 검증과 프런트엔드의 모드 선택 화면을 변경 대상으로 든다"
+    }
+  ]
+}

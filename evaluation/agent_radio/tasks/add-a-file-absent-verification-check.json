@@ -1,0 +1,41 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "add-a-file-absent-verification-check",
+  "type": "bounded_implementation",
+  "title": "파일이 없어야 통과하는 검증 검사를 추가하라",
+  "goal": "team_verification_checks.py에 새 검사 종류 file_absent 를 추가하라: 지정한 워크스페이스 상대 경로에 읽을 수 있는 파일이 없으면 통과, 있으면 실패로 판정한다. path 외에 추가 필드는 요구하지 않는다. 파일이 존재해 실패하는 경우와 없어서 통과하는 경우를 각각 검증하는 테스트를 작성하라. 기존 네 검사 종류의 동작은 바꾸지 마라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "bounded_write",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "없는 파일이 통과가 되도록 조기 반환을 다뤘다",
+      "check": "run_verification_check가 대상 파일을 찾지 못하면 종류 분기 전에 실패로 반환하는 구조였음을 전제로, 제출물이 file_absent 에 대해 그 경로가 통과가 되게 처리했음을 코드에서 확인한다. 종류 분기 뒤에만 코드를 추가해 없는 파일에서 도달하지 못하면 실패"
+    },
+    {
+      "id": "R2",
+      "criterion": "파일이 있으면 실패한다",
+      "check": "제출물이 읽을 수 있는 파일이 존재할 때 passed=False 를 반환함을 코드에서 확인한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "파서가 추가 필드를 요구하지 않는다",
+      "check": "제출물이 file_absent 를 값이나 패턴을 요구하는 집합에 넣지 않았고, path 만으로 파싱됨을 코드에서 확인한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "두 방향을 모두 검증하는 테스트가 있다",
+      "check": "제출물 안에 파일 없음→통과, 파일 있음→실패를 각각 단언하는 새 테스트가 코드로 존재한다"
+    },
+    {
+      "id": "R5",
+      "criterion": "기존 네 종류의 동작이 바뀌지 않았다",
+      "check": "file_nonempty, file_contains, file_matches, json_parses 의 판정 로직과 반환값이 그대로임을 확인한다(줄바꿈 문자 차이는 무시한다)"
+    },
+    {
+      "id": "R6",
+      "criterion": "제출된 테스트가 실제로 통과한다",
+      "check": "채점자가 제출된 테스트를 직접 실행했을 때 새 테스트를 포함해 전부 통과한다(하니스 실행 로그가 아니라 그 자리에서 실행해 얻은 결과로 확인한다)"
+    }
+  ]
+}

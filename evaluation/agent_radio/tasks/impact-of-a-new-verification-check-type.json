@@ -1,0 +1,36 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "impact-of-a-new-verification-check-type",
+  "type": "architecture_impact",
+  "title": "새 검증 검사 종류를 추가할 때 바뀌어야 하는 지점을 전부 들라",
+  "goal": "새 검증 검사 종류 하나를 추가한다고 할 때, 코드를 수정하지 말고 이 코드베이스에서 실제로 바뀌어야 하는 지점을 전부 설명하라. 파서와 실행기 외에 같은 어휘를 따로 들고 있는 곳이 있으면 그것도 밝히라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "파서 쪽 변경 지점을 이름으로 든다",
+      "check": "답이 team_verification_checks.py의 CHECK_TYPES와 parse_verification_check를 이름으로 들며, 필드 요구가 종류별 집합(_VALUE_TYPES 또는 _PATTERN_TYPES)으로 갈린다는 점을 짚는다"
+    },
+    {
+      "id": "R2",
+      "criterion": "실행기 분기를 이름으로 든다",
+      "check": "답이 run_verification_check에 판정 분기를 추가해야 한다고 말한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "계획 프롬프트가 어휘를 따로 들고 있음을 안다",
+      "check": "답이 team_runtime.py의 계획 프롬프트가 허용 검사 목록을 직접 나열하므로 그것도 고쳐야 한다고 명시한다. 이 지점을 빠뜨리면 실패 — 파서만 고치면 리더가 새 종류를 제안할 방법이 없다"
+    },
+    {
+      "id": "R4",
+      "criterion": "프런트엔드가 종류를 아는지 판단한다",
+      "check": "답이 frontend의 BuildEvidence 계열 화면이 검사 결과를 표시하는 방식을 확인하고, 새 종류에 대해 표시 변경이 필요한지 아닌지를 근거와 함께 판단한다(필요 없다는 판단도 근거가 있으면 인정)"
+    },
+    {
+      "id": "R5",
+      "criterion": "migration이 필요 없음을 근거와 함께 말한다",
+      "check": "답이 검사 종류가 DB enum이나 CHECK 제약으로 고정되어 있지 않아 migration이 필요 없다고 근거를 들어 말한다. migration이 필요하다고 서술하면 실패"
+    }
+  ]
+}

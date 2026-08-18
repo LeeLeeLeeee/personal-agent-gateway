@@ -1,0 +1,41 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "type-the-unmapped-repair-stage-error",
+  "type": "bounded_implementation",
+  "title": "복구 대상이 없는 stage에 전용 예외를 내게 하라",
+  "goal": "team_repair_stages.py의 repair_stage_for가 복구 대상이 등재되지 않은 stage에 대해 KeyError 대신 전용 예외를 내게 하라. 예외 메시지에는 문제가 된 stage 이름이 들어가야 한다. 등재된 stage의 반환값은 바꾸지 마라. 미등재 stage에서 그 예외가 나는 것과 메시지에 이름이 들어가는 것을 검증하는 테스트를 작성하라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "bounded_write",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "전용 예외 타입을 정의했다",
+      "check": "제출물이 KeyError가 아닌 별도 예외 클래스를 정의하고 그것을 발생시킴을 코드에서 확인한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "메시지에 stage 이름이 들어간다",
+      "check": "제출물이 예외 메시지에 문제된 stage 이름을 포함함을 확인한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "등재된 stage의 반환이 그대로다",
+      "check": "worker_execution 이 자신을, cycle_add_work 가 cycle_planning_repair 를 반환하는 기존 동작이 유지됨을 코드 또는 테스트에서 확인한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "기존 completeness 테스트를 깨지 않았다",
+      "check": "tests/test_team_repair_stages.py 의 기존 테스트가 수정되지 않았거나, 수정되었다면 그 이유가 새 예외 타입 반영뿐임을 diff에서 확인한다"
+    },
+    {
+      "id": "R5",
+      "criterion": "예외를 검증하는 테스트가 있다",
+      "check": "제출물 안에 미등재 stage에서 새 예외가 발생함을 단언하는 테스트가 코드로 존재한다"
+    },
+    {
+      "id": "R6",
+      "criterion": "제출된 테스트가 실제로 통과한다",
+      "check": "채점자가 제출된 테스트를 직접 실행했을 때 새 테스트를 포함해 전부 통과한다(하니스 실행 로그가 아니라 그 자리에서 실행해 얻은 결과로 확인한다)"
+    }
+  ]
+}

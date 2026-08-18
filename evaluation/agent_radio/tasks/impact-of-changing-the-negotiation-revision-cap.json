@@ -1,0 +1,31 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "impact-of-changing-the-negotiation-revision-cap",
+  "type": "architecture_impact",
+  "title": "계획 협상 리비전 상한을 바꿀 때 함께 봐야 할 것을 설명하라",
+  "goal": "계획 협상이 허용하는 리비전 횟수 상한을 바꾼다고 할 때, 코드를 수정하지 말고 함께 검토해야 하는 지점을 설명하라. 상한을 넘겼을 때 런이 어떻게 끝나는지도 밝히라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "상한 상수를 이름으로 든다",
+      "check": "답이 team_plan_negotiation.py의 리비전 상한 상수를 이름으로 들고 그 값을 정확히 인용한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "상한 초과 시 런의 결말을 안다",
+      "check": "답이 상한을 넘기면 협상이 중단되고 런이 어떤 종단 상태로 정리되는지 설명한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "리비전 저장의 유일성 제약을 짚는다",
+      "check": "답이 리비전 행이 (team_run_id, cycle_id, revision) 같은 유일 색인으로 보호된다는 점을 짚고, 상한 변경이 그 제약과 어떻게 맞물리는지 설명한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "폐기된 리비전의 태스크 처리를 안다",
+      "check": "답이 승인되지 않은 리비전의 태스크가 폐기되며 실행 대상에서 빠진다는 점을 설명한다"
+    }
+  ]
+}

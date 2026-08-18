@@ -1,0 +1,36 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "ignore-worktrees-when-walking-files",
+  "type": "bounded_implementation",
+  "title": "파일 순회에서 중첩 체크아웃 디렉터리를 건너뛰게 하라",
+  "goal": "file_safety.py의 안전 파일 순회가 .worktrees 디렉터리를 건너뛰게 하라. 기존에 건너뛰던 디렉터리들의 동작은 바꾸지 마라. .worktrees 안의 파일이 순회 결과에 나오지 않고 평범한 디렉터리의 파일은 그대로 나오는 것을 검증하는 테스트를 최소 하나 작성하라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "bounded_write",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "무시 목록에 추가했다",
+      "check": "제출물이 IGNORED_DIRECTORY_NAMES에 .worktrees 를 넣었음을 코드에서 확인한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "비교 방식을 유지했다",
+      "check": "제출물이 기존과 같이 소문자로 정규화한 디렉터리 이름과 비교하며, 별도의 경로 패턴 검사를 새로 만들지 않았음을 확인한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "심볼릭 링크 제외가 그대로다",
+      "check": "순회가 여전히 심볼릭 링크 디렉터리를 제외함을 코드에서 확인한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "두 방향을 모두 검증하는 테스트가 있다",
+      "check": "제출물 안에 .worktrees 하위 파일이 결과에 없음을 단언하는 테스트와 평범한 하위 디렉터리 파일이 결과에 있음을 단언하는 테스트가 코드로 존재한다"
+    },
+    {
+      "id": "R5",
+      "criterion": "제출된 테스트가 실제로 통과한다",
+      "check": "채점자가 제출된 테스트를 직접 실행했을 때 새 테스트를 포함해 전부 통과한다(하니스 실행 로그가 아니라 그 자리에서 실행해 얻은 결과로 확인한다)"
+    }
+  ]
+}

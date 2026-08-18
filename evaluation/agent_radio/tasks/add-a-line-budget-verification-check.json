@@ -1,0 +1,41 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "add-a-line-budget-verification-check",
+  "type": "bounded_implementation",
+  "title": "줄 수 상한을 검사하는 검증 종류를 추가하라",
+  "goal": "team_verification_checks.py에 새 검사 종류 file_at_most_lines 를 추가하라: path 와 정수 필드 max_lines 를 받아, 파일의 줄 수가 max_lines 이하이면 통과, 넘으면 실패로 판정한다. max_lines 가 정수가 아니거나 1보다 작으면 파싱 단계에서 거부해야 한다. 상한을 넘겨 실패하는 경우를 검증하는 테스트를 작성하라. 기존 네 검사 종류의 동작은 바꾸지 마라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "bounded_write",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "정수 필드를 위한 검증을 새로 만들었다",
+      "check": "기존 종류별 필드 집합이 문자열 필드만 다뤘음을 전제로, 제출물이 max_lines 를 정수로 검증하는 경로를 추가했음을 코드에서 확인한다. 문자열 필드 취급으로 끼워 넣었으면 실패"
+    },
+    {
+      "id": "R2",
+      "criterion": "잘못된 max_lines 를 파싱에서 거부한다",
+      "check": "제출물이 정수가 아닌 값과 1보다 작은 값을 parse 단계에서 거부함을 코드에서 확인한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "판정 방향이 맞다",
+      "check": "줄 수가 max_lines 이하일 때 passed=True, 넘을 때 False 임을 코드에서 확인한다(경계값 포함)"
+    },
+    {
+      "id": "R4",
+      "criterion": "실패 케이스 테스트가 있다",
+      "check": "제출물 안에 상한을 넘긴 파일에 대해 passed=False 를 단언하는 새 테스트가 코드로 존재한다"
+    },
+    {
+      "id": "R5",
+      "criterion": "기존 네 종류의 동작이 바뀌지 않았다",
+      "check": "기존 네 분기의 판정 로직과 반환값이 그대로임을 확인한다(줄바꿈 문자 차이는 무시한다)"
+    },
+    {
+      "id": "R6",
+      "criterion": "제출된 테스트가 실제로 통과한다",
+      "check": "채점자가 제출된 테스트를 직접 실행했을 때 새 테스트를 포함해 전부 통과한다(하니스 실행 로그가 아니라 그 자리에서 실행해 얻은 결과로 확인한다)"
+    }
+  ]
+}
