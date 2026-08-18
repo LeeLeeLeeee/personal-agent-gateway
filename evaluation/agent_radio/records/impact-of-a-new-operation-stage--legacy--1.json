@@ -10,7 +10,9 @@
   "finished_at": "2026-08-18T05:06:23.437353Z",
   "wall_ms": 326040,
   "cost": {
-    "provider": "codex"
+    "provider": "codex",
+    "input_tokens": 1466373,
+    "output_tokens": 12252
   },
   "rubric_results": [
     {

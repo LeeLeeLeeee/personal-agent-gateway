@@ -50,6 +50,17 @@ class RunArtifact:
     # provider keeps no recoverable record of it -- an unknown is reported as an
     # unknown rather than backfilled with the alias.
     resolved_model: str | None
+    # The reasoning effort the provider actually used. Not merely unresolved like
+    # the model alias -- never requested at all, so the provider's own record is
+    # the only one there is. Two runs at different efforts are not two samples of
+    # the same configuration, however identical the request looked.
+    resolved_effort: str | None
+    # What the run cost, from the provider's transcript. LMG reports usage per
+    # account, which cannot be attributed to one run, so this is the only place
+    # a per-run number exists. Null rather than zero when unrecoverable: a run
+    # averaged in as free would make every mode look cheaper than it is.
+    input_tokens: int | None
+    output_tokens: int | None
     started_at: str
     finished_at: str
     wall_ms: int
@@ -105,13 +116,10 @@ def parse_artifact(payload: dict) -> RunArtifact:
     error = payload.get("error")
     if error is not None and not isinstance(error, str):
         raise FixtureError("error must be a string or null")
-    if "resolved_model" not in payload:
-        raise FixtureError("resolved_model is missing")
-    resolved_model = payload["resolved_model"]
-    if resolved_model is not None and (
-        not isinstance(resolved_model, str) or not resolved_model.strip()
-    ):
-        raise FixtureError("resolved_model must be a non-empty string or null")
+    resolved_model = _recovered_text(payload, "resolved_model")
+    resolved_effort = _recovered_text(payload, "resolved_effort")
+    input_tokens = _recovered_count(payload, "input_tokens")
+    output_tokens = _recovered_count(payload, "output_tokens")
     return RunArtifact(
         run_id=_required_text(payload, "run_id"),
         fixture_id=_required_text(payload, "fixture_id"),
@@ -125,6 +133,9 @@ def parse_artifact(payload: dict) -> RunArtifact:
         model=_required_text(payload, "model"),
         source_commit=_required_text(payload, "source_commit"),
         resolved_model=resolved_model,
+        resolved_effort=resolved_effort,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         started_at=_required_text(payload, "started_at"),
         finished_at=_required_text(payload, "finished_at"),
         wall_ms=wall_ms,
@@ -134,6 +145,42 @@ def parse_artifact(payload: dict) -> RunArtifact:
         repository_unchanged=unchanged,
         error=error,
     )
+
+
+def _recovered_text(payload: dict, key: str) -> str | None:
+    """A fact the provider may not have kept, as text.
+
+    Absent is refused separately from null. A key that can be left out lets
+    "nobody recorded this" pass as "this artefact predates the question", and
+    those are different states that would both read as no data. An empty string
+    is refused for the mirror reason: it claims a blank answer where null claims
+    no answer.
+    """
+    if key not in payload:
+        raise FixtureError(f"{key} is missing")
+    value = payload[key]
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise FixtureError(f"{key} must be a non-empty string or null")
+    return value
+
+
+def _recovered_count(payload: dict, key: str) -> int | None:
+    """A fact the provider may not have kept, as a count.
+
+    Zero is a legitimate measurement and null is the absence of one, so they
+    are kept distinct: a run recorded as costing zero tokens would be averaged
+    in as free.
+    """
+    if key not in payload:
+        raise FixtureError(f"{key} is missing")
+    value = payload[key]
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise FixtureError(f"{key} must be a non-negative integer or null")
+    return value
 
 
 def write_artifact(directory: Path, artifact: RunArtifact) -> Path:

@@ -17,6 +17,7 @@ from agent_radio.artifact import (
 from agent_radio.fixture import Fixture, FixtureError, RubricItem
 from agent_radio.runner import (
     DEFAULT_BACKEND,
+    EMPTY_TRACE,
     EVAL_DATA_ROOT,
     EVAL_WORKSPACE_ROOT,
     Harness,
@@ -25,6 +26,7 @@ from agent_radio.runner import (
     _evaluation_config,
     export_source,
     main,
+    provider_trace,
     repository_is_unchanged,
     repository_status,
     run_fixture,
@@ -64,6 +66,9 @@ def _artifact(**overrides) -> dict:
         "model": "default",
         "source_commit": "9e711fa0c0ffee0000000000000000000000beef",
         "resolved_model": "gpt-5.6-terra",
+        "resolved_effort": "high",
+        "input_tokens": 18271,
+        "output_tokens": 564,
         "started_at": "2026-08-14T01:00:00Z",
         "finished_at": "2026-08-14T01:06:20Z",
         "wall_ms": 380000,
@@ -173,6 +178,12 @@ def test_a_completed_run_with_a_blank_summary_is_not_scoreable():
         # and it is blank", which is a different claim.
         {"resolved_model": ""},
         {"resolved_model": 5},
+        {"resolved_effort": ""},
+        # Zero is a measurement and null is the absence of one, but a negative
+        # count is neither.
+        {"input_tokens": -1},
+        {"output_tokens": "many"},
+        {"input_tokens": True},
     ],
 )
 def test_an_artefact_that_cannot_be_trusted_is_refused(overrides):
@@ -180,20 +191,45 @@ def test_an_artefact_that_cannot_be_trusted_is_refused(overrides):
         parse_artifact(_artifact(**overrides))
 
 
-def test_an_artefact_missing_resolved_model_is_refused():
+@pytest.mark.parametrize(
+    "key",
+    ["resolved_model", "resolved_effort", "input_tokens", "output_tokens"],
+)
+def test_an_artefact_missing_a_recovered_fact_is_refused(key):
     """Absent is not the same as null. A field that can be left out silently
-    turns "nobody recorded which model answered" into "this artefact predates
-    the question", and both read as no data while meaning different things."""
+    turns "nobody recorded this" into "this artefact predates the question",
+    and both read as no data while meaning different things."""
     payload = _artifact()
-    del payload["resolved_model"]
+    del payload[key]
 
     with pytest.raises(FixtureError):
         parse_artifact(payload)
 
 
-def test_an_unrecoverable_model_is_recorded_as_unknown():
+def test_facts_the_provider_did_not_keep_are_recorded_as_unknown():
     """Null is a legitimate value: some providers keep no transcript."""
-    assert parse_artifact(_artifact(resolved_model=None)).resolved_model is None
+    artifact = parse_artifact(
+        _artifact(
+            resolved_model=None,
+            resolved_effort=None,
+            input_tokens=None,
+            output_tokens=None,
+        )
+    )
+
+    assert artifact.resolved_model is None
+    assert artifact.resolved_effort is None
+    assert artifact.input_tokens is None
+    assert artifact.output_tokens is None
+
+
+def test_a_run_that_really_cost_nothing_is_not_an_unknown():
+    """Zero is a measurement. Collapsing it into null would lose the difference
+    between a run that spent nothing and one nobody measured."""
+    artifact = parse_artifact(_artifact(input_tokens=0, output_tokens=0))
+
+    assert artifact.input_tokens == 0
+    assert artifact.output_tokens == 0
 
 
 def test_writing_then_loading_round_trips(tmp_path: Path):
@@ -808,6 +844,101 @@ async def test_a_read_only_run_gets_no_writable_copy(tmp_path: Path):
     )
 
     assert not (Path(artifact.workspace_path) / "source").exists()
+
+
+def _transcript(path: Path, *entries: dict) -> str:
+    path.write_text(
+        "".join(json.dumps(entry) + "\n" for entry in entries), encoding="utf-8"
+    )
+    return str(path)
+
+
+def _token_count(given: int, produced: int) -> dict:
+    return {
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "info": {
+                "total_token_usage": {
+                    "input_tokens": given,
+                    "output_tokens": produced,
+                }
+            },
+        },
+    }
+
+
+def test_a_runs_cost_is_summed_across_its_sessions(tmp_path: Path):
+    """A run has more than one session -- the leader and the worker each get
+    their own -- and `total_token_usage` is cumulative inside a session, so the
+    run's cost is the last count of each file added together. Taking one
+    session would report a fraction of what the run actually spent."""
+    leader = _transcript(
+        tmp_path / "leader.jsonl",
+        {"type": "turn_context", "payload": {"model": "m", "effort": "high"}},
+        _token_count(100, 10),
+        _token_count(300, 30),
+    )
+    worker = _transcript(
+        tmp_path / "worker.jsonl",
+        {"type": "turn_context", "payload": {"model": "m", "effort": "high"}},
+        _token_count(700, 70),
+    )
+    sessions = [
+        {"consumer_session_id": "run-1", "storage_path": leader},
+        {"consumer_session_id": "run-1", "storage_path": worker},
+        {"consumer_session_id": "other", "storage_path": leader},
+    ]
+
+    trace = provider_trace(lambda: sessions, "run-1")
+
+    assert (trace.input_tokens, trace.output_tokens) == (1000, 100)
+    assert (trace.model, trace.effort) == ("m", "high")
+
+
+def test_a_run_whose_sessions_disagree_reports_no_single_model(tmp_path: Path):
+    """Two sessions on different models have no answer to "which model
+    answered", and naming either one would state something untrue. The cost is
+    still a fact, so it survives."""
+    first = _transcript(
+        tmp_path / "a.jsonl",
+        {"type": "turn_context", "payload": {"model": "m1", "effort": "high"}},
+        _token_count(100, 10),
+    )
+    second = _transcript(
+        tmp_path / "b.jsonl",
+        {"type": "turn_context", "payload": {"model": "m2", "effort": "low"}},
+        _token_count(200, 20),
+    )
+    sessions = [
+        {"consumer_session_id": "run-1", "storage_path": first},
+        {"consumer_session_id": "run-1", "storage_path": second},
+    ]
+
+    trace = provider_trace(lambda: sessions, "run-1")
+
+    assert trace.model is None
+    assert trace.effort is None
+    assert (trace.input_tokens, trace.output_tokens) == (300, 30)
+
+
+def test_an_unreadable_transcript_is_an_unknown_not_a_crash(tmp_path: Path):
+    """This runs after the provider call is paid for, where nothing may raise."""
+    sessions = [
+        {"consumer_session_id": "run-1", "storage_path": str(tmp_path / "gone.jsonl")},
+        {"consumer_session_id": "run-1", "storage_path": None},
+    ]
+
+    trace = provider_trace(lambda: sessions, "run-1")
+
+    assert trace == EMPTY_TRACE
+
+
+def test_an_unavailable_gateway_is_an_unknown_not_a_crash():
+    def refuse():
+        raise RuntimeError("gateway down")
+
+    assert provider_trace(refuse, "run-1") == EMPTY_TRACE
 
 
 async def test_the_run_records_which_model_actually_answered(tmp_path: Path):

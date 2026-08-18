@@ -108,58 +108,140 @@ def build_harness(config: AppConfig) -> Harness:
     )
 
 
-def resolved_model(sessions: object, run_id: str) -> str | None:
-    """Which model actually answered, if the provider left a record of it.
+@dataclass(frozen=True)
+class ProviderTrace:
+    """What the provider itself recorded about a run.
 
-    `model` on the artefact is what was *requested*, and for codex that is
+    Every field is optional because every one of them is a fact that may simply
+    not have been kept. None means "not recoverable", never "zero" and never a
+    default -- a run whose cost is unknown must not be averaged in as a cheap
+    one, and a run whose model is unknown must not be compared as if it were the
+    alias that was requested.
+    """
+
+    model: str | None
+    effort: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+
+
+EMPTY_TRACE = ProviderTrace(None, None, None, None)
+
+
+def provider_trace(sessions: object, run_id: str) -> ProviderTrace:
+    """Read back what actually ran, from the provider's own transcripts.
+
+    The artefact's `model` is what was *requested*, and for codex that is
     normally the alias "default" -- "use whatever the local configuration
-    selects". Neither the operation ledger nor the gateway's session list
-    resolves it: both store the alias. The provider's own transcript does, so
-    that is what this reads, found through the session whose consumer id is this
-    run.
+    selects". Nothing in the gateway resolves it: the operation ledger and the
+    session list both store the alias verbatim. Reasoning effort is worse than
+    unresolved, it is never requested at all, so the only record of it is the
+    provider's. Token usage is the same story from the other end: LMG reports
+    it per account, which cannot be attributed to one run.
 
-    Returns None rather than guessing. Every failure here is a missing fact, not
-    a wrong one: no session yet, a provider that keeps no transcript, a file
-    already rotated away. Answering "default" would turn an unknown into a
-    claim, which is the thing this field exists to stop.
+    All three live in the transcript, so all three are read here, through the
+    sessions whose consumer id is this run. A run has more than one session --
+    the leader and the worker each get their own -- so tokens are summed across
+    them and `total_token_usage` is cumulative within a session, meaning the
+    last count in each file is that session's total.
+
+    Model and effort are collected as sets and reported only when the run agrees
+    with itself. Two sessions that ran different models have no single answer to
+    "which model answered", and picking either one would state something untrue
+    rather than admit the ambiguity.
+
+    Never raises. Every failure here -- no session yet, no transcript, a file
+    already rotated away, a line that is not JSON -- is a missing fact, and this
+    runs after the provider call has been paid for, where nothing is allowed to
+    destroy the artefact.
     """
     try:
         rows = sessions()
     except Exception:  # noqa: BLE001 - an unavailable gateway is an unknown
-        return None
+        return EMPTY_TRACE
     paths = [
         row.get("storage_path")
         for row in rows or ()
         if isinstance(row, dict) and row.get("consumer_session_id") == run_id
     ]
+    models: set[str] = set()
+    efforts: set[str] = set()
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     for path in paths:
         if not isinstance(path, str) or not path:
             continue
+        session_input: int | None = None
+        session_output: int | None = None
         try:
             with Path(path).open(encoding="utf-8") as stream:
                 for line in stream:
-                    found = _model_in_transcript_line(line)
-                    if found:
-                        return found
+                    entry = _transcript_entry(line)
+                    if entry is None:
+                        continue
+                    models.update(_texts(entry, ("model",)))
+                    efforts.update(_texts(entry, ("effort", "reasoning_effort")))
+                    usage = _token_usage(entry)
+                    if usage is not None:
+                        session_input, session_output = usage
         except OSError:
             continue
-    return None
+        if session_input is not None:
+            input_tokens = (input_tokens or 0) + session_input
+        if session_output is not None:
+            output_tokens = (output_tokens or 0) + session_output
+    return ProviderTrace(
+        model=_only(models),
+        effort=_only(efforts),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
 
 
-def _model_in_transcript_line(line: str) -> str | None:
+def _only(values: set[str]) -> str | None:
+    """The single value, or None when the run does not agree with itself."""
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _transcript_entry(line: str) -> dict | None:
     try:
         entry = json.loads(line)
     except ValueError:
         return None
-    if not isinstance(entry, dict):
-        return None
+    return entry if isinstance(entry, dict) else None
+
+
+def _texts(entry: dict, keys: tuple[str, ...]) -> set[str]:
+    found: set[str] = set()
     payload = entry.get("payload")
     for holder in (payload, entry):
-        if isinstance(holder, dict):
-            model = holder.get("model")
-            if isinstance(model, str) and model.strip():
-                return model
-    return None
+        if not isinstance(holder, dict):
+            continue
+        for key in keys:
+            value = holder.get(key)
+            if isinstance(value, str) and value.strip():
+                found.add(value)
+    return found
+
+
+def _token_usage(entry: dict) -> tuple[int, int] | None:
+    """This entry's cumulative session totals, if it carries them."""
+    payload = entry.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    info = payload.get("info")
+    if not isinstance(info, dict):
+        return None
+    totals = info.get("total_token_usage")
+    if not isinstance(totals, dict):
+        return None
+    given = totals.get("input_tokens")
+    produced = totals.get("output_tokens")
+    if not isinstance(given, int) or isinstance(given, bool):
+        return None
+    if not isinstance(produced, int) or isinstance(produced, bool):
+        return None
+    return given, produced
 
 
 def repository_status(repo_root: Path) -> str:
@@ -457,8 +539,9 @@ async def run_fixture(
         repository_unchanged = False
         raised = _joined(raised, f"could not verify isolation: {exc}")
 
-    # Cannot raise: resolved_model swallows its own failures and answers None.
-    model_that_answered = resolved_model(harness.sessions, run.id)
+    # Cannot raise: provider_trace swallows its own failures and answers None
+    # for anything it could not recover.
+    trace = provider_trace(harness.sessions, run.id)
 
     error = _joined(final.error_message, raised)
     if not error and final.status not in ANSWERING_RUN_STATUSES:
@@ -476,7 +559,10 @@ async def run_fixture(
         backend=backend,
         model=model,
         source_commit=source_commit,
-        resolved_model=model_that_answered,
+        resolved_model=trace.model,
+        resolved_effort=trace.effort,
+        input_tokens=trace.input_tokens,
+        output_tokens=trace.output_tokens,
         started_at=_isoformat(started),
         finished_at=_isoformat(finished),
         wall_ms=max(int((finished - started).total_seconds() * 1000), 0),
