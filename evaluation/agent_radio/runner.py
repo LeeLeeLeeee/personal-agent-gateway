@@ -275,9 +275,11 @@ async def run_fixture(
     status_before = repository_status(repo_root)
 
     try:
-        # What the run reads: a pinned export of HEAD, not the working tree it
-        # was launched from. See export_source.
-        source, source_commit = export_source(repo_root, Path(harness.exports))
+        # What the run reads: an export of the commit this fixture pins, not
+        # the working tree it was launched from. See export_source.
+        source, source_commit = export_source(
+            repo_root, Path(harness.exports), fixture.repo_ref
+        )
         leader = harness.personas.create_persona(
             f"Eval Lead ({fixture.id})",
             "lead",
@@ -453,26 +455,32 @@ EVAL_WORKSPACE_ROOT = _EVAL_ROOT / "workspace"
 EVAL_SOURCE_ROOT = _EVAL_ROOT / "source"
 
 
-def export_source(repo_root: Path, exports_root: Path) -> tuple[Path, str]:
-    """A pristine checkout of HEAD, and the commit it is.
+def export_source(repo_root: Path, exports_root: Path, ref: str) -> tuple[Path, str]:
+    """A pristine checkout of `ref`, and the commit it resolved to.
+
+    The caller passes the fixture's `repo_ref`, never HEAD: a rubric is written
+    against a particular tree, and grading an answer about today's code with
+    yesterday's rubric compares two different things while looking entirely
+    valid. Nothing downstream would catch it -- `is_stale` compares fixture
+    definitions, not commits -- so the pin has to be honoured here.
 
     What a run reads has to be a commit rather than a working tree, for two
     reasons of unequal weight. The lesser one is mechanical: staging this
     repository's working tree copies 2629 files, including nested checkouts
     under `.worktrees` and browser caches under `data/backups`, with relative
     paths up to 189 characters -- which no workspace location can fit inside
-    Windows' path limit. HEAD is 679 files and 96 characters.
+    Windows' path limit. A commit is 679 files and 96 characters.
 
     The greater one is that a sweep reading uncommitted work measures something
-    nobody can repeat. `git archive` gives exactly the tracked files at HEAD,
-    with no `.git` directory for a model to go spelunking in.
+    nobody can repeat. `git archive` gives exactly the tracked files at that
+    commit, with no `.git` directory for a model to go spelunking in.
 
     Reused across runs of the same commit, and the completion marker sits beside
     the export rather than inside it: a directory left half-written by a killed
     run must not be mistaken for a source tree, and the export the model reads
     must contain nothing this harness put there.
     """
-    commit = _git_output(repo_root, "rev-parse", "HEAD")
+    commit = _git_output(repo_root, "rev-parse", f"{ref}^{{commit}}")
     destination = exports_root / f"pag-{commit[:7]}"
     marker = exports_root / f"pag-{commit[:7]}.complete"
     if marker.exists():

@@ -654,7 +654,7 @@ async def test_a_completed_run_produces_a_scoreable_artefact(tmp_path: Path):
     assert artifact.scoreable is True
 
 
-def test_the_exported_source_is_head_and_nothing_else(tmp_path: Path):
+def test_the_exported_source_is_the_commit_and_nothing_else(tmp_path: Path):
     """What a run is allowed to read is a commit, not a working tree.
 
     Staging the working tree of this repository copies 2629 files -- nested
@@ -672,7 +672,7 @@ def test_the_exported_source_is_head_and_nothing_else(tmp_path: Path):
     (repo / "ignored").mkdir()
     (repo / "ignored" / "junk.bin").write_text("junk", encoding="utf-8")
 
-    source, commit = export_source(repo, tmp_path / "exports")
+    source, commit = export_source(repo, tmp_path / "exports", "HEAD")
 
     assert (source / "a.txt").read_text(encoding="utf-8") == "x"
     assert not (source / "uncommitted.txt").exists()
@@ -685,17 +685,35 @@ def test_exporting_the_same_commit_twice_reuses_the_export(tmp_path: Path):
     """Otherwise the second run of a sweep dies on its predecessor's directory."""
     repo = _initialised_repo(tmp_path)
 
-    first, first_commit = export_source(repo, tmp_path / "exports")
-    second, second_commit = export_source(repo, tmp_path / "exports")
+    first, first_commit = export_source(repo, tmp_path / "exports", "HEAD")
+    second, second_commit = export_source(repo, tmp_path / "exports", "HEAD")
 
     assert first == second
     assert first_commit == second_commit
     assert (second / "a.txt").read_text(encoding="utf-8") == "x"
 
 
-async def test_the_run_reads_the_pinned_export_and_records_its_commit(
-    tmp_path: Path,
-):
+async def test_the_run_reads_the_commit_the_fixture_pins(tmp_path: Path):
+    """Not HEAD. The fixture's repo_ref is the tree its rubric was written
+    against, so reading anything else grades an answer about one tree with a
+    rubric about another -- and nothing downstream would notice, because
+    is_stale compares fixture definitions, never commits."""
+    harness, repo = _stub_harness(tmp_path)
+    pinned = _git(repo, "rev-parse", "HEAD")
+    (repo / "later.txt").write_text("after the fixture was written", encoding="utf-8")
+    _git(repo, "add", "later.txt")
+    _git(repo, "commit", "-m", "moves HEAD past the pin")
+    fixture = replace(_understanding_fixture(), repo_ref=pinned)
+
+    artifact = await run_fixture(harness, fixture, mode="legacy", repo_root=repo)
+
+    assert artifact.source_commit == pinned
+    assert artifact.source_commit != _git(repo, "rev-parse", "HEAD")
+    export = harness.exports / f"pag-{pinned[:7]}"
+    assert not (export / "later.txt").exists()
+
+
+async def test_the_run_records_the_commit_it_read(tmp_path: Path):
     """An artefact that cannot say which source produced its answer is not
     comparable with anything, and the source is half of what a run is."""
     harness, repo = _stub_harness(tmp_path)
