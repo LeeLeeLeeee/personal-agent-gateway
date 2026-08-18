@@ -1,0 +1,23 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "8f237d5a9cb047499c11d9179542572e",
+  "fixture_id": "impact-of-letting-a-check-run-a-command",
+  "fixture_sha256": "86aaf6c10ecca88e42e077fa9e067520c5816965b8d5c33856226d336536937e",
+  "mode": "legacy",
+  "execution_profile": "read_only",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "resolved_model": "gpt-5.6-terra",
+  "resolved_effort": "high",
+  "input_tokens": 84772,
+  "output_tokens": 1261,
+  "started_at": "2026-08-18T06:42:10.488628Z",
+  "finished_at": "2026-08-18T06:43:35.788983Z",
+  "wall_ms": 85300,
+  "run_status": "interrupted",
+  "summary": null,
+  "workspace_path": "C:\\pag-eval\\workspace\\8f237d5a9cb047499c11d9179542572e\\workspace",
+  "repository_unchanged": true,
+  "error": "provider_protocol_error"
+}

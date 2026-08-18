@@ -1,0 +1,23 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "7662af0ea8dd44da8db5c8e2b62150ab",
+  "fixture_id": "where-the-provider-snapshot-comes-from",
+  "fixture_sha256": "49abc9302586d9bde1dfe82ba96a0cff1f3594c84673c85f4813a7c2dd378731",
+  "mode": "legacy",
+  "execution_profile": "read_only",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "resolved_model": "gpt-5.6-terra",
+  "resolved_effort": "high",
+  "input_tokens": 2777381,
+  "output_tokens": 14245,
+  "started_at": "2026-08-18T06:28:37.888679Z",
+  "finished_at": "2026-08-18T06:36:17.516558Z",
+  "wall_ms": 459627,
+  "run_status": "completed",
+  "summary": "Provider 실행 능력의 원천, cycle 동결 시점, 모델 클라이언트까지의 전달 경로를 근거와 함께 보고서로 작성했습니다. 최초 artifact root 쓰기는 거부됐으나 작업 루트의 `data/artifacts`로 산출물 위치를 정정해 완료했으며, 관련 소스 동작 테스트 4개가 통과했습니다.",
+  "workspace_path": "C:\\pag-eval\\workspace\\7662af0ea8dd44da8db5c8e2b62150ab\\workspace",
+  "repository_unchanged": true,
+  "error": null
+}

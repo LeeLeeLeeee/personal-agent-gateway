@@ -1,0 +1,23 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "3f3f66cb305f4faa8316e5e4c400d57b",
+  "fixture_id": "add-a-line-budget-verification-check",
+  "fixture_sha256": "ae342458a94b431e44ae94ead84fe5f51b37185bbd2dcef902730c557a9abe97",
+  "mode": "legacy",
+  "execution_profile": "bounded_write",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "resolved_model": "gpt-5.6-terra",
+  "resolved_effort": "high",
+  "input_tokens": 1014740,
+  "output_tokens": 9113,
+  "started_at": "2026-08-18T06:47:05.947091Z",
+  "finished_at": "2026-08-18T06:52:20.953516Z",
+  "wall_ms": 315006,
+  "run_status": "completed",
+  "summary": "`file_at_most_lines` 검사를 추가했습니다. `max_lines`는 정수이며 1 이상인지 파싱 단계에서 검증하고, 파일 줄 수가 상한을 넘으면 실패합니다. 상한 초과 실패 테스트를 포함했으며 기존 검사 동작은 유지했습니다.\n\n검증: 대상 pytest 15개 통과, Ruff 검사 통과.",
+  "workspace_path": "C:\\pag-eval\\workspace\\3f3f66cb305f4faa8316e5e4c400d57b\\workspace",
+  "repository_unchanged": true,
+  "error": null
+}

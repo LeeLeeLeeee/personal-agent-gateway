@@ -1,0 +1,23 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "dd7d9704e47645d995186fd356fe930d",
+  "fixture_id": "which-repair-stage-repairs-what",
+  "fixture_sha256": "af6af52f20ac23d76747490f34ae9451e03512660672142d01025f43f7f4bc64",
+  "mode": "legacy",
+  "execution_profile": "read_only",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "resolved_model": "gpt-5.6-terra",
+  "resolved_effort": "high",
+  "input_tokens": 1135649,
+  "output_tokens": 8347,
+  "started_at": "2026-08-18T06:36:20.428308Z",
+  "finished_at": "2026-08-18T06:40:29.156638Z",
+  "wall_ms": 248728,
+  "run_status": "completed",
+  "summary": "구조화된 출력 파싱 실패 시의 모든 `OperationStage → 복구 stage` 매핑과 결정 규칙, 그리고 이름 규칙 예외를 분석 보고서에 정리했습니다. 실패 사항은 없습니다.",
+  "workspace_path": "C:\\pag-eval\\workspace\\dd7d9704e47645d995186fd356fe930d\\workspace",
+  "repository_unchanged": true,
+  "error": null
+}
