@@ -1,4 +1,5 @@
 import subprocess
+import types
 from pathlib import Path
 
 import pytest
@@ -212,3 +213,30 @@ def test_a_path_that_is_not_a_repository_is_an_error(tmp_path: Path):
     isolation held when nothing was checked."""
     with pytest.raises(RunnerError):
         repository_is_unchanged(tmp_path / "nothing")
+
+
+def test_a_path_inside_a_repository_but_not_its_root_is_an_error(tmp_path: Path):
+    """git -C walks upward to find a .git, so pointing this at a subdirectory
+    would silently report the enclosing repository's whole status --
+    including changes made by something else entirely outside repo_root."""
+    repo = _initialised_repo(tmp_path)
+    subdir = repo / "sub"
+    subdir.mkdir()
+
+    with pytest.raises(RunnerError):
+        repository_is_unchanged(subdir)
+
+
+def test_missing_git_executable_is_a_runner_error(tmp_path: Path, monkeypatch):
+    """subprocess.run raises FileNotFoundError when git is not on PATH, which
+    a returncode check alone cannot catch."""
+
+    def _raise(*args, **kwargs):
+        raise FileNotFoundError("git not found")
+
+    monkeypatch.setattr(
+        "agent_radio.runner.subprocess", types.SimpleNamespace(run=_raise)
+    )
+
+    with pytest.raises(RunnerError):
+        repository_is_unchanged(tmp_path)
