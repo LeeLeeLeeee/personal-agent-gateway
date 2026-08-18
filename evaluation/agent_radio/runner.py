@@ -7,9 +7,13 @@ assembly would drift from the real one without anyone noticing.
 """
 
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
+from agent_radio.artifact import IMPLEMENTED_MODES, RunArtifact
+from agent_radio.fixture import Fixture
 from personal_agent_gateway.app import create_app
 from personal_agent_gateway.config import AppConfig
 
@@ -26,6 +30,7 @@ class Harness:
     policies: object
     directory: object
     rules: object
+    personas: object = None
 
 
 def build_harness(config: AppConfig) -> Harness:
@@ -57,6 +62,7 @@ def build_harness(config: AppConfig) -> Harness:
         policies=state.space_policy_service,
         directory=state.team_directory_service,
         rules=state.rule_set_service,
+        personas=state.persona_service,
     )
 
 
@@ -116,3 +122,120 @@ def repository_is_unchanged(repo_root: Path) -> bool:
             f"cannot read git status for {repo_root}: {result.stderr.strip()}"
         )
     return result.stdout.strip() == ""
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def run_fixture(
+    harness: Harness,
+    fixture: Fixture,
+    *,
+    mode: str,
+    repo_root: Path,
+    now: Callable[[], datetime] = utc_now,
+) -> RunArtifact:
+    """Run one fixture once and describe what happened.
+
+    Never raises for a failed run -- a failure is a result, and the artefact is
+    how it gets counted. Dropping failures would inflate every success rate
+    computed later, so a run that failed comes back as an artefact carrying its
+    status and error, not as an exception. It raises only when the run could
+    not be *set up*, because there is then nothing to describe.
+
+    `now` is the caller's clock, called exactly twice -- once before the run
+    and once after -- so both timestamps and the wall time derived from them
+    come from the same source and a test can pin all three.
+    """
+    if mode not in IMPLEMENTED_MODES:
+        raise RunnerError(f"mode is not implemented: {mode!r}")
+    # Before anything is created and before any provider call is spent: this
+    # refuses a repo_root that is not a repository root, which is the one
+    # condition that would make the isolation check silently answer about a
+    # different tree. Its answer here is deliberately unused -- a tree that was
+    # already dirty is not this run's doing.
+    repository_is_unchanged(repo_root)
+
+    try:
+        leader = harness.personas.create_persona(
+            f"Eval Lead ({fixture.id})",
+            "lead",
+            "Plans the evaluation task and reports the answer.",
+            [],
+            [],
+        )
+        member = harness.personas.create_persona(
+            f"Eval Worker ({fixture.id})",
+            "worker",
+            "Carries out the evaluation task.",
+            [],
+            [],
+        )
+        team = harness.directory.create_team(
+            f"Eval {fixture.id}",
+            fixture.title,
+            leader.id,
+            [member.id],
+        )
+        # The isolation the ADR requires, set before the run is created: the
+        # run reads the repository and writes only to its own workspace.
+        # create_team_run snapshots the policy, so a later change cannot
+        # retroactively alter what this run was allowed to do.
+        harness.policies.upsert(
+            "team",
+            team.id,
+            read_mode="selected",
+            read_path=str(repo_root),
+            write_mode="isolated",
+            workspace_path=None,
+        )
+        run = harness.teams.create_team_run_from_team(
+            harness.directory,
+            harness.rules,
+            team_id=team.id,
+            goal=fixture.goal,
+            run_mode="plan_and_execute",
+            max_workers=1,
+            lifecycle_mode="continuous",
+            execution_policy="triggered",
+        )
+        cycle = harness.teams.create_cycle(run.id, "manual", f"eval-{fixture.id}")
+    except Exception as exc:
+        raise RunnerError(f"could not set up a run for {fixture.id}: {exc}") from exc
+
+    started = now()
+    raised: str | None = None
+    try:
+        # Driven directly, not queued. build_harness never enters the app's
+        # lifespan, so the cycle dispatcher and cycle loop are wired but not
+        # running: a queued cycle request would sit queued forever and nothing
+        # would raise.
+        await harness.runtime.start(run.id, cycle.id)
+    except Exception as exc:  # noqa: BLE001 - a failed run is a result
+        raised = str(exc) or type(exc).__name__
+    finished = now()
+
+    final = harness.teams.get_team_run(run.id)
+    error = final.error_message or raised
+    if final.status != "completed" and not error:
+        error = f"run ended as {final.status}"
+    return RunArtifact(
+        run_id=run.id,
+        fixture_id=fixture.id,
+        fixture_sha256=fixture.sha256,
+        mode=mode,
+        execution_profile=fixture.execution_profile,
+        started_at=_isoformat(started),
+        finished_at=_isoformat(finished),
+        wall_ms=max(int((finished - started).total_seconds() * 1000), 0),
+        run_status=final.status,
+        summary=final.summary,
+        workspace_path=final.working_root or final.workspace_root,
+        repository_unchanged=repository_is_unchanged(repo_root),
+        error=error,
+    )
+
+
+def _isoformat(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
