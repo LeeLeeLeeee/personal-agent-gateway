@@ -676,10 +676,10 @@ The table's job is as much to refuse a verdict as to report one.
 - Test: `tests/test_agent_radio_evaluation.py`
 
 **Interfaces:**
-- Consumes: `Fixture`, `Record`, `is_stale` from Tasks 1-2.
+- Consumes: `Fixture`, `Record`, `is_stale`, `rubric_is_fully_reported` from Tasks 1-2.
 - Produces:
   - `@dataclass(frozen=True) class Cell: mode, samples, success_rate, critical_defects, rework, cost_tokens, p50_ms, p95_ms | None`
-  - `@dataclass(frozen=True) class Report: rows: dict[str, tuple[Cell, ...]]; stale_dropped: int; warnings: tuple[str, ...]`
+  - `@dataclass(frozen=True) class Report: rows: dict[str, tuple[Cell, ...]]; stale_dropped: int; unreported_dropped: int; warnings: tuple[str, ...]`
   - `build_report(fixtures, records) -> Report`
   - `render(report) -> str`
   - `MINIMUM_REPEATS_PER_TYPE = 5`, `MINIMUM_TASKS = 20`, `P95_MINIMUM_SAMPLES = 5`
@@ -769,6 +769,20 @@ def test_success_needs_every_item_to_pass():
     assert row[0].success_rate == 0.5
 ```
 
+def test_a_partially_scored_record_is_dropped_and_counted_separately():
+    """Omitting the item you know failed would otherwise be indistinguishable
+    from a full pass. It is counted apart from stale because "the definition
+    changed" and "only part of it was scored" are different problems."""
+    partial = _record(rubric_results=[{"id": "R1", "passed": True, "note": "n"}])
+
+    report = build_report(_fixtures(), [parse_record(partial)])
+
+    assert report.unreported_dropped == 1
+    assert report.stale_dropped == 0
+    assert report.rows == {}
+    assert "미완 채점" in render(report)
+
+
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_agent_radio_evaluation.py -q -p no:randomly -k "report or baseline or p95 or thin_sample or split_by_type"`
@@ -789,7 +803,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from statistics import quantiles
 
-from agent_radio.fixture import Fixture, Record, is_stale
+from agent_radio.fixture import Fixture, Record, is_stale, rubric_is_fully_reported
 
 BASELINE_MODE = "legacy"
 MINIMUM_REPEATS_PER_TYPE = 5
@@ -820,8 +834,19 @@ def build_report(
     fixtures: Mapping[str, Fixture],
     records: Sequence[Record],
 ) -> Report:
-    live = [record for record in records if not is_stale(record, fixtures)]
-    stale_dropped = len(records) - len(live)
+    fresh = [record for record in records if not is_stale(record, fixtures)]
+    stale_dropped = len(records) - len(fresh)
+    # A record that answers fewer items than its rubric defines is not evidence:
+    # omitting the item you know failed produces something indistinguishable
+    # from a full pass. Counted apart from stale, because "someone changed the
+    # definition" and "someone scored only part of it" are different problems
+    # and reporting them as one hides both.
+    live = [
+        record
+        for record in fresh
+        if rubric_is_fully_reported(record, fixtures[record.fixture_id])
+    ]
+    unreported_dropped = len(fresh) - len(live)
 
     by_type: dict[str, dict[str, list[Record]]] = {}
     for record in live:
@@ -834,7 +859,7 @@ def build_report(
         )
         for fixture_type, group in sorted(by_type.items())
     }
-    return Report(rows, stale_dropped, _warnings(fixtures, live, by_type))
+    return Report(rows, stale_dropped, unreported_dropped, _warnings(fixtures, live, by_type))
 
 
 def render(report: Report) -> str:
@@ -857,6 +882,11 @@ def render(report: Report) -> str:
         lines.append(
             f"stale 기록 {report.stale_dropped}건 제외됨 "
             "(fixture 정의가 측정 이후 바뀜)"
+        )
+    if report.unreported_dropped:
+        lines.append(
+            f"미완 채점 {report.unreported_dropped}건 제외됨 "
+            "(rubric 항목을 전부 기록하지 않음)"
         )
     lines.extend(report.warnings)
     return "\n".join(lines)
