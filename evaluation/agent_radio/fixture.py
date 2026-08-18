@@ -265,7 +265,7 @@ def parse_record(payload: dict) -> Record:
         finished_at=_required_text(payload, "finished_at"),
         wall_ms=_counter(payload, "wall_ms"),
         cost=dict(payload["cost"]),
-        rubric_results=tuple(_parse_result(raw) for raw in results),
+        rubric_results=_parse_results(results),
         rework_count=_counter(payload, "rework_count"),
         conflict_count=_counter(payload, "conflict_count"),
         critical_defects_found=_counter(payload, "critical_defects_found"),
@@ -294,6 +294,32 @@ def is_stale(record: Record, fixtures: Mapping[str, Fixture]) -> bool:
     """
     fixture = fixtures.get(record.fixture_id)
     return fixture is None or fixture.sha256 != record.fixture_sha256
+
+
+def rubric_is_fully_reported(record: Record, fixture: Fixture) -> bool:
+    """Whether the record answers exactly the rubric it claims to measure.
+
+    Kept separate from is_stale because the two say different things and a
+    reader has to be able to tell them apart: stale means someone changed the
+    definition after the fact, this means someone reported fewer items than the
+    definition asks for. Folding the second into the first would report a
+    scoring gap as tampering.
+    """
+    return {result.id for result in record.rubric_results} == {
+        item.id for item in fixture.rubric
+    }
+
+
+def _parse_results(raw_results: list) -> tuple[RubricResult, ...]:
+    results: list[RubricResult] = []
+    seen: set[str] = set()
+    for raw in raw_results:
+        result = _parse_result(raw)
+        if result.id in seen:
+            raise FixtureError(f"duplicate rubric result id: {result.id!r}")
+        seen.add(result.id)
+        results.append(result)
+    return tuple(results)
 
 
 def _parse_result(raw: object) -> RubricResult:

@@ -13,6 +13,7 @@ from agent_radio.fixture import (
     load_records,
     parse_fixture,
     parse_record,
+    rubric_is_fully_reported,
 )
 
 _ANY_COMMIT = lambda ref: True  # noqa: E731 - a stub, not production code
@@ -285,6 +286,48 @@ def test_a_record_is_stale_when_its_fixture_changed_underneath_it():
 
 def test_a_record_for_an_unknown_fixture_is_stale():
     assert is_stale(parse_record(_record()), {}) is True
+
+
+def test_duplicate_rubric_result_ids_are_refused():
+    """A scorer who repeats an id and never mentions another must not produce
+    a record that looks fully measured."""
+    results = [
+        {"id": "R1", "passed": True, "note": "n"},
+        {"id": "R1", "passed": True, "note": "n"},
+        {"id": "R3", "passed": True, "note": "n"},
+    ]
+    with pytest.raises(FixtureError):
+        parse_record(_record(rubric_results=results))
+
+
+def test_a_record_reporting_a_strict_subset_is_not_fully_reported():
+    fixture = parse_fixture(_definition(), sha256="def", commit_exists=_ANY_COMMIT)
+    results = [{"id": "R1", "passed": True, "note": "n"}]
+
+    record = parse_record(_record(rubric_results=results))
+
+    assert rubric_is_fully_reported(record, fixture) is False
+
+
+def test_a_record_with_an_unknown_rubric_id_is_not_fully_reported():
+    fixture = parse_fixture(_definition(), sha256="def", commit_exists=_ANY_COMMIT)
+    results = [
+        {"id": "R1", "passed": True, "note": "n"},
+        {"id": "R2", "passed": True, "note": "n"},
+        {"id": "R99", "passed": True, "note": "n"},
+    ]
+
+    record = parse_record(_record(rubric_results=results))
+
+    assert rubric_is_fully_reported(record, fixture) is False
+
+
+def test_a_record_matching_the_rubric_exactly_is_fully_reported():
+    fixture = parse_fixture(_definition(), sha256="def", commit_exists=_ANY_COMMIT)
+
+    record = parse_record(_record())
+
+    assert rubric_is_fully_reported(record, fixture) is True
 
 
 def test_loading_records_from_a_directory(tmp_path: Path):
