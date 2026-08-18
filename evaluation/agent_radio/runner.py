@@ -504,8 +504,45 @@ def export_source(repo_root: Path, exports_root: Path, ref: str) -> tuple[Path, 
     archive = _git_bytes(repo_root, "archive", "--format=tar", commit)
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(destination, filter="data")
+    _remove_evaluation_material(destination)
     marker.write_text(f"{commit}\n", encoding="utf-8")
     return destination, commit
+
+
+def _remove_evaluation_material(export: Path) -> None:
+    """Take this evaluation's own design material out of what a run may read.
+
+    It lives in the repository the fixtures ask questions about. One plan
+    document states that the impact fixture's items "should force naming
+    REPAIR_STAGE, the grouping requirement in team_provider_recovery.py, and the
+    completeness tests" -- three of that fixture's five rubric items, in the
+    tree the model is reading. The first sweep's answer cited it by path and
+    line, so this is not hypothetical.
+
+    Removed after extraction rather than filtered during it: `git archive` does
+    not honour exclude pathspecs, and a filter that silently matched nothing
+    would be indistinguishable from one that worked.
+
+    Only material about the evaluation goes. Unrelated design documents stay --
+    they are part of the codebase the questions are about, and dropping them
+    would change the subject rather than close a leak.
+    """
+    removed = 0
+    evaluation = export / "evaluation"
+    if evaluation.is_dir():
+        shutil.rmtree(evaluation)
+        removed += 1
+    for path in export.glob("docs/**/*agent-radio*"):
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        removed += 1
+    if not removed:
+        # Not an error: a commit predating the evaluation has nothing to leak.
+        # Said out loud so that a future rename cannot turn this into a silent
+        # no-op that reads like a clean export.
+        print(f"note: no evaluation material found in {export.name}")
 
 
 def _git_output(repo_root: Path, *args: str) -> str:

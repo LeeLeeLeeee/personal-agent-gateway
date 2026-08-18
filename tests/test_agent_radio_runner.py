@@ -681,6 +681,45 @@ def test_the_exported_source_is_the_commit_and_nothing_else(tmp_path: Path):
     assert commit == _git(repo, "rev-parse", "HEAD")
 
 
+def test_the_export_omits_the_evaluations_own_material(tmp_path: Path):
+    """Otherwise the answer key ships with the question.
+
+    This evaluation's design documents live in the repository the fixtures
+    read. One of them says, in as many words, that the impact fixture's items
+    "should force naming REPAIR_STAGE, the grouping requirement in
+    team_provider_recovery.py, and the completeness tests" -- which is three of
+    that fixture's five rubric items. The first sweep's answer cited that file
+    by path and line. An answer derived from the rubric is indistinguishable
+    from one derived from the code, and the rubric exists precisely to tell
+    those apart.
+    """
+    repo = _initialised_repo(tmp_path)
+    plans = repo / "docs" / "superpowers" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "2026-08-14-agent-radio-stage-0-evaluation-tooling.md").write_text(
+        "items should force naming REPAIR_STAGE", encoding="utf-8"
+    )
+    (plans / "2026-08-11-team-run-structured-output-resilience.md").write_text(
+        "an ordinary design document", encoding="utf-8"
+    )
+    (repo / "evaluation").mkdir()
+    (repo / "evaluation" / "rubrics.md").write_text("the answers", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "docs and evaluation")
+
+    source, _ = export_source(repo, tmp_path / "exports", "HEAD")
+
+    assert not (source / "evaluation").exists()
+    assert not (
+        plans_out := source / "docs" / "superpowers" / "plans"
+    ).joinpath("2026-08-14-agent-radio-stage-0-evaluation-tooling.md").exists()
+    # Unrelated design documents stay: they are part of the codebase a real
+    # question is asked about, and removing them would change the subject.
+    assert plans_out.joinpath(
+        "2026-08-11-team-run-structured-output-resilience.md"
+    ).exists()
+
+
 def test_exporting_the_same_commit_twice_reuses_the_export(tmp_path: Path):
     """Otherwise the second run of a sweep dies on its predecessor's directory."""
     repo = _initialised_repo(tmp_path)
