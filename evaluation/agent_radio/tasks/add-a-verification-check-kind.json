@@ -1,0 +1,36 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "add-a-verification-check-kind",
+  "type": "bounded_implementation",
+  "title": "새 검증 검사 종류 file_not_contains 를 엔드투엔드로 추가한다",
+  "goal": "team_verification_checks.py 에 새 검증 검사 종류 file_not_contains 를 엔드투엔드로 추가하라: CHECK_TYPES 와 parse_verification_check 가 이를 file_contains 와 같은 필드(type, path, value)로 파싱하게 하고, run_verification_check 에 value 가 파일 내용에 없으면 통과, 있으면 실패로 판정하는 분기를 추가하라. value 가 파일에 존재해 실패하는 경우를 검증하는 테스트를 최소 하나 작성하라. 기존 네 가지 검사 종류(file_nonempty, file_contains, file_matches, json_parses)의 동작은 바꾸지 마라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "bounded_write",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "파서가 새 종류를 인식한다",
+      "check": "CHECK_TYPES 튜플에 file_not_contains 가 추가되어 있고, parse_verification_check 가 이를 file_contains 와 동일하게 type · path · value 세 필드로 파싱함을 코드에서 확인한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "실행기가 새 종류를 처리하며 판정 방향이 file_contains 의 반대다",
+      "check": "run_verification_check 에 file_not_contains 분기가 추가되어 있고, value 가 파일 내용에 없을 때 passed=True, 있을 때 passed=False 를 반환함을 코드에서 확인한다"
+    },
+    {
+      "id": "R3",
+      "criterion": "실패 케이스를 검증하는 테스트가 실제로 존재한다",
+      "check": "제출물 안에 file_not_contains 가 value 를 포함하는 파일에 대해 passed=False 를 반환함을 단언하는 새 테스트 코드가 포함되어 있다(실행 로그가 아니라 테스트 코드 자체에서 그 단언을 확인한다)"
+    },
+    {
+      "id": "R4",
+      "criterion": "기존 네 검사 종류의 동작이 바뀌지 않았다",
+      "check": "file_nonempty, file_contains, file_matches, json_parses 를 구현하는 기존 분기의 비교 로직과 반환값이 그대로이며, diff에 이 네 분기에 대한 수정이 없음을 확인한다"
+    },
+    {
+      "id": "R5",
+      "criterion": "새 검사 종류가 기존 경로 안전 검증을 재사용한다",
+      "check": "file_not_contains 가 safe_workspace_file 과 _safe_relative 를 그대로 통해 경로를 검증하며, 별도의 새 경로 검증 로직을 추가하지 않았음을 코드에서 확인한다"
+    }
+  ]
+}

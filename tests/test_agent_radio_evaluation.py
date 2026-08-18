@@ -220,6 +220,21 @@ def test_a_goal_naming_a_hyphenated_script_is_allowed():
     assert "git-push" in fixture.goal
 
 
+def test_every_shipped_definition_is_usable():
+    """The rules have only met invented definitions until here. This is the
+    first time they meet real ones, including the git check against this
+    repository's actual history."""
+    directory = Path(__file__).resolve().parents[1] / "evaluation/agent_radio/tasks"
+
+    fixtures = load_fixtures(directory)
+
+    assert {fixture.type for fixture in fixtures.values()} == {
+        "understanding",
+        "architecture_impact",
+        "bounded_implementation",
+    }
+
+
 def _record(**overrides) -> dict:
     payload = {
         "schema": "gateway.eval-record/v1",

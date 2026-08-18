@@ -1,0 +1,26 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "understand-acceptance-gate",
+  "type": "understanding",
+  "title": "수용 게이트가 무엇을 실제로 검사하는지 설명한다",
+  "goal": "Team Run의 수용 게이트가 required_verifications를 어떻게 판정하는지, 그리고 어떤 검사 종류가 실제로 실행되는지 설명하라.",
+  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "execution_profile": "read_only",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "검사 종류를 이름으로 든다",
+      "check": "답변이 file_nonempty · file_contains · file_matches · json_parses 중 둘 이상을 이름으로 언급한다"
+    },
+    {
+      "id": "R2",
+      "criterion": "아무것도 컴파일하거나 실행하지 않는다고 말한다",
+      "check": "답변이 검사 종류가 모두 파일 읽기임을 명시한다. '테스트를 돌린다'거나 '빌드한다'는 서술이 있으면 실패"
+    },
+    {
+      "id": "R3",
+      "criterion": "게이트가 실행한 검사와 워커가 신고한 것을 구분한다",
+      "check": "답변이 verified 와 attested(또는 같은 뜻의 두 경로)를 구분해 설명한다"
+    }
+  ]
+}
