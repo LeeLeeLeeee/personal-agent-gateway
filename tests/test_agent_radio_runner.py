@@ -1,6 +1,8 @@
+import asyncio
 import json
 import subprocess
 import types
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -45,6 +47,8 @@ def _artifact(**overrides) -> dict:
         "fixture_sha256": "abc",
         "mode": "legacy",
         "execution_profile": "read_only",
+        "backend": "codex",
+        "model": "default",
         "started_at": "2026-08-14T01:00:00Z",
         "finished_at": "2026-08-14T01:06:20Z",
         "wall_ms": 380000,
@@ -60,6 +64,32 @@ def _artifact(**overrides) -> dict:
 
 def test_a_completed_clean_run_is_scoreable():
     assert parse_artifact(_artifact()).scoreable is True
+
+
+def test_a_run_that_lost_an_optional_task_is_still_scoreable():
+    """The product writes completed_with_failures when every *required* task
+    completed and an optional one did not. It is terminal, it carries a real
+    summary and no error, and with a real model a flaky optional task is an
+    ordinary event -- discarding it would quietly eat a share of every
+    measurement."""
+    artifact = parse_artifact(_artifact(run_status="completed_with_failures"))
+
+    assert artifact.scoreable is True
+
+
+def test_a_run_that_lost_an_optional_task_and_produced_nothing_is_not_scoreable():
+    """Terminal is not sufficient on its own: there still has to be an answer.
+    The product also reaches completed_with_failures with no summary, e.g.
+    when plan approval never completed."""
+    artifact = parse_artifact(
+        _artifact(
+            run_status="completed_with_failures",
+            summary=None,
+            error="collaboration_plan_approval_incomplete",
+        )
+    )
+
+    assert artifact.scoreable is False
 
 
 def test_a_failed_run_is_kept_but_not_scoreable():
@@ -122,6 +152,8 @@ def test_a_completed_run_with_a_blank_summary_is_not_scoreable():
         {"repository_unchanged": "yes"},
         {"run_id": ""},
         {"fixture_sha256": ""},
+        {"backend": ""},
+        {"model": ""},
     ],
 )
 def test_an_artefact_that_cannot_be_trusted_is_refused(overrides):
@@ -231,7 +263,7 @@ def test_a_modified_tracked_file_counts_as_changed(tmp_path: Path):
     assert repository_is_unchanged(repo) is False
 
 
-def test_two_different_dirty_states_read_as_different_statuses(tmp_path: Path):
+def test_a_file_added_to_an_already_dirty_tree_changes_the_status(tmp_path: Path):
     """The whole point of comparing status text rather than a dirty/clean
     boolean: a file added to an already-dirty tree has to be visible."""
     repo = _initialised_repo(tmp_path)
@@ -241,6 +273,67 @@ def test_two_different_dirty_states_read_as_different_statuses(tmp_path: Path):
 
     assert repository_status(repo) != before
     assert repository_is_unchanged(repo) is False
+
+
+def test_a_file_added_inside_an_already_untracked_directory_changes_the_status(
+    tmp_path: Path,
+):
+    """Default --porcelain collapses an untracked directory to one `?? dir/`
+    line, so this pair of reads was byte-identical until -uall was added --
+    and creating a file is the escape this check exists to catch."""
+    repo = _initialised_repo(tmp_path)
+    (repo / "notes").mkdir()
+    (repo / "notes" / "first.txt").write_text("already here", encoding="utf-8")
+    before = repository_status(repo)
+    (repo / "notes" / "second.txt").write_text("dropped by a run", encoding="utf-8")
+
+    assert repository_status(repo) != before
+
+
+def test_a_file_rewritten_inside_an_untracked_directory_changes_the_status(
+    tmp_path: Path,
+):
+    """This is the case that pins -uall specifically. Adding a file to an
+    untracked directory also moves that directory's mtime, so the fingerprint
+    alone would have caught it; rewriting a file inside one does not, so
+    without -uall both reads are `?? notes/` with the same stat and the change
+    is invisible."""
+    repo = _initialised_repo(tmp_path)
+    (repo / "notes").mkdir()
+    (repo / "notes" / "first.txt").write_text("first draft", encoding="utf-8")
+    before = repository_status(repo)
+    (repo / "notes" / "first.txt").write_text(
+        "a much longer second draft", encoding="utf-8"
+    )
+
+    assert repository_status(repo) != before
+
+
+def test_an_untracked_file_rewritten_in_place_changes_the_status(tmp_path: Path):
+    """`?? path` is identical before and after a rewrite, so the size and
+    mtime appended to each untracked line are what make it visible."""
+    repo = _initialised_repo(tmp_path)
+    scratch = repo / "wip.txt"
+    scratch.write_text("first draft", encoding="utf-8")
+    before = repository_status(repo)
+    scratch.write_text("a much longer second draft", encoding="utf-8")
+
+    assert repository_status(repo) != before
+
+
+@pytest.mark.xfail(
+    reason="git status shows ' M path' for a tracked file whatever its "
+    "content, and nothing here hashes it. Documented, not fixed: closing it "
+    "means hashing every modified tracked file on both reads.",
+    strict=True,
+)
+def test_a_tracked_file_modified_twice_is_not_visible(tmp_path: Path):
+    repo = _initialised_repo(tmp_path)
+    (repo / "a.txt").write_text("someone's uncommitted work", encoding="utf-8")
+    before = repository_status(repo)
+    (repo / "a.txt").write_text("rewritten by a run", encoding="utf-8")
+
+    assert repository_status(repo) != before
 
 
 def test_a_path_that_is_not_a_repository_is_an_error(tmp_path: Path):
@@ -325,6 +418,24 @@ def _worker_outcome() -> str:
     )
 
 
+def _worker_failure() -> str:
+    return json.dumps(
+        {
+            "status": "failed",
+            "summary": "교차 확인은 하지 못했다",
+            "reason_code": "tool_unavailable",
+            "deliverables": [],
+            "verifications": [
+                {
+                    "name": "worker-result",
+                    "status": "failed",
+                    "evidence": "the cross-check tool was not available",
+                }
+            ],
+        }
+    )
+
+
 class _StubModel:
     """Stands in for the provider, and for nothing else.
 
@@ -333,22 +444,45 @@ class _StubModel:
     model call was replaced.
     """
 
-    def __init__(self, agent, teams, repo, *, answer, fail_with, dirty_repo):
+    def __init__(
+        self,
+        agent,
+        teams,
+        repo,
+        *,
+        answer,
+        fail_with,
+        writes,
+        hangs,
+        optional_task_fails,
+    ):
         self._agent = agent
         self._teams = teams
         self._repo = repo
         self._answer = answer
         self._fail_with = fail_with
-        self._dirty_repo = dirty_repo
+        self._writes = writes
+        self._hangs = hangs
+        self._optional_task_fails = optional_task_fails
         self._calls = 0
 
     async def complete_operation(self, messages, *, consumer_run_id):
-        if self._dirty_repo:
-            (self._repo / "scratch.txt").write_text("escaped", encoding="utf-8")
+        if self._writes:
+            escaped = self._repo / self._writes
+            escaped.parent.mkdir(parents=True, exist_ok=True)
+            escaped.write_text("escaped", encoding="utf-8")
+        if self._hangs:
+            await asyncio.Event().wait()
         if self._fail_with:
             raise RuntimeError(self._fail_with)
         self._calls += 1
         if self._agent.role != "leader":
+            if self._optional_task_fails and self._calls == 2:
+                # A declared failure, not a raised one. A raw exception leaves
+                # the model operation open and the whole run fails on the next
+                # stage -- which is the product's behaviour, not the case this
+                # test is about.
+                return ModelResponse(content=_worker_failure(), tool_calls=[])
             return ModelResponse(content=_worker_outcome(), tool_calls=[])
         if self._calls == 1:
             return ModelResponse(content=self._plan(), tool_calls=[])
@@ -365,22 +499,36 @@ class _StubModel:
             for agent in self._teams.list_agents(self._agent.team_run_id)
             if agent.role == "member"
         )
-        return json.dumps(
-            [
+        plan = [
+            {
+                "title": "Read the gate",
+                "description": "Read the acceptance gate and report on it.",
+                "owner_agent_id": worker.id,
+                "required": True,
+                "plan_task_id": "read",
+                "depends_on_task_ids": [],
+                "acceptance": {
+                    "required_outputs": [],
+                    "required_verifications": ["worker-result"],
+                },
+            }
+        ]
+        if self._optional_task_fails:
+            plan.append(
                 {
-                    "title": "Read the gate",
-                    "description": "Read the acceptance gate and report on it.",
+                    "title": "Nice to have",
+                    "description": "An optional cross-check.",
                     "owner_agent_id": worker.id,
-                    "required": True,
-                    "plan_task_id": "read",
+                    "required": False,
+                    "plan_task_id": "cross-check",
                     "depends_on_task_ids": [],
                     "acceptance": {
                         "required_outputs": [],
                         "required_verifications": ["worker-result"],
                     },
                 }
-            ]
-        )
+            )
+        return json.dumps(plan)
 
 
 def _stub_harness(
@@ -388,7 +536,9 @@ def _stub_harness(
     *,
     answer: str = "…",
     fail_with: str | None = None,
-    dirty_repo: bool = False,
+    writes: str | None = None,
+    hangs: bool = False,
+    optional_task_fails: bool = False,
 ) -> tuple[Harness, Path]:
     repo = _initialised_repo(tmp_path)
     db = Database(tmp_path / "app.db")
@@ -421,7 +571,9 @@ def _stub_harness(
                 repo,
                 answer=answer,
                 fail_with=fail_with,
-                dirty_repo=dirty_repo,
+                writes=writes,
+                hangs=hangs,
+                optional_task_fails=optional_task_fails,
             )
         return models[agent.id]
 
@@ -476,7 +628,7 @@ async def test_a_failed_run_still_produces_an_artefact(tmp_path: Path):
 async def test_a_read_only_fixture_that_dirtied_the_repository_is_not_scoreable(
     tmp_path: Path,
 ):
-    harness, repo = _stub_harness(tmp_path, answer="…", dirty_repo=True)
+    harness, repo = _stub_harness(tmp_path, answer="…", writes="scratch.txt")
     fixture = _understanding_fixture()
 
     artifact = await run_fixture(harness, fixture, mode="legacy", repo_root=repo)
@@ -510,7 +662,7 @@ async def test_a_run_that_adds_to_an_already_dirty_tree_is_not_scoreable(
     """The comparison is on the status text, not on a dirty/clean boolean:
     two different dirty states are not the same tree, and collapsing them
     would hide exactly the escape this check exists to catch."""
-    harness, repo = _stub_harness(tmp_path, answer="…", dirty_repo=True)
+    harness, repo = _stub_harness(tmp_path, answer="…", writes="scratch.txt")
     (repo / "wip.txt").write_text("someone's uncommitted work", encoding="utf-8")
 
     artifact = await run_fixture(
@@ -519,6 +671,165 @@ async def test_a_run_that_adds_to_an_already_dirty_tree_is_not_scoreable(
 
     assert artifact.repository_unchanged is False
     assert artifact.scoreable is False
+
+
+async def test_a_run_that_wrote_inside_an_already_untracked_directory_is_caught(
+    tmp_path: Path,
+):
+    """The hole -uall closes, driven end to end: default --porcelain reports
+    `?? notes/` before and after, so a run that wrote a real file was recorded
+    as having changed nothing and was graded as if isolation had held."""
+    harness, repo = _stub_harness(tmp_path, answer="…", writes="notes/second.txt")
+    (repo / "notes").mkdir()
+    (repo / "notes" / "first.txt").write_text("already here", encoding="utf-8")
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert (repo / "notes" / "second.txt").exists()
+    assert artifact.repository_unchanged is False
+    assert artifact.scoreable is False
+
+
+async def test_no_error_is_invented_for_a_status_that_carries_an_answer(
+    tmp_path: Path, monkeypatch
+):
+    """completed_with_failures is terminal, carries a real summary and has no
+    error of its own: the product writes it when every required task completed
+    and an optional one did not. Fabricating an error for it would make it
+    unscoreable, and with a real model a flaky optional task is ordinary.
+
+    The status is substituted on the way back rather than provoked, because
+    the product's own route to it in a cycle run needs a scripted
+    acceptance-review dance that would test the script, not the runner. The
+    run underneath is real and so is the TeamRun this replaces a field on.
+    """
+    harness, repo = _stub_harness(tmp_path, answer="게이트는 파일만 읽는다")
+    real_get = harness.teams.get_team_run
+
+    def as_completed_with_failures(run_id):
+        return replace(real_get(run_id), status="completed_with_failures")
+
+    monkeypatch.setattr(harness.teams, "get_team_run", as_completed_with_failures)
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert artifact.run_status == "completed_with_failures"
+    assert artifact.summary == "게이트는 파일만 읽는다"
+    assert artifact.error is None
+    assert artifact.scoreable is True
+
+
+async def test_a_worker_declared_failure_parks_the_run_and_is_recorded(
+    tmp_path: Path,
+):
+    """Worth knowing before any money is spent: a worker that *declares* a
+    failure does not simply fail its task -- the product opens a user decision
+    and parks the run at waiting_for_user. The runner records that as a
+    non-scoreable result instead of hanging on it or raising."""
+    harness, repo = _stub_harness(
+        tmp_path,
+        answer="게이트는 파일만 읽는다",
+        optional_task_fails=True,
+    )
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert artifact.run_status == "waiting_for_user"
+    assert artifact.error is not None
+    assert artifact.scoreable is False
+
+
+async def test_a_hung_run_becomes_a_recorded_failure(tmp_path: Path):
+    """Neither TeamRuntime.start nor a provider call has a wall-clock bound of
+    its own, so without one here a single hang stalls the sweep and produces
+    no artefact at all."""
+    harness, repo = _stub_harness(tmp_path, hangs=True)
+
+    artifact = await run_fixture(
+        harness,
+        _understanding_fixture(),
+        mode="legacy",
+        repo_root=repo,
+        timeout_seconds=0.2,
+    )
+
+    assert artifact.run_status != "completed"
+    assert artifact.error is not None and "wall-clock" in artifact.error
+    assert artifact.scoreable is False
+
+
+async def test_an_unverifiable_repository_still_produces_an_artefact(
+    tmp_path: Path, monkeypatch
+):
+    """The provider call is already paid for by the time isolation is read.
+    git going missing, or the repository moving, must not destroy the run --
+    a non-scoreable artefact beats no artefact."""
+    harness, repo = _stub_harness(tmp_path, answer="…")
+    real = repository_status
+    calls = []
+
+    def fail_after_the_run(path: Path) -> str:
+        calls.append(path)
+        if len(calls) > 1:
+            raise RunnerError("git is not available on PATH")
+        return real(path)
+
+    monkeypatch.setattr("agent_radio.runner.repository_status", fail_after_the_run)
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert artifact.run_status == "completed"
+    assert artifact.summary == "…"
+    # Unverifiable is not verified-clean, and only one of the two is safe.
+    assert artifact.repository_unchanged is False
+    assert "could not verify isolation" in artifact.error
+    assert artifact.scoreable is False
+
+
+async def test_the_artefact_names_what_produced_the_answer(tmp_path: Path):
+    """Once the money is spent, an artefact that cannot say which provider and
+    model produced its answer is not comparable with anything."""
+    harness, repo = _stub_harness(tmp_path, answer="…")
+
+    artifact = await run_fixture(
+        harness,
+        _understanding_fixture(),
+        mode="legacy",
+        repo_root=repo,
+        backend="claude",
+        model="a-named-model",
+    )
+
+    assert (artifact.backend, artifact.model) == ("claude", "a-named-model")
+    # And it is what the run actually used, not a label attached afterwards.
+    assert all(
+        (persona.default_backend, persona.default_model)
+        == ("claude", "a-named-model")
+        for persona in harness.personas.list_personas()
+    )
+
+
+async def test_a_relative_repo_root_is_resolved(tmp_path: Path, monkeypatch):
+    """A relative path passes the repository-root check and then fails deep
+    inside the space policy, which requires an absolute directory."""
+    harness, repo = _stub_harness(tmp_path, answer="…")
+    monkeypatch.chdir(tmp_path)
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=Path("repo")
+    )
+
+    assert artifact.run_status == "completed"
+    policy = harness.policies.resolve(team_id=_only_team_id(harness))
+    assert policy.policy.read_path == str(repo.resolve())
 
 
 async def test_the_run_is_isolated_from_the_repository(tmp_path: Path):

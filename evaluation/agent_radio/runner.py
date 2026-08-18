@@ -6,16 +6,30 @@ TeamRuntime has more than ten collaborators and a second copy of that
 assembly would drift from the real one without anyone noticing.
 """
 
+import asyncio
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agent_radio.artifact import IMPLEMENTED_MODES, RunArtifact
+from agent_radio.artifact import (
+    ANSWERING_RUN_STATUSES,
+    IMPLEMENTED_MODES,
+    RunArtifact,
+)
 from agent_radio.fixture import Fixture
 from personal_agent_gateway.app import create_app
 from personal_agent_gateway.config import AppConfig
+
+# Generous on purpose. This is not a performance budget -- wall_ms is the
+# measurement -- it is the bound that stops one hung run from stalling a whole
+# sweep with nothing to show for it.
+DEFAULT_TIMEOUT_SECONDS = 1800.0
+# Named here rather than inherited from PersonaService's defaults so that the
+# artefact can say what produced its answer. See run_fixture.
+DEFAULT_BACKEND = "codex"
+DEFAULT_MODEL = "default"
 
 
 class RunnerError(RuntimeError):
@@ -30,7 +44,7 @@ class Harness:
     policies: object
     directory: object
     rules: object
-    personas: object = None
+    personas: object
 
 
 def build_harness(config: AppConfig) -> Harness:
@@ -67,13 +81,33 @@ def build_harness(config: AppConfig) -> Harness:
 
 
 def repository_status(repo_root: Path) -> str:
-    """What git says the tracked working tree currently looks like.
+    """git's status text for the working tree, with untracked files fingerprinted.
 
-    Returned as git's own porcelain text rather than a boolean, because the
-    interesting question a run asks is not "is this tree clean" but "is this
-    tree the same tree it was before the run". Two different dirty states are
-    not the same tree, and collapsing them to "dirty then, dirty now" would
-    hide exactly the escape this check exists to catch.
+    Returned as text rather than a boolean because the question a run asks is
+    not "is this tree clean" but "does git describe this tree the same way it
+    did before the run". Two different dirty states are not the same tree, and
+    collapsing them to "dirty then, dirty now" would hide exactly the escape
+    this check exists to catch.
+
+    Be precise about what that text can and cannot see, because
+    `repository_unchanged=True` means only "this string is identical", which is
+    weaker than "the run wrote nothing":
+
+    - `-uall` is not optional. Default `--porcelain` collapses an untracked
+      *directory* to a single `?? dir/` line, so a new file created inside an
+      already-untracked directory produces byte-identical output before and
+      after -- and creating a file is the escape signature this exists to
+      catch. `-uall` names every untracked path individually. It costs nothing
+      on this repository because every large directory in it is gitignored.
+    - Each `?? ` line carries the file's size and mtime, so an untracked file
+      that is *rewritten* rather than created also shows up. That is bounded by
+      what git already enumerated, not a tree walk of our own.
+    - It still cannot see a *tracked* file that was already modified before the
+      run and modified again during it: both reads say ` M path` and nothing
+      hashes the content. Nor does it see a file whose path git quotes (paths
+      with characters `core.quotePath` escapes), which is left un-fingerprinted
+      rather than guessed at.
+    - It sees nothing gitignored at all; that is deliberate, see below.
 
     This reads the tracked working tree only. Anything gitignored is
     invisible to it by design, not by oversight: `data/app.sqlite` is
@@ -116,7 +150,7 @@ def repository_status(repo_root: Path) -> str:
 
     try:
         result = subprocess.run(
-            ["git", "-C", str(repo_root), "status", "--porcelain"],
+            ["git", "-C", str(repo_root), "status", "--porcelain", "-uall"],
             capture_output=True,
             text=True,
             check=False,
@@ -127,7 +161,30 @@ def repository_status(repo_root: Path) -> str:
         raise RunnerError(
             f"cannot read git status for {repo_root}: {result.stderr.strip()}"
         )
-    return result.stdout
+    return _fingerprint_untracked(repo_root, result.stdout)
+
+
+def _fingerprint_untracked(repo_root: Path, status_text: str) -> str:
+    """Append size and mtime to each untracked line.
+
+    Only `?? ` lines: a tracked file's modification already shows in its status
+    code, and stat()ing every path in a large repository would be the tree walk
+    -uall lets us avoid. A path we cannot stat -- git quoted it, or it vanished
+    between the two calls -- is left exactly as git printed it, because a
+    guessed fingerprint would be worse than an honest gap.
+    """
+    lines = []
+    for line in status_text.splitlines():
+        fingerprint = ""
+        if line.startswith("?? "):
+            try:
+                stat = (repo_root / line[3:]).stat()
+            except OSError:
+                fingerprint = ""
+            else:
+                fingerprint = f" size={stat.st_size} mtime_ns={stat.st_mtime_ns}"
+        lines.append(line + fingerprint)
+    return "\n".join(lines)
 
 
 def repository_is_unchanged(repo_root: Path) -> bool:
@@ -151,6 +208,9 @@ async def run_fixture(
     mode: str,
     repo_root: Path,
     now: Callable[[], datetime] = utc_now,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    backend: str = DEFAULT_BACKEND,
+    model: str = DEFAULT_MODEL,
 ) -> RunArtifact:
     """Run one fixture once and describe what happened.
 
@@ -158,14 +218,29 @@ async def run_fixture(
     how it gets counted. Dropping failures would inflate every success rate
     computed later, so a run that failed comes back as an artefact carrying its
     status and error, not as an exception. It raises only when the run could
-    not be *set up*, because there is then nothing to describe.
+    not be *set up*, because there is then nothing to describe. Once the
+    provider call has been paid for, nothing after it is allowed to destroy the
+    artefact: a hang, a vanished git, a moved repository all become a recorded
+    non-scoreable result.
 
     `now` is the caller's clock, called exactly twice -- once before the run
     and once after -- so both timestamps and the wall time derived from them
     come from the same source and a test can pin all three.
+
+    `backend` and `model` are named explicitly rather than left to
+    PersonaService's defaults, and land on the artefact. An artefact that
+    cannot say what produced its answer is not comparable with anything, and
+    that is not a thing to discover after the invoice. What is recorded is what
+    was *requested*: a model alias like "default" is resolved upstream, and the
+    runner never sees what it resolved to.
     """
     if mode not in IMPLEMENTED_MODES:
         raise RunnerError(f"mode is not implemented: {mode!r}")
+    # Resolved once, here: a relative path passes the repository-root check
+    # (git resolves it) and then fails deep inside the space policy, which
+    # requires an absolute directory. Normalizing at the entrance means one
+    # failure mode instead of two.
+    repo_root = repo_root.resolve()
     # Read before anything is created and before any provider call is spent.
     # Two jobs: it refuses a repo_root that is not a repository root -- the one
     # condition that would make the isolation check silently answer about a
@@ -184,6 +259,8 @@ async def run_fixture(
             "Plans the evaluation task and reports the answer.",
             [],
             [],
+            default_backend=backend,
+            default_model=model,
         )
         member = harness.personas.create_persona(
             f"Eval Worker ({fixture.id})",
@@ -191,6 +268,8 @@ async def run_fixture(
             "Carries out the evaluation task.",
             [],
             [],
+            default_backend=backend,
+            default_model=model,
         )
         team = harness.directory.create_team(
             f"Eval {fixture.id}",
@@ -231,14 +310,44 @@ async def run_fixture(
         # lifespan, so the cycle dispatcher and cycle loop are wired but not
         # running: a queued cycle request would sit queued forever and nothing
         # would raise.
-        await harness.runtime.start(run.id, cycle.id)
+        #
+        # Bounded, because neither TeamRuntime.start nor a provider call has a
+        # wall-clock limit of its own: without this a single hung run stalls a
+        # whole sweep and produces no artefact at all. Cancellation reaches
+        # TeamRuntime, which settles the run as canceled, so the timeout is
+        # recorded rather than merely escaped.
+        await asyncio.wait_for(
+            harness.runtime.start(run.id, cycle.id),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError:
+        raised = f"run exceeded its {timeout_seconds:g}s wall-clock bound"
     except Exception as exc:  # noqa: BLE001 - a failed run is a result
         raised = str(exc) or type(exc).__name__
     finished = now()
 
-    final = harness.teams.get_team_run(run.id)
-    error = final.error_message or raised
-    if final.status != "completed" and not error:
+    # Everything from here is bookkeeping over a run that has already been paid
+    # for, so nothing in it may raise. A lost artefact costs the provider call
+    # twice: once to make it, once to make it again.
+    try:
+        final = harness.teams.get_team_run(run.id)
+    except Exception as exc:  # noqa: BLE001
+        final = run
+        raised = _joined(raised, f"could not read the finished run back: {exc}")
+    try:
+        repository_unchanged = repository_status(repo_root) == status_before
+    except RunnerError as exc:
+        # Unverifiable is not the same as verified-clean, and only one of the
+        # two is safe to assume.
+        repository_unchanged = False
+        raised = _joined(raised, f"could not verify isolation: {exc}")
+
+    error = _joined(final.error_message, raised)
+    if not error and final.status not in ANSWERING_RUN_STATUSES:
+        # Only for a status that carries no answer. `completed_with_failures`
+        # is a real answer with a real summary and no error of its own --
+        # inventing one for it would discard a gradeable run because some
+        # optional task failed.
         error = f"run ended as {final.status}"
     return RunArtifact(
         run_id=run.id,
@@ -246,15 +355,23 @@ async def run_fixture(
         fixture_sha256=fixture.sha256,
         mode=mode,
         execution_profile=fixture.execution_profile,
+        backend=backend,
+        model=model,
         started_at=_isoformat(started),
         finished_at=_isoformat(finished),
         wall_ms=max(int((finished - started).total_seconds() * 1000), 0),
         run_status=final.status,
         summary=final.summary,
         workspace_path=final.working_root or final.workspace_root,
-        repository_unchanged=repository_status(repo_root) == status_before,
+        repository_unchanged=repository_unchanged,
         error=error,
     )
+
+
+def _joined(first: str | None, second: str | None) -> str | None:
+    """Both reasons or the one there is. A run can fail and then also refuse to
+    be verified, and the second must not overwrite the first."""
+    return "; ".join(part for part in (first, second) if part) or None
 
 
 def _isoformat(value: datetime) -> str:

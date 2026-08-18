@@ -21,6 +21,13 @@ from agent_radio.fixture import (
 
 ARTIFACT_SCHEMA = "gateway.eval-run/v1"
 IMPLEMENTED_MODES = frozenset({"legacy"})
+# The product's terminal statuses that mean "the Team produced an answer".
+# `completed_with_failures` is one of them: the product writes it when every
+# *required* task completed and some *optional* task did not, and it carries a
+# real summary and no error. Excluding it would throw away a gradeable answer
+# because one optional task was flaky -- with a real model that is an ordinary
+# event, so it would quietly eat a share of every measurement.
+ANSWERING_RUN_STATUSES = frozenset({"completed", "completed_with_failures"})
 
 
 @dataclass(frozen=True)
@@ -30,6 +37,8 @@ class RunArtifact:
     fixture_sha256: str
     mode: str
     execution_profile: str
+    backend: str
+    model: str
     started_at: str
     finished_at: str
     wall_ms: int
@@ -43,15 +52,15 @@ class RunArtifact:
     def scoreable(self) -> bool:
         """Whether a human should grade this at all.
 
-        Three ways an execution produces nothing gradeable: it failed, it
-        produced no answer -- a summary that is empty or only whitespace
-        counts as no answer -- or it changed the repository. The last one
-        applies whatever the execution profile: bounded_write is licensed to
-        write to its own isolated workspace, never to the repository, so a
-        bounded_write run that mutated the repository broke isolation exactly
-        as badly as a read_only run would.
+        Three ways an execution produces nothing gradeable: it did not reach a
+        status that carries an answer, it produced no answer -- a summary that
+        is empty or only whitespace counts as no answer -- or it changed the
+        repository. The last one applies whatever the execution profile:
+        bounded_write is licensed to write to its own isolated workspace, never
+        to the repository, so a bounded_write run that mutated the repository
+        broke isolation exactly as badly as a read_only run would.
         """
-        if self.run_status != "completed":
+        if self.run_status not in ANSWERING_RUN_STATUSES:
             return False
         if not self.summary or not self.summary.strip():
             return False
@@ -91,6 +100,11 @@ def parse_artifact(payload: dict) -> RunArtifact:
         fixture_sha256=_required_text(payload, "fixture_sha256"),
         mode=mode,
         execution_profile=profile,
+        # Which provider and which model produced the answer. Required, not
+        # optional: once the measurement is paid for, an artefact that does not
+        # name what produced it cannot be compared with anything.
+        backend=_required_text(payload, "backend"),
+        model=_required_text(payload, "model"),
         started_at=_required_text(payload, "started_at"),
         finished_at=_required_text(payload, "finished_at"),
         wall_ms=wall_ms,
