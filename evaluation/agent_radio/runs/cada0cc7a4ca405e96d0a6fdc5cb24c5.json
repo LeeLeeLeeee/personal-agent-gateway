@@ -1,0 +1,18 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "cada0cc7a4ca405e96d0a6fdc5cb24c5",
+  "fixture_id": "understand-acceptance-gate",
+  "fixture_sha256": "00d718d48b0606762d3418234f649fac7174759597da6cdc55bdac1c5d2c858d",
+  "mode": "legacy",
+  "execution_profile": "read_only",
+  "backend": "codex",
+  "model": "default",
+  "started_at": "2026-08-18T02:26:04.333587Z",
+  "finished_at": "2026-08-18T02:26:04.490312Z",
+  "wall_ms": 156,
+  "run_status": "failed",
+  "summary": null,
+  "workspace_path": "C:\\Users\\Administrator\\playground\\personal-agent-gateway\\data\\eval\\workspace\\cada0cc7a4ca405e96d0a6fdc5cb24c5\\workspace",
+  "repository_unchanged": true,
+  "error": "codex: capabilities_unavailable"
+}
