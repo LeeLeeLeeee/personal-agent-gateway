@@ -112,7 +112,8 @@ LMG의 `/v1/usage`는 **계정 전체 스냅샷**이지 런별 토큰이 아니�
 
 - **모든 런이 provider preflight에서 실패한다.** 산출물: `run_status="failed"`, `error="codex: capabilities_unavailable"`, `wall_ms` 156~165. 연산 행은 `prepared`·시도 **0회** — 모델은 한 번도 호출되지 않았다.
 - **그 메시지는 원인을 잘못 지목한다.** LMG는 codex를 `available=True, ready=True, execution=True`로 보고하고, 실행기 자신의 앱에서 `registry.get("codex")`도 성공한다. `capabilities_unavailable`은 `team_provider_recovery._recovery_reason`이 스냅샷에 `readiness_error`가 없을 때 쓰는 **기본 문자열**이지 관측된 사실이 아니다.
-- **가장 유력한 지점**: preflight의 세션 로더. `fetch_sessions_strict(config)`가 예외 없이 `status=None`, 빈 데이터를 반환한다. 이건 제품/환경 통합 문제이고 하니스 결함이 아니므로, 여기서 진단을 멈추고 후속으로 남긴다.
+- **세션 로더는 원인이 아니다.** 한때 그렇게 적었으나 틀렸다. `fetch_sessions_strict`는 결과 객체가 아니라 **`list[dict]`를 반환**하며(`lmg_client.py:383-392`), 실패 시에는 조용히 빈 값을 주는 게 아니라 `LMGQueryError`를 던진다. `.status`/`.data`를 읽은 프로브가 리스트에서 없는 속성을 읽어 `None`과 빈 값을 출력한 것이고, 그 호출은 성공한 것이었다. 잘못된 진단을 지운다.
+- **따라서 원인은 아직 모른다.** 확실한 것만 적는다: LMG는 codex를 `available/ready/execution` 모두 정상으로 보고하고, 실행기 자신의 앱에서 `registry.get("codex")`도 성공하며, 연산 행은 `prepared`·시도 0회이고, 에러 문자열은 `_recovery_reason`이 스냅샷에 `readiness_error`가 없을 때 쓰는 기본값이다. 다음 조사는 **그 스냅샷이 어디서 만들어져 무엇을 담고 있는지**(연산의 `provider_snapshot_json`, 그리고 `team_provider_recovery`의 분류 코드)에서 시작해야 한다.
 
 ### 하니스가 지킨 약속 (실제 실행으로 확인)
 
@@ -123,6 +124,6 @@ LMG의 `/v1/usage`는 **계정 전체 스냅샷**이지 런별 토큰이 아니�
 
 ### 후속
 
-- **`fetch_sessions_strict`가 빈 결과를 내는 이유**를 밝히기 전에는 실측을 진행할 수 없다. 이것이 baseline으로 가는 유일한 차단 요인이다.
+- **provider preflight가 왜 막는지** 밝히기 전에는 실측을 진행할 수 없다. 이것이 baseline으로 가는 유일한 차단 요인이다. 위에 적은 네 가지 확실한 사실에서 출발하되, 세션 로더는 이미 배제됐다.
 - **`capabilities_unavailable`이 원인을 잘못 지목한다.** 스냅샷에 사유가 없을 때 실제로 무엇이 막았는지를 담도록 고쳐야 한다 — 지금은 진단이 코드를 읽어야만 가능하다.
 - `cost`는 여전히 비어 있다(LMG는 계정 단위 usage만 보고).
