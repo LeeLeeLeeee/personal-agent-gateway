@@ -326,6 +326,19 @@ async def run_fixture(
             lifecycle_mode="continuous",
             execution_policy="triggered",
         )
+        # A task that asks for an edit needs something it is allowed to edit.
+        # The staged snapshot is not it: acceptance verifies it byte for byte
+        # and refuses the work if it moved, so an agent that edits the source in
+        # place is rejected with input_snapshot_modified however good its patch
+        # was. The copy goes in the working root because that is the one place
+        # the space policy tells the agent it may write. read_only fixtures get
+        # nothing -- a writable copy of the repository in the workspace is an
+        # invitation to write one.
+        if fixture.execution_profile == "bounded_write":
+            shutil.copytree(
+                source,
+                Path(run.working_root or run.workspace_root) / "source",
+            )
         cycle = harness.teams.create_cycle(run.id, "manual", f"eval-{fixture.id}")
         # The rest of the dispatcher's prologue. TeamCycleDispatcher.run_one
         # creates the cycle and then freezes the provider snapshot onto it,

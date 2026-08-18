@@ -713,6 +713,40 @@ async def test_the_run_reads_the_commit_the_fixture_pins(tmp_path: Path):
     assert not (export / "later.txt").exists()
 
 
+async def test_a_bounded_write_run_gets_a_writable_copy_of_the_source(
+    tmp_path: Path,
+):
+    """Otherwise the task it was set is impossible, and the run measures that.
+
+    A bounded_write fixture asks for an edit to a source file. The only source
+    in scope is the staged snapshot, which acceptance verifies byte for byte
+    and refuses the work if it moved -- so an agent that edits it in place is
+    rejected with input_snapshot_modified, whatever its ability. Nothing else
+    in the workspace holds the code. The copy goes in the working root, which
+    is the one place the space policy tells the agent it may write.
+    """
+    harness, repo = _stub_harness(tmp_path)
+    fixture = replace(_understanding_fixture(), execution_profile="bounded_write")
+
+    artifact = await run_fixture(harness, fixture, mode="legacy", repo_root=repo)
+
+    copy = Path(artifact.workspace_path) / "source" / "a.txt"
+    assert copy.read_text(encoding="utf-8") == "x"
+    copy.write_text("edited", encoding="utf-8")
+
+
+async def test_a_read_only_run_gets_no_writable_copy(tmp_path: Path):
+    """A read_only fixture has nothing to edit, and a writable copy of the
+    repository sitting in its workspace is an invitation to write one."""
+    harness, repo = _stub_harness(tmp_path)
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert not (Path(artifact.workspace_path) / "source").exists()
+
+
 async def test_the_run_records_the_commit_it_read(tmp_path: Path):
     """An artefact that cannot say which source produced its answer is not
     comparable with anything, and the source is half of what a run is."""

@@ -1,0 +1,19 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "a5616f5a88c949df9b58f1bf7d6ef6db",
+  "fixture_id": "add-a-verification-check-kind",
+  "fixture_sha256": "c6f7811e192551a882d344093abebcf83dc3d8bfc9b8c1791b0879b5f652362b",
+  "mode": "legacy",
+  "execution_profile": "bounded_write",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "started_at": "2026-08-18T04:35:01.306736Z",
+  "finished_at": "2026-08-18T04:38:25.979532Z",
+  "wall_ms": 204672,
+  "run_status": "completed",
+  "summary": "`file_not_contains` 검사를 추가했습니다. 파일에 값이 없으면 통과하고, 존재하면 실패하도록 구현했으며, 값 존재 시 실패하는 테스트를 포함했습니다. 기존 네 검사 종류는 유지됐고 대상 pytest 14건이 통과했습니다.",
+  "workspace_path": "C:\\pag-eval\\workspace\\a5616f5a88c949df9b58f1bf7d6ef6db\\workspace",
+  "repository_unchanged": true,
+  "error": null
+}
