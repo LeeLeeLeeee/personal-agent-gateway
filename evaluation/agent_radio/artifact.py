@@ -44,12 +44,18 @@ class RunArtifact:
         """Whether a human should grade this at all.
 
         Three ways an execution produces nothing gradeable: it failed, it
-        produced no answer, or -- for a read-only fixture -- it wrote to the
-        repository, which means it ran under conditions no other run shared.
+        produced no answer -- a summary that is empty or only whitespace
+        counts as no answer -- or it changed the repository. The last one
+        applies whatever the execution profile: bounded_write is licensed to
+        write to its own isolated workspace, never to the repository, so a
+        bounded_write run that mutated the repository broke isolation exactly
+        as badly as a read_only run would.
         """
-        if self.run_status != "completed" or not self.summary:
+        if self.run_status != "completed":
             return False
-        if self.execution_profile == "read_only" and not self.repository_unchanged:
+        if not self.summary or not self.summary.strip():
+            return False
+        if not self.repository_unchanged:
             return False
         return True
 
@@ -101,15 +107,27 @@ def write_artifact(directory: Path, artifact: RunArtifact) -> Path:
 
     An artefact describes one execution. Overwriting loses the execution it
     described, and nothing else in the system records that it happened.
+
+    run_id comes from a later task and cannot be trusted here -- this is the
+    last place it is still a string rather than part of a path, so it is the
+    last chance to refuse one that would escape the directory it was given.
     """
-    directory.mkdir(parents=True, exist_ok=True)
+    if any(fragment in artifact.run_id for fragment in ("/", "\\", "..")):
+        raise FixtureError(f"run_id is not a safe filename: {artifact.run_id!r}")
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except FileExistsError as exc:
+        raise FixtureError(f"{directory} is not a directory") from exc
     path = directory / f"{artifact.run_id}.json"
     if path.exists():
         raise FixtureError(f"an artefact for {artifact.run_id} already exists")
     payload = {"schema": ARTIFACT_SCHEMA, **asdict(artifact)}
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    try:
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        raise FixtureError(f"could not write artefact for {artifact.run_id}") from exc
     return path
 
 

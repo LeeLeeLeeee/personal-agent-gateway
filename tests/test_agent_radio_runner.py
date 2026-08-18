@@ -56,20 +56,34 @@ def test_a_read_only_run_that_touched_the_repository_is_not_scoreable():
     assert artifact.scoreable is False
 
 
-def test_a_bounded_write_run_may_change_its_own_workspace():
-    """bounded_write is allowed to write; repository_unchanged still refers to
-    the repository, not the isolated workspace."""
+@pytest.mark.parametrize("repository_unchanged", [True, False])
+def test_a_bounded_write_run_is_scoreable_only_if_the_repository_is_unchanged(
+    repository_unchanged,
+):
+    """bounded_write is allowed to write to its own isolated workspace, but
+    repository_unchanged names the repository, not the workspace -- a
+    bounded_write run that mutated the repository broke isolation exactly as
+    badly as a read_only run would, and is not scoreable either."""
     artifact = parse_artifact(
-        _artifact(execution_profile="bounded_write", repository_unchanged=True)
+        _artifact(
+            execution_profile="bounded_write",
+            repository_unchanged=repository_unchanged,
+        )
     )
 
-    assert artifact.scoreable is True
+    assert artifact.scoreable is repository_unchanged
 
 
 def test_a_completed_run_with_no_summary_is_not_scoreable():
     """There is nothing to grade. Silently treating it as an empty answer would
     score a missing measurement as a failed one."""
     assert parse_artifact(_artifact(summary=None)).scoreable is False
+
+
+def test_a_completed_run_with_a_blank_summary_is_not_scoreable():
+    """A whitespace-only summary is still nothing to grade -- the same
+    reasoning as a missing summary applies identically."""
+    assert parse_artifact(_artifact(summary="   ")).scoreable is False
 
 
 @pytest.mark.parametrize(
@@ -106,3 +120,36 @@ def test_writing_the_same_run_twice_is_refused(tmp_path: Path):
 
     with pytest.raises(FixtureError):
         write_artifact(tmp_path, artifact)
+
+
+def test_writing_refuses_a_run_id_that_would_escape_the_directory(tmp_path: Path):
+    """run_id comes from a later task and cannot be trusted -- this module is
+    the last place it is still a string, so it is the last chance to stop a
+    traversal before it becomes a real file outside the directory it was
+    given."""
+    artifact = parse_artifact(_artifact(run_id="../escaped"))
+
+    with pytest.raises(FixtureError):
+        write_artifact(tmp_path, artifact)
+
+    assert not (tmp_path.parent / "escaped.json").exists()
+
+
+def test_writing_refuses_a_run_id_with_a_path_separator(tmp_path: Path):
+    artifact = parse_artifact(_artifact(run_id="sub/run"))
+
+    with pytest.raises(FixtureError):
+        write_artifact(tmp_path, artifact)
+
+    assert not any(tmp_path.rglob("*.json"))
+
+
+def test_writing_into_a_path_that_is_a_file_raises_fixture_error(tmp_path: Path):
+    """Every other failure in this module raises FixtureError; a raw OSError
+    would give a caller a second exception type to handle."""
+    not_a_directory = tmp_path / "not-a-directory"
+    not_a_directory.write_text("occupied")
+    artifact = parse_artifact(_artifact())
+
+    with pytest.raises(FixtureError):
+        write_artifact(not_a_directory, artifact)
