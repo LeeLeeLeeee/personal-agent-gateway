@@ -240,6 +240,7 @@ def _record(**overrides) -> dict:
         "schema": "gateway.eval-record/v1",
         "fixture_id": "understand-acceptance-gate",
         "fixture_sha256": "abc",
+        "run_id": "72f188589eb747e3aef45d1d3ca68a9d",
         "mode": "legacy",
         "repeat": 1,
         "harness_version": "0.1.0",
@@ -259,6 +260,21 @@ def _record(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def test_a_record_must_say_which_execution_it_scored():
+    """A verdict with no run behind it cannot be checked.
+
+    The artefact is what says whether the run was scoreable at all -- isolated,
+    against which commit, by which model. A record that does not name its run
+    cannot be held against any of that, and once a fixture has repeats, two
+    verdicts for the same fixture become indistinguishable.
+    """
+    payload = _record()
+    del payload["run_id"]
+
+    with pytest.raises(FixtureError):
+        parse_record(payload)
 
 
 def test_a_record_with_every_item_passed_counts_as_a_success():

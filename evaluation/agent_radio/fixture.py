@@ -222,6 +222,12 @@ class RubricResult:
 class Record:
     fixture_id: str
     fixture_sha256: str
+    # Which execution this verdict is about. Without it a record cannot be
+    # traced back to the artefact that says whether the run was even scoreable
+    # -- whether it stayed isolated, what it cost, which commit it read. One
+    # record per fixture hides the need; the moment repeats exist, two verdicts
+    # for the same fixture become indistinguishable.
+    run_id: str
     mode: str
     repeat: int
     harness_version: str
@@ -258,6 +264,7 @@ def parse_record(payload: dict) -> Record:
     return Record(
         fixture_id=_required_text(payload, "fixture_id"),
         fixture_sha256=_required_text(payload, "fixture_sha256"),
+        run_id=_required_text(payload, "run_id"),
         mode=mode,
         repeat=_positive_int(payload, "repeat"),
         harness_version=_required_text(payload, "harness_version"),

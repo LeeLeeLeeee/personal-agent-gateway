@@ -9,6 +9,7 @@ assembly would drift from the real one without anyone noticing.
 import argparse
 import asyncio
 import io
+import json
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,7 @@ from agent_radio.artifact import (
 from agent_radio.fixture import Fixture, FixtureError, load_fixtures
 from personal_agent_gateway.app import create_app
 from personal_agent_gateway.config import AppConfig, load_config
+from personal_agent_gateway.lmg_client import fetch_sessions_strict
 
 # Generous on purpose. This is not a performance budget -- wall_ms is the
 # measurement -- it is the bound that stops one hung run from stalling a whole
@@ -65,6 +67,9 @@ class Harness:
     # a per-run argument would let a test that forgot it write into the real
     # sweep's export directory.
     exports: Path
+    # Reads the gateway's session list. Injected rather than called directly so
+    # that a test can describe a session without an LMG to ask.
+    sessions: object
 
 
 def build_harness(config: AppConfig) -> Harness:
@@ -99,7 +104,62 @@ def build_harness(config: AppConfig) -> Harness:
         personas=state.persona_service,
         recovery=state.team_provider_recovery,
         exports=EVAL_SOURCE_ROOT,
+        sessions=lambda: fetch_sessions_strict(config),
     )
+
+
+def resolved_model(sessions: object, run_id: str) -> str | None:
+    """Which model actually answered, if the provider left a record of it.
+
+    `model` on the artefact is what was *requested*, and for codex that is
+    normally the alias "default" -- "use whatever the local configuration
+    selects". Neither the operation ledger nor the gateway's session list
+    resolves it: both store the alias. The provider's own transcript does, so
+    that is what this reads, found through the session whose consumer id is this
+    run.
+
+    Returns None rather than guessing. Every failure here is a missing fact, not
+    a wrong one: no session yet, a provider that keeps no transcript, a file
+    already rotated away. Answering "default" would turn an unknown into a
+    claim, which is the thing this field exists to stop.
+    """
+    try:
+        rows = sessions()
+    except Exception:  # noqa: BLE001 - an unavailable gateway is an unknown
+        return None
+    paths = [
+        row.get("storage_path")
+        for row in rows or ()
+        if isinstance(row, dict) and row.get("consumer_session_id") == run_id
+    ]
+    for path in paths:
+        if not isinstance(path, str) or not path:
+            continue
+        try:
+            with Path(path).open(encoding="utf-8") as stream:
+                for line in stream:
+                    found = _model_in_transcript_line(line)
+                    if found:
+                        return found
+        except OSError:
+            continue
+    return None
+
+
+def _model_in_transcript_line(line: str) -> str | None:
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(entry, dict):
+        return None
+    payload = entry.get("payload")
+    for holder in (payload, entry):
+        if isinstance(holder, dict):
+            model = holder.get("model")
+            if isinstance(model, str) and model.strip():
+                return model
+    return None
 
 
 def repository_status(repo_root: Path) -> str:
@@ -397,6 +457,9 @@ async def run_fixture(
         repository_unchanged = False
         raised = _joined(raised, f"could not verify isolation: {exc}")
 
+    # Cannot raise: resolved_model swallows its own failures and answers None.
+    model_that_answered = resolved_model(harness.sessions, run.id)
+
     error = _joined(final.error_message, raised)
     if not error and final.status not in ANSWERING_RUN_STATUSES:
         # Only for a status that carries no answer. `completed_with_failures`
@@ -413,6 +476,7 @@ async def run_fixture(
         backend=backend,
         model=model,
         source_commit=source_commit,
+        resolved_model=model_that_answered,
         started_at=_isoformat(started),
         finished_at=_isoformat(finished),
         wall_ms=max(int((finished - started).total_seconds() * 1000), 0),

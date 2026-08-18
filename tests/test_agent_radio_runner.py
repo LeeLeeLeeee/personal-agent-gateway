@@ -63,6 +63,7 @@ def _artifact(**overrides) -> dict:
         "backend": "codex",
         "model": "default",
         "source_commit": "9e711fa0c0ffee0000000000000000000000beef",
+        "resolved_model": "gpt-5.6-terra",
         "started_at": "2026-08-14T01:00:00Z",
         "finished_at": "2026-08-14T01:06:20Z",
         "wall_ms": 380000,
@@ -168,11 +169,31 @@ def test_a_completed_run_with_a_blank_summary_is_not_scoreable():
         {"fixture_sha256": ""},
         {"backend": ""},
         {"model": ""},
+        # An unknown must be stated as null. An empty string reads as "we looked
+        # and it is blank", which is a different claim.
+        {"resolved_model": ""},
+        {"resolved_model": 5},
     ],
 )
 def test_an_artefact_that_cannot_be_trusted_is_refused(overrides):
     with pytest.raises(FixtureError):
         parse_artifact(_artifact(**overrides))
+
+
+def test_an_artefact_missing_resolved_model_is_refused():
+    """Absent is not the same as null. A field that can be left out silently
+    turns "nobody recorded which model answered" into "this artefact predates
+    the question", and both read as no data while meaning different things."""
+    payload = _artifact()
+    del payload["resolved_model"]
+
+    with pytest.raises(FixtureError):
+        parse_artifact(payload)
+
+
+def test_an_unrecoverable_model_is_recorded_as_unknown():
+    """Null is a legitimate value: some providers keep no transcript."""
+    assert parse_artifact(_artifact(resolved_model=None)).resolved_model is None
 
 
 def test_writing_then_loading_round_trips(tmp_path: Path):
@@ -573,12 +594,14 @@ class _StubRegistry:
 def _stub_harness(
     tmp_path: Path,
     *,
+    sessions: list | None = None,
     answer: str = "…",
     fail_with: str | None = None,
     writes: str | None = None,
     hangs: bool = False,
     optional_task_fails: bool = False,
 ) -> tuple[Harness, Path]:
+    sessions = [] if sessions is None else sessions
     repo = _initialised_repo(tmp_path)
     db = Database(tmp_path / "app.db")
     db.initialize()
@@ -633,6 +656,7 @@ def _stub_harness(
         personas=personas,
         recovery=TeamProviderRecovery(teams, _StubRegistry(), operations),
         exports=tmp_path / "exports",
+        sessions=lambda: sessions,
     )
     return harness, repo
 
@@ -784,6 +808,63 @@ async def test_a_read_only_run_gets_no_writable_copy(tmp_path: Path):
     )
 
     assert not (Path(artifact.workspace_path) / "source").exists()
+
+
+async def test_the_run_records_which_model_actually_answered(tmp_path: Path):
+    """`model` is the request; this is the answer.
+
+    "default" means "whatever the local provider configuration selects", and
+    neither the operation ledger nor the gateway's session list resolves it --
+    both store the alias. The provider's own transcript does, and the session
+    whose consumer id is this run is what points at it.
+    """
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "session_meta", "payload": {"model": "gpt-5.6-terra"}})
+        + "\n",
+        encoding="utf-8",
+    )
+    harness, repo = _stub_harness(tmp_path)
+    fixture = _understanding_fixture()
+
+    # The session only exists once the run does, so it is described by run id
+    # after the fact, the way the real gateway reports it.
+    async def run_and_capture():
+        return await run_fixture(harness, fixture, mode="legacy", repo_root=repo)
+
+    sessions: list[dict] = []
+    harness = replace(harness, sessions=lambda: sessions)
+    original = harness.teams.create_team_run_from_team
+
+    def remember(*args, **kwargs):
+        run = original(*args, **kwargs)
+        sessions.append(
+            {
+                "consumer_session_id": run.id,
+                "storage_path": str(transcript),
+            }
+        )
+        return run
+
+    harness.teams.create_team_run_from_team = remember
+    artifact = await run_and_capture()
+
+    assert artifact.model == "default"
+    assert artifact.resolved_model == "gpt-5.6-terra"
+
+
+async def test_a_provider_that_kept_no_transcript_leaves_the_model_unknown(
+    tmp_path: Path,
+):
+    """Null, not the alias. Recording "default" would turn a missing fact into
+    a claim about which model ran."""
+    harness, repo = _stub_harness(tmp_path, sessions=[])
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert artifact.resolved_model is None
 
 
 async def test_the_run_records_the_commit_it_read(tmp_path: Path):

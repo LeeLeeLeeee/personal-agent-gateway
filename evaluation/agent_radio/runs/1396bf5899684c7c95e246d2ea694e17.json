@@ -1,0 +1,20 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "1396bf5899684c7c95e246d2ea694e17",
+  "fixture_id": "add-a-verification-check-kind",
+  "fixture_sha256": "c6f7811e192551a882d344093abebcf83dc3d8bfc9b8c1791b0879b5f652362b",
+  "mode": "legacy",
+  "execution_profile": "bounded_write",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "resolved_model": "gpt-5.6-terra",
+  "started_at": "2026-08-18T05:06:26.128247Z",
+  "finished_at": "2026-08-18T05:10:18.928659Z",
+  "wall_ms": 232800,
+  "run_status": "completed",
+  "summary": "`file_not_contains` 검사를 추가했습니다. `CHECK_TYPES`, 파싱, 실행 로직이 `type/path/value` 형식으로 동작하며, 값이 파일에 있으면 실패하고 없으면 통과합니다. 값 존재 시 실패하는 pytest도 추가했습니다.\n\n대상 테스트 14개와 Ruff는 통과했습니다. 전체 테스트는 기존 `agent_radio` 모듈 누락으로 수집 단계에서 실패했습니다.",
+  "workspace_path": "C:\\pag-eval\\workspace\\1396bf5899684c7c95e246d2ea694e17\\workspace",
+  "repository_unchanged": true,
+  "error": null
+}

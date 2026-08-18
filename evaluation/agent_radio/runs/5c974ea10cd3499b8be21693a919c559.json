@@ -1,0 +1,20 @@
+{
+  "schema": "gateway.eval-run/v1",
+  "run_id": "5c974ea10cd3499b8be21693a919c559",
+  "fixture_id": "impact-of-a-new-operation-stage",
+  "fixture_sha256": "b7e190c8a89eca826375aa9e05ad10bc2196dd5375cf0126ff1f82ae9fde89a8",
+  "mode": "legacy",
+  "execution_profile": "read_only",
+  "backend": "codex",
+  "model": "default",
+  "source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "resolved_model": "gpt-5.6-terra",
+  "started_at": "2026-08-18T05:00:57.396703Z",
+  "finished_at": "2026-08-18T05:06:23.437353Z",
+  "wall_ms": 326040,
+  "run_status": "completed",
+  "summary": "새 OperationStage 추가 시 정의·검증·repair·실행·복구·효과·API/UI·테스트·문서·설정의 실제 영향 지점을 전수 정리했으며, 코드 변경은 하지 않았습니다. 실패 사항은 없습니다.\n\nLibrary에 요청되었습니다",
+  "workspace_path": "C:\\pag-eval\\workspace\\5c974ea10cd3499b8be21693a919c559\\workspace",
+  "repository_unchanged": true,
+  "error": null
+}

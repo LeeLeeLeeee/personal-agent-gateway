@@ -43,6 +43,13 @@ class RunArtifact:
     # `backend` is: the source is half of what a run is, and two answers about
     # different trees are not two measurements of the same thing.
     source_commit: str
+    # What actually answered, as opposed to `model`, which is what was asked
+    # for. "default" is an alias the local provider configuration resolves, so
+    # the same request runs a different model whenever that configuration
+    # changes, and nothing in the request records the difference. Null when the
+    # provider keeps no recoverable record of it -- an unknown is reported as an
+    # unknown rather than backfilled with the alias.
+    resolved_model: str | None
     started_at: str
     finished_at: str
     wall_ms: int
@@ -98,6 +105,13 @@ def parse_artifact(payload: dict) -> RunArtifact:
     error = payload.get("error")
     if error is not None and not isinstance(error, str):
         raise FixtureError("error must be a string or null")
+    if "resolved_model" not in payload:
+        raise FixtureError("resolved_model is missing")
+    resolved_model = payload["resolved_model"]
+    if resolved_model is not None and (
+        not isinstance(resolved_model, str) or not resolved_model.strip()
+    ):
+        raise FixtureError("resolved_model must be a non-empty string or null")
     return RunArtifact(
         run_id=_required_text(payload, "run_id"),
         fixture_id=_required_text(payload, "fixture_id"),
@@ -110,6 +124,7 @@ def parse_artifact(payload: dict) -> RunArtifact:
         backend=_required_text(payload, "backend"),
         model=_required_text(payload, "model"),
         source_commit=_required_text(payload, "source_commit"),
+        resolved_model=resolved_model,
         started_at=_required_text(payload, "started_at"),
         finished_at=_required_text(payload, "finished_at"),
         wall_ms=wall_ms,

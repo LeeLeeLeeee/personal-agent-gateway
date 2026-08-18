@@ -2,6 +2,7 @@
   "schema": "gateway.eval-record/v1",
   "fixture_id": "add-a-verification-check-kind",
   "fixture_sha256": "c6f7811e192551a882d344093abebcf83dc3d8bfc9b8c1791b0879b5f652362b",
+  "run_id": "1396bf5899684c7c95e246d2ea694e17",
   "mode": "legacy",
   "repeat": 1,
   "harness_version": "0.1.0",

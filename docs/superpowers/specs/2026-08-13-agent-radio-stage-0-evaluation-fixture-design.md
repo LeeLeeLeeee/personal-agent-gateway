@@ -76,6 +76,7 @@ tests/test_agent_radio_evaluation.py
   "schema": "gateway.eval-record/v1",
   "fixture_id": "understand-acceptance-gate",
   "fixture_sha256": "<tasks/<id>.json의 해시>",
+  "run_id": "<채점한 실행의 run id — runs/<run_id>.json>",
   "mode": "legacy",
   "repeat": 1,
   "harness_version": "0.1.0",
@@ -95,6 +96,8 @@ tests/test_agent_radio_evaluation.py
 - `fixture_sha256`이 있어야 "정의를 조용히 고치고 재측정"을 탐지할 수 있다. 집계 시 현재 파일 해시와 다르면 그 기록은 stale로 표시한다.
 - `mode_metrics`는 Stage 1부터 협업 지표(전달 수, 유용하게 쓰인 message 비율 등)가 들어갈 자리다. 지금은 빈 객체이며, **지금 필드를 발명하지 않는다.** Stage 1이 무엇을 셀지 정할 때 그 spec이 채운다.
 - `critical_defects_found`는 ADR이 "감소하면 승격 금지"로 지정한 지표라 core에 둔다.
+- `run_id`는 이 판정이 **어느 실행**에 대한 것인지 말한다. 없으면 기록을 산출물과 맞대볼 수 없다 — 그 실행이 격리를 지켰는지, 어느 커밋을 읽었는지, 어떤 모델이 답했는지는 전부 산출물에만 있다. 과제당 1건일 때는 없어도 굴러가지만, 반복이 생기는 순간 같은 과제의 두 판정을 구분할 수 없다.
+- 산출물(`runs/<run_id>.json`)에는 `resolved_model`이 함께 남는다. `model`은 **요청한 값**(codex의 경우 보통 별칭 `default`)이고, `resolved_model`은 **실제로 답한 모델**이다. 별칭은 로컬 provider 설정이 해석하므로 그 설정이 바뀌면 같은 요청이 다른 모델로 돌고, 요청 값만으로는 그 차이를 알 수 없다. 연산 원장도 게이트웨이 세션 목록도 별칭만 저장하므로, 값은 provider 자신의 transcript에서 되짚는다. 되짚을 수 없으면 `null`이며 **별칭으로 메우지 않는다** — 모르는 것을 주장으로 바꾸는 것이 이 필드가 막으려는 일이다.
 
 ## 집계
 
