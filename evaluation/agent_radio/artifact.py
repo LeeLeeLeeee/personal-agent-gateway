@@ -1,0 +1,124 @@
+"""What one execution left behind.
+
+Deliberately not a record: a record carries a human's verdict, and this
+carries only what happened. Keeping them apart is what stops the aggregator's
+counts sliding from "measured" to "attempted".
+
+Pure, like fixture.py -- it imports nothing from personal_agent_gateway, so the
+shape can be reasoned about without standing up a runtime.
+"""
+
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from agent_radio.fixture import (
+    EXECUTION_PROFILES,
+    MODES,
+    FixtureError,
+    _required_text,
+)
+
+ARTIFACT_SCHEMA = "gateway.eval-run/v1"
+IMPLEMENTED_MODES = frozenset({"legacy"})
+
+
+@dataclass(frozen=True)
+class RunArtifact:
+    run_id: str
+    fixture_id: str
+    fixture_sha256: str
+    mode: str
+    execution_profile: str
+    started_at: str
+    finished_at: str
+    wall_ms: int
+    run_status: str
+    summary: str | None
+    workspace_path: str
+    repository_unchanged: bool
+    error: str | None
+
+    @property
+    def scoreable(self) -> bool:
+        """Whether a human should grade this at all.
+
+        Three ways an execution produces nothing gradeable: it failed, it
+        produced no answer, or -- for a read-only fixture -- it wrote to the
+        repository, which means it ran under conditions no other run shared.
+        """
+        if self.run_status != "completed" or not self.summary:
+            return False
+        if self.execution_profile == "read_only" and not self.repository_unchanged:
+            return False
+        return True
+
+
+def parse_artifact(payload: dict) -> RunArtifact:
+    if not isinstance(payload, dict):
+        raise FixtureError("artefact is not an object")
+    if payload.get("schema") != ARTIFACT_SCHEMA:
+        raise FixtureError(f"unknown artefact schema: {payload.get('schema')!r}")
+    mode = _required_text(payload, "mode")
+    if mode not in MODES:
+        raise FixtureError(f"unknown mode: {mode!r}")
+    if mode not in IMPLEMENTED_MODES:
+        raise FixtureError(f"mode is not implemented by the runner: {mode!r}")
+    profile = _required_text(payload, "execution_profile")
+    if profile not in EXECUTION_PROFILES:
+        raise FixtureError(f"unknown execution profile: {profile!r}")
+    unchanged = payload.get("repository_unchanged")
+    if not isinstance(unchanged, bool):
+        raise FixtureError("repository_unchanged must be a boolean")
+    wall_ms = payload.get("wall_ms")
+    if not isinstance(wall_ms, int) or isinstance(wall_ms, bool) or wall_ms < 0:
+        raise FixtureError("wall_ms must be a non-negative integer")
+    summary = payload.get("summary")
+    if summary is not None and not isinstance(summary, str):
+        raise FixtureError("summary must be a string or null")
+    error = payload.get("error")
+    if error is not None and not isinstance(error, str):
+        raise FixtureError("error must be a string or null")
+    return RunArtifact(
+        run_id=_required_text(payload, "run_id"),
+        fixture_id=_required_text(payload, "fixture_id"),
+        fixture_sha256=_required_text(payload, "fixture_sha256"),
+        mode=mode,
+        execution_profile=profile,
+        started_at=_required_text(payload, "started_at"),
+        finished_at=_required_text(payload, "finished_at"),
+        wall_ms=wall_ms,
+        run_status=_required_text(payload, "run_status"),
+        summary=summary,
+        workspace_path=_required_text(payload, "workspace_path"),
+        repository_unchanged=unchanged,
+        error=error,
+    )
+
+
+def write_artifact(directory: Path, artifact: RunArtifact) -> Path:
+    """Write one artefact, refusing to overwrite.
+
+    An artefact describes one execution. Overwriting loses the execution it
+    described, and nothing else in the system records that it happened.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{artifact.run_id}.json"
+    if path.exists():
+        raise FixtureError(f"an artefact for {artifact.run_id} already exists")
+    payload = {"schema": ARTIFACT_SCHEMA, **asdict(artifact)}
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+def load_artifacts(directory: Path) -> list[RunArtifact]:
+    artifacts: list[RunArtifact] = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            payload = json.loads(path.read_bytes())
+        except json.JSONDecodeError as exc:
+            raise FixtureError(f"{path.name} is not JSON") from exc
+        artifacts.append(parse_artifact(payload))
+    return artifacts
