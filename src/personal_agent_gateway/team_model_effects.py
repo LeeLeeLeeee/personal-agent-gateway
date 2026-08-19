@@ -396,7 +396,7 @@ class TeamModelEffectService:
         on that key would drop a real note to avoid a duplicate, which is the
         trade the ADR refuses.
         """
-        if self._collaboration is None or outcome is None:
+        if outcome is None:
             return
         if outcome.mention_refusals:
             # A note the parse turned away and a note addressed to nobody are
@@ -405,13 +405,20 @@ class TeamModelEffectService:
             # differs, because "the worker wrote a note we could not accept" and
             # "the worker named someone who is not here" send a reader looking
             # in different places.
+            #
+            # Above the `_collaboration is None` guard on purpose: writing this
+            # down needs the message log, not the channel. TeamRuntime's own
+            # default builds the shape where the two disagree -- pass
+            # `collaboration` to the runtime and let `model_effects` default --
+            # and under it the runtime renders the radio prefix while every
+            # refusal here would go unrecorded.
             self._record_degraded_collaboration(
                 operation,
                 "mention_malformed",
                 "mentions were refused as malformed: "
                 + ", ".join(outcome.mention_refusals),
             )
-        if not outcome.mentions:
+        if self._collaboration is None or not outcome.mentions:
             return
         try:
             self._collaboration.record_mentions(

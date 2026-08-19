@@ -8439,6 +8439,41 @@ async def test_a_malformed_note_does_not_undo_the_applied_task(collab_setup) -> 
 
 
 @pytest.mark.asyncio
+async def test_a_refusal_is_recorded_even_with_no_collaboration_in_effects(
+    collab_setup,
+) -> None:
+    """Writing a refusal down needs the message log, not the channel, so it must
+    not be gated on the channel.
+
+    TeamRuntime's own default builds exactly the shape where the two disagree:
+    pass `collaboration` and let `model_effects` default, and the runtime renders
+    the radio prefix while the effect service holds None. Under it every refusal
+    -- and, before this, every note -- went unrecorded.
+    """
+    setup = collab_setup
+    setup.worker_clients[0].outcome_mentions = [
+        {"to": "W-02", "text": "게이트는 파일만 읽는다\n두 번째 줄"}
+    ]
+    runtime = TeamRuntime(
+        setup.teams,
+        setup.model_factory,
+        operations=setup.operations,
+        model_invoker=TeamModelInvoker(setup.operations, sleep=_no_sleep),
+        collaboration=setup.collab,
+    )
+
+    run = await runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    degraded = [
+        m
+        for m in setup.teams.list_messages(setup.run.id)
+        if m.kind == "collaboration_degraded"
+    ]
+    assert [m.metadata["reason_code"] for m in degraded] == ["mention_malformed"]
+
+
+@pytest.mark.asyncio
 async def test_a_failed_mention_write_does_not_undo_the_applied_task(
     collab_setup,
 ) -> None:

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Literal
 
+from personal_agent_gateway.team_collaboration import MENTION_BATCH_LIMIT
 from personal_agent_gateway.team_structured_output import normalize_json_envelope
 
 TaskOutcomeStatus = Literal["completed", "blocked", "failed"]
@@ -124,9 +125,14 @@ def parse_task_outcome(content: str) -> TaskOutcome:
         deliverables=deliverables,
         verifications=verifications,
         mentions=mentions,
+        # Capped at the same bound the notes themselves ride under. The
+        # reason codes are ours, so no model text gets through, but the count is
+        # the model's: 3000 malformed notes would otherwise put a 30KB body into
+        # a collaboration_degraded row, the operation result payload and the
+        # acceptance-review prompt JSON.
         mention_refusals=(
             _parse_mention_refusals(raw.get("mention_refusals", [])) + refusals
-        ),
+        )[:MENTION_BATCH_LIMIT],
     )
 
 
@@ -208,6 +214,12 @@ def _parse_mentions(value: object) -> tuple[tuple[Mention, ...], tuple[str, ...]
     way. The reasons travel on the outcome so `_store_mentions` can write the
     refusal down in that same shape.
     """
+    if value is None:
+        # An unused optional field, which is a natural thing for a model to emit
+        # for one. A degradation row here would send a reader looking for a note
+        # that was refused when none was ever sent, and an audit line about work
+        # that did not happen is worse than no audit line.
+        return (), ()
     if not isinstance(value, list):
         return (), (MENTION_REFUSED_MALFORMED,)
     mentions: list[Mention] = []
