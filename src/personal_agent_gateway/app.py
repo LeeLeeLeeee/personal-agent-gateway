@@ -265,6 +265,7 @@ def create_app(
         model_invoker=operation_invoker,
         model_effects=effect_service,
         provider_recovery=provider_recovery,
+        collaboration=collaboration_service,
     )
     app.state.team_run_orchestrator = TeamRunOrchestrator(
         team_run_registry,

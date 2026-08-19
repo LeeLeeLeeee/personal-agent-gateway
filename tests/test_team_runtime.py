@@ -37,7 +37,7 @@ from personal_agent_gateway.team_model_operations import (
     TeamModelOperationService,
     ValidatedOperationResult,
 )
-from personal_agent_gateway.team_outcomes import TaskOutcome
+from personal_agent_gateway.team_outcomes import Mention, TaskOutcome
 from personal_agent_gateway.team_results import workspace_snapshot
 from personal_agent_gateway.team_provider_recovery import (
     ProviderOperationWaiting,
@@ -7747,8 +7747,12 @@ class NegotiationWorkerModel:
         self.die_after_fetches: int | None = None
         # Notes this worker attaches to the outcome it answers work with.
         self.outcome_mentions: list[dict[str, str]] = []
+        # Every prompt this worker was actually handed. `complete` delegates
+        # here, so both entry points are recorded by the one append.
+        self.prompts: list[str] = []
 
     async def complete_operation(self, messages, *, consumer_run_id):
+        self.prompts.append(messages[-1]["content"])
         self.call_count += 1
         if _is_worker_prompt(messages):
             self.execution_calls += 1
@@ -7786,6 +7790,7 @@ class NegotiationSetup(SimpleNamespace):
             self.model_factory,
             operations=self.operations,
             model_invoker=TeamModelInvoker(self.operations, sleep=_no_sleep),
+            collaboration=getattr(self, "collab", None),
             model_effects=TeamModelEffectService(
                 self.db,
                 self.teams,
@@ -8437,3 +8442,165 @@ async def test_without_a_collaboration_service_mentions_are_ignored(tmp_path) ->
     assert not [
         m for m in setup.teams.list_messages(setup.run.id) if m.kind == "peer_mention"
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_worker_prompt_lists_its_teammates(collab_setup) -> None:
+    """명단이 없으면 수신자를 지정할 방법이 없다."""
+    setup = collab_setup
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert any(
+        "TEAM ROSTER" in p and "W-02" in p for p in setup.worker_clients[0].prompts
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_undelivered_note_reaches_the_next_call(collab_setup) -> None:
+    setup = collab_setup
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[1].id, [Mention("W-01", "파일만 읽는다")]
+    )
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert any(
+        "TEAM RADIO" in p and "파일만 읽는다" in p and "from W-02" in p
+        for p in setup.worker_clients[0].prompts
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_leader_also_receives_notes(collab_setup) -> None:
+    """spec은 리더가 받는다고 정했다. 워커 경로만 고치면 LEAD로 보낸 쪽지는
+    영원히 전달되지 않고 그 사실은 어디에도 나타나지 않는다."""
+    setup = collab_setup
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[0].id, [Mention("LEAD", "계획을 다시 보라")]
+    )
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert any("계획을 다시 보라" in p for p in setup.lead_client.all_prompts)
+
+
+@pytest.mark.asyncio
+async def test_no_notes_means_no_radio_block(collab_setup) -> None:
+    setup = collab_setup
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert all("TEAM RADIO" not in p for p in setup.worker_clients[0].prompts)
+
+
+@pytest.mark.asyncio
+async def test_recovery_reproduces_the_same_notes(collab_setup) -> None:
+    """복구가 다시 조회하면 그 사이 온 쪽지가 섞이고, 지문이 달라져 원장이
+    OperationConflict로 거부한다."""
+    setup = collab_setup
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[1].id, [Mention("W-01", "first")]
+    )
+    # 예약 뒤 호출 전에 죽는다 -- 재시작이 실제로 발견하는 상태이고, 클라이언트
+    # 쪽 raise로는 만들 수 없다.
+    setup.worker_clients[0].die_after_fetches = 0
+
+    # start는 예외를 올리지 않는다: 잡아서 실패한 런을 돌려준다(`:1738-1742`).
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[1].id, [Mention("W-01", "late")]
+    )
+    setup.worker_clients[0].die_after_fetches = None
+
+    # 연속 런의 resume은 cycle_id를 요구한다(`:4506-4509`).
+    await setup.new_runtime().resume(setup.run.id, setup.cycle.id)
+
+    delivered = [p for p in setup.worker_clients[0].prompts if "TEAM RADIO" in p]
+    assert delivered
+    # 렌더된 줄로 검사한다: 워커 프롬프트는 "isolated"와 "unrelated"를 담고 있어
+    # 맨 "late" 부분문자열 검사는 구현과 무관하게 언제나 실패한다.
+    assert all("from W-02: late" not in p for p in delivered)
+    assert all("from W-02: first" in p for p in delivered)
+
+
+@pytest.mark.asyncio
+async def test_a_delivered_note_is_not_sent_again(collab_setup) -> None:
+    """전달 완료는 원장에서 유도한다: 그 operation이 applied면 전달된 것이다."""
+    setup = collab_setup
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[1].id, [Mention("W-01", "note")]
+    )
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert setup.collab.undelivered(setup.run.id, setup.workers[0].id) == ()
+
+
+@pytest.mark.asyncio
+async def test_an_operation_reserved_before_the_wiring_still_resumes(tmp_path) -> None:
+    """배달 없는 기존 operation은 접두사 없이 재현된다.
+
+    이 기능이 켜지기 전에 예약된 호출에 접두사를 붙이면 지문이 달라지고
+    `reserve`가 거부해 그 런은 영구히 복구 불가가 된다. 협업을 끈 런타임으로
+    죽인 뒤 켠 런타임으로 복구하는 것이 그 상태를 만드는 방법이다.
+    """
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=False)
+    setup.worker_clients[0].die_after_fetches = 0
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    setup.collab = TeamCollaborationService(setup.db, setup.teams)
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[1].id, [Mention("W-01", "pending")]
+    )
+    setup.worker_clients[0].die_after_fetches = None
+
+    await setup.new_runtime().resume(setup.run.id, setup.cycle.id)
+
+    # 그 호출은 실제로 모델까지 갔다: 배달을 새로 열어 지문을 바꿨다면
+    # `reserve`가 거부해 이 프롬프트는 아예 존재하지 않는다.
+    assert setup.worker_clients[0].prompts
+    assert all(
+        "TEAM ROSTER" not in prompt for prompt in setup.worker_clients[0].prompts
+    )
+    # 접두사가 붙지 않았으므로 쪽지는 여전히 미전달이다 -- 다음 호출이 받는다.
+    assert [
+        note[2]
+        for note in setup.collab.undelivered(setup.run.id, setup.workers[0].id)
+    ] == ["pending"]
+
+
+@pytest.mark.asyncio
+async def test_a_broken_radio_lookup_does_not_reach_the_model_call(
+    collab_setup,
+) -> None:
+    """radio는 곁다리다: 조회가 깨져도 호출은 접두사 없이 그대로 나간다.
+
+    강등되지 않으면 예외가 `_invoke_operation` 밖으로 나가 `start`의 광범위한
+    except가 런을 실패로 정리한다 -- 쪽지 기능의 버그가 작업을 죽인다.
+    """
+    setup = collab_setup
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the delivery table is broken")
+
+    setup.collab.undelivered = explode
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    assert all(
+        "TEAM ROSTER" not in prompt for prompt in setup.worker_clients[0].prompts
+    )
+    degraded = [
+        m
+        for m in setup.teams.list_messages(setup.run.id)
+        if m.kind == "collaboration_degraded"
+    ]
+    assert degraded
+    assert {m.metadata["reason_code"] for m in degraded} == {
+        "collaboration_unavailable"
+    }

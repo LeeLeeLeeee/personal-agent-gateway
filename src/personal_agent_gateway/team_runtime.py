@@ -19,6 +19,14 @@ from personal_agent_gateway.team_acceptance import (
     rejected_verification_names,
     terminal_rejected_status,
 )
+from personal_agent_gateway.team_collaboration import (
+    MENTION_BATCH_LIMIT,
+    radio_block,
+    roster_block,
+)
+from personal_agent_gateway.team_collaboration_service import (
+    TeamCollaborationService,
+)
 from personal_agent_gateway.team_coverage_report import extract_coverage_gaps
 from personal_agent_gateway.team_artifact_publisher import (
     ArtifactPublicationError,
@@ -688,6 +696,7 @@ class TeamRuntime:
         model_invoker: TeamModelInvoker | None = None,
         model_effects: TeamModelEffectService | None = None,
         provider_recovery: TeamProviderRecovery | None = None,
+        collaboration: TeamCollaborationService | None = None,
     ) -> None:
         self._teams = teams
         self._model_factory = model_factory
@@ -708,6 +717,7 @@ class TeamRuntime:
             self._operations,
         )
         self._provider_recovery = provider_recovery
+        self._collaboration = collaboration
         self._task_input_stager = TaskInputStager(teams._db, teams)
 
     def _model(
@@ -918,6 +928,7 @@ class TeamRuntime:
         messages: list[dict[str, object]],
         parser: Callable[[ModelResponse], ValidatedOperationResult],
     ) -> TeamModelOperation:
+        messages, spec = self._with_radio(spec, agent, messages)
         open_operation = self._operations.get_open_for_cycle(spec.cycle_id)
         if (
             open_operation is not None
@@ -980,6 +991,76 @@ class TeamRuntime:
                 upstream_session_id=None,
             )
             raise
+
+    def _with_radio(self, spec, agent, messages):
+        """명단과 미전달 쪽지를 첫 메시지 앞에 붙이고 지문을 다시 계산한다.
+
+        stage를 가리지 않는다: 목록을 만들면 새 stage에서 조용히 누락되고, 이
+        저장소는 그 실패로 completeness 테스트를 두고 있다.
+
+        프롬프트 템플릿에 자리를 만들지 않는 이유는 별개다 -- WORKER_PROMPT를
+        정확히 네 키로 .format()하는 테스트가 있어(tests/test_team_runtime.py:3413)
+        새 자리를 만들면 KeyError가 된다. 접두사로 붙이면 SPACE 정책 블록보다
+        앞에 와서 마지막 말이 정책이 되는 배치까지 동시에 만족한다.
+        """
+        if self._collaboration is None or not messages:
+            return messages, spec
+        try:
+            if self._collaboration.delivery_for(spec.operation_key) is not None:
+                # 이미 확정된 호출이다. 쪽지가 0개였더라도 그 사실을 재현해야
+                # 한다 -- 다시 조회하면 그 사이 도착한 쪽지가 섞여 지문이 달라지고
+                # reserve가 거부한다.
+                notes = self._collaboration.notes_by_id(
+                    spec.team_run_id,
+                    self._collaboration.delivery_message_ids(spec.operation_key),
+                )
+            elif self._operations.get_by_key(spec.operation_key) is not None:
+                # operation은 이미 있는데 배달은 없다: 이 기능이 배선되기 전에
+                # 예약된 호출이다. 새로 붙이면 지문이 달라져 복구가 영구히
+                # 막히므로, 접두사 없이 원래 요청을 재현한다.
+                return messages, spec
+            else:
+                notes = self._collaboration.undelivered(spec.team_run_id, agent.id)[
+                    :MENTION_BATCH_LIMIT
+                ]
+                self._collaboration.open_delivery(
+                    spec.team_run_id,
+                    agent.id,
+                    spec.operation_key,
+                    [note[0] for note in notes],
+                )
+            prefix = roster_block(self._roster_entries(spec.team_run_id)) + radio_block(
+                [(sender, text) for _, sender, text in notes]
+            )
+        except Exception as exc:  # noqa: BLE001 - 곁다리가 런을 죽이지 않는다
+            self._teams.append_message(
+                spec.team_run_id,
+                None,
+                agent.id,
+                "collaboration_degraded",
+                f"radio-lite disabled for this step: {exc}",
+                {"reason_code": "collaboration_unavailable"},
+            )
+            return messages, spec
+        if not prefix:
+            return messages, spec
+        head, *rest = messages
+        amended = [{**head, "content": prefix + str(head["content"])}, *rest]
+        return amended, replace(
+            spec,
+            request_digest=_operation_request_digest(
+                spec.stage, spec.stage_ordinal, agent.id, amended
+            ),
+        )
+
+    def _roster_entries(self, team_run_id):
+        labels = self._collaboration.labels_for_run(team_run_id)
+        by_agent = {agent.id: agent for agent in self._teams.list_agents(team_run_id)}
+        return [
+            (label, str(by_agent[agent_id].persona_snapshot.get("name", "")))
+            for label, agent_id in sorted(labels.items())
+            if agent_id in by_agent
+        ]
 
     async def _recover_open_operation(
         self,
