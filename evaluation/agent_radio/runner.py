@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -284,6 +285,19 @@ def _lock_path(config: AppConfig) -> Path:
     return Path(config.app_db_path).parent / "run.lock"
 
 
+def _lock_detail(path: Path) -> str:
+    """Who holds the lock and for how long, best effort and never raising."""
+    try:
+        holder = path.read_text(encoding="utf-8").strip() or "unknown pid"
+    except OSError:
+        holder = "unreadable"
+    try:
+        age = int(time.time() - path.stat().st_mtime)
+        return f"pid {holder}, held {age}s"
+    except OSError:
+        return f"pid {holder}"
+
+
 @contextmanager
 def only_one_run(config: AppConfig):
     """Hold the evaluation lock, or refuse.
@@ -303,8 +317,14 @@ def only_one_run(config: AppConfig):
     try:
         handle = path.open("x", encoding="utf-8")
     except FileExistsError as exc:
+        # The message carries what a person needs to decide, because the lock is
+        # deliberately not self-clearing and a stale one blocks everything. A run
+        # killed abruptly -- not raising, killed -- never reaches the release, and
+        # that is exactly the case where the holder's pid and the lock's age tell
+        # you in one glance whether to delete it.
         raise RunInProgress(
-            f"another evaluation run holds {path}. If no run is active, delete it."
+            f"another evaluation run holds {path} "
+            f"({_lock_detail(path)}). If no run is active, delete it."
         ) from exc
     try:
         handle.write(f"{os.getpid()}\n")
