@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -8561,11 +8562,11 @@ async def test_an_operation_reserved_before_the_wiring_still_resumes(tmp_path) -
     await setup.new_runtime().resume(setup.run.id, setup.cycle.id)
 
     # 그 호출은 실제로 모델까지 갔다: 배달을 새로 열어 지문을 바꿨다면
-    # `reserve`가 거부해 이 프롬프트는 아예 존재하지 않는다.
+    # `reserve`가 거부해 이 프롬프트는 아예 존재하지 않는다. 첫 프롬프트가
+    # 재현된 그 호출이다 -- 전체에 걸어두면 이 fixture가 워커-0을 한 번만
+    # 부른다는 사실에 매달린 단정이 된다.
     assert setup.worker_clients[0].prompts
-    assert all(
-        "TEAM ROSTER" not in prompt for prompt in setup.worker_clients[0].prompts
-    )
+    assert "TEAM ROSTER" not in setup.worker_clients[0].prompts[0]
     # 접두사가 붙지 않았으므로 쪽지는 여전히 미전달이다 -- 다음 호출이 받는다.
     assert [
         note[2]
@@ -8608,7 +8609,7 @@ async def test_a_broken_radio_lookup_does_not_reach_the_model_call(
 
 @pytest.mark.asyncio
 async def test_a_failed_degradation_record_does_not_reach_the_model_call(
-    collab_setup,
+    collab_setup, caplog
 ) -> None:
     """강등을 남기는 쓰기 자체가 실패해도 호출은 살아 있어야 한다.
 
@@ -8630,9 +8631,49 @@ async def test_a_failed_degradation_record_does_not_reach_the_model_call(
 
     setup.teams.append_message = refuse_degraded
 
+    with caplog.at_level(
+        logging.WARNING, logger="personal_agent_gateway.team_runtime"
+    ):
+        run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    assert all(
+        "TEAM ROSTER" not in prompt for prompt in setup.worker_clients[0].prompts
+    )
+    # 삼키기만 하면 실패가 어디에도 나타나지 않는다: 경고가 그 유일한 흔적이다.
+    assert any(
+        "could not record degraded collaboration" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_prefix_that_cannot_be_built_pins_nothing(collab_setup) -> None:
+    """확정은 접두사가 만들어진 뒤에 한다.
+
+    먼저 확정하면 명단 조회가 던질 때 강등이 접두사 없는 요청을 보내고, 그
+    operation은 applied에 도달한다. _UNDELIVERED_SQL은 그 시점부터 묶인 쪽지를
+    영구히 제외하므로 프롬프트에 실린 적 없는 쪽지가 '전달됨'으로 굳는다.
+    """
+    setup = collab_setup
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[1].id, [Mention("W-01", "note")]
+    )
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the roster is broken")
+
+    # 옛 순서에서 확정 뒤·접두사 완성 전에 놓여 있던 두 번의 DB 읽기다.
+    setup.runtime._roster_entries = explode
+
     run = await setup.runtime.start(setup.run.id, setup.cycle.id)
 
     assert run.status == "completed"
     assert all(
         "TEAM ROSTER" not in prompt for prompt in setup.worker_clients[0].prompts
     )
+    # 아무것도 묶이지 않았으므로 쪽지는 그대로 미전달이다.
+    assert [
+        note[2]
+        for note in setup.collab.undelivered(setup.run.id, setup.workers[0].id)
+    ] == ["note"]

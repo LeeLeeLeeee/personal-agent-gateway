@@ -995,7 +995,12 @@ class TeamRuntime:
             )
             raise
 
-    def _with_radio(self, spec, agent, messages):
+    def _with_radio(
+        self,
+        spec: OperationSpec,
+        agent: TeamAgent,
+        messages: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], OperationSpec]:
         """명단과 미전달 쪽지를 첫 메시지 앞에 붙이고 지문을 다시 계산한다.
 
         stage를 가리지 않는다: 목록을 만들면 새 stage에서 조용히 누락되고, 이
@@ -1017,6 +1022,7 @@ class TeamRuntime:
                     spec.team_run_id,
                     self._collaboration.delivery_message_ids(spec.operation_key),
                 )
+                pinned = True
             elif self._operations.get_by_key(spec.operation_key) is not None:
                 # operation은 이미 있는데 배달은 없다: 이 기능이 배선되기 전에
                 # 예약된 호출이다. 새로 붙이면 지문이 달라져 복구가 영구히
@@ -1026,15 +1032,23 @@ class TeamRuntime:
                 notes = self._collaboration.undelivered(spec.team_run_id, agent.id)[
                     :MENTION_BATCH_LIMIT
                 ]
+                pinned = False
+            prefix = roster_block(self._roster_entries(spec.team_run_id)) + radio_block(
+                [(sender, text) for _, sender, text in notes]
+            )
+            if not prefix:
+                return messages, spec
+            if not pinned:
+                # 접두사가 만들어진 **뒤에** 확정한다. 확정과 접두사 사이에서 무엇이
+                # 던지면 아래 except가 접두사 없는 요청을 보내는데, 그 operation은
+                # applied에 도달하고 _UNDELIVERED_SQL은 묶인 쪽지를 영구히 제외한다
+                # -- 프롬프트에 실린 적 없는 쪽지가 '전달됨'으로 굳는 조용한 유실이다.
                 self._collaboration.open_delivery(
                     spec.team_run_id,
                     agent.id,
                     spec.operation_key,
                     [note[0] for note in notes],
                 )
-            prefix = roster_block(self._roster_entries(spec.team_run_id)) + radio_block(
-                [(sender, text) for _, sender, text in notes]
-            )
         except Exception as exc:  # noqa: BLE001 - 곁다리가 런을 죽이지 않는다
             content = f"radio-lite disabled for this step: {exc}"
             try:
@@ -1057,8 +1071,6 @@ class TeamRuntime:
                     exc_info=True,
                 )
             return messages, spec
-        if not prefix:
-            return messages, spec
         head, *rest = messages
         amended = [{**head, "content": prefix + str(head["content"])}, *rest]
         return amended, replace(
@@ -1068,7 +1080,7 @@ class TeamRuntime:
             ),
         )
 
-    def _roster_entries(self, team_run_id):
+    def _roster_entries(self, team_run_id: str) -> list[tuple[str, str]]:
         labels = self._collaboration.labels_for_run(team_run_id)
         by_agent = {agent.id: agent for agent in self._teams.list_agents(team_run_id)}
         return [
