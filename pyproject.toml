@@ -10,7 +10,12 @@ dependencies = [
   "python-dotenv>=1.1.0",
   "pyotp>=2.9.0",
   "qrcode>=8.0",
-  "croniter>=6.0.0"
+  "croniter>=6.0.0",
+  # zoneinfo has no tz database of its own on Windows, so schedule handling
+  # fails with ZoneInfoNotFoundError without this. It was present in the
+  # long-lived venv by accident and absent from every fresh install, which
+  # cost three schedule-test failures in a new worktree.
+  "tzdata>=2025.1"
 ]
 
 [project.optional-dependencies]
