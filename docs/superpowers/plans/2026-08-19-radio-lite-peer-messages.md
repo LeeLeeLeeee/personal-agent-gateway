@@ -22,6 +22,8 @@
 - 쪽지 경로의 어떤 실패도 런을 실패시키지 않는다.
 - 모델에게 에이전트를 부를 때는 UUID가 아니라 라벨(`LEAD`, `W-01`)을 쓴다.
 - 한 쪽지 본문 상한 **2000자**, 한 배달의 쪽지 수 상한 **10개**.
+- 테스트가 필요한 import를 직접 확인하고 추가한다: `contextlib`, `OperationSpec`(`team_model_operations`), `TERMINAL_RUN_STATUSES`(`team_lifecycle:51`), `Mention`(`team_outcomes`). `replace`는 `team_runtime.py:5`에 이미 있다.
+- `NegotiationSetup.new_runtime`(`tests/test_team_runtime.py:7766`)은 기존 테스트 약 20개가 공유한다. 협업 서비스를 넘길 때 `getattr(self, "collab", None)`로 읽어 **기존 테스트가 그대로 동작**하게 한다.
 - `TeamRuntime`과 `TeamModelEffectService`에 협업 서비스를 넣을 때 **기본값은 `None`(기능 꺼짐)** 이다. 두 클래스는 프로덕션과 테스트에서 80곳 가까이 생성되며, 필수 인자로 만들면 전부 고쳐야 한다.
 - **effect 적용 트랜잭션 안에서 협업 쓰기를 하지 마라.** `apply_worker_outcome`은 `begin immediate`를 열고 있고(`team_model_effects.py:279`), `append_message`는 `Database.execute`로 **다른 커넥션**을 연다(`teams.py:3395`, `db.py:460`). 그 안에서 부르면 `database is locked`로 5.5초 뒤 실패하고, 예외 처리 경로마저 같은 락에 걸려 **이미 적용된 작업이 롤백된다**. 쪽지 저장은 트랜잭션이 닫힌 뒤에 한다.
 - **프로덕션 배선을 잊지 마라.** `app.py:225`(effects)와 `app.py:241`(runtime) 두 곳에 협업 서비스를 넘겨야 기능이 실제로 동작한다. 기본값이 `None`이므로 배선을 빼먹으면 테스트는 통과하고 제품은 아무 일도 하지 않는다.
@@ -599,6 +601,7 @@ git commit -m "feat(collab): store mentions as messages, refusing unknown labels
 - Produces: 같은 클래스에
   - `undelivered(team_run_id, agent_id) -> tuple[tuple[str, str, str], ...]` — `(message_id, sender_label, text)`, 오래된 것부터
   - `open_delivery(team_run_id, agent_id, operation_key, message_ids) -> str`
+  - `delivery_for(operation_key) -> str | None` — 그 키의 배달 id, 없으면 None. **쪽지 수가 아니라 행 존재**로 판단하기 위한 것이다
   - `delivery_message_ids(operation_key) -> tuple[str, ...]`
   - `notes_by_id(team_run_id, message_ids) -> tuple[tuple[str, str, str], ...]` — `undelivered`와 같은 형태
   - `undelivered_count(team_run_id) -> int`
@@ -831,6 +834,18 @@ def _now() -> str:
                 )
         return delivery_id
 
+    def delivery_for(self, operation_key: str) -> str | None:
+        """그 키로 열린 배달의 id. 쪽지가 0개인 배달도 존재하는 배달이다.
+
+        호출자가 쪽지 수로 판단하면, 쪽지 0개로 한 번 확정된 호출이 재진입할 때
+        새로 조회해 다른 접두사를 만들고, 원장이 바뀐 지문을 거부해 런이 죽는다.
+        """
+        row = self._db.fetchone(
+            "select id from team_collaboration_deliveries where operation_key = ?",
+            (operation_key,),
+        )
+        return row["id"] if row else None
+
     def delivery_message_ids(self, operation_key: str) -> tuple[str, ...]:
         rows = self._db.fetchall(
             "select i.message_id from team_collaboration_delivery_items i"
@@ -1029,6 +1044,18 @@ git commit -m "feat(collab): store a worker's mentions once its outcome is appli
 - Consumes: Task 2 `roster_block`·`radio_block`·`MENTION_BATCH_LIMIT`, Task 5 `undelivered`·`open_delivery`·`delivery_message_ids`·`notes_by_id`
 - Produces: `TeamRuntime(..., collaboration=None)`. `_invoke_operation`이 메시지 앞에 명단·쪽지를 붙이고 그에 맞게 지문을 다시 계산한다
 
+**세 갈래로 갈린다.** 판단 기준은 쪽지 수가 아니라 **행의 존재**다.
+
+| 상태 | 처리 |
+| --- | --- |
+| 이 키로 열린 배달이 있다 | 그 배달의 쪽지로 **같은 접두사를 재현**한다. 쪽지가 0개였으면 0개로 재현한다 |
+| 배달은 없는데 operation은 있다 | **접두사 없이** 원래 요청을 재현한다. 이 기능 배선 이전에 예약된 호출이다 |
+| 둘 다 없다 | 새로 조회해 배달을 확정하고 접두사를 붙인다 |
+
+쪽지 수로 판단하면 **명단 블록 때문에 모든 호출이 배달을 열지만 대부분 쪽지가 0개**이므로, 재진입 시 새로 조회해 다른 접두사를 만들고 `reserve`가 바뀐 지문을 거부한다. 그 `OperationConflict`는 radio의 try/except 밖에서 나므로 `start`/`resume`의 광범위한 except가 잡아 런을 실패로 정리한다 — **배선이 들어가는 순간 `prepared` 상태인 모든 런이 영구히 복구 불가가 된다.**
+
+두 번째 갈래가 없으면 같은 일이 이 기능 이전에 예약된 모든 operation에 일어난다.
+
 **주입은 `_invoke_operation`(`team_runtime.py:914`)에서 한다.** `_operation_spec`이 아니다: `OperationSpec`에는 `messages` 필드가 없고(`team_model_operations.py:91-101`) 호출 지점들은 `messages`를 spec과 invoker에 **각각** 넘긴다. spec 쪽에서 붙이면 지문만 바뀌고 모델은 쪽지를 못 본다 — 원장이 전달됐다고 기록하는데 실제로는 가지 않은 상태가 되어, 구현하지 않는 것보다 나쁘다.
 
 `_invoke_operation`은 `spec`과 `messages`를 함께 받고 `:928`에서 예약하며, 복구 경로도 `:1475`에서 이곳으로 들어온다. 호출 지점은 6곳(`:757, :831, :1475, :2698, :2945, :2982, :3028`)이고 전부 이 메서드를 지난다.
@@ -1095,7 +1122,8 @@ async def test_recovery_reproduces_the_same_notes(collab_setup):
     # 쪽 raise로는 만들 수 없다.
     setup.worker_clients[0].die_after_fetches = 0
 
-    with pytest.raises(RuntimeError):
+    # start는 예외를 올리지 않는다: 잡아서 실패한 런을 돌려준다(`:1738-1742`).
+    with contextlib.suppress(Exception):
         await setup.runtime.start(setup.run.id, setup.cycle.id)
 
     setup.collab.record_mentions(
@@ -1103,7 +1131,8 @@ async def test_recovery_reproduces_the_same_notes(collab_setup):
     )
     setup.worker_clients[0].die_after_fetches = None
 
-    await setup.new_runtime().resume(setup.run.id)
+    # 연속 런의 resume은 cycle_id를 요구한다(`:4506-4509`).
+    await setup.new_runtime().resume(setup.run.id, setup.cycle.id)
 
     delivered = [p for p in setup.worker_clients[0].prompts if "TEAM RADIO" in p]
     assert delivered
@@ -1138,6 +1167,10 @@ Expected: FAIL — `TeamRuntime`이 `collaboration` 인자를 받지 않고, 어
         ...
 ```
 
+`_with_radio`가 첫 문장인 것은 의도이지만, **이미 `applied`/`completed`인 operation에 쪽지를 묶으면 안 된다.** `_invoke_operation`은 뒤쪽(`:940` 부근)에서 그 상태면 모델을 부르지 않고 반환하는데, 그 전에 배달을 열면 그 쪽지들은 프롬프트에 실리지 않은 채 "전달됨"(operation이 applied)으로 판정된다 — 조용한 유실이고, spec의 유실 0이 금지하는 바로 그것이다.
+
+위 `elif self._operations.get_by_key(...) is not None: return messages, spec` 갈래가 이 경우를 함께 막는다: 이미 존재하는 operation에는 배달을 새로 열지 않는다. 그 갈래를 지우면 두 결함이 동시에 되살아난다.
+
 ```python
     def _with_radio(self, spec, agent, messages):
         """명단과 미전달 쪽지를 첫 메시지 앞에 붙이고 지문을 다시 계산한다.
@@ -1153,9 +1186,19 @@ Expected: FAIL — `TeamRuntime`이 `collaboration` 인자를 받지 않고, 어
         if self._collaboration is None or not messages:
             return messages, spec
         try:
-            pinned = self._collaboration.delivery_message_ids(spec.operation_key)
-            if pinned:
-                notes = self._collaboration.notes_by_id(spec.team_run_id, pinned)
+            if self._collaboration.delivery_for(spec.operation_key) is not None:
+                # 이미 확정된 호출이다. 쪽지가 0개였더라도 그 사실을 재현해야
+                # 한다 -- 다시 조회하면 그 사이 도착한 쪽지가 섞여 지문이 달라지고
+                # reserve가 거부한다.
+                notes = self._collaboration.notes_by_id(
+                    spec.team_run_id,
+                    self._collaboration.delivery_message_ids(spec.operation_key),
+                )
+            elif self._operations.get_by_key(spec.operation_key) is not None:
+                # operation은 이미 있는데 배달은 없다: 이 기능이 배선되기 전에
+                # 예약된 호출이다. 새로 붙이면 지문이 달라져 복구가 영구히
+                # 막히므로, 접두사 없이 원래 요청을 재현한다.
+                return messages, spec
             else:
                 notes = self._collaboration.undelivered(spec.team_run_id, agent.id)[
                     :MENTION_BATCH_LIMIT
@@ -1228,7 +1271,9 @@ git commit -m "feat(collab): inject notes at the one funnel every model call pas
 - Consumes: Task 5 `undelivered_count`
 - Produces: 런이 종단 상태로 돌아올 때 미전달 수가 `collaboration_undelivered` 메시지로 남는다
 
-단일 종단 훅은 없다. 내부 종단 전이는 여러 곳이지만 **공개 진입점은 셋**이고 모두 `TeamRun`을 돌려주므로, 반환 직전에 종단 여부를 보고 기록한다.
+단일 종단 훅은 없다. `TeamRun`을 돌려주는 공개 진입점은 **`start`(`:1678`), `resume`(`:3959`), `settle_contest`(`:4176`)** 셋이다. `adjudicate_contest`(`:4113`)는 `ContestOutcome`을 돌려주므로 여기에 쓰면 `run.status`에서 AttributeError가 난다 — 감싸지 않는다.
+
+**연속(continuous) 런은 사이클마다 `completed`를 지난다**(`:1703`, `:3887`, `:4198`). 종단 상태만 보고 기록하면 다음 사이클이 전달할 쪽지를 매 사이클 "미전달"로 남긴다. 그래서 **런의 lifecycle_mode가 continuous이고 아직 다음 사이클이 남아 있으면 기록하지 않는다** — 기록은 그 런이 더 이상 아무도 부르지 않을 때만 의미가 있다.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1244,16 +1289,14 @@ async def test_notes_that_never_landed_are_recorded_when_the_run_ends(collab_set
     # 수신자가 호출 전에 죽으므로 그 operation은 applied가 되지 않는다.
     setup.worker_clients[1].die_after_fetches = 0
 
-    with pytest.raises(RuntimeError):
+    with contextlib.suppress(Exception):
         await setup.runtime.start(setup.run.id, setup.cycle.id)
+    run = setup.teams.get_team_run(setup.run.id)
 
-    run = await setup.new_runtime().resume(setup.run.id)
-
-    if run.status in TERMINAL_RUN_STATUSES:
-        kinds = [m.kind for m in setup.teams.list_messages(setup.run.id)]
-        assert "collaboration_undelivered" in kinds
-    else:
-        assert setup.collab.undelivered_count(setup.run.id) == 1
+    # 종단이 아니면 이 테스트는 아무것도 검사하지 못한다. 헤지하지 않고 단정한다.
+    assert run.status in TERMINAL_RUN_STATUSES
+    kinds = [m.kind for m in setup.teams.list_messages(setup.run.id)]
+    assert "collaboration_undelivered" in kinds
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1271,6 +1314,11 @@ Expected: FAIL — 종단이면 `collaboration_undelivered`가 없고, 종단이
         않는다 -- 곁다리 기능이 런의 마무리를 붙잡으면 안 된다.
         """
         if self._collaboration is None or run.status not in TERMINAL_RUN_STATUSES:
+            return run
+        if run.lifecycle_mode == "continuous" and run.status == "completed":
+            # 연속 런은 사이클마다 completed를 지난다. 다음 사이클이 전달할 쪽지를
+            # 매번 미전달로 적으면 그 기록은 소음이 되고, 소음이 된 기록은 읽히지
+            # 않는다.
             return run
         try:
             pending = self._collaboration.undelivered_count(run.id)
