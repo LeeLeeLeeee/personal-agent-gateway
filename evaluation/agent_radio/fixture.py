@@ -246,6 +246,9 @@ class Record:
     conflict_count: int
     critical_defects_found: int
     mode_metrics: dict[str, object]
+    # How many workers the team ran with. See parse_record for why an absent
+    # value is tolerated and defaulted rather than refused.
+    workers: int = 1
 
     @property
     def succeeded(self) -> bool:
@@ -270,6 +273,20 @@ def parse_record(payload: dict) -> Record:
     for key in ("cost", "mode_metrics"):
         if not isinstance(payload.get(key), dict):
             raise FixtureError(f"{key} must be an object")
+    # Absent is tolerated here, uniquely: every record written before this
+    # field existed was produced by a runner with max_workers=1 hardcoded, so
+    # a missing `workers` is not an unrecorded measurement -- it is a known
+    # fact about those runs. Mirrors artifact.py's parse_artifact, which
+    # tolerates the same gap on the artefact side for the same reason. Do not
+    # make this strict again: the sweep this feature is measured against wrote
+    # records with no `workers` key at all, and a strict read would make every
+    # one of them unreadable the moment this branch merges.
+    if "workers" not in payload:
+        workers = 1
+    else:
+        workers = payload["workers"]
+        if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
+            raise FixtureError("workers must be a positive integer")
     return Record(
         fixture_id=_required_text(payload, "fixture_id"),
         fixture_sha256=_required_text(payload, "fixture_sha256"),
@@ -287,6 +304,7 @@ def parse_record(payload: dict) -> Record:
         conflict_count=_counter(payload, "conflict_count"),
         critical_defects_found=_counter(payload, "critical_defects_found"),
         mode_metrics=dict(payload["mode_metrics"]),
+        workers=workers,
     )
 
 

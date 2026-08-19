@@ -368,6 +368,26 @@ def test_a_record_matching_the_rubric_exactly_is_fully_reported():
     assert rubric_is_fully_reported(record, fixture) is True
 
 
+def test_workers_defaults_to_one_when_absent():
+    """Every record on disk before this field existed has no `workers` key.
+    Absent is a recovered fact (those sweeps hardcoded one worker), not an
+    unrecorded measurement -- so it must not become unreadable."""
+    payload = _record()
+    assert "workers" not in payload
+
+    assert parse_record(payload).workers == 1
+
+
+def test_workers_is_read_when_present():
+    assert parse_record(_record(workers=2)).workers == 2
+
+
+@pytest.mark.parametrize("overrides", [{"workers": 0}, {"workers": "2"}, {"workers": True}])
+def test_a_bad_workers_value_is_refused(overrides):
+    with pytest.raises(FixtureError):
+        parse_record(_record(**overrides))
+
+
 def test_loading_records_from_a_directory(tmp_path: Path):
     (tmp_path / "run-1.json").write_text(json.dumps(_record()), encoding="utf-8")
 
@@ -588,6 +608,28 @@ def test_repeats_of_a_single_task_show_up_as_one_task_not_five():
     assert row[0].samples == 5
     assert row[0].tasks == 1
     assert "| arm | n | tasks |" in render(report)
+
+
+def test_different_worker_counts_do_not_pool_into_one_cell():
+    """legacy@2 vs radio_lite@2 is the controlled comparison two-worker
+    support exists to make possible. A one-worker and a two-worker run of the
+    same mode must not silently average into a single row."""
+    report = build_report(
+        _fixtures(),
+        [
+            parse_record(_record(workers=1)),
+            parse_record(_record(workers=2)),
+        ],
+    )
+
+    (row,) = report.rows.values()
+    assert len(row) == 2
+    assert {cell.samples for cell in row} == {1, 1}
+
+
+def test_a_two_worker_arm_is_labelled_distinctly():
+    assert Arm("legacy", False, workers=2).label == "legacy@2"
+    assert Arm("legacy", False, workers=1).label == "legacy"
 
 
 def test_arm_order_puts_the_baseline_first_even_against_the_alphabet():

@@ -256,6 +256,8 @@ def test_mentions_are_parsed_when_present():
         [{"to": "", "text": "x"}],
         [{"to": "W-02", "text": "x", "extra": 1}],
         [{"to": ["W-02"], "text": "x"}],
+        [{"to": "W-02", "text": "line one\nline two"}],
+        [{"to": "W-02", "text": "line one\rline two"}],
         "not a list",
     ],
 )

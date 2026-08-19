@@ -28,6 +28,16 @@ class Mention:
     to: str
     text: str
 
+    def __post_init__(self) -> None:
+        # A note is one short line by design. A newline lets a body forge
+        # extra radio lines or a whole competing SPACE POLICY block ahead of
+        # the real one once rendered -- refused here, at the one place every
+        # Mention comes into being (whether via _parse_mentions or directly),
+        # rather than stripped or escaped, since a mangled version of a
+        # forgery attempt serves no one.
+        if "\n" in self.text or "\r" in self.text:
+            raise TaskOutcomeError()
+
 
 @dataclass(frozen=True)
 class TaskOutcome:
@@ -171,6 +181,7 @@ def _parse_mentions(value: object) -> tuple[Mention, ...]:
             raise TaskOutcomeError()
         if not isinstance(text, str) or not text.strip():
             raise TaskOutcomeError()
+        # Mention.__post_init__ refuses an embedded newline in text.
         mentions.append(Mention(to.strip(), text.strip()))
     return tuple(mentions)
 

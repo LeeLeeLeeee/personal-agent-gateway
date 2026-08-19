@@ -31,10 +31,19 @@ class Arm:
 
     mode: str
     plan_negotiation: bool
+    # How many workers the run used. Its own axis for the same reason as
+    # `plan_negotiation`: a two-worker run and a one-worker run are not two
+    # samples of the same configuration, however identical the mode looks, and
+    # `legacy@2 vs radio_lite@2` is exactly the controlled comparison
+    # two-worker support exists to make possible. Defaulted rather than
+    # required so every existing call site -- including records written before
+    # this axis existed, which default to one worker -- keeps working.
+    workers: int = 1
 
     @property
     def label(self) -> str:
-        return f"{self.mode}+협상" if self.plan_negotiation else self.mode
+        base = f"{self.mode}+협상" if self.plan_negotiation else self.mode
+        return base if self.workers == 1 else f"{base}@{self.workers}"
 
 
 # The baseline is legacy with the feature *off*. Legacy that negotiated is a
@@ -84,7 +93,7 @@ def build_report(
     by_type: dict[str, dict[Arm, list[Record]]] = {}
     for record in live:
         fixture_type = fixtures[record.fixture_id].type
-        arm = Arm(record.mode, record.plan_negotiation)
+        arm = Arm(record.mode, record.plan_negotiation, record.workers)
         by_type.setdefault(fixture_type, {}).setdefault(arm, []).append(record)
 
     rows = {
@@ -195,7 +204,7 @@ def _percentile(durations: list[int], percent: int) -> int:
 
 def _arm_order(group: Mapping[Arm, list[Record]]) -> list[Arm]:
     """The baseline first, always: every gate is stated against it."""
-    arms = sorted(group, key=lambda arm: (arm.mode, arm.plan_negotiation))
+    arms = sorted(group, key=lambda arm: (arm.mode, arm.plan_negotiation, arm.workers))
     if BASELINE_ARM in arms:
         arms.remove(BASELINE_ARM)
         return [BASELINE_ARM, *arms]
