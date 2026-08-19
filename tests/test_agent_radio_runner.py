@@ -17,6 +17,7 @@ from agent_radio.artifact import (
 from agent_radio.fixture import Fixture, FixtureError, RubricItem
 from agent_radio.runner import (
     DEFAULT_BACKEND,
+    DEFAULT_MODEL,
     EMPTY_TRACE,
     EVAL_DATA_ROOT,
     EVAL_WORKSPACE_ROOT,
@@ -64,7 +65,8 @@ def _artifact(**overrides) -> dict:
         "plan_negotiation": False,
         "execution_profile": "read_only",
         "backend": "codex",
-        "model": "default",
+        "model": "gpt-5.6-luna",
+        "effort": "xhigh",
         "source_commit": "9e711fa0c0ffee0000000000000000000000beef",
         "resolved_model": "gpt-5.6-terra",
         "resolved_effort": "high",
@@ -176,6 +178,7 @@ def test_a_completed_run_with_a_blank_summary_is_not_scoreable():
         {"fixture_sha256": ""},
         {"backend": ""},
         {"model": ""},
+        {"effort": ""},
         # An unknown must be stated as null. An empty string reads as "we looked
         # and it is blank", which is a different claim.
         {"resolved_model": ""},
@@ -1023,8 +1026,37 @@ async def test_the_run_records_which_model_actually_answered(tmp_path: Path):
     harness.teams.create_team_run_from_team = remember
     artifact = await run_and_capture()
 
-    assert artifact.model == "default"
+    # The request and the answer are separate facts: the transcript says terra
+    # ran, while the run asked for whatever DEFAULT_MODEL names.
+    assert artifact.model == DEFAULT_MODEL
     assert artifact.resolved_model == "gpt-5.6-terra"
+
+
+async def test_the_requested_model_and_effort_reach_the_personas(tmp_path: Path):
+    """Recorded and delivered, because either alone misleads.
+
+    The gateway fills in "high" for a persona with no effort option
+    (runtime_factory.py:132), which overrides both the model's own default and
+    the alias default without anything in the request showing it. So an artefact
+    that names an effort has to be an effort the personas actually carry.
+    """
+    harness, repo = _stub_harness(tmp_path)
+
+    artifact = await run_fixture(
+        harness,
+        _understanding_fixture(),
+        mode="legacy",
+        repo_root=repo,
+        model="gpt-5.6-luna",
+        effort="xhigh",
+    )
+
+    assert (artifact.model, artifact.effort) == ("gpt-5.6-luna", "xhigh")
+    personas = harness.personas.list_personas()
+    assert personas
+    for persona in personas:
+        assert persona.default_model == "gpt-5.6-luna"
+        assert persona.default_options.get("effort") == "xhigh"
 
 
 async def test_a_provider_that_kept_no_transcript_leaves_the_model_unknown(

@@ -37,16 +37,31 @@ DEFAULT_TIMEOUT_SECONDS = 1800.0
 # Named here rather than inherited from PersonaService's defaults so that the
 # artefact can say what produced its answer. See run_fixture.
 DEFAULT_BACKEND = "codex"
-DEFAULT_MODEL = "default"
-# Deliberately far below DEFAULT_TIMEOUT_SECONDS. A worker that cleanly
-# declares a failure does not just fail its task -- the product opens a user
-# decision and the run parks at waiting_for_user, and with no human present to
-# resolve it, run_fixture then waits out its whole timeout before recording
-# anything. At 1800s that is 30 minutes of nothing per such run, and a sweep
-# of a handful of fixtures cannot absorb that. Five minutes is still generous
-# for one fixture actually making progress, and --timeout-seconds overrides it
-# for a run expected to take longer.
-CLI_DEFAULT_TIMEOUT_SECONDS = 300.0
+# Named exactly, not through the "default" alias. The alias resolves to whatever
+# the local Codex configuration selects, so two sweeps a month apart can run
+# different models with nothing in the request to show it.
+DEFAULT_MODEL = "gpt-5.6-luna"
+# Requested explicitly even though it matches what the gateway would substitute
+# (runtime_factory.py:132), because a value that arrives by substitution cannot
+# be told from one nobody chose -- and this model's own default is medium, so the
+# substitution is doing real work either way.
+#
+# xhigh was tried first and is not affordable here: on one fixture the worker was
+# still going at 71 turns when the 900s bound cut it off, against 8-15 turns for
+# the same fixture at high. It was making progress the whole time, so this is a
+# budget decision rather than a hang.
+DEFAULT_EFFORT = "high"
+# Still well below DEFAULT_TIMEOUT_SECONDS, and for the same reason: a worker
+# that cleanly declares a failure does not just fail its task -- the product
+# opens a user decision and the run parks at waiting_for_user, and with no human
+# present to resolve it, run_fixture waits out the whole bound before recording
+# anything. So this is the cost of one such run, paid per occurrence.
+#
+# Raised from 300s once real durations were in hand: measured runs on this
+# repository land between 150s and 460s, so five minutes truncated healthy runs
+# rather than only catching parked ones. 900s covers the observed range with
+# room and is what every sweep was already passing explicitly.
+CLI_DEFAULT_TIMEOUT_SECONDS = 900.0
 
 
 class RunnerError(RuntimeError):
@@ -391,6 +406,7 @@ async def run_fixture(
     plan_negotiation: bool = False,
     backend: str = DEFAULT_BACKEND,
     model: str = DEFAULT_MODEL,
+    effort: str = DEFAULT_EFFORT,
 ) -> RunArtifact:
     """Run one fixture once and describe what happened.
 
@@ -446,6 +462,7 @@ async def run_fixture(
             [],
             default_backend=backend,
             default_model=model,
+            default_options={"effort": effort},
         )
         member = harness.personas.create_persona(
             f"Eval Worker ({fixture.id})",
@@ -455,6 +472,7 @@ async def run_fixture(
             [],
             default_backend=backend,
             default_model=model,
+            default_options={"effort": effort},
         )
         team = harness.directory.create_team(
             f"Eval {fixture.id}",
@@ -576,6 +594,7 @@ async def run_fixture(
         execution_profile=fixture.execution_profile,
         backend=backend,
         model=model,
+        effort=effort,
         source_commit=source_commit,
         resolved_model=trace.model,
         resolved_effort=trace.effort,
@@ -772,6 +791,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="negotiate the plan before executing it (its own axis, not a mode)",
     )
     parser.add_argument("--backend", default=DEFAULT_BACKEND)
+    parser.add_argument(
+        "--effort",
+        default=DEFAULT_EFFORT,
+        help="reasoning effort to request (the gateway substitutes high if unset)",
+    )
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument(
         "--timeout-seconds",
@@ -809,6 +833,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 plan_negotiation=args.negotiation,
                 backend=args.backend,
                 model=args.model,
+                effort=args.effort,
             )
         )
     except RunnerError as exc:

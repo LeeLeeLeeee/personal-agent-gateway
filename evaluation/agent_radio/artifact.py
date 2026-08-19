@@ -42,6 +42,15 @@ class RunArtifact:
     execution_profile: str
     backend: str
     model: str
+    # What was asked for. `resolved_effort` is what ran. The two differ silently
+    # whenever a persona carries no effort option, because the gateway fills in
+    # "high" -- so recording only the second cannot tell a deliberate choice from
+    # a substitution.
+    #
+    # Null means the request stated no effort and the gateway chose for it. Runs
+    # before this field existed are in that state, and writing "high" into them
+    # would turn the gateway's substitution into a choice the sweep never made.
+    effort: str | None
     # The commit the run was allowed to read. Required for the same reason
     # `backend` is: the source is half of what a run is, and two answers about
     # different trees are not two measurements of the same thing.
@@ -151,6 +160,7 @@ def parse_artifact(payload: dict) -> RunArtifact:
         # name what produced it cannot be compared with anything.
         backend=_required_text(payload, "backend"),
         model=_required_text(payload, "model"),
+        effort=_recovered_text(payload, "effort"),
         source_commit=_required_text(payload, "source_commit"),
         resolved_model=resolved_model,
         resolved_effort=resolved_effort,
