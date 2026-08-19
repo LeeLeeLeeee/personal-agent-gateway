@@ -1009,6 +1009,34 @@ def _migration_31_team_plan_negotiation(
     )
 
 
+def _migration_32_team_collaboration_deliveries(
+    connection: sqlite3.Connection,
+) -> None:
+    connection.executescript(
+        """
+        create table if not exists team_collaboration_deliveries (
+            id text primary key,
+            team_run_id text not null,
+            agent_id text not null,
+            operation_key text not null unique,
+            status text not null,
+            created_at text not null,
+            settled_at text
+        );
+        create index if not exists idx_collab_delivery_agent
+        on team_collaboration_deliveries(team_run_id, agent_id, status);
+
+        create table if not exists team_collaboration_delivery_items (
+            delivery_id text not null,
+            message_id text not null,
+            primary key (delivery_id, message_id)
+        );
+        create index if not exists idx_collab_delivery_items_message
+        on team_collaboration_delivery_items(message_id);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -1041,6 +1069,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (29, "team-run-workspace-inheritance", _migration_29_team_run_workspace_inheritance),
     (30, "operation-failure-shape", _migration_30_operation_failure_shape),
     (31, "team-plan-negotiation", _migration_31_team_plan_negotiation),
+    (32, "team-collaboration-deliveries", _migration_32_team_collaboration_deliveries),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
