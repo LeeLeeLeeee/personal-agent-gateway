@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "분석 보고서를 `artifacts/worker-repair-stage-impact.md`에 작성했습니다. 코드 변경은 하지 않았습니다.\n\n전용 `worker_execution_repair` stage를 도입하려면 stage 선언·매핑, 재개/복구 분기, 결과 validator와 worker effect 허용 목록, workspace baseline 캡처, provider 대기 복구 대상, ledger/API/지표의 stage·ordinal 해석, 기존 `worker_execution@1` 레거시 행 처리, 관련 테스트를 함께 바꿔야 합니다.\n\n가장 중요한 무오류 약화 위험은 복구 stage를 workspace baseline 대상에 추가하지 않는 경우입니다. 이때 복구 작업의 파일 변경이 빈 변경 집합으로 기록되어 acceptance·audit·미신고 경로 검사가 놓칠 수 있습니다. 또한 validator/allow-list 누락, provider recovery 집합 누락, ordinal만으로 재시도 횟수를 해석하는 소비자도 각각 결과 종류·재개·관측성 보장을 약화시킵니다.\n\n테스트는 읽기 전용 분석 요청이므로 실행하지 않았습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\7052417ad8594892b3cf95cee2c24222\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

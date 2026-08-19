@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "두 작업이 모두 완료되었습니다. 수용 게이트의 `required_verifications` 전체 순회, 결과 수집·종합, 조기 실패 동작, 항목별 상세 증거 저장 및 API 노출 구조를 코드 근거와 함께 정리했습니다. 실패한 작업은 없습니다.\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\55297d71a47a46a387ac1170432cd297\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

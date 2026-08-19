@@ -82,6 +82,7 @@ def _artifact(**overrides) -> dict:
         "run_status": "completed",
         "summary": "수용 게이트는 파일 읽기만 한다",
         "workspace_path": "data/workspace/run-1/workspace",
+        "workers": 1,
         "repository_unchanged": True,
         "repository_diff": None,
         "error": None,
@@ -611,33 +612,36 @@ class _StubModel:
         return await self.complete_operation(messages, consumer_run_id="direct")
 
     def _plan(self) -> str:
-        """Named at call time because the worker agent only exists once the
-        runner has created the run."""
-        worker = next(
+        """Named at call time because the worker agents only exist once the
+        runner has created the run. One task per worker: a run that creates a
+        second worker but never gives it a task proves nothing about the
+        peer-message channel this evaluation exists to exercise."""
+        workers = [
             agent
             for agent in self._teams.list_agents(self._agent.team_run_id)
             if agent.role == "member"
-        )
+        ]
         plan = [
             {
-                "title": "Read the gate",
+                "title": f"Read the gate ({index + 1})",
                 "description": "Read the acceptance gate and report on it.",
                 "owner_agent_id": worker.id,
                 "required": True,
-                "plan_task_id": "read",
+                "plan_task_id": f"read-{index}",
                 "depends_on_task_ids": [],
                 "acceptance": {
                     "required_outputs": [],
                     "required_verifications": ["worker-result"],
                 },
             }
+            for index, worker in enumerate(workers)
         ]
         if self._optional_task_fails:
             plan.append(
                 {
                     "title": "Nice to have",
                     "description": "An optional cross-check.",
-                    "owner_agent_id": worker.id,
+                    "owner_agent_id": workers[0].id,
                     "required": False,
                     "plan_task_id": "cross-check",
                     "depends_on_task_ids": [],
@@ -892,6 +896,32 @@ async def test_a_read_only_run_gets_no_writable_copy(tmp_path: Path):
     )
 
     assert not (Path(artifact.workspace_path) / "source").exists()
+
+
+async def test_a_two_worker_run_invokes_both_workers(tmp_path: Path):
+    """peer 간 전달이 요점이다. 워커 2를 만들고 부르지 않으면 측정할 상황이 없다."""
+    harness, repo = _stub_harness(tmp_path)
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo, workers=2
+    )
+
+    assert artifact.workers == 2
+    roles = [p.role for p in harness.personas.list_personas()]
+    assert roles.count("worker") == 2
+    tasks = harness.teams.list_tasks(artifact.run_id)
+    assert len({task.owner_agent_id for task in tasks}) == 2
+
+
+async def test_the_default_is_one_worker(tmp_path: Path):
+    """기존 측정과 비교 가능하도록 기본값은 바뀌지 않는다."""
+    harness, repo = _stub_harness(tmp_path)
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert artifact.workers == 1
 
 
 def _transcript(path: Path, *entries: dict) -> str:

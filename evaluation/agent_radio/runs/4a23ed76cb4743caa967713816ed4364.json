@@ -21,6 +21,7 @@
   "run_status": "failed",
   "summary": null,
   "workspace_path": "C:\\pag-eval\\workspace\\4a23ed76cb4743caa967713816ed4364\\workspace",
+  "workers": 1,
   "repository_unchanged": false,
   "repository_diff": null,
   "error": "Input snapshot was modified"

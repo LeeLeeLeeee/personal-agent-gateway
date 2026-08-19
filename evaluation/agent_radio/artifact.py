@@ -85,6 +85,10 @@ class RunArtifact:
     run_status: str
     summary: str | None
     workspace_path: str
+    # How many workers the team ran with. Required as of this field's
+    # introduction; see parse_artifact for why an absent value is still
+    # tolerated when reading.
+    workers: int
     repository_unchanged: bool
     # What changed, when something did. `repository_unchanged` says only that
     # the tree moved, and a run flagged that way cannot be diagnosed afterwards
@@ -142,6 +146,23 @@ def parse_artifact(payload: dict) -> RunArtifact:
     wall_ms = payload.get("wall_ms")
     if not isinstance(wall_ms, int) or isinstance(wall_ms, bool) or wall_ms < 0:
         raise FixtureError("wall_ms must be a non-negative integer")
+    # Absent is tolerated here, uniquely: every artefact written before this
+    # field existed was produced with max_workers=1 hardcoded
+    # (evaluation/agent_radio/runner.py:567 at the time), so a missing
+    # `workers` is not an unrecorded measurement -- it is a known fact about
+    # those runs. `_recovered_count`'s "absent is refused, null is accepted"
+    # rule exists to catch the harness failing to record something; here the
+    # harness that wrote these artefacts had no such field to record. Do not
+    # make this strict again: the baseline sweep this feature is measured
+    # against was produced by that older runner and has no `workers` key at
+    # all, and a strict read would make every one of those artefacts
+    # unreadable the moment this branch merges.
+    if "workers" not in payload:
+        workers = 1
+    else:
+        workers = payload["workers"]
+        if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
+            raise FixtureError("workers must be a positive integer")
     summary = payload.get("summary")
     if summary is not None and not isinstance(summary, str):
         raise FixtureError("summary must be a string or null")
@@ -184,6 +205,7 @@ def parse_artifact(payload: dict) -> RunArtifact:
         run_status=_required_text(payload, "run_status"),
         summary=summary,
         workspace_path=_required_text(payload, "workspace_path"),
+        workers=workers,
         repository_unchanged=unchanged,
         repository_diff=_recovered_text(payload, "repository_diff"),
         error=error,

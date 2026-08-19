@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "수용 게이트의 검증 실행·결과 수집·종합 판정 흐름과 항목별 증거 기록 방식을 문서화했습니다. 지정된 문서 존재 및 `required_verifications` 포함 검증도 통과했으며, 보고된 실패는 없습니다.\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\07866448bf8448bbb089a6ae71bed34d\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

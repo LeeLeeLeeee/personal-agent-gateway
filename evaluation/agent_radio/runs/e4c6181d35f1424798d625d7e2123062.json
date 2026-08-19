@@ -21,6 +21,7 @@
   "run_status": "canceled",
   "summary": null,
   "workspace_path": "C:\\pag-eval\\workspace\\e4c6181d35f1424798d625d7e2123062\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": "run exceeded its 900s wall-clock bound"

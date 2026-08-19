@@ -473,6 +473,7 @@ async def run_fixture(
     backend: str = DEFAULT_BACKEND,
     model: str = DEFAULT_MODEL,
     effort: str = DEFAULT_EFFORT,
+    workers: int = 1,
 ) -> RunArtifact:
     """Run one fixture once and describe what happened.
 
@@ -530,21 +531,32 @@ async def run_fixture(
             default_model=model,
             default_options={"effort": effort},
         )
-        member = harness.personas.create_persona(
-            f"Eval Worker ({fixture.id})",
-            "worker",
-            "Carries out the evaluation task.",
-            [],
-            [],
-            default_backend=backend,
-            default_model=model,
-            default_options={"effort": effort},
-        )
+        # One persona per worker. `workers` many members give the peer-message
+        # channel a peer to write to; without a second worker the feature is
+        # unmeasurable. create_team_run_from_team below is given
+        # max_workers=workers, but that is only the configured value the run
+        # records (teams.py reports execution_mode as "sequential"
+        # unconditionally) -- tasks still execute one at a time, never
+        # concurrently. The ADR forbids parallel execute; this is sequential
+        # execution across a bigger roster, not a way around that.
+        members = [
+            harness.personas.create_persona(
+                f"Eval Worker {index + 1} ({fixture.id})",
+                "worker",
+                "Carries out the evaluation task.",
+                [],
+                [],
+                default_backend=backend,
+                default_model=model,
+                default_options={"effort": effort},
+            )
+            for index in range(workers)
+        ]
         team = harness.directory.create_team(
             f"Eval {fixture.id}",
             fixture.title,
             leader.id,
-            [member.id],
+            [m.id for m in members],
         )
         # The isolation the ADR requires, set before the run is created: the
         # run reads the pinned export and writes only to its own workspace.
@@ -564,7 +576,7 @@ async def run_fixture(
             team_id=team.id,
             goal=fixture.goal,
             run_mode="plan_and_execute",
-            max_workers=1,
+            max_workers=workers,
             lifecycle_mode="continuous",
             execution_policy="triggered",
             plan_negotiation=plan_negotiation,
@@ -679,6 +691,7 @@ async def run_fixture(
         run_status=final.status,
         summary=final.summary,
         workspace_path=final.working_root or final.workspace_root,
+        workers=workers,
         repository_unchanged=repository_unchanged,
         repository_diff=repository_diff,
         error=error,
@@ -906,6 +919,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="how many workers to run the team with (default: 1)",
+    )
+    parser.add_argument(
         "--timeout-seconds",
         type=float,
         default=CLI_DEFAULT_TIMEOUT_SECONDS,
@@ -943,6 +962,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     backend=args.backend,
                     model=args.model,
                     effort=args.effort,
+                    workers=args.workers,
                 )
             )
     except RunnerError as exc:

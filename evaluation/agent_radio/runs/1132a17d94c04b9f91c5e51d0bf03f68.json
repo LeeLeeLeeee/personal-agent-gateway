@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "수용 게이트의 실제 동작과 증거 기록 방식을 문서화했습니다.\n\n중요한 발견: 현재 구현은 실패한 검증을 만나면 조기 반환하므로, 모든 `required_verifications`를 실행·수집한 뒤 종합하는 전제가 충족되지 않습니다. 문서에는 이 차이와 검증별 증거 기록 규칙을 명시했습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\1132a17d94c04b9f91c5e51d0bf03f68\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

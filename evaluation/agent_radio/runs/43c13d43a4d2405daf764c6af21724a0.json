@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "워커가 각 `check`를 실행해 실행 레코드와 증빙을 남기고, 게이트는 그 레코드의 체크 정의·대상 산출물·실행 시도·무결성을 검증한 뒤 결과를 판정에 사용하도록 설계 변경점을 정리했습니다.\n\n핵심 보장은 유지됩니다. `check`가 있는 항목에서는 워커의 요약, `passed` 선언, 자연어 설명은 계속 무시하고, 유효한 실행 증빙의 기계 판정만 사용합니다. 실행 누락·오류·정의/대상 불일치·증빙 변조는 통과가 아닌 `unverified` 또는 실패로 처리해야 합니다.\n\n워커 분석 문서가 생성되었고, 지정된 비어 있지 않음 및 보장 문구 포함 검증을 통과했습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\43c13d43a4d2405daf764c6af21724a0\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

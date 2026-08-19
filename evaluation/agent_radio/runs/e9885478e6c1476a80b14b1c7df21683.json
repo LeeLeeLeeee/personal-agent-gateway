@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "새 검사 종류는 `team_verification_checks.py`의 registry·파서·직렬화·실행 분기와 evidence를 함께 확장해야 합니다. 별도 어휘 보유처는 `team_model_operations.py`의 ledger validator와 `team_runtime.py`의 프롬프트입니다.\n\n추가 필드가 있으면 canonical payload(`team_model_effects.py`)와 UI detail renderer도 변경 대상입니다. DB/API/result 경로는 기존 공용 serializer를 사용하므로 타입만 추가하면 보통 코드 변경은 없지만 round-trip 테스트가 필요합니다. UI 설명·fixtures·계약 문서와 관련 백엔드/API/UI 테스트도 갱신해야 합니다. 명령 실행형 검사는 별도 보안·권한 설계가 필요합니다. 독립 enum은 README, migration, API 모델에서는 발견되지 않았습니다. 실패 없음.\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\e9885478e6c1476a80b14b1c7df21683\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

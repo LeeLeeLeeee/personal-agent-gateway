@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "`file_at_most_lines` 검사를 추가했습니다. `max_lines`는 정수이며 1 이상인지 파싱 단계에서 검증하고, 파일 줄 수가 상한을 넘으면 실패합니다. 상한 초과 실패 테스트를 포함했으며 기존 검사 동작은 유지했습니다.\n\n검증: 대상 pytest 15개 통과, Ruff 검사 통과.",
   "workspace_path": "C:\\pag-eval\\workspace\\3f3f66cb305f4faa8316e5e4c400d57b\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

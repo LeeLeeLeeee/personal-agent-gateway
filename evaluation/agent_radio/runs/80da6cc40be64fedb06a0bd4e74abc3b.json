@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "구현·스키마·문서·테스트를 대조해 `attested_only`가 워커의 검증 항목 자기 보증을 기록하는 방식과, 보증되지 않은 항목과의 구분 기준을 `reports/attested_only-explanation.md`에 정리했습니다. 작업 실패는 없습니다.\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\80da6cc40be64fedb06a0bd4e74abc3b\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null
