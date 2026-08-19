@@ -24,18 +24,32 @@ class VerificationEvidence:
 
 
 @dataclass(frozen=True)
+class Mention:
+    to: str
+    text: str
+
+
+@dataclass(frozen=True)
 class TaskOutcome:
     status: TaskOutcomeStatus
     summary: str
     reason_code: str | None
     deliverables: tuple[Deliverable, ...]
     verifications: tuple[VerificationEvidence, ...]
+    # Default keeps existing constructor calls working; a later task drops this
+    # from the stored payload, so it must stay easy to omit.
+    mentions: tuple[Mention, ...] = ()
 
 
 class TaskOutcomeError(ValueError):
     def __init__(self, code: str = "invalid_task_outcome") -> None:
         self.code = code
         super().__init__("Worker final response is not a valid TaskOutcome")
+
+
+_OUTCOME_KEYS = frozenset(
+    {"status", "summary", "reason_code", "deliverables", "verifications"}
+)
 
 
 def parse_task_outcome(content: str) -> TaskOutcome:
@@ -46,13 +60,10 @@ def parse_task_outcome(content: str) -> TaskOutcome:
         raw = json.loads(stripped)
     except json.JSONDecodeError as exc:
         raise TaskOutcomeError() from exc
-    if not isinstance(raw, dict) or set(raw) != {
-        "status",
-        "summary",
-        "reason_code",
-        "deliverables",
-        "verifications",
-    }:
+    if not isinstance(raw, dict) or set(raw) not in (
+        _OUTCOME_KEYS,
+        _OUTCOME_KEYS | {"mentions"},
+    ):
         raise TaskOutcomeError()
 
     status = raw["status"]
@@ -69,12 +80,14 @@ def parse_task_outcome(content: str) -> TaskOutcome:
 
     deliverables = _parse_deliverables(raw["deliverables"])
     verifications = _parse_verifications(raw["verifications"])
+    mentions = _parse_mentions(raw.get("mentions", []))
     return TaskOutcome(
         status=status,
         summary=summary.strip(),
         reason_code=reason_code.strip() if isinstance(reason_code, str) else None,
         deliverables=deliverables,
         verifications=verifications,
+        mentions=mentions,
     )
 
 
@@ -143,6 +156,23 @@ def _parse_verifications(value: object) -> tuple[VerificationEvidence, ...]:
             )
         )
     return tuple(verifications)
+
+
+def _parse_mentions(value: object) -> tuple[Mention, ...]:
+    if not isinstance(value, list):
+        raise TaskOutcomeError()
+    mentions: list[Mention] = []
+    for raw in value:
+        if not isinstance(raw, dict) or set(raw) != {"to", "text"}:
+            raise TaskOutcomeError()
+        to = raw["to"]
+        text = raw["text"]
+        if not isinstance(to, str) or not to.strip():
+            raise TaskOutcomeError()
+        if not isinstance(text, str) or not text.strip():
+            raise TaskOutcomeError()
+        mentions.append(Mention(to.strip(), text.strip()))
+    return tuple(mentions)
 
 
 def _safe_relative_path(value: str) -> bool:

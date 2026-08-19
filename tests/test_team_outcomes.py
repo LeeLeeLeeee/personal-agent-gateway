@@ -219,3 +219,47 @@ def test_incoherent_verification_reports_are_rejected(verification):
                 }
             )
         )
+
+
+_BASE = {
+    "status": "completed",
+    "summary": "done",
+    "reason_code": None,
+    "deliverables": [],
+    "verifications": [],
+}
+
+
+def _payload(**overrides):
+    return json.dumps({**_BASE, **overrides}, ensure_ascii=False)
+
+
+def test_an_outcome_without_mentions_still_parses():
+    """기존 형태를 깨면 모든 워커 응답이 repair 경로로 떨어진다."""
+    assert parse_task_outcome(_payload()).mentions == ()
+
+
+def test_mentions_are_parsed_when_present():
+    outcome = parse_task_outcome(
+        _payload(mentions=[{"to": "W-02", "text": "게이트는 파일만 읽는다"}])
+    )
+
+    (mention,) = outcome.mentions
+    assert (mention.to, mention.text) == ("W-02", "게이트는 파일만 읽는다")
+
+
+@pytest.mark.parametrize(
+    "mentions",
+    [
+        [{"to": "W-02"}],
+        [{"to": "W-02", "text": "  "}],
+        [{"to": "", "text": "x"}],
+        [{"to": "W-02", "text": "x", "extra": 1}],
+        [{"to": ["W-02"], "text": "x"}],
+        "not a list",
+    ],
+)
+def test_a_malformed_mention_is_refused(mentions):
+    """껍데기만 두 형태를 받고 안쪽은 지금처럼 엄격하게 검사한다."""
+    with pytest.raises(TaskOutcomeError):
+        parse_task_outcome(_payload(mentions=mentions))
