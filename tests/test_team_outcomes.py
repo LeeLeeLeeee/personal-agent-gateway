@@ -1,9 +1,11 @@
 import json
+from dataclasses import asdict
 
 import pytest
 
 from personal_agent_gateway.team_outcomes import (
     Deliverable,
+    Mention,
     TaskOutcome,
     TaskOutcomeError,
     VerificationEvidence,
@@ -256,12 +258,79 @@ def test_mentions_are_parsed_when_present():
         [{"to": "", "text": "x"}],
         [{"to": "W-02", "text": "x", "extra": 1}],
         [{"to": ["W-02"], "text": "x"}],
-        [{"to": "W-02", "text": "line one\nline two"}],
-        [{"to": "W-02", "text": "line one\rline two"}],
         "not a list",
     ],
 )
-def test_a_malformed_mention_is_refused(mentions):
-    """껍데기만 두 형태를 받고 안쪽은 지금처럼 엄격하게 검사한다."""
+def test_a_malformed_mention_is_dropped_without_voiding_the_outcome(mentions):
+    """껍데기만 두 형태를 받고 안쪽은 지금처럼 엄격하게 검사하되, 그 거부가
+    워커의 결과를 무효로 만들지는 않는다.
+
+    쪽지는 곁다리다. 여기서 raise하면 끝낸 태스크가 자기 일이 아닌 필드 하나로
+    거절되고, 그 필드를 되달라고 하지도 않는 repair 라운드가 유료로 한 번 타고,
+    쪽지는 아무 기록 없이 사라진다. 라벨이 틀린 쪽지는 이미 강등으로 남고
+    태스크는 살아남는다 -- 본문이 틀린 쪽지도 같아야 한다.
+    """
+    outcome = parse_task_outcome(_payload(mentions=mentions))
+
+    assert outcome.status == "completed"
+    assert outcome.mentions == ()
+    assert outcome.mention_refusals == ("malformed",)
+
+
+@pytest.mark.parametrize(
+    "separator",
+    ["\n", "\r", "\r\n", "\u2028", "\u2029", "\x85", "\x0b", "\x0c"],
+)
+def test_every_line_break_python_knows_is_refused(separator):
+    """`"\\n" in text`는 자기 근거를 강제하지 못한다: U+2028(LINE SEPARATOR),
+    U+2029(PARAGRAPH SEPARATOR), U+0085, \\x0b, \\x0c는 그 검사를 통과해 렌더된
+    접두사에 그대로 실린다. json은 리터럴 U+2028을 손대지 않고 통과시키므로
+    모델은 escape조차 필요하지 않다. splitlines가 아는 모든 개행이 거부되어야
+    한다."""
+    text = f"line one{separator}line two"
+
+    outcome = parse_task_outcome(_payload(mentions=[{"to": "W-02", "text": text}]))
+
+    assert outcome.status == "completed"
+    assert outcome.mentions == ()
+    assert outcome.mention_refusals == ("line_break",)
+    # And the dataclass itself stays incapable of holding one: that invariant is
+    # what makes "no path can render a forged line" structural rather than an
+    # audit of every asdict(outcome) site.
     with pytest.raises(TaskOutcomeError):
-        parse_task_outcome(_payload(mentions=mentions))
+        Mention("W-02", text)
+
+
+def test_a_trailing_break_is_a_break_too():
+    """줄 수만 세면(`len(splitlines()) > 1`) 끝에 붙은 개행이 통과한다."""
+    with pytest.raises(TaskOutcomeError):
+        Mention("W-02", "one line\n")
+
+
+def test_a_good_note_survives_a_malformed_sibling():
+    outcome = parse_task_outcome(
+        _payload(
+            mentions=[
+                {"to": "W-02", "text": "게이트는 파일만 읽는다"},
+                {"to": "W-03", "text": "line one\nline two"},
+            ]
+        )
+    )
+
+    assert [mention.text for mention in outcome.mentions] == [
+        "게이트는 파일만 읽는다"
+    ]
+    assert outcome.mention_refusals == ("line_break",)
+
+
+def test_a_refusal_survives_the_ledger_round_trip():
+    """거부는 parse에서 발견되고 기록은 apply에서 이뤄진다. 그 둘 사이에는 원장이
+    있고, outcome payload만 건너간다 -- asdict → json → parse를 넘지 못하는
+    거부는 끝내 어디에도 적히지 않는다."""
+    outcome = parse_task_outcome(
+        _payload(mentions=[{"to": "W-02", "text": "line one\nline two"}])
+    )
+
+    again = parse_task_outcome(json.dumps(asdict(outcome), ensure_ascii=False))
+
+    assert again.mention_refusals == ("line_break",)

@@ -7,7 +7,8 @@ from personal_agent_gateway.team_collaboration import (
     radio_block,
     roster_block,
 )
-from personal_agent_gateway.team_runtime import PLANNING_PROMPT, WORKER_PROMPT
+from personal_agent_gateway import team_runtime
+from personal_agent_gateway.team_runtime import PLANNING_PROMPT
 
 
 def test_labels_are_stable_and_short():
@@ -29,18 +30,37 @@ def test_roster_block_names_every_teammate():
     assert "W-02" in block and "구현 담당" in block
 
 
-def test_the_roster_never_tells_the_leader_to_send_mentions():
-    """The roster prefix is rendered on every prompt, leader included, but the
-    leader only receives notes -- _parse_task_plan rejects any unknown key per
-    task, so a hint to use "mentions" here earns a repair round. The worker's
-    outcome contract is where sending is documented; the roster must say only
-    who each label names."""
-    leader_prompt = (
-        roster_block([("LEAD", "설계 리드"), ("W-01", "구현 담당")]) + PLANNING_PROMPT
-    )
+def test_the_roster_scopes_its_labels_away_from_owner_agent_id():
+    """The prefix sits immediately above `Available team members`, which shows
+    raw UUIDs and `owner_agent_id`. Without saying where a label is used, a
+    leader writes `owner_agent_id: "W-01"`, `_parse_task_plan` raises, and a
+    planning repair round is burned -- the same wasted-round failure class the
+    roster wording was filed against."""
+    block = roster_block([("LEAD", "설계 리드"), ("W-01", "구현 담당")])
 
-    assert "mentions" not in leader_prompt.lower()
-    assert '"mentions"' in WORKER_PROMPT
+    assert "owner_agent_id" in block
+    assert "note" in block
+
+
+def test_only_the_worker_outcome_contract_tells_a_model_to_send_mentions():
+    """The prefix is prepended at every stage, not just planning, but only the
+    worker sends notes -- _parse_task_plan rejects any unknown key per task, so
+    a hint to use "mentions" in a leader prompt earns a repair round. Pinned
+    over every prompt this module defines rather than one of them, so a prompt
+    added later is covered without anyone remembering to add it here."""
+    prompts = {
+        name: value
+        for name, value in vars(team_runtime).items()
+        if name.endswith("_PROMPT") and isinstance(value, str)
+    }
+    # Guards the loop against a rename that would leave it iterating nothing.
+    assert PLANNING_PROMPT in prompts.values()
+    assert len(prompts) >= 8
+    assert '"mentions"' in prompts.pop("WORKER_PROMPT")
+
+    roster = roster_block([("LEAD", "설계 리드"), ("W-01", "구현 담당")])
+    for name, prompt in prompts.items():
+        assert "mentions" not in (roster + prompt).lower(), name
 
 
 def test_radio_block_marks_the_content_as_untrusted_reference():

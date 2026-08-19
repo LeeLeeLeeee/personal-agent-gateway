@@ -627,6 +627,88 @@ def test_different_worker_counts_do_not_pool_into_one_cell():
     assert {cell.samples for cell in row} == {1, 1}
 
 
+def test_a_two_worker_comparison_reads_against_its_own_baseline():
+    """`legacy@2 vs radio_lite@2` is the comparison the workers axis exists to
+    enable, so it has to be able to read as met. A baseline pinned at one worker
+    made it permanently unmeetable -- every two-worker group reported
+    "베이스라인 없음" while holding a legacy arm -- and did not disclose that it
+    meant no *one-worker* legacy arm."""
+    fixtures: dict = {}
+    records = []
+    for i in range(20):
+        fixture = parse_fixture(
+            _definition(id=f"u{i}"), sha256=f"u{i}-sha", commit_exists=_ANY_COMMIT
+        )
+        fixtures[fixture.id] = fixture
+        for mode in ("legacy", "radio_lite"):
+            records.append(
+                parse_record(
+                    _record(
+                        fixture_id=fixture.id,
+                        fixture_sha256=fixture.sha256,
+                        mode=mode,
+                        workers=2,
+                    )
+                )
+            )
+
+    report = build_report(fixtures, records)
+
+    assert report.warnings == ()
+    assert "베이스라인 없음" not in render(report)
+    (row,) = report.rows.values()
+    assert row[0].arm == Arm("legacy", False, workers=2)
+
+
+def test_a_missing_baseline_names_the_worker_count_it_is_missing_at():
+    """"베이스라인 없음" on a two-worker group means no *two-worker* legacy arm.
+    A reader who cannot see which one is missing looks for the wrong records --
+    and a one-worker legacy arm sitting right there in the same group makes the
+    bare message read as simply wrong."""
+    report = build_report(
+        _fixtures(),
+        [
+            parse_record(_record(mode="legacy", workers=1)),
+            parse_record(_record(mode="radio_lite", workers=2)),
+        ],
+    )
+
+    assert any("legacy@2" in warning for warning in report.warnings)
+    assert "legacy@2" in render(report)
+
+
+def test_each_worker_count_is_ordered_from_its_own_baseline():
+    """Baseline-first is dead weight if the promotion can only ever fire for
+    one worker count; a synthetic mode sorting before 'legacy' is what proves
+    it fires at all."""
+    baseline_two = Arm("legacy", False, workers=2)
+    other_two = Arm("aardvark", False, workers=2)
+
+    assert _arm_order({other_two: [], baseline_two: []}) == [baseline_two, other_two]
+    assert _arm_order({other_two: [], BASELINE_ARM: [], baseline_two: []}) == [
+        BASELINE_ARM,
+        baseline_two,
+        other_two,
+    ]
+
+
+def test_the_rubric_tells_a_grader_to_write_the_worker_count():
+    """Nothing propagates artifact.workers into a hand-authored record, and
+    parse_record tolerates its absence by design, so the only thing standing
+    between a two-worker record and the one-worker cell is the instruction."""
+    rubric = (
+        Path(__file__).resolve().parents[1]
+        / "evaluation"
+        / "agent_radio"
+        / "rubric.md"
+    ).read_text(encoding="utf-8")
+
+    assert "workers" in rubric
+    # Naming the field is not enough: the tolerance is what makes omitting it
+    # silent, so the procedure has to say that omitting it pools the record.
+    assert "1워커" in rubric
+
+
 def test_a_two_worker_arm_is_labelled_distinctly():
     assert Arm("legacy", False, workers=2).label == "legacy@2"
     assert Arm("legacy", False, workers=1).label == "legacy"

@@ -29,13 +29,22 @@ class Mention:
     text: str
 
     def __post_init__(self) -> None:
-        # A note is one short line by design. A newline lets a body forge
-        # extra radio lines or a whole competing SPACE POLICY block ahead of
-        # the real one once rendered -- refused here, at the one place every
-        # Mention comes into being (whether via _parse_mentions or directly),
-        # rather than stripped or escaped, since a mangled version of a
-        # forgery attempt serves no one.
-        if "\n" in self.text or "\r" in self.text:
+        # A note is one short line by design. A break lets a body forge extra
+        # radio lines or a whole competing SPACE POLICY block ahead of the real
+        # one once rendered -- refused here, at the one place every Mention
+        # comes into being (whether via _parse_mentions or directly), rather
+        # than stripped or escaped, since a mangled version of a forgery
+        # attempt serves no one.
+        #
+        # `splitlines` is the check because it is Python's own answer to what a
+        # line break is: it also breaks on U+2028 (LINE SEPARATOR), U+2029
+        # (PARAGRAPH SEPARATOR), U+0085, \x0b and \x0c, every one of which a
+        # `"\n" in text` test lets through -- and json carries a literal U+2028
+        # through untouched, so a model needs no escape to emit one. Rejoining
+        # with nothing must give the text back, which holds exactly when the
+        # text carries no break at all; counting lines alone would let a
+        # trailing break past.
+        if "".join(self.text.splitlines()) != self.text:
             raise TaskOutcomeError()
 
 
@@ -49,6 +58,13 @@ class TaskOutcome:
     # Default keeps existing constructor calls working; a later task drops this
     # from the stored payload, so it must stay easy to omit.
     mentions: tuple[Mention, ...] = ()
+    # One reason per note the parse refused. Notes are auxiliary, so a
+    # malformed one is dropped instead of voiding the worker's finished task --
+    # but dropping it silently is the loss this whole channel exists to
+    # prevent, and the place that records a refusal (`_store_mentions`) is on
+    # the far side of the ledger from the place that discovers one. So the
+    # discovery rides on the outcome, which is the one thing that crosses.
+    mention_refusals: tuple[str, ...] = ()
 
 
 class TaskOutcomeError(ValueError):
@@ -60,6 +76,12 @@ class TaskOutcomeError(ValueError):
 _OUTCOME_KEYS = frozenset(
     {"status", "summary", "reason_code", "deliverables", "verifications"}
 )
+
+# Why a note was refused. Our own words, never the model's: the note itself is
+# not repeated into the ledger, only the fact that one was turned away.
+MENTION_REFUSED_LINE_BREAK = "line_break"
+MENTION_REFUSED_MALFORMED = "malformed"
+_MENTION_REFUSALS = frozenset({MENTION_REFUSED_LINE_BREAK, MENTION_REFUSED_MALFORMED})
 
 
 def parse_task_outcome(content: str) -> TaskOutcome:
@@ -73,6 +95,10 @@ def parse_task_outcome(content: str) -> TaskOutcome:
     if not isinstance(raw, dict) or set(raw) not in (
         _OUTCOME_KEYS,
         _OUTCOME_KEYS | {"mentions"},
+        # The shape asdict(TaskOutcome) produces, which is what the ledger
+        # stores and hands back for re-parsing. Accepted so a stored outcome
+        # round-trips; `mention_refusals` is not documented to any model.
+        _OUTCOME_KEYS | {"mentions", "mention_refusals"},
     ):
         raise TaskOutcomeError()
 
@@ -90,7 +116,7 @@ def parse_task_outcome(content: str) -> TaskOutcome:
 
     deliverables = _parse_deliverables(raw["deliverables"])
     verifications = _parse_verifications(raw["verifications"])
-    mentions = _parse_mentions(raw.get("mentions", []))
+    mentions, refusals = _parse_mentions(raw.get("mentions", []))
     return TaskOutcome(
         status=status,
         summary=summary.strip(),
@@ -98,6 +124,9 @@ def parse_task_outcome(content: str) -> TaskOutcome:
         deliverables=deliverables,
         verifications=verifications,
         mentions=mentions,
+        mention_refusals=(
+            _parse_mention_refusals(raw.get("mention_refusals", [])) + refusals
+        ),
     )
 
 
@@ -168,22 +197,59 @@ def _parse_verifications(value: object) -> tuple[VerificationEvidence, ...]:
     return tuple(verifications)
 
 
-def _parse_mentions(value: object) -> tuple[Mention, ...]:
+def _parse_mentions(value: object) -> tuple[tuple[Mention, ...], tuple[str, ...]]:
+    """The notes that stand, and one reason for each one turned away.
+
+    A malformed note is dropped, never raised. Raising voids the whole outcome
+    over a field that is not the worker's work -- and then costs a repair round
+    whose prompt does not even ask the field back, so the note vanishes with
+    nothing recorded. A bad recipient label already degrades and leaves the
+    task standing; a malformed body is the same kind of fault and ends the same
+    way. The reasons travel on the outcome so `_store_mentions` can write the
+    refusal down in that same shape.
+    """
     if not isinstance(value, list):
-        raise TaskOutcomeError()
+        return (), (MENTION_REFUSED_MALFORMED,)
     mentions: list[Mention] = []
+    refusals: list[str] = []
     for raw in value:
-        if not isinstance(raw, dict) or set(raw) != {"to", "text"}:
-            raise TaskOutcomeError()
-        to = raw["to"]
-        text = raw["text"]
-        if not isinstance(to, str) or not to.strip():
-            raise TaskOutcomeError()
-        if not isinstance(text, str) or not text.strip():
-            raise TaskOutcomeError()
-        # Mention.__post_init__ refuses an embedded newline in text.
-        mentions.append(Mention(to.strip(), text.strip()))
-    return tuple(mentions)
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != {"to", "text"}
+            or not isinstance(raw["to"], str)
+            or not raw["to"].strip()
+            or not isinstance(raw["text"], str)
+            or not raw["text"].strip()
+        ):
+            refusals.append(MENTION_REFUSED_MALFORMED)
+            continue
+        try:
+            # Mention refuses a line break at construction and keeps refusing
+            # it: that invariant is what makes "no path can render a forged
+            # line" structural rather than an audit of every asdict(outcome)
+            # site. So the break is caught here, not pre-checked and allowed
+            # through a relaxed dataclass.
+            mentions.append(Mention(raw["to"].strip(), raw["text"].strip()))
+        except TaskOutcomeError:
+            refusals.append(MENTION_REFUSED_LINE_BREAK)
+    return tuple(mentions), tuple(refusals)
+
+
+def _parse_mention_refusals(value: object) -> tuple[str, ...]:
+    """Refusals an earlier parse of this same outcome already recorded.
+
+    Anything unrecognised is normalised to the generic reason rather than
+    refused: raising here would void the outcome, which is the very failure
+    this field exists to prevent.
+    """
+    if not isinstance(value, list):
+        return (MENTION_REFUSED_MALFORMED,)
+    return tuple(
+        reason
+        if isinstance(reason, str) and reason in _MENTION_REFUSALS
+        else MENTION_REFUSED_MALFORMED
+        for reason in value
+    )
 
 
 def _safe_relative_path(value: str) -> bool:

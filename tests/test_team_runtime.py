@@ -8399,6 +8399,46 @@ async def test_an_unknown_recipient_does_not_undo_the_applied_task(
 
 
 @pytest.mark.asyncio
+async def test_a_malformed_note_does_not_undo_the_applied_task(collab_setup) -> None:
+    """The note the worker wrote is lost either way. The question is whether the
+    worker's finished task goes with it, silently.
+
+    A newline in the body used to raise out of parse_task_outcome, which lands
+    as invalid_structured_output: a paid acceptance_worker_repair round fires,
+    its prompt asks for an outcome and never mentions the notes field, the
+    repaired outcome parses with none, and _store_mentions returns early having
+    written nothing. A completed task rejected over an auxiliary field, a round
+    burned, and the note gone with no trace. A bad *label* was already handled
+    the other way -- degraded, task kept -- and both are malformed notes.
+    """
+    setup = collab_setup
+    setup.worker_clients[0].outcome_mentions = [
+        {"to": "W-02", "text": "게이트는 파일만 읽는다\n두 번째 줄"}
+    ]
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    tasks = setup.teams.list_tasks(setup.run.id, setup.cycle.id)
+    assert [task.status for task in tasks] == ["completed", "completed"]
+    degraded = [
+        m
+        for m in setup.teams.list_messages(setup.run.id)
+        if m.kind == "collaboration_degraded"
+    ]
+    # Recorded, and told apart from an unknown label: a reader chasing
+    # mention_rejected goes looking for a roster that does not name the
+    # recipient, which is not what happened here.
+    assert [m.metadata["reason_code"] for m in degraded] == ["mention_malformed"]
+    assert "line_break" in degraded[0].content
+    assert not [
+        m for m in setup.teams.list_messages(setup.run.id) if m.kind == "peer_mention"
+    ]
+    # No repair round: the outcome parsed the first time.
+    assert setup.worker_clients[0].review_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_a_failed_mention_write_does_not_undo_the_applied_task(
     collab_setup,
 ) -> None:

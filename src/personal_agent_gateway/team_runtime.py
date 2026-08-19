@@ -168,8 +168,9 @@ had no way to perform -- and say why in "evidence". Do not report a status you d
 not observe.
 
 You may also include an optional "mentions" array to leave a short note for a
-teammate: [{{"to":"roster label","text":"note, up to 2000 characters"}}]. Name
-the recipient by its roster label; at most 10 mentions per response.
+teammate: [{{"to":"roster label","text":"a single line, no line breaks, up to
+2000 characters"}}]. Name the recipient by its roster label; at most 10
+mentions per response.
 
 The same rule applies to what your result says, not just to its verifications.
 When you state something as fact about this repository, name the file that shows
@@ -5150,8 +5151,8 @@ def _acceptance_worker_repair_messages(
                 "Do not repeat the task or modify files. Re-emit only the "
                 "previous final result as one raw JSON object with exactly "
                 "these keys: status, summary, reason_code, deliverables, "
-                "verifications. Do not include explanations, Markdown, or "
-                "code fences."
+                "verifications, and mentions if the previous response carried "
+                "any. Do not include explanations, Markdown, or code fences."
             ),
         }
     ]

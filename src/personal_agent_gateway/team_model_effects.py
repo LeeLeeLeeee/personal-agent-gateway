@@ -396,7 +396,22 @@ class TeamModelEffectService:
         on that key would drop a real note to avoid a duplicate, which is the
         trade the ADR refuses.
         """
-        if self._collaboration is None or outcome is None or not outcome.mentions:
+        if self._collaboration is None or outcome is None:
+            return
+        if outcome.mention_refusals:
+            # A note the parse turned away and a note addressed to nobody are
+            # the same fault -- a malformed mention -- so they end the same way:
+            # the task stands and the loss is written down. Only the reason_code
+            # differs, because "the worker wrote a note we could not accept" and
+            # "the worker named someone who is not here" send a reader looking
+            # in different places.
+            self._record_degraded_collaboration(
+                operation,
+                "mention_malformed",
+                "mentions were refused as malformed: "
+                + ", ".join(outcome.mention_refusals),
+            )
+        if not outcome.mentions:
             return
         try:
             self._collaboration.record_mentions(
@@ -415,29 +430,39 @@ class TeamModelEffectService:
                 if isinstance(exc, UnknownRecipient)
                 else "mention_store_failed"
             )
-            content = (
-                f"mentions were not stored: {type(exc).__name__}: {exc}"
+            self._record_degraded_collaboration(
+                operation,
+                reason_code,
+                f"mentions were not stored: {type(exc).__name__}: {exc}",
             )
-            try:
-                self._teams.append_message(
-                    operation.team_run_id,
-                    None,
-                    operation.agent_id,
-                    "collaboration_degraded",
-                    content,
-                    {"reason_code": reason_code},
-                    cycle_id=operation.cycle_id,
-                )
-            except Exception:  # noqa: BLE001 - recording the degradation cannot fail the run
-                # This write can fail for the same reason the one above did (the
-                # write lock), and letting it escape would tell the caller that
-                # an operation the ledger already marked applied had failed.
-                _LOGGER.warning(
-                    "could not record degraded collaboration for run %s: %s",
-                    operation.team_run_id,
-                    content,
-                    exc_info=True,
-                )
+
+    def _record_degraded_collaboration(
+        self,
+        operation: TeamModelOperation,
+        reason_code: str,
+        content: str,
+    ) -> None:
+        """The one shape every collaboration loss is recorded in."""
+        try:
+            self._teams.append_message(
+                operation.team_run_id,
+                None,
+                operation.agent_id,
+                "collaboration_degraded",
+                content,
+                {"reason_code": reason_code},
+                cycle_id=operation.cycle_id,
+            )
+        except Exception:  # noqa: BLE001 - recording the degradation cannot fail the run
+            # This write can fail for the same reason the note write did (the
+            # write lock), and letting it escape would tell the caller that an
+            # operation the ledger already marked applied had failed.
+            _LOGGER.warning(
+                "could not record degraded collaboration for run %s: %s",
+                operation.team_run_id,
+                content,
+                exc_info=True,
+            )
 
     def apply_worker_query(self, operation_id: str) -> WorkerEffectResult:
         now = _now()
@@ -3565,15 +3590,17 @@ def _canonical_digest(value: object) -> str:
 
 
 def _stored_outcome(outcome: TaskOutcome) -> dict[str, object]:
-    """The outcome as it is stored and compared. `mentions` is left out.
+    """The outcome as it is stored and compared, minus the note fields.
 
-    The notes are stored as messages instead, and putting the field in the
-    stored payload would make the replay comparison disagree for every
-    operation applied before this upgrade, where the stored JSON has no such
-    key.
+    The notes are stored as messages instead, and a refused note is stored as a
+    degradation message; putting either field in the stored payload would make
+    the replay comparison disagree for every operation applied before this
+    upgrade, where the stored JSON has no such key.
     """
     return {
-        key: value for key, value in asdict(outcome).items() if key != "mentions"
+        key: value
+        for key, value in asdict(outcome).items()
+        if key not in {"mentions", "mention_refusals"}
     }
 
 

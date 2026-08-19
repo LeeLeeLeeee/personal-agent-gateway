@@ -6,7 +6,7 @@ in the table itself, because a threshold that lives only in a document is one
 a tired reader approves past.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import quantiles
 
@@ -48,7 +48,38 @@ class Arm:
 
 # The baseline is legacy with the feature *off*. Legacy that negotiated is a
 # different arm and must not stand in as the thing it is being measured against.
+# This is the one-worker baseline specifically; `baseline_for` gives the arm any
+# given worker count is measured against.
 BASELINE_ARM = Arm(BASELINE_MODE, False)
+
+
+def baseline_for(workers: int) -> Arm:
+    """The arm a `workers`-wide arm is measured against.
+
+    There is no single baseline row for a table. `radio_lite@2` has nothing to
+    have beaten unless `legacy@2` was measured, and a one-worker legacy arm is
+    not that measurement -- which is the entire reason `workers` is an axis. A
+    fixed `BASELINE_ARM` pinned at one worker made `legacy@2 vs radio_lite@2`,
+    the comparison the axis exists to enable, permanently unable to read as
+    met, and reported it as "no baseline" without saying it meant "no
+    *one-worker* baseline".
+    """
+    return Arm(BASELINE_MODE, False, workers)
+
+
+def _missing_baselines(arms: Iterable[Arm]) -> tuple[Arm, ...]:
+    """The baselines this group needs and does not have, one per worker count."""
+    present = set(arms)
+    return tuple(
+        sorted(
+            {
+                baseline
+                for baseline in (baseline_for(arm.workers) for arm in present)
+                if baseline not in present
+            },
+            key=lambda arm: arm.workers,
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -122,13 +153,16 @@ def render(report: Report) -> str:
                 f"{cell.rework_per_task:.2f} | {cell.cost_tokens_per_task:.1f} | "
                 f"{cell.p50_ms} | {p95} |"
             )
-        if BASELINE_ARM not in {cell.arm for cell in cells}:
+        missing = _missing_baselines(cell.arm for cell in cells)
+        if missing:
             # A reader must not have to cross-reference the warnings section to
             # see this: a type with no baseline row looks fully vetted on its
-            # own if this line isn't here too.
+            # own if this line isn't here too. The arm is named, so "no
+            # baseline" cannot be read as one worker count's when it is
+            # another's.
             lines.append(
-                f"베이스라인 없음: {fixture_type} 타입에 {BASELINE_ARM.label} 기록이 "
-                "없어 판단 불가"
+                f"베이스라인 없음: {fixture_type} 타입에 "
+                f"{', '.join(arm.label for arm in missing)} 기록이 없어 판단 불가"
             )
         lines.append("")
     if report.stale_dropped:
@@ -203,12 +237,22 @@ def _percentile(durations: list[int], percent: int) -> int:
 
 
 def _arm_order(group: Mapping[Arm, list[Record]]) -> list[Arm]:
-    """The baseline first, always: every gate is stated against it."""
-    arms = sorted(group, key=lambda arm: (arm.mode, arm.plan_negotiation, arm.workers))
-    if BASELINE_ARM in arms:
-        arms.remove(BASELINE_ARM)
-        return [BASELINE_ARM, *arms]
-    return arms
+    """Each worker count's baseline first: every gate is stated against it.
+
+    Rows are grouped by worker count so that the arm a row is read against sits
+    directly above it. One promotion of a single table-wide baseline would put
+    `legacy` above `radio_lite@2`, which is not what that row is measured
+    against.
+    """
+    return sorted(
+        group,
+        key=lambda arm: (
+            arm.workers,
+            arm != baseline_for(arm.workers),
+            arm.mode,
+            arm.plan_negotiation,
+        ),
+    )
 
 
 def _warnings(
@@ -228,9 +272,12 @@ def _warnings(
     # because a type can clear the repeats-per-type count entirely on modes
     # other than legacy and still have no baseline to compare against.
     no_baseline_types = [
-        fixture_type
+        # The missing arm is named, not just the type: "베이스라인 없음" on a
+        # two-worker group means no *two-worker* legacy arm, and a reader who
+        # cannot see which one is missing will look for the wrong records.
+        f"{fixture_type}({', '.join(arm.label for arm in missing)})"
         for fixture_type, group in by_type.items()
-        if BASELINE_ARM not in group
+        if (missing := _missing_baselines(group))
     ]
     if len(tasks) >= MINIMUM_TASKS and not thin_types and not no_baseline_types:
         return ()

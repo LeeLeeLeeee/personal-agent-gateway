@@ -30,11 +30,20 @@ def roster_block(entries: Sequence[tuple[str, str]]) -> str:
 
     이것 없이는 수신자를 지정할 방법이 없다: 프롬프트는 자기 페르소나와 자기
     태스크만 담고 있어 동료가 있다는 사실조차 전달하지 않는다.
+
+    라벨의 쓰임을 괄호 안에서 한정한다. 이 블록은 리더 프롬프트 위에도 붙고,
+    그 바로 아래에 `Available team members`가 UUID와 `owner_agent_id`를 함께
+    보여준다 -- 라벨이 사람을 부르는 이름일 뿐이라고 말하지 않으면 리더가
+    `owner_agent_id: "W-01"`을 쓰고, `_parse_task_plan`이 거부해 계획 repair
+    라운드가 한 번 낭비된다.
     """
     if not entries:
         return ""
     lines = [f"- {label}: {name}" for label, name in entries]
-    return "TEAM ROSTER (label -> teammate):\n" + "\n".join(lines) + "\n\n"
+    return (
+        "TEAM ROSTER (label -> teammate; a label names a person in a note, "
+        "never in owner_agent_id):\n" + "\n".join(lines) + "\n\n"
+    )
 
 
 def radio_block(notes: Sequence[tuple[str, str]]) -> str:
