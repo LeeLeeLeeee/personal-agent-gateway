@@ -4,7 +4,9 @@
 
 **Goal:** 에이전트가 동료에게 쪽지를 보내고, 수신자가 다음 모델 호출에 불려올 때 그 쪽지를 프롬프트로 받는다. 죽었다 살아나도 유실 없이 같은 묶음이 재현된다.
 
-**Architecture:** 신규 테이블 2개(`team_collaboration_deliveries`, `team_collaboration_delivery_items`)만 추가하고 기존 테이블은 바꾸지 않는다. 미전달 쪽지는 저장하지 않고 유도한다. 주입과 정산은 **단 하나의 접점**에서 한다: `_operation_spec`을 모듈 함수에서 `TeamRuntime`의 메서드로 옮기면 모든 모델 호출이 그곳을 지나고 `run`·`agent`·`stage`·`ordinal`·`task_id`가 이미 손에 있다. 프롬프트 템플릿은 **건드리지 않는다** — 명단과 쪽지는 메시지 앞에 붙이는 접두사로 들어간다.
+**Architecture:** 신규 테이블 2개(`team_collaboration_deliveries`, `team_collaboration_delivery_items`)만 추가하고 기존 테이블은 바꾸지 않는다. 주입은 **`_invoke_operation`(`team_runtime.py:914`) 한 곳**에서 한다 — 그 메서드는 `spec`과 `messages`를 함께 받고 `:928`에서 예약하며, 복구 경로(`_invoke_existing_operation`)도 `:1475`에서 이곳으로 들어온다. 프롬프트 템플릿은 건드리지 않고 메시지 앞에 접두사로 붙인다.
+
+**전달 완료와 미전달은 저장하지 않고 원장에서 유도한다.** 배달은 `operation_key`로 원장의 operation과 1:1이고, 원장은 이미 `applied`를 기록한다. 그래서 "전달됨"은 별도 상태가 아니라 **그 operation이 applied인가**이다. 같은 사실을 두 곳에 두지 않으므로 어긋날 수 없고, effect 트랜잭션 안에서 쓰기를 하지 않으므로 락도 생기지 않는다.
 
 **Tech Stack:** Python 3.13, SQLite (`migrations.py`), pytest. 프런트엔드 변경 없음.
 
@@ -21,6 +23,8 @@
 - 모델에게 에이전트를 부를 때는 UUID가 아니라 라벨(`LEAD`, `W-01`)을 쓴다.
 - 한 쪽지 본문 상한 **2000자**, 한 배달의 쪽지 수 상한 **10개**.
 - `TeamRuntime`과 `TeamModelEffectService`에 협업 서비스를 넣을 때 **기본값은 `None`(기능 꺼짐)** 이다. 두 클래스는 프로덕션과 테스트에서 80곳 가까이 생성되며, 필수 인자로 만들면 전부 고쳐야 한다.
+- **effect 적용 트랜잭션 안에서 협업 쓰기를 하지 마라.** `apply_worker_outcome`은 `begin immediate`를 열고 있고(`team_model_effects.py:279`), `append_message`는 `Database.execute`로 **다른 커넥션**을 연다(`teams.py:3395`, `db.py:460`). 그 안에서 부르면 `database is locked`로 5.5초 뒤 실패하고, 예외 처리 경로마저 같은 락에 걸려 **이미 적용된 작업이 롤백된다**. 쪽지 저장은 트랜잭션이 닫힌 뒤에 한다.
+- **프로덕션 배선을 잊지 마라.** `app.py:225`(effects)와 `app.py:241`(runtime) 두 곳에 협업 서비스를 넘겨야 기능이 실제로 동작한다. 기본값이 `None`이므로 배선을 빼먹으면 테스트는 통과하고 제품은 아무 일도 하지 않는다.
 
 ---
 
@@ -597,29 +601,30 @@ git commit -m "feat(collab): store mentions as messages, refusing unknown labels
   - `open_delivery(team_run_id, agent_id, operation_key, message_ids) -> str`
   - `delivery_message_ids(operation_key) -> tuple[str, ...]`
   - `notes_by_id(team_run_id, message_ids) -> tuple[tuple[str, str, str], ...]` — `undelivered`와 같은 형태
-  - `settle_delivery(operation_key, status)` — `applied` 또는 `abandoned`
   - `undelivered_count(team_run_id) -> int`
-  - `abandon_open_deliveries(team_run_id) -> int`
+
+`settle_delivery`는 **없다.** 전달 완료는 원장에서 유도한다 — 배달의 `operation_key`가 가리키는 operation이 `applied`이면 그 배달의 쪽지는 전달된 것이다. 상태를 따로 쓰면 (1) 같은 사실이 두 곳에 살고 (2) 그 쓰기가 effect 트랜잭션 안에 들어가 락을 만든다. `status` 컬럼은 스키마에 남기되 이 조각에서는 `prepared`로만 쓰고 판정에 사용하지 않는다.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 def test_undelivered_excludes_only_applied_deliveries(setup):
-    """전달 완료는 적용된 배달만이다. prepared에 묶인 쪽지는 아직 미전달이다."""
+    """전달 완료의 판정 근거는 원장이다: 그 operation이 applied인가."""
     (first,) = setup.collab.record_mentions(
         setup.run.id, None, setup.workers[0].id, [Mention("W-02", "one")]
     )
     (second,) = setup.collab.record_mentions(
         setup.run.id, None, setup.workers[0].id, [Mention("W-02", "two")]
     )
+    key = _reserved_operation(setup, setup.workers[1])
 
-    setup.collab.open_delivery(setup.run.id, setup.workers[1].id, "k-1", [first])
+    setup.collab.open_delivery(setup.run.id, setup.workers[1].id, key, [first])
     assert [n[0] for n in setup.collab.undelivered(setup.run.id, setup.workers[1].id)] == [
         first,
         second,
     ]
 
-    setup.collab.settle_delivery("k-1", "applied")
+    _mark_operation_applied(setup, key)
     assert [n[0] for n in setup.collab.undelivered(setup.run.id, setup.workers[1].id)] == [
         second
     ]
@@ -655,28 +660,64 @@ def test_notes_by_id_matches_the_shape_of_undelivered(setup):
     )
 
 
-def test_an_abandoned_delivery_leaves_the_notes_undelivered(setup):
+def test_a_delivery_whose_operation_never_applied_leaves_the_notes_pending(setup):
     """유실 0을 주장하려면 못 전한 쪽지가 여전히 미전달로 보여야 한다."""
     (first,) = setup.collab.record_mentions(
         setup.run.id, None, setup.workers[0].id, [Mention("W-02", "one")]
     )
-    setup.collab.open_delivery(setup.run.id, setup.workers[1].id, "k-3", [first])
+    key = _reserved_operation(setup, setup.workers[1])
+    setup.collab.open_delivery(setup.run.id, setup.workers[1].id, key, [first])
 
-    setup.collab.settle_delivery("k-3", "abandoned")
-
+    # operation은 예약만 됐고 applied가 아니다.
     assert [n[0] for n in setup.collab.undelivered(setup.run.id, setup.workers[1].id)] == [
         first
     ]
+    assert setup.collab.undelivered_count(setup.run.id) == 1
 
 
-def test_abandoning_open_deliveries_counts_them(setup):
+def test_a_delivery_with_no_operation_at_all_leaves_the_notes_pending(setup):
+    """조인이 비면 미전달로 남아야 한다. 안 그러면 고아 배달이 쪽지를 삼킨다."""
     (first,) = setup.collab.record_mentions(
         setup.run.id, None, setup.workers[0].id, [Mention("W-02", "one")]
     )
-    setup.collab.open_delivery(setup.run.id, setup.workers[1].id, "k-4", [first])
+    setup.collab.open_delivery(setup.run.id, setup.workers[1].id, "no-such-key", [first])
 
-    assert setup.collab.abandon_open_deliveries(setup.run.id) == 1
     assert setup.collab.undelivered_count(setup.run.id) == 1
+```
+
+두 헬퍼는 원장을 직접 만진다. 세터가 없으므로 테스트도 진짜 원장을 써야 하고, 그게 이 설계의 요점이다 — 세터가 없으면 원장과 어긋날 수도 없다.
+
+```python
+def _reserved_operation(setup, agent) -> str:
+    """이 에이전트에 대해 예약된 operation의 key.
+
+    OperationSpec의 필수 필드를 채워 reserve를 부른다. request_digest는 64자
+    hex여야 한다(team_model_operations.py:633의 _validate_request_digest).
+    """
+    key = f"test:{agent.id}:{len(setup.collab.labels_for_run(setup.run.id))}"
+    setup.operations.reserve(
+        OperationSpec(
+            operation_key=key,
+            team_run_id=setup.run.id,
+            cycle_id=setup.cycle.id,
+            task_id=None,
+            agent_id=agent.id,
+            provider=agent.backend,
+            stage="cycle_planning",
+            stage_ordinal=0,
+            request_digest="0" * 64,
+        )
+    )
+    return key
+
+
+def _mark_operation_applied(setup, operation_key: str) -> None:
+    with setup.db.connection() as connection:
+        connection.execute(
+            "update team_model_operations set status = 'applied'"
+            " where operation_key = ?",
+            (operation_key,),
+        )
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -698,6 +739,9 @@ def _now() -> str:
 ```
 
 ```python
+    # 전달 완료의 판정 근거는 원장이다: 이 쪽지를 실은 배달의 operation이
+    # applied이면 전달된 것이다. 배달 표에 상태를 따로 쓰면 같은 사실이 두 곳에
+    # 살고, 그 쓰기가 effect 트랜잭션 안으로 들어가 락을 만든다.
     _UNDELIVERED_SQL = """
         select m.id, m.sender_agent_id, m.content
         from team_messages m
@@ -708,7 +752,8 @@ def _now() -> str:
               select 1
               from team_collaboration_delivery_items i
               join team_collaboration_deliveries d on d.id = i.delivery_id
-              where i.message_id = m.id and d.status = 'applied'
+              join team_model_operations o on o.operation_key = d.operation_key
+              where i.message_id = m.id and o.status = 'applied'
           )
         order by m.created_at, m.id
     """
@@ -796,36 +841,19 @@ def _now() -> str:
         )
         return tuple(row["message_id"] for row in rows)
 
-    def settle_delivery(self, operation_key: str, status: str) -> None:
-        if status not in {"applied", "abandoned"}:
-            raise ValueError(f"unknown delivery status: {status!r}")
-        self._db.execute(
-            "update team_collaboration_deliveries set status = ?, settled_at = ?"
-            " where operation_key = ?",
-            (status, _now(), operation_key),
-        )
-
     def undelivered_count(self, team_run_id: str) -> int:
+        """런 전체의 미전달 쪽지 수. undelivered와 같은 판정 근거를 쓴다."""
         row = self._db.fetchone(
             "select count(*) as total from team_messages m"
             " where m.team_run_id = ? and m.kind = 'peer_mention'"
             " and not exists ("
             "   select 1 from team_collaboration_delivery_items i"
             "   join team_collaboration_deliveries d on d.id = i.delivery_id"
-            "   where i.message_id = m.id and d.status = 'applied')",
+            "   join team_model_operations o on o.operation_key = d.operation_key"
+            "   where i.message_id = m.id and o.status = 'applied')",
             (team_run_id,),
         )
         return int(row["total"]) if row else 0
-
-    def abandon_open_deliveries(self, team_run_id: str) -> int:
-        rows = self._db.fetchall(
-            "select operation_key from team_collaboration_deliveries"
-            " where team_run_id = ? and status = 'prepared'",
-            (team_run_id,),
-        )
-        for row in rows:
-            self.settle_delivery(row["operation_key"], "abandoned")
-        return len(rows)
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -845,24 +873,34 @@ git commit -m "feat(collab): derive undelivered notes and pin them per operation
 ### Task 6: 보내는 경로를 실제로 연결한다
 
 **Files:**
-- Modify: `src/personal_agent_gateway/team_model_effects.py` (`apply_worker_outcome`, 생성자)
-- Test: `tests/test_team_model_effects.py`
+- Modify: `src/personal_agent_gateway/team_model_effects.py` (생성자, `apply_worker_outcome`), `src/personal_agent_gateway/app.py:225`
+- Test: `tests/test_team_runtime.py`
 
 **Interfaces:**
 - Consumes: Task 4 `record_mentions`·`UnknownRecipient`
-- Produces: `TeamModelEffectService(db, teams, operations, collaboration=None)`. 워커 결과가 적용될 때 그 결과의 `mentions`가 메시지로 저장된다
+- Produces: `TeamModelEffectService(db, teams, operations, collaboration=None)`. 워커 결과가 적용된 뒤 그 결과의 `mentions`가 메시지로 저장된다
 
-**이 태스크가 없으면 기능이 동작하지 않는다.** Task 3이 파싱하고 Task 4가 저장 함수를 만들지만, 프로덕션 코드 중 그것을 부르는 곳이 없다 — 모델이 쓴 쪽지가 파싱된 뒤 버려진다.
+**이 태스크가 없으면 기능이 존재하지 않는다.** Task 3이 파싱하고 Task 4가 저장 함수를 만들지만, 프로덕션 코드 중 그것을 부르는 곳이 없어 모델이 쓴 쪽지는 파싱된 뒤 버려진다.
+
+**쓰기는 트랜잭션이 닫힌 뒤에 한다.** `apply_worker_outcome`은 `begin immediate`를 열고 있고(`team_model_effects.py:279`) `append_message`는 다른 커넥션을 연다(`teams.py:3395`). 안에서 부르면 `database is locked`로 5.5초 뒤 실패하고, 예외 처리 경로도 같은 락에 걸려 이미 적용된 작업이 롤백된다. `with` 블록이 끝난 뒤, 반환 직전에 부른다.
 
 - [ ] **Step 1: Write the failing test**
 
-```python
-def test_an_applied_worker_outcome_stores_its_mentions(effects_setup):
-    """파싱만 하고 저장하지 않으면 모델이 쓴 쪽지가 조용히 사라진다."""
-    setup = effects_setup
-    outcome_json = _outcome_with_mentions([{"to": "W-02", "text": "확인 필요"}])
+`make_negotiation_runtime`(`tests/test_team_runtime.py:7804`)은 워커 2명 런을 만들고 `NegotiationWorkerModel`이 모든 워커 실행에 같은 완료 결과를 답한다. 쪽지가 실린 결과를 답하게 하려면 그 stub에 훅 하나를 더한다:
 
-    setup.apply_worker_outcome_from(outcome_json)
+```python
+        self.outcome_mentions: list[dict] = []
+```
+
+그리고 `complete_operation`의 워커 실행 분기에서 `_outcome_json("done")` 대신 `_outcome_json("done", mentions=self.outcome_mentions)`를 답하게 한다. `_outcome_json`이 `mentions`를 받지 않으면, 받으면 payload에 그 키를 넣도록 확장한다(빈 목록이면 키를 넣지 않는다 — 기존 형태를 유지해야 다른 테스트가 깨지지 않는다).
+
+```python
+async def test_a_worker_mention_is_stored_when_the_outcome_is_applied(collab_setup):
+    """파싱만 하고 저장하지 않으면 모델이 쓴 쪽지가 조용히 사라진다."""
+    setup = collab_setup
+    setup.worker_clients[0].outcome_mentions = [{"to": "W-02", "text": "확인 필요"}]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
 
     peer = [
         m for m in setup.teams.list_messages(setup.run.id) if m.kind == "peer_mention"
@@ -871,41 +909,41 @@ def test_an_applied_worker_outcome_stores_its_mentions(effects_setup):
     assert peer[0].recipient_agent_id == setup.workers[1].id
 
 
-def test_an_unknown_recipient_does_not_fail_the_task(effects_setup):
+async def test_an_unknown_recipient_does_not_undo_the_applied_task(collab_setup):
     """쪽지는 곁다리다. 잘못된 라벨이 완료된 작업을 되돌리면 안 된다."""
-    setup = effects_setup
-    outcome_json = _outcome_with_mentions([{"to": "W-99", "text": "x"}])
+    setup = collab_setup
+    setup.worker_clients[0].outcome_mentions = [{"to": "W-99", "text": "x"}]
 
-    result = setup.apply_worker_outcome_from(outcome_json)
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
 
-    assert result is not None
+    assert run.status == "completed"
     kinds = [m.kind for m in setup.teams.list_messages(setup.run.id)]
     assert "collaboration_degraded" in kinds
+    assert "peer_mention" not in kinds
 
 
-def test_no_collaboration_service_means_mentions_are_ignored(effects_setup_without_collab):
+async def test_without_a_collaboration_service_mentions_are_ignored(tmp_path):
     """기본값이 None이므로 기존 생성 지점 80곳이 그대로 동작한다."""
-    setup = effects_setup_without_collab
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=False)
+    setup.worker_clients[0].outcome_mentions = [{"to": "W-02", "text": "x"}]
 
-    setup.apply_worker_outcome_from(
-        _outcome_with_mentions([{"to": "W-02", "text": "x"}])
-    )
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
 
     assert not [
         m for m in setup.teams.list_messages(setup.run.id) if m.kind == "peer_mention"
     ]
 ```
 
-`effects_setup`은 `tests/test_team_model_effects.py`의 기존 워커 결과 적용 테스트가 쓰는 헬퍼를 재사용하고, `TeamModelEffectService`에 `collaboration=TeamCollaborationService(db, teams)`를 넘긴다. `_outcome_with_mentions`는 그 파일의 기존 outcome payload 헬퍼에 `mentions` 키를 더한 것이다. 기존 헬퍼 이름은 파일을 열어 확인한다.
+`collab_setup`은 `make_negotiation_runtime` 결과에 `collab = TeamCollaborationService(db, teams)`를 붙이고, `NegotiationSetup.new_runtime`과 그 안의 `TeamModelEffectService(...)`가 `collaboration=collab`을 받도록 고친 fixture다.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/Scripts/python.exe -m pytest tests/test_team_model_effects.py -v -k mention`
+Run: `.venv/Scripts/python.exe -m pytest tests/test_team_runtime.py -v -k "mention_is_stored or unknown_recipient or mentions_are_ignored"`
 Expected: FAIL — `TeamModelEffectService`가 `collaboration` 인자를 받지 않아 `TypeError`가 난다.
 
 - [ ] **Step 3: Write minimal implementation**
 
-생성자에 기본값 `None`으로 받는다:
+생성자:
 
 ```python
     def __init__(self, db, teams, operations, collaboration=None) -> None:
@@ -913,19 +951,22 @@ Expected: FAIL — `TeamModelEffectService`가 `collaboration` 인자를 받지 
         self._collaboration = collaboration
 ```
 
-`apply_worker_outcome`이 결과를 적용한 뒤(같은 흐름 안에서) 쪽지를 저장한다:
+`apply_worker_outcome`에서 **`with self._db.connection()` 블록이 끝난 뒤**, 반환 직전에 부른다. 블록 안에서 파싱한 `outcome`을 지역 변수로 들고 나온다(안에서 `return`하는 replay 경로는 건드리지 않는다 — 이미 적용된 것은 다시 저장하지 않는다).
 
 ```python
+        # 트랜잭션 밖에서 부른다: append_message가 두 번째 커넥션을 열기 때문에
+        # begin immediate 안에서 부르면 database is locked가 되고, 실패 경로가
+        # 이미 적용된 작업을 되돌린다.
         self._store_mentions(operation, outcome)
+        return result
 ```
 
 ```python
     def _store_mentions(self, operation, outcome) -> None:
         """쪽지를 저장한다. 실패해도 적용된 작업을 되돌리지 않는다.
 
-        협업은 곁다리 기능이다: 잘못된 라벨이나 저장 실패가 완료된 워커 작업을
-        무효로 만들면 ADR의 "켜지 않은 런의 lifecycle은 바뀌지 않는다" 전제가
-        깨진다.
+        협업은 곁다리다: 잘못된 라벨이나 저장 실패가 완료된 워커 작업을 무효로
+        만들면 ADR의 "켜지 않은 런의 lifecycle은 바뀌지 않는다" 전제가 깨진다.
         """
         if self._collaboration is None or not outcome.mentions:
             return
@@ -948,43 +989,53 @@ Expected: FAIL — `TeamModelEffectService`가 `collaboration` 인자를 받지 
             )
 ```
 
-`app.py`에서 `TeamModelEffectService`를 만드는 곳(`app.py:225`)에 `collaboration=TeamCollaborationService(app.state.database, app.state.team_run_service)`를 넘긴다.
+`app.py:225`의 `TeamModelEffectService(...)` 생성에 `collaboration=TeamCollaborationService(app.state.database, app.state.team_run_service)`를 넘긴다. 같은 인스턴스를 Task 7에서 `TeamRuntime`에도 넘기므로 `app.py`에서 한 번 만들어 변수로 잡는다.
+
+**`mentions`가 저장 payload를 오염시키지 않게 한다.** `_replay_worker`는 `asdict(outcome)`을 `task.outcome`과 비교한다(`team_model_effects.py:2166`, `:2182`). `TaskOutcome`에 필드가 생기면 이 업그레이드 **이전에** 적용된 operation을 replay할 때 저장된 JSON에는 `mentions`가 없어 비교가 어긋나고 `OperationConflict`가 된다. 저장·비교 양쪽에서 `mentions`를 제외한다:
+
+```python
+def _stored_outcome(outcome) -> dict:
+    """저장·비교용 outcome. mentions는 제외한다.
+
+    쪽지는 메시지로 따로 저장되고, 이 필드가 저장 payload에 들어가면 업그레이드
+    이전에 적용된 operation의 replay 비교가 어긋난다.
+    """
+    return {key: value for key, value in asdict(outcome).items() if key != "mentions"}
+```
+
+`task.outcome`을 쓰는 지점과 `expected_outcome`을 만드는 지점 모두 이 함수를 쓴다.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/Scripts/python.exe -m pytest tests/test_team_model_effects.py tests/test_app.py -q`
+Run: `.venv/Scripts/python.exe -m pytest tests/test_team_runtime.py tests/test_team_model_effects.py tests/test_app.py -q`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/personal_agent_gateway/team_model_effects.py src/personal_agent_gateway/app.py tests/test_team_model_effects.py
-git commit -m "feat(collab): store a worker's mentions when its outcome is applied"
+git add src/personal_agent_gateway/team_model_effects.py src/personal_agent_gateway/app.py tests/test_team_runtime.py
+git commit -m "feat(collab): store a worker's mentions once its outcome is applied"
 ```
 
 ---
 
-### Task 7: 단일 접점에서 주입한다
+### Task 7: 단일 통로에서 주입한다
 
 **Files:**
-- Modify: `src/personal_agent_gateway/team_runtime.py` (`_operation_spec`을 메서드로, 13개 호출 지점, `_invoke_existing_operation`, `TeamRuntime.__init__`)
+- Modify: `src/personal_agent_gateway/team_runtime.py` (`__init__`, `_invoke_operation`), `src/personal_agent_gateway/app.py:241`
 - Test: `tests/test_team_runtime.py`
 
 **Interfaces:**
 - Consumes: Task 2 `roster_block`·`radio_block`·`MENTION_BATCH_LIMIT`, Task 5 `undelivered`·`open_delivery`·`delivery_message_ids`·`notes_by_id`
-- Produces: `TeamRuntime(..., collaboration=None)`. `self._operation_spec(...)`(메서드) 및 `_invoke_existing_operation`이 메시지 앞에 명단·쪽지 접두사를 붙인다
+- Produces: `TeamRuntime(..., collaboration=None)`. `_invoke_operation`이 메시지 앞에 명단·쪽지를 붙이고 그에 맞게 지문을 다시 계산한다
 
-`_operation_spec`은 지금 모듈 함수이고 호출 지점이 13곳(`team_runtime.py:820, 1886, 2050, 2171, 2699, 2946, 2983, 3029, 3075, 3152, 3559, 4154, 4358`), 전부 메서드 안이다. 메서드로 옮기면 `self._collaboration`에 닿고, 모든 모델 호출이 그 한 곳을 지난다. stage 목록을 만들면 새 stage에서 조용히 누락된다.
+**주입은 `_invoke_operation`(`team_runtime.py:914`)에서 한다.** `_operation_spec`이 아니다: `OperationSpec`에는 `messages` 필드가 없고(`team_model_operations.py:91-101`) 호출 지점들은 `messages`를 spec과 invoker에 **각각** 넘긴다. spec 쪽에서 붙이면 지문만 바뀌고 모델은 쪽지를 못 본다 — 원장이 전달됐다고 기록하는데 실제로는 가지 않은 상태가 되어, 구현하지 않는 것보다 나쁘다.
+
+`_invoke_operation`은 `spec`과 `messages`를 함께 받고 `:928`에서 예약하며, 복구 경로도 `:1475`에서 이곳으로 들어온다. 호출 지점은 6곳(`:757, :831, :1475, :2698, :2945, :2982, :3028`)이고 전부 이 메서드를 지난다.
 
 - [ ] **Step 1: Write the failing test**
 
-`NegotiationWorkerModel`은 프롬프트를 보관하지 않는다. `complete_operation`(`:7741`)에 한 줄을 추가한다 — `complete`는 그것을 위임하므로 두 경로가 함께 기록된다:
-
-```python
-        self.prompts.append(messages[-1]["content"])
-```
-
-`__init__`에 `self.prompts: list[str] = []`를 추가한다. 리더는 `all_prompts`(`:7691`)를 쓴다 — `prompts`는 계획 프롬프트만 담는다.
+`NegotiationWorkerModel`에 `self.prompts: list[str] = []`를 추가하고 `complete_operation`(`:7741`) 첫 줄에 `self.prompts.append(messages[-1]["content"])`를 넣는다 — `complete`는 그것에 위임하므로(`:7756`) 두 경로가 함께 기록된다. 리더는 `all_prompts`(`:7691`)를 쓴다. `prompts`는 계획 프롬프트만 담기 때문이다.
 
 ```python
 async def test_a_worker_prompt_lists_its_teammates(collab_setup):
@@ -993,7 +1044,9 @@ async def test_a_worker_prompt_lists_its_teammates(collab_setup):
 
     await setup.runtime.start(setup.run.id, setup.cycle.id)
 
-    assert any("TEAM ROSTER" in p and "W-02" in p for p in setup.worker_clients[0].prompts)
+    assert any(
+        "TEAM ROSTER" in p and "W-02" in p for p in setup.worker_clients[0].prompts
+    )
 
 
 async def test_an_undelivered_note_reaches_the_next_call(collab_setup):
@@ -1011,8 +1064,8 @@ async def test_an_undelivered_note_reaches_the_next_call(collab_setup):
 
 
 async def test_the_leader_also_receives_notes(collab_setup):
-    """spec은 리더가 받는다고 정했다. 워커만 고치면 LEAD로 보낸 쪽지는 영원히
-    전달되지 않고 그 사실은 어디에도 나타나지 않는다."""
+    """spec은 리더가 받는다고 정했다. 워커 경로만 고치면 LEAD로 보낸 쪽지는
+    영원히 전달되지 않고 그 사실은 어디에도 나타나지 않는다."""
     setup = collab_setup
     setup.collab.record_mentions(
         setup.run.id, None, setup.workers[0].id, [Mention("LEAD", "계획을 다시 보라")]
@@ -1032,12 +1085,14 @@ async def test_no_notes_means_no_radio_block(collab_setup):
 
 
 async def test_recovery_reproduces_the_same_notes(collab_setup):
-    """지문 검사가 이걸 강제한다. 다른 묶음이면 OperationConflict가 난다."""
+    """복구가 다시 조회하면 그 사이 온 쪽지가 섞이고, 지문이 달라져 원장이
+    OperationConflict로 거부한다."""
     setup = collab_setup
     setup.collab.record_mentions(
         setup.run.id, None, setup.workers[1].id, [Mention("W-01", "first")]
     )
-    # 예약 뒤 호출 전에 죽는다 -- 재시작이 실제로 발견하는 상태다.
+    # 예약 뒤 호출 전에 죽는다 -- 재시작이 실제로 발견하는 상태이고, 클라이언트
+    # 쪽 raise로는 만들 수 없다.
     setup.worker_clients[0].die_after_fetches = 0
 
     with pytest.raises(RuntimeError):
@@ -1055,7 +1110,8 @@ async def test_recovery_reproduces_the_same_notes(collab_setup):
     assert all("late" not in p for p in delivered)
 
 
-async def test_applying_the_result_settles_the_delivery(collab_setup):
+async def test_a_delivered_note_is_not_sent_again(collab_setup):
+    """전달 완료는 원장에서 유도한다: 그 operation이 applied면 전달된 것이다."""
     setup = collab_setup
     setup.collab.record_mentions(
         setup.run.id, None, setup.workers[1].id, [Mention("W-01", "note")]
@@ -1066,84 +1122,73 @@ async def test_applying_the_result_settles_the_delivery(collab_setup):
     assert setup.collab.undelivered(setup.run.id, setup.workers[0].id) == ()
 ```
 
-`collab_setup`은 `make_negotiation_runtime`의 결과에 `collab`을 붙이고, `new_runtime()`이 `collaboration=`을 넘기도록 `NegotiationSetup.new_runtime`을 수정한 것이다.
-
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/Scripts/python.exe -m pytest tests/test_team_runtime.py -v -k "teammates or undelivered_note or leader_also or radio_block or reproduces or settles"`
+Run: `.venv/Scripts/python.exe -m pytest tests/test_team_runtime.py -v -k "teammates or undelivered_note or leader_also or radio_block or reproduces or not_sent_again"`
 Expected: FAIL — `TeamRuntime`이 `collaboration` 인자를 받지 않고, 어떤 프롬프트에도 `TEAM ROSTER`가 없다.
 
 - [ ] **Step 3: Write minimal implementation**
 
-`_operation_spec`을 메서드로 옮긴다(모듈 함수 정의를 `TeamRuntime` 안으로 이동, 첫 인자 `self`). 13개 호출 지점을 `self._operation_spec(`으로 바꾼다. `stage_ordinal`을 가변 상태에서 유도하는 두 곳(`:2946`, `:3029`)이 있으므로 **키는 한 번 계산해 넘긴다.**
+`TeamRuntime.__init__`에 `collaboration=None`을 받아 `self._collaboration`에 둔다.
 
 ```python
-    def _operation_spec(
-        self,
-        run,
-        cycle_id,
-        agent,
-        stage,
-        stage_ordinal,
-        messages,
-        *,
-        task_id=None,
-        upstream_session_id=_SESSION_UNSET,
-    ) -> OperationSpec:
-        operation_key = _operation_key(cycle_id, stage, stage_ordinal, task_id=task_id)
-        messages = self._with_radio(run, agent, operation_key, messages)
-        return OperationSpec(
-            operation_key=operation_key,
-            ...
-            request_digest=_operation_request_digest(
-                stage, stage_ordinal, agent.id, messages
-            ),
-            ...
-        )
+    async def _invoke_operation(self, spec, agent, messages, parser):
+        messages, spec = self._with_radio(spec, agent, messages)
+        open_operation = self._operations.get_open_for_cycle(spec.cycle_id)
+        ...
 ```
 
 ```python
-    def _with_radio(self, run, agent, operation_key, messages):
-        """명단과 미전달 쪽지를 첫 메시지 앞에 붙인다.
+    def _with_radio(self, spec, agent, messages):
+        """명단과 미전달 쪽지를 첫 메시지 앞에 붙이고 지문을 다시 계산한다.
 
-        stage를 가리지 않는다: 목록을 만들면 새 stage에서 조용히 누락되고,
-        이 저장소는 그 실패로 completeness 테스트를 두고 있다.
+        stage를 가리지 않는다: 목록을 만들면 새 stage에서 조용히 누락되고, 이
+        저장소는 그 실패로 completeness 테스트를 두고 있다.
 
-        프롬프트 템플릿에 자리를 만들지 않는 이유는 별개다 -- WORKER_PROMPT는
-        정확히 네 키로 .format()되는 테스트가 있어(tests/test_team_runtime.py:3413)
+        프롬프트 템플릿에 자리를 만들지 않는 이유는 별개다 -- WORKER_PROMPT를
+        정확히 네 키로 .format()하는 테스트가 있어(tests/test_team_runtime.py:3413)
         새 자리를 만들면 KeyError가 된다. 접두사로 붙이면 SPACE 정책 블록보다
         앞에 와서 마지막 말이 정책이 되는 배치까지 동시에 만족한다.
         """
         if self._collaboration is None or not messages:
-            return messages
+            return messages, spec
         try:
-            pinned = self._collaboration.delivery_message_ids(operation_key)
+            pinned = self._collaboration.delivery_message_ids(spec.operation_key)
             if pinned:
-                notes = self._collaboration.notes_by_id(run.id, pinned)
+                notes = self._collaboration.notes_by_id(spec.team_run_id, pinned)
             else:
-                notes = self._collaboration.undelivered(run.id, agent.id)[
+                notes = self._collaboration.undelivered(spec.team_run_id, agent.id)[
                     :MENTION_BATCH_LIMIT
                 ]
                 self._collaboration.open_delivery(
-                    run.id, agent.id, operation_key, [note[0] for note in notes]
+                    spec.team_run_id,
+                    agent.id,
+                    spec.operation_key,
+                    [note[0] for note in notes],
                 )
-            roster = roster_block(self._roster_entries(run.id))
-            radio = radio_block([(sender, text) for _, sender, text in notes])
+            prefix = roster_block(self._roster_entries(spec.team_run_id)) + radio_block(
+                [(sender, text) for _, sender, text in notes]
+            )
         except Exception as exc:  # noqa: BLE001 - 곁다리가 런을 죽이지 않는다
             self._teams.append_message(
-                run.id,
+                spec.team_run_id,
                 None,
                 agent.id,
                 "collaboration_degraded",
                 f"radio-lite disabled for this step: {exc}",
                 {"reason_code": "collaboration_unavailable"},
             )
-            return messages
-        prefix = roster + radio
+            return messages, spec
         if not prefix:
-            return messages
+            return messages, spec
         head, *rest = messages
-        return [{**head, "content": prefix + str(head["content"])}, *rest]
+        amended = [{**head, "content": prefix + str(head["content"])}, *rest]
+        return amended, replace(
+            spec,
+            request_digest=_operation_request_digest(
+                spec.stage, spec.stage_ordinal, agent.id, amended
+            ),
+        )
 
     def _roster_entries(self, team_run_id):
         labels = self._collaboration.labels_for_run(team_run_id)
@@ -1155,20 +1200,20 @@ Expected: FAIL — `TeamRuntime`이 `collaboration` 인자를 받지 않고, 어
         ]
 ```
 
-`_invoke_existing_operation`(`:1451`)도 같은 접두사를 붙인다 — 복구 경로이므로 `delivery_message_ids`가 채워져 있어 같은 묶음이 재현된다.
+`replace`는 `dataclasses.replace`다 — `OperationSpec`은 frozen dataclass다(`team_model_operations.py:90`). import를 추가한다.
 
-적용 뒤 정산은 operation이 `applied`로 전이하는 지점에서 부른다. Task 6에서 이미 협업 서비스를 가진 `TeamModelEffectService`가 그 전이를 소유하므로 거기서 `settle_delivery(operation.operation_key, "applied")`를 부른다 — 워커뿐 아니라 **모든** stage의 배달이 정산된다.
+`app.py:241`의 `TeamRuntime(...)`에 Task 6에서 만든 같은 협업 인스턴스를 `collaboration=`으로 넘긴다. **이 배선을 빼먹으면 테스트는 통과하고 제품은 아무 일도 하지 않는다.**
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/ -q`
-Expected: PASS, 기준선과 동일한 실패 수(0)
+Expected: 기준선과 같은 실패 수(`test_start_refuses_unknown_runtime_listener` 1건)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/personal_agent_gateway/team_runtime.py src/personal_agent_gateway/team_model_effects.py tests/test_team_runtime.py
-git commit -m "feat(collab): inject notes at the one seam every model call passes"
+git add src/personal_agent_gateway/team_runtime.py src/personal_agent_gateway/app.py tests/test_team_runtime.py
+git commit -m "feat(collab): inject notes at the one funnel every model call passes"
 ```
 
 ---
@@ -1176,62 +1221,74 @@ git commit -m "feat(collab): inject notes at the one seam every model call passe
 ### Task 8: 런이 끝날 때 못 전한 쪽지를 기록한다
 
 **Files:**
-- Modify: `src/personal_agent_gateway/team_runtime.py` (런 종단 정리)
+- Modify: `src/personal_agent_gateway/team_runtime.py` (`start` `:1678`, `resume` `:3959`, `adjudicate_contest` `:4113`)
 - Test: `tests/test_team_runtime.py`
 
 **Interfaces:**
-- Consumes: Task 5 `undelivered_count`·`abandon_open_deliveries`
-- Produces: 런이 종단이 될 때 미전달 수가 `collaboration_undelivered` 메시지로 남고 `prepared` 배달이 `abandoned`가 된다
+- Consumes: Task 5 `undelivered_count`
+- Produces: 런이 종단 상태로 돌아올 때 미전달 수가 `collaboration_undelivered` 메시지로 남는다
+
+단일 종단 훅은 없다. 내부 종단 전이는 여러 곳이지만 **공개 진입점은 셋**이고 모두 `TeamRun`을 돌려주므로, 반환 직전에 종단 여부를 보고 기록한다.
 
 - [ ] **Step 1: Write the failing test**
 
-리더는 실제로 호출되므로(계획 `:1691`, 종합 `:4358`) LEAD 앞으로 보낸 쪽지는 전달된다. 전달되지 않는 상황을 만들려면 **적용되지 않는 배달**을 직접 만든다.
+워커 2명 구성에서 리더와 두 워커 모두 호출되므로, 전달되지 않는 상황은 **수신자가 죽어 그 operation이 applied가 되지 않는** 경우다.
 
 ```python
 async def test_notes_that_never_landed_are_recorded_when_the_run_ends(collab_setup):
     """조용히 사라지면 유실 0을 확인할 방법이 없다."""
     setup = collab_setup
-    (note,) = setup.collab.record_mentions(
+    setup.collab.record_mentions(
         setup.run.id, None, setup.workers[0].id, [Mention("W-02", "미전달")]
     )
-    # 적용되지 않을 배달: 존재하지 않는 operation key에 묶는다.
-    setup.collab.open_delivery(setup.run.id, setup.workers[1].id, "k-orphan", [note])
+    # 수신자가 호출 전에 죽으므로 그 operation은 applied가 되지 않는다.
+    setup.worker_clients[1].die_after_fetches = 0
 
-    await setup.runtime.start(setup.run.id, setup.cycle.id)
+    with pytest.raises(RuntimeError):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
 
-    kinds = [m.kind for m in setup.teams.list_messages(setup.run.id)]
-    assert "collaboration_undelivered" in kinds
+    run = await setup.new_runtime().resume(setup.run.id)
+
+    if run.status in TERMINAL_RUN_STATUSES:
+        kinds = [m.kind for m in setup.teams.list_messages(setup.run.id)]
+        assert "collaboration_undelivered" in kinds
+    else:
+        assert setup.collab.undelivered_count(setup.run.id) == 1
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_team_runtime.py -v -k never_landed`
-Expected: FAIL — `collaboration_undelivered`가 없다.
+Expected: FAIL — 종단이면 `collaboration_undelivered`가 없고, 종단이 아니면 미전달 수를 셀 메서드가 아직 없다.
 
 - [ ] **Step 3: Write minimal implementation**
 
-런이 종단 상태로 정리되는 지점(`_settle_failed`와 완료 경로 모두가 지나는 곳)에서 부른다:
-
 ```python
-    def _close_collaboration(self, run) -> None:
-        if self._collaboration is None:
-            return
+    def _close_collaboration(self, run):
+        """런이 끝났으면 못 전한 쪽지 수를 남긴다.
+
+        조용히 사라지면 "유실 0"을 확인할 방법이 없다. 실패해도 종료를 막지
+        않는다 -- 곁다리 기능이 런의 마무리를 붙잡으면 안 된다.
+        """
+        if self._collaboration is None or run.status not in TERMINAL_RUN_STATUSES:
+            return run
         try:
-            abandoned = self._collaboration.abandon_open_deliveries(run.id)
             pending = self._collaboration.undelivered_count(run.id)
-        except Exception:  # noqa: BLE001 - 곁다리가 종료를 막지 않는다
-            return
-        if not pending:
-            return
-        self._teams.append_message(
-            run.id,
-            None,
-            None,
-            "collaboration_undelivered",
-            f"{pending} peer notes were never delivered",
-            {"count": pending, "abandoned_deliveries": abandoned},
-        )
+        except Exception:  # noqa: BLE001
+            return run
+        if pending:
+            self._teams.append_message(
+                run.id,
+                None,
+                None,
+                "collaboration_undelivered",
+                f"{pending} peer notes were never delivered",
+                {"count": pending},
+            )
+        return run
 ```
+
+`start`·`resume`·`adjudicate_contest`가 `TeamRun`을 돌려주는 각 return을 `return self._close_collaboration(run)`으로 감싼다.
 
 - [ ] **Step 4: Run test to verify it passes**
 
