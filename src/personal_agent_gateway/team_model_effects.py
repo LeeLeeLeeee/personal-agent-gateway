@@ -304,59 +304,73 @@ class TeamModelEffectService:
                 normalized_changes,
             )
             if operation.status == "applied":
-                return self._replay_worker(
+                result = self._replay_worker(
                     connection,
                     operation,
                     input_digest,
                 )
-            if operation.status != "completed":
-                raise StaleOperation(
-                    f"Expected operation status completed, got {operation.status}"
-                )
-            if task.status != "in_progress":
-                raise OperationConflict("Worker task is not in progress")
-            if agent.status != "running" or agent.current_task_id != task.id:
-                raise OperationConflict("Worker is not running the operation task")
-
-            _apply_mediation_reinvocation(
-                connection,
-                operation,
-                now,
-            )
-            if operation.result_kind == "user_decision":
-                result = self._apply_worker_decision(
-                    connection,
-                    operation,
-                    task,
-                    agent,
-                    now,
-                )
+                if operation.result_kind == "task_outcome":
+                    # The replay path stores the notes too. Storing happens
+                    # after this transaction commits (it has to -- see below),
+                    # so a process death or a `database is locked` in that gap
+                    # leaves the operation applied with the notes unwritten,
+                    # and every later entry ends here. Without this the
+                    # worker's note is gone with nothing to recover it from and
+                    # undelivered_count reports 0.
+                    applied_outcome = _task_outcome(operation)
             else:
-                if acceptance is None:
-                    raise ValueError("Acceptance result is required for a task outcome")
-                result = self._apply_task_outcome(
+                if operation.status != "completed":
+                    raise StaleOperation(
+                        f"Expected operation status completed, got {operation.status}"
+                    )
+                if task.status != "in_progress":
+                    raise OperationConflict("Worker task is not in progress")
+                if agent.status != "running" or agent.current_task_id != task.id:
+                    raise OperationConflict(
+                        "Worker is not running the operation task"
+                    )
+
+                _apply_mediation_reinvocation(
                     connection,
                     operation,
-                    task,
-                    agent,
-                    acceptance,
-                    normalized_changes,
                     now,
                 )
-                applied_outcome = _task_outcome(operation)
-            _promote_actor_session(connection, operation, now)
-            _mark_applied(
-                connection,
-                operation,
-                effect_type=operation.result_kind or "worker_outcome",
-                effect_ref=_worker_effect_ref(
+                if operation.result_kind == "user_decision":
+                    result = self._apply_worker_decision(
+                        connection,
+                        operation,
+                        task,
+                        agent,
+                        now,
+                    )
+                else:
+                    if acceptance is None:
+                        raise ValueError(
+                            "Acceptance result is required for a task outcome"
+                        )
+                    result = self._apply_task_outcome(
+                        connection,
+                        operation,
+                        task,
+                        agent,
+                        acceptance,
+                        normalized_changes,
+                        now,
+                    )
+                    applied_outcome = _task_outcome(operation)
+                _promote_actor_session(connection, operation, now)
+                _mark_applied(
                     connection,
                     operation,
-                    result,
-                    input_digest,
-                ),
-                now=now,
-            )
+                    effect_type=operation.result_kind or "worker_outcome",
+                    effect_ref=_worker_effect_ref(
+                        connection,
+                        operation,
+                        result,
+                        input_digest,
+                    ),
+                    now=now,
+                )
         # Outside the transaction: append_message opens a second connection, so
         # calling this inside `begin immediate` deadlocks on the write lock, and
         # the failure path then rolls back a task that was already applied.
@@ -371,6 +385,16 @@ class TeamModelEffectService:
         Collaboration is auxiliary: if a bad label or a failed write voided a
         finished worker task, the ADR's promise that a run which never turned
         this on keeps its lifecycle would not hold.
+
+        Called on the replay path as well, which can store the same note twice.
+        That is deliberate and within the ADR's licence -- duplicates are
+        allowed, loss is forbidden -- and it is not made idempotent on purpose.
+        A note carries no operation identity (`record_mentions` writes only
+        `to_label` in the metadata), so the only key available here is
+        (cycle, sender, label, text), and one worker can legitimately send the
+        same text to the same teammate from two stages of one cycle. Skipping
+        on that key would drop a real note to avoid a duplicate, which is the
+        trade the ADR refuses.
         """
         if self._collaboration is None or outcome is None or not outcome.mentions:
             return
