@@ -57,3 +57,16 @@ def test_more_notes_than_the_batch_limit_are_capped_and_counted():
 
     assert block.count("item") == MENTION_BATCH_LIMIT
     assert "5 more notes withheld" in block
+
+
+def test_a_flood_of_notes_cannot_push_the_assignment_out():
+    """상한이 없으면 긴 글로 원래 지시를 밀어낼 수 있다."""
+    flood = [("W-02", "가" * 5000) for _ in range(50)]
+
+    block = radio_block(flood)
+
+    assert len(block) < MENTION_TEXT_LIMIT * MENTION_BATCH_LIMIT + 1000
+    # 상한 없는 크기 검사만으로는 부족하다: 캡이 실제로 걸렸다는 것도
+    # 직접 보여야 한다 -- 50개 중 10개만 실리고, 나머지는 개수로 남는다.
+    assert block.count("from W-02:") == MENTION_BATCH_LIMIT
+    assert "40 more notes withheld" in block
