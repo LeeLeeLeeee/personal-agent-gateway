@@ -22,5 +22,6 @@
   "summary": "조사를 완료했습니다. `data/artifacts/attested_only_explanation.md`에 소스 줄 번호와 함께 문서화했습니다.\n\n핵심은 `attested_only`가 개별 항목의 직접 보증값이 아니라, 서버 검증 항목이 하나도 실행되지 않았는지를 나타내는 task-level 플래그라는 점입니다. 개별 항목은 `mode`로 구분됩니다.\n\n- `verified`: 서버 검증으로 판정됨\n- `attested`: 워커가 `checked:true`, `status:\"passed\"`로 자체 보증함\n- `unverified`: 워커가 보증하지 않음 (`checked:false`, `status:\"unknown\"`)\n\n따라서 `attested_only:true`만으로 모든 항목이 워커 보증을 받았다고 해석할 수 없으며, `verifications[*].mode`와 `unverified` 목록을 함께 확인해야 합니다. 실패는 없습니다.\n\n\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\7890a752dd254894a7e855d535f6fc18\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

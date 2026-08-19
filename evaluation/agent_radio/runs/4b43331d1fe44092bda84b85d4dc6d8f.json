@@ -22,5 +22,6 @@
   "summary": "`attested_only`는 워커가 해당 검증 항목을 직접 확인하고 그 결과를 스스로 보증했음을 표시한다. 값에 포함된 항목만 워커의 보증 범위이며, 포함되지 않은 항목은 검증되었을 수 있더라도 워커가 직접 보증한 증거로 취급하지 않는다. 실패는 보고되지 않았다.",
   "workspace_path": "C:\\pag-eval\\workspace\\4b43331d1fe44092bda84b85d4dc6d8f\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

@@ -22,5 +22,6 @@
   "summary": "워커 실행 check 결과를 신뢰하는 프로토콜과, claim을 판정에서 배제하는 보존 조건을 문서화했다. 코드 변경은 없으며 실패 보고는 없다.\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\53405c9f07534bbc8a75a46df3e2fe52\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

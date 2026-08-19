@@ -22,5 +22,6 @@
   "summary": "새 OperationStage 추가 시 정의·검증·repair·실행·복구·효과·API/UI·테스트·문서·설정의 실제 영향 지점을 전수 정리했으며, 코드 변경은 하지 않았습니다. 실패 사항은 없습니다.\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\5c974ea10cd3499b8be21693a919c559\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

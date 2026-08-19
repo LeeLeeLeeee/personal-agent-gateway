@@ -21,6 +21,7 @@ from agent_radio.runner import (
     EMPTY_TRACE,
     EVAL_DATA_ROOT,
     EVAL_WORKSPACE_ROOT,
+    REPOSITORY_DIFF_LIMIT,
     Harness,
     RunInProgress,
     RunnerError,
@@ -82,6 +83,7 @@ def _artifact(**overrides) -> dict:
         "summary": "수용 게이트는 파일 읽기만 한다",
         "workspace_path": "data/workspace/run-1/workspace",
         "repository_unchanged": True,
+        "repository_diff": None,
         "error": None,
     }
     payload.update(overrides)
@@ -186,6 +188,11 @@ def test_a_completed_run_with_a_blank_summary_is_not_scoreable():
         {"resolved_model": ""},
         {"resolved_model": 5},
         {"resolved_effort": ""},
+        # Same claim, about the tree: null says there was nothing to report, an
+        # empty string says the diff itself was blank -- which no changed tree
+        # produces.
+        {"repository_diff": ""},
+        {"repository_diff": 5},
         # Zero is a measurement and null is the absence of one, but a negative
         # count is neither.
         {"input_tokens": -1},
@@ -209,6 +216,7 @@ def test_an_artefact_that_cannot_be_trusted_is_refused(overrides):
         "input_tokens",
         "cached_input_tokens",
         "output_tokens",
+        "repository_diff",
     ],
 )
 def test_an_artefact_missing_a_recovered_fact_is_refused(key):
@@ -237,6 +245,28 @@ def test_facts_the_provider_did_not_keep_are_recorded_as_unknown():
     assert artifact.resolved_effort is None
     assert artifact.input_tokens is None
     assert artifact.output_tokens is None
+
+
+def test_an_unchanged_tree_reports_no_diff():
+    """Null means there is nothing to report -- the tree did not move, or the
+    check could not be run at all."""
+    artifact = parse_artifact(_artifact(repository_diff=None))
+
+    assert artifact.repository_diff is None
+
+
+def test_a_changed_tree_carries_what_changed():
+    """A boolean says a run broke isolation and nothing more, which is exactly
+    the state that cannot be diagnosed after the sweep has ended."""
+    artifact = parse_artifact(
+        _artifact(
+            repository_unchanged=False,
+            repository_diff="--- before\n+++ after\n@@ -0,0 +1 @@\n+?? scratch.txt",
+        )
+    )
+
+    assert "scratch.txt" in artifact.repository_diff
+    assert artifact.scoreable is False
 
 
 def test_a_run_that_really_cost_nothing_is_not_an_unknown():
@@ -1220,6 +1250,70 @@ async def test_a_run_that_wrote_inside_an_already_untracked_directory_is_caught(
     assert artifact.scoreable is False
 
 
+async def test_a_run_that_dirtied_the_repository_records_what_changed(
+    tmp_path: Path,
+):
+    """A boolean says isolation broke and nothing else. That has already
+    happened once on a real sweep and the cause is still unknown, because the
+    artefact recorded that something changed without recording what."""
+    harness, repo = _stub_harness(tmp_path, answer="…", writes="scratch.txt")
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert artifact.repository_unchanged is False
+    assert artifact.repository_diff is not None
+    assert "scratch.txt" in artifact.repository_diff
+
+
+async def test_a_run_that_changed_nothing_records_no_diff(tmp_path: Path):
+    """Null is "nothing to report", and an unchanged tree has nothing to
+    report. Writing an empty diff instead would put a blank answer where there
+    is no question."""
+    harness, repo = _stub_harness(tmp_path, answer="…")
+    (repo / "wip.txt").write_text("someone's uncommitted work", encoding="utf-8")
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert artifact.repository_unchanged is True
+    assert artifact.repository_diff is None
+
+
+async def test_an_enormous_difference_is_truncated_and_says_so(
+    tmp_path: Path, monkeypatch
+):
+    """A run that escaped into a build directory can move thousands of paths.
+    The artefact keeps enough to diagnose it and says out loud that it kept
+    only that much -- a silently cut diff reads as a complete one.
+
+    The flood is substituted rather than written, because what is under test is
+    the cap, not git's ability to enumerate several thousand files.
+    """
+    harness, repo = _stub_harness(tmp_path, answer="…")
+    real = repository_status
+    calls = []
+
+    def flood_after_the_run(path: Path) -> str:
+        calls.append(path)
+        if len(calls) > 1:
+            return "\n".join(f"?? escaped/file-{index:05d}.txt" for index in range(900))
+        return real(path)
+
+    monkeypatch.setattr("agent_radio.runner.repository_status", flood_after_the_run)
+
+    artifact = await run_fixture(
+        harness, _understanding_fixture(), mode="legacy", repo_root=repo
+    )
+
+    assert artifact.repository_unchanged is False
+    assert "escaped/file-00000.txt" in artifact.repository_diff
+    assert "truncated" in artifact.repository_diff
+    assert len(artifact.repository_diff) < REPOSITORY_DIFF_LIMIT + 200
+
+
 async def test_no_error_is_invented_for_a_status_that_carries_an_answer(
     tmp_path: Path, monkeypatch
 ):
@@ -1318,6 +1412,9 @@ async def test_an_unverifiable_repository_still_produces_an_artefact(
     assert artifact.summary == "…"
     # Unverifiable is not verified-clean, and only one of the two is safe.
     assert artifact.repository_unchanged is False
+    # And there is genuinely nothing to report: the check never ran, so there
+    # are no two states to compare.
+    assert artifact.repository_diff is None
     assert "could not verify isolation" in artifact.error
     assert artifact.scoreable is False
 

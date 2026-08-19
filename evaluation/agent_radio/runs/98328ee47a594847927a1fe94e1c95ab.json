@@ -22,5 +22,6 @@
   "summary": "완료했습니다. 소스 근거상 게이트는 `required_verifications`를 선언 순서대로 순차 실행하며, 각 결과를 `evidence.verifications`에 `name`, `mode`, `status`, 검사 evidence로 기록합니다. 모든 항목과 staged-input 검사를 통과해야 `accepted: true`가 되며, 실패 시 즉시 반환되어 이후 항목은 실행·기록되지 않습니다.\n\n소스 추적과 합성을 완료했고, 관련 테스트는 60개 통과·1개 건너뜀, 추가 결과 테스트 4개 통과입니다. 보조 graphify/feature-map 검증은 각각 권한 및 Git 메타데이터 부재로 사용하지 못했습니다.\n\n결과 문서: `data/artifacts/gate-verification-answer.md`\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\98328ee47a594847927a1fe94e1c95ab\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

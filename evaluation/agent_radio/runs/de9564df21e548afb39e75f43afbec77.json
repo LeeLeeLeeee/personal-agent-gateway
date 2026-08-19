@@ -22,5 +22,6 @@
   "summary": "수용 게이트는 모든 작업 산출물이 선언된 `required_outputs`와 일치하고 안전한 파일인지 확인한 뒤, `required_verifications`를 선언 순서대로 평가합니다.\n\n`check`가 있으면 작업자의 주장과 무관하게 서버가 직접 실행한 결과만 사용하며, 실패 즉시 거절합니다. `check: null`이면 작업 결과의 동명 evidence를 사용합니다. `checked=true` 및 `status=\"passed\"`만 통과이고, `checked=false`는 거절하지 않지만 `unverified`로 기록됩니다.\n\n실제로 실행되는 서버 검사 종류는 네 가지입니다.\n\n- `file_nonempty`: 공백 제거 후 파일 내용 존재 여부\n- `file_contains`: 지정 문자열 포함 여부\n- `file_matches`: 멀티라인 정규식 매치 여부\n- `json_parses`: JSON 파싱 여부\n\n검사는 워크스페이스 내부의 일반 파일만 대상으로 하며 symlink·민감 파일·상위 경로는 거부하고, 파일 크기는 최대 1MB, 정규식 패턴은 최대 200자, 검사 대상 텍스트는 최대 64,000자로 제한됩니다. `shell` 같은 임의 명령 실행 검사는 허용되지 않습니다.\n\n조사 근거의 관련 테스트는 `46 passed, 1 skipped`였습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\de9564df21e548afb39e75f43afbec77\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

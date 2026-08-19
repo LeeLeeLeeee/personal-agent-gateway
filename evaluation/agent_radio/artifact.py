@@ -86,6 +86,17 @@ class RunArtifact:
     summary: str | None
     workspace_path: str
     repository_unchanged: bool
+    # What changed, when something did. `repository_unchanged` says only that
+    # the tree moved, and a run flagged that way cannot be diagnosed afterwards
+    # at all -- the sweep is over, the workspace is gone, and the escape is
+    # whatever it was. This carries git's own before/after status as a diff, so
+    # the file that appeared is nameable a month later.
+    #
+    # Null means there is nothing to report: either the tree did not move, or
+    # the check could not be run at all. The second case is not "no change" --
+    # `repository_unchanged` is already False for it -- it is "there are not two
+    # states to compare".
+    repository_diff: str | None
     error: str | None
 
     @property
@@ -174,6 +185,7 @@ def parse_artifact(payload: dict) -> RunArtifact:
         summary=summary,
         workspace_path=_required_text(payload, "workspace_path"),
         repository_unchanged=unchanged,
+        repository_diff=_recovered_text(payload, "repository_diff"),
         error=error,
     )
 

@@ -22,5 +22,6 @@
   "summary": "필요한 변경사항을 분석해 [보고서](C:/pag-eval/workspace/844153761ac24e6282c0ffa64cfe826e/workspace/data/artifacts/required-verification-trust-boundary-report.md)로 작성했습니다.\n\n핵심은 워커의 최종 주장이 아닌, 워커가 실행한 check의 시스템 캡처 영수증을 게이트가 입력으로 받도록 하는 것입니다. 영수증은 정확한 check·작업·워크스페이스에绑定하고, 누락·불일치·실패 시 fail-closed 해야 합니다. check가 없는 항목은 기존 워커 주장 방식을 유지하며, check가 있는 항목에서는 워커의 `checked/status/evidence`를 계속 판정에서 배제해야 합니다.\n\n정상 실행·cycle·retry·restart 경로와 영속화/재생 경로도 함께 변경되어야 합니다. 소스 코드는 수정하지 않았습니다. Git 메타데이터가 없어 커밋 고정 및 이력 기반 교차검증은 수행하지 못했습니다.\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\844153761ac24e6282c0ffa64cfe826e\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

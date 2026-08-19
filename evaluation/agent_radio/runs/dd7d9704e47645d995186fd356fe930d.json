@@ -22,5 +22,6 @@
   "summary": "구조화된 출력 파싱 실패 시의 모든 `OperationStage → 복구 stage` 매핑과 결정 규칙, 그리고 이름 규칙 예외를 분석 보고서에 정리했습니다. 실패 사항은 없습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\dd7d9704e47645d995186fd356fe930d\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

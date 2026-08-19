@@ -22,5 +22,6 @@
   "summary": "`file_absent` 검사를 추가했습니다. 파일이 없으면 통과하고 존재하면 실패하며, 두 경우를 모두 검증하는 테스트를 추가했습니다. 기존 검사 동작은 유지됐고, 관련 pytest 15개와 ruff 검사가 통과했습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\c834fb20fa3c4232acf51a8268f7aeb8\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

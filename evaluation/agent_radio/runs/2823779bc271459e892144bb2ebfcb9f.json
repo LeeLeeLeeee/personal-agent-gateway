@@ -22,5 +22,6 @@
   "summary": "수용 게이트가 모든 `required_verifications` 결과를 수집한 뒤 종합 판정하고, 항목별 결과를 증거에 기록하는 방식을 설명하는 문서를 작성했습니다. 보고된 실패는 없습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\2823779bc271459e892144bb2ebfcb9f\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

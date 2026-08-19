@@ -22,5 +22,6 @@
   "summary": "분석을 완료했다. 결론은 `attested_only`가 워커의 자체 보증을 기록하는 필드가 아니라, 서버 게이트 검사가 없음을 나타내는 상태라는 것이다. 워커가 보증한 항목과 보증하지 않은 항목은 항목별 `attested`·`unverified` 상태로 구분된다. 자세한 근거는 `data/artifacts/attested-only-worker-vouching.md`에 정리했다. 실패 사항은 없다.",
   "workspace_path": "C:\\pag-eval\\workspace\\4853d072367048efa2f0f82723adbe7d\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

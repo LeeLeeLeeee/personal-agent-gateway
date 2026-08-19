@@ -22,5 +22,6 @@
   "summary": "코드 수정 없이 전용 복구 stage 전환에 필요한 흐름·상태·정책 변경점을 분석했다. worker_execution은 단일 실행과 실패 기록만 맡고, 재시도 정책·backoff·복구 입력 구성·최종 실패 판단은 복구 stage와 stage 전이 로직으로 옮겨야 한다.\n\n특히 총 시도 횟수와 timeout 예산의 공유, idempotency/checkpoint 전달, 원인 오류 보존, 취소·재개·관측성의 stage 간 연결이 필요하다. 이를 누락하면 오류 없이도 최대 재시도 보장이 stage마다 초기화되거나, 중복 부작용 방지·원인 추적·실행 순서 보장이 조용히 약화될 수 있다. 실패는 없었다.",
   "workspace_path": "C:\\pag-eval\\workspace\\3341f52441dd403b89f56195f7399347\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

@@ -22,5 +22,6 @@
   "summary": "`file_at_most_lines` 검사를 추가하고, 줄 수가 상한을 초과할 때 실패하는 테스트를 작성했습니다. 대상 테스트 14개와 Ruff 정적 검사는 통과했습니다.\n\n전체 pytest는 기존 `agent_radio` 의존성 부재로 수집 단계에서 실패했습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\ef26f7ea5212421396a3328bf8f7faa1\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

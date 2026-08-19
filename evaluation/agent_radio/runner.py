@@ -8,6 +8,7 @@ assembly would drift from the real one without anyone noticing.
 
 import argparse
 import asyncio
+import difflib
 import io
 import json
 import os
@@ -65,6 +66,11 @@ DEFAULT_EFFORT = "high"
 # rather than only catching parked ones. 900s covers the observed range with
 # room and is what every sweep was already passing explicitly.
 CLI_DEFAULT_TIMEOUT_SECONDS = 900.0
+# How much of an isolation diff the artefact keeps. Enough to name what escaped
+# -- a couple of hundred status lines -- without letting one run that wandered
+# into a build directory write a megabyte of paths into a file that is read as a
+# record of the run. Anything cut is said out loud; see _status_diff.
+REPOSITORY_DIFF_LIMIT = 4000
 
 
 class RunnerError(RuntimeError):
@@ -626,12 +632,18 @@ async def run_fixture(
     except Exception as exc:  # noqa: BLE001
         final = run
         raised = _joined(raised, f"could not read the finished run back: {exc}")
+    repository_diff: str | None = None
     try:
-        repository_unchanged = repository_status(repo_root) == status_before
-    except RunnerError as exc:
-        # Unverifiable is not the same as verified-clean, and only one of the
-        # two is safe to assume.
+        status_after = repository_status(repo_root)
+        repository_unchanged = status_after == status_before
+        if not repository_unchanged:
+            repository_diff = _status_diff(status_before, status_after)
+    except Exception as exc:  # noqa: BLE001 - see the note above: nothing here
+        # may raise. Unverifiable is not the same as verified-clean, and only
+        # one of the two is safe to assume; a diff that could not be built is
+        # reported as no diff rather than as an unchanged tree.
         repository_unchanged = False
+        repository_diff = None
         raised = _joined(raised, f"could not verify isolation: {exc}")
 
     # Cannot raise: provider_trace swallows its own failures and answers None
@@ -668,8 +680,44 @@ async def run_fixture(
         summary=final.summary,
         workspace_path=final.working_root or final.workspace_root,
         repository_unchanged=repository_unchanged,
+        repository_diff=repository_diff,
         error=error,
     )
+
+
+def _status_diff(before: str, after: str) -> str | None:
+    """What moved between the two status readings, as a unified diff.
+
+    The two texts are git's own status output, so their diff names the paths
+    that appeared, vanished or changed state -- which is the whole question a
+    later reader has. Recording only that the two strings differed leaves that
+    reader with a boolean and no way back to the cause.
+
+    Truncation is announced rather than silent: a diff cut at the limit and
+    presented as complete would read as "these are the four files it touched"
+    when it touched four hundred, and that is a worse artefact than a short one.
+
+    None when the diff is empty, which two texts differing only in trailing
+    whitespace can produce. An empty string would claim a blank answer where
+    null claims no answer, and the artefact refuses it for that reason.
+    """
+    text = "\n".join(
+        difflib.unified_diff(
+            before.splitlines(),
+            after.splitlines(),
+            fromfile="before the run",
+            tofile="after the run",
+            lineterm="",
+        )
+    )
+    if not text.strip():
+        return None
+    if len(text) > REPOSITORY_DIFF_LIMIT:
+        dropped = len(text) - REPOSITORY_DIFF_LIMIT
+        return text[:REPOSITORY_DIFF_LIMIT] + (
+            f"\n[diff truncated: {dropped} more characters]"
+        )
+    return text
 
 
 def _joined(first: str | None, second: str | None) -> str | None:

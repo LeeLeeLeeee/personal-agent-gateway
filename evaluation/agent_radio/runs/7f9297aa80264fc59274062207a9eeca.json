@@ -22,5 +22,6 @@
   "summary": "조사와 설명 작성을 완료했다. 확인 결과 `attested_only`는 워커의 자기 보증을 직접 기록하는 필드가 아니라, `verified_count == 0`인 작업 수준 신호다.\n\n실제 워커 보증은 `mode: \"attested\"`와 `status: \"passed\"`로 나타나며, 미보증 항목은 `mode: \"unverified\"`, `status: \"unknown\"`, `unverified` 목록으로 구분된다. 근거: `src/personal_agent_gateway/team_acceptance.py:129-168`.",
   "workspace_path": "C:\\pag-eval\\workspace\\7f9297aa80264fc59274062207a9eeca\\workspace",
   "repository_unchanged": false,
+  "repository_diff": null,
   "error": null
 }

@@ -22,5 +22,6 @@
   "summary": "읽기 전용 영향 분석을 완료했습니다. 코드는 수정하지 않았습니다.\n\n핵심 결론은 단순히 `worker_execution` 문자열을 `worker_execution_repair`로 바꾸는 것으로는 충분하지 않다는 것입니다. stage registry/mapping, operation key·ordinal, validator/effect allowlist, runtime 재개·재시작, provider recovery, workspace baseline, prompt/context·artifact 전달, effect idempotency, 기존 `worker_execution:1` row 호환성, 테스트와 문서를 함께 변경해야 합니다.\n\n동작 보존이 자동으로 보장되지는 않습니다. 특히 repair budget 재설정, context·baseline·artifact 누락, result kind parity 누락, provider stage 분류 누락은 오류 없이 결과 품질·복구 범위·관측성을 조용히 약화시킬 수 있습니다. 정확한 새 stage 이름, ordinal/key 규칙, 누적 retry budget, legacy dual-read 정책은 구현 전에 결정해야 합니다.\n\n상세 보고서: [worker-execution-repair-stage-impact.md](/C:/pag-eval/workspace/9773d36eb7bd4b9dbba0f5cd05a041b5/workspace/data/artifacts/worker-execution-repair-stage-impact.md)\n\n검증상 실패는 없었으며, 전체 graphify 산출물 생성은 쓰기 정책 때문에 수행하지 않았습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\9773d36eb7bd4b9dbba0f5cd05a041b5\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

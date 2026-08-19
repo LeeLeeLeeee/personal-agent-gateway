@@ -22,5 +22,6 @@
   "summary": "`file_at_most_lines` 검사를 추가했습니다. `path`와 `max_lines`를 검증하고, 줄 수가 상한을 넘으면 실패합니다. 잘못된 `max_lines` 값은 파싱 단계에서 거부되며, 초과 실패 pytest도 추가했습니다. 관련 테스트 14건과 Ruff 검사를 통과했습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\ae0412f114d8461081d4d9d547bfe54b\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }

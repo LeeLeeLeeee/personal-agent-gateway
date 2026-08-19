@@ -22,5 +22,6 @@
   "summary": "완료했습니다. 수용 게이트는 모든 `required_verifications`를 끝까지 실행·수집하는 방식이 아니라, 선언 순서대로 처리하다 실패 또는 누락을 만나면 즉시 거절하고 반환합니다. 따라서 실패 결과의 증거에는 그 시점까지 처리된 항목만 담기며, 이후 항목은 실행·수집되지 않습니다.\n\n모든 항목을 통과한 경우에만 `evidence[\"verifications\"]`에 항목별 `mode`, `status`, `evidence`를 종합하고 `accepted=True`로 결정합니다. `check`가 있으면 게이트가 직접 실행한 `verified` 결과, 작업자 확인만 있으면 `attested`, 미확인은 `unverified`로 기록됩니다. 상세 근거는 `acceptance-gate-explanation.md`에 정리했습니다. 실패 사항은 없습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\28523ad22e6b41028c0cd10fa81846ce\\workspace",
   "repository_unchanged": true,
+  "repository_diff": null,
   "error": null
 }
