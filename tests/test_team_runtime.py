@@ -8604,3 +8604,35 @@ async def test_a_broken_radio_lookup_does_not_reach_the_model_call(
     assert {m.metadata["reason_code"] for m in degraded} == {
         "collaboration_unavailable"
     }
+
+
+@pytest.mark.asyncio
+async def test_a_failed_degradation_record_does_not_reach_the_model_call(
+    collab_setup,
+) -> None:
+    """강등을 남기는 쓰기 자체가 실패해도 호출은 살아 있어야 한다.
+
+    그 쓰기는 radio 조회가 실패한 이유(예: write lock)로 함께 실패할 수 있고,
+    감싸지 않으면 곁다리의 실패가 결국 모델 호출 경로로 전파된다.
+    """
+    setup = collab_setup
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the delivery table is broken")
+
+    setup.collab.undelivered = explode
+    real_append = setup.teams.append_message
+
+    def refuse_degraded(*args, **kwargs):
+        if "collaboration_degraded" in args:
+            raise RuntimeError("the message table is broken too")
+        return real_append(*args, **kwargs)
+
+    setup.teams.append_message = refuse_degraded
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    assert all(
+        "TEAM ROSTER" not in prompt for prompt in setup.worker_clients[0].prompts
+    )

@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -100,6 +101,8 @@ from personal_agent_gateway.teams import (
     _validate_task_acceptance,
     parse_required_verifications,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 PLANNING_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
 Goal: {goal}
@@ -1033,14 +1036,26 @@ class TeamRuntime:
                 [(sender, text) for _, sender, text in notes]
             )
         except Exception as exc:  # noqa: BLE001 - 곁다리가 런을 죽이지 않는다
-            self._teams.append_message(
-                spec.team_run_id,
-                None,
-                agent.id,
-                "collaboration_degraded",
-                f"radio-lite disabled for this step: {exc}",
-                {"reason_code": "collaboration_unavailable"},
-            )
+            content = f"radio-lite disabled for this step: {exc}"
+            try:
+                self._teams.append_message(
+                    spec.team_run_id,
+                    None,
+                    agent.id,
+                    "collaboration_degraded",
+                    content,
+                    {"reason_code": "collaboration_unavailable"},
+                )
+            except Exception:  # noqa: BLE001 - 강등 기록이 호출을 죽이지 않는다
+                # 이 쓰기도 위와 같은 이유로 실패할 수 있고, 놓아주면 곁다리의
+                # 실패가 모델 호출 경로로 전파된다 -- radio 실패는 절대 전파되지
+                # 않는다는 제약이 금하는 바로 그것이다.
+                _LOGGER.warning(
+                    "could not record degraded collaboration for run %s: %s",
+                    spec.team_run_id,
+                    content,
+                    exc_info=True,
+                )
             return messages, spec
         if not prefix:
             return messages, spec
