@@ -10,11 +10,13 @@ import argparse
 import asyncio
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tarfile
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -272,6 +274,44 @@ def _token_usage(entry: dict) -> tuple[int, int, int] | None:
     if not isinstance(cached, int) or isinstance(cached, bool) or cached < 0:
         cached = 0
     return given, min(cached, given), produced
+
+
+class RunInProgress(RunnerError):
+    """Another run holds the lock."""
+
+
+def _lock_path(config: AppConfig) -> Path:
+    return Path(config.app_db_path).parent / "run.lock"
+
+
+@contextmanager
+def only_one_run(config: AppConfig):
+    """Hold the evaluation lock, or refuse.
+
+    Concurrent runs do not just contend for the provider, they spoil each other's
+    measurement: artefacts are written inside the repository, so one run's
+    artefact lands between another's before and after snapshots and the isolation
+    check reports a changed tree that no run caused. Both runs then look
+    unscoreable for a reason belonging to neither.
+
+    Exclusive create, and no staleness heuristic on purpose. A leftover lock
+    means a run died without releasing it, and quietly stealing the lock is how a
+    genuinely concurrent second run gets started anyway.
+    """
+    path = _lock_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        handle = path.open("x", encoding="utf-8")
+    except FileExistsError as exc:
+        raise RunInProgress(
+            f"another evaluation run holds {path}. If no run is active, delete it."
+        ) from exc
+    try:
+        handle.write(f"{os.getpid()}\n")
+        handle.close()
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def repository_status(repo_root: Path) -> str:
@@ -822,20 +862,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"workspace: {config.workspace_root}")
 
     try:
-        harness = build_harness(config)
-        artifact = asyncio.run(
-            run_fixture(
-                harness,
-                fixture,
-                mode=args.mode,
-                repo_root=_REPO_ROOT,
-                timeout_seconds=args.timeout_seconds,
-                plan_negotiation=args.negotiation,
-                backend=args.backend,
-                model=args.model,
-                effort=args.effort,
+        with only_one_run(config):
+            harness = build_harness(config)
+            artifact = asyncio.run(
+                run_fixture(
+                    harness,
+                    fixture,
+                    mode=args.mode,
+                    repo_root=_REPO_ROOT,
+                    timeout_seconds=args.timeout_seconds,
+                    plan_negotiation=args.negotiation,
+                    backend=args.backend,
+                    model=args.model,
+                    effort=args.effort,
+                )
             )
-        )
     except RunnerError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

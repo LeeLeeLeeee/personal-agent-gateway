@@ -22,11 +22,13 @@ from agent_radio.runner import (
     EVAL_DATA_ROOT,
     EVAL_WORKSPACE_ROOT,
     Harness,
+    RunInProgress,
     RunnerError,
     _REPO_ROOT,
     _evaluation_config,
     export_source,
     main,
+    only_one_run,
     provider_trace,
     repository_is_unchanged,
     repository_status,
@@ -1519,6 +1521,49 @@ def test_the_evaluation_config_does_not_point_at_the_products_data():
     # from the caller's real configuration.
     assert eval_config.lmg_base_url == product_config.lmg_base_url
     assert eval_config.session_dir == product_config.session_dir
+
+
+def test_a_second_run_is_refused_while_one_holds_the_lock(tmp_path: Path):
+    """Overlapping runs invalidate each other rather than merely competing.
+
+    Artefacts are written inside the repository, so one run's artefact lands
+    between another's before and after snapshots and the isolation check reports
+    a changed tree that no run caused. A sweep lost fourteen of sixteen runs to
+    exactly this before the lock existed.
+    """
+    config = AppConfig(
+        workspace_root=tmp_path / "workspace",
+        session_dir=tmp_path / "sessions",
+        app_db_path=tmp_path / "data" / "app.sqlite",
+        lmg_base_url="http://127.0.0.1:9999",
+    )
+
+    with only_one_run(config) as held:
+        assert held.exists()
+        with pytest.raises(RunInProgress):
+            with only_one_run(config):
+                raise AssertionError("the second run should not have started")
+
+    # Released on the way out, so the next run is not blocked by the last one.
+    assert not held.exists()
+
+
+def test_the_lock_is_released_even_when_the_run_raises(tmp_path: Path):
+    """A crashed run must not wedge every later one."""
+    config = AppConfig(
+        workspace_root=tmp_path / "workspace",
+        session_dir=tmp_path / "sessions",
+        app_db_path=tmp_path / "data" / "app.sqlite",
+        lmg_base_url="http://127.0.0.1:9999",
+    )
+
+    with pytest.raises(RuntimeError):
+        with only_one_run(config) as held:
+            raise RuntimeError("the run died")
+
+    assert not held.exists()
+    with only_one_run(config):
+        pass
 
 
 def test_the_evaluation_workspace_lives_outside_the_repository():
