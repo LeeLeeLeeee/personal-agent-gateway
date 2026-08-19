@@ -34,7 +34,7 @@ def roster_block(entries: Sequence[tuple[str, str]]) -> str:
     if not entries:
         return ""
     lines = [f"- {label}: {name}" for label, name in entries]
-    return "TEAM ROSTER (labels to address in \"mentions\"):\n" + "\n".join(lines) + "\n\n"
+    return "TEAM ROSTER (label -> teammate):\n" + "\n".join(lines) + "\n\n"
 
 
 def radio_block(notes: Sequence[tuple[str, str]]) -> str:

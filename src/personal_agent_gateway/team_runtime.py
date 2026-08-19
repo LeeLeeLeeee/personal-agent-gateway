@@ -167,6 +167,10 @@ verification -- a tool that is missing, a command that failed to run, a check yo
 had no way to perform -- and say why in "evidence". Do not report a status you did
 not observe.
 
+You may also include an optional "mentions" array to leave a short note for a
+teammate: [{{"to":"roster label","text":"note, up to 2000 characters"}}]. Name
+the recipient by its roster label; at most 10 mentions per response.
+
 The same rule applies to what your result says, not just to its verifications.
 When you state something as fact about this repository, name the file that shows
 it, with the line when you can. If the assignment appears to take something for

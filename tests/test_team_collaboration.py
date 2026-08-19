@@ -7,6 +7,7 @@ from personal_agent_gateway.team_collaboration import (
     radio_block,
     roster_block,
 )
+from personal_agent_gateway.team_runtime import PLANNING_PROMPT, WORKER_PROMPT
 
 
 def test_labels_are_stable_and_short():
@@ -26,6 +27,20 @@ def test_roster_block_names_every_teammate():
 
     assert "LEAD" in block and "설계 리드" in block
     assert "W-02" in block and "구현 담당" in block
+
+
+def test_the_roster_never_tells_the_leader_to_send_mentions():
+    """The roster prefix is rendered on every prompt, leader included, but the
+    leader only receives notes -- _parse_task_plan rejects any unknown key per
+    task, so a hint to use "mentions" here earns a repair round. The worker's
+    outcome contract is where sending is documented; the roster must say only
+    who each label names."""
+    leader_prompt = (
+        roster_block([("LEAD", "설계 리드"), ("W-01", "구현 담당")]) + PLANNING_PROMPT
+    )
+
+    assert "mentions" not in leader_prompt.lower()
+    assert '"mentions"' in WORKER_PROMPT
 
 
 def test_radio_block_marks_the_content_as_untrusted_reference():
