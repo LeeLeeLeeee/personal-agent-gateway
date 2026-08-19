@@ -24,6 +24,7 @@ from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_collaboration_service import (
     TeamCollaborationService,
 )
+from personal_agent_gateway.team_lifecycle import TERMINAL_RUN_STATUSES
 from personal_agent_gateway.team_model_effects import (
     TeamModelEffectService,
     team_model_effect_result_validators,
@@ -8677,3 +8678,56 @@ async def test_a_prefix_that_cannot_be_built_pins_nothing(collab_setup) -> None:
         note[2]
         for note in setup.collab.undelivered(setup.run.id, setup.workers[0].id)
     ] == ["note"]
+
+
+@pytest.mark.asyncio
+async def test_notes_that_never_landed_are_recorded_when_the_run_ends(
+    collab_setup,
+) -> None:
+    """조용히 사라지면 유실 0을 확인할 방법이 없다."""
+    setup = collab_setup
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[0].id, [Mention("W-02", "미전달")]
+    )
+    # 수신자가 호출 전에 죽으므로 그 operation은 applied가 되지 않는다.
+    setup.worker_clients[1].die_after_fetches = 0
+
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+    run = setup.teams.get_team_run(setup.run.id)
+
+    # 종단이 아니면 이 테스트는 아무것도 검사하지 못한다. 헤지하지 않고 단정한다.
+    assert run.status in TERMINAL_RUN_STATUSES
+    kinds = [m.kind for m in setup.teams.list_messages(setup.run.id)]
+    assert "collaboration_undelivered" in kinds
+
+
+@pytest.mark.asyncio
+async def test_a_continuous_run_mid_cycle_does_not_record_undelivered_notes(
+    collab_setup,
+) -> None:
+    """연속 런은 사이클마다 `completed`를 지난다.
+
+    종단 상태만 보고 기록하면 다음 사이클이 전달할 쪽지를 매 사이클
+    "미전달"로 남긴다 -- 그 기록은 소음이 되고, 소음이 된 기록은 읽히지
+    않는다. 이 런은 실제로 `completed`로 끝나고 쪽지도 실제로 묶이지
+    않았지만(test_a_prefix_that_cannot_be_built_pins_nothing과 같은 상황),
+    lifecycle_mode가 continuous이므로 기록되지 않아야 한다.
+    """
+    setup = collab_setup
+    assert setup.run.lifecycle_mode == "continuous"
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[1].id, [Mention("W-01", "note")]
+    )
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the roster is broken")
+
+    setup.runtime._roster_entries = explode
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    assert setup.collab.undelivered_count(setup.run.id) > 0
+    kinds = [m.kind for m in setup.teams.list_messages(setup.run.id)]
+    assert "collaboration_undelivered" not in kinds

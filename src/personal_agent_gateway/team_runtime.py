@@ -51,6 +51,7 @@ from personal_agent_gateway.team_model_invoker import (
     TeamModelInvoker,
 )
 from personal_agent_gateway.team_lifecycle import (
+    TERMINAL_RUN_STATUSES,
     LifecycleIntegrityError,
     cycle_execution_disposition,
 )
@@ -1783,6 +1784,52 @@ class TeamRuntime:
         )
         return clean
 
+    def _close_collaboration(self, run: TeamRun) -> TeamRun:
+        """런이 끝났으면 못 전한 쪽지 수를 남긴다.
+
+        조용히 사라지면 "유실 0"을 확인할 방법이 없다. 실패해도 종료를 막지
+        않는다 -- 곁다리 기능이 런의 마무리를 붙잡으면 안 된다.
+        """
+        if self._collaboration is None or run.status not in TERMINAL_RUN_STATUSES:
+            return run
+        if run.lifecycle_mode == "continuous" and run.status == "completed":
+            # 연속 런은 사이클마다 completed를 지난다. 다음 사이클이 전달할 쪽지를
+            # 매번 미전달로 적으면 그 기록은 소음이 되고, 소음이 된 기록은 읽히지
+            # 않는다.
+            return run
+        try:
+            pending = self._collaboration.undelivered_count(run.id)
+            if pending:
+                self._teams.append_message(
+                    run.id,
+                    None,
+                    None,
+                    "collaboration_undelivered",
+                    f"{pending} peer notes were never delivered",
+                    {"count": pending},
+                )
+        except Exception as exc:  # noqa: BLE001 - 곁다리가 런을 죽이지 않는다
+            content = f"collaboration close failed for this run: {exc}"
+            try:
+                self._teams.append_message(
+                    run.id,
+                    None,
+                    None,
+                    "collaboration_degraded",
+                    content,
+                    {"reason_code": "collaboration_unavailable"},
+                )
+            except Exception:  # noqa: BLE001 - 강등 기록이 런을 죽이지 않는다
+                # 이 쓰기도 위와 같은 이유로 실패할 수 있고, 놓아주면 곁다리의
+                # 실패가 종료 경로로 전파된다.
+                _LOGGER.warning(
+                    "could not record degraded collaboration close for run %s: %s",
+                    run.id,
+                    content,
+                    exc_info=True,
+                )
+        return run
+
     async def start(self, team_run_id: str, cycle_id: str | None = None) -> TeamRun:
         run = self._teams.get_team_run(team_run_id)
         self._validate_cycle(run, cycle_id)
@@ -1803,7 +1850,9 @@ class TeamRuntime:
                     stage="planning",
                     cycle_id=cycle_id,
                 )
-                return await self._publish_user_decision_request(run, cycle_id)
+                return self._close_collaboration(
+                    await self._publish_user_decision_request(run, cycle_id)
+                )
 
             run = self._teams.get_team_run(run.id)
             if run.run_mode != "plan_and_execute":
@@ -1813,14 +1862,14 @@ class TeamRuntime:
                     self._teams.set_cycle_status(cycle_id, "completed")
                 self._package_results(run, leader, cycle_id)
                 await self._publish({"type": "team.run.completed", "team_run_id": run.id})
-                return run
+                return self._close_collaboration(run)
 
             workers = _find_workers(self._teams.list_agents(run.id))
             if not workers:
                 error = "plan_and_execute run has no worker agents (empty member_persona_ids)"
                 run = self._settle_failed(run, error, cycle_id)
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
-                return run
+                return self._close_collaboration(run)
 
             # Opt-in. A run without the flag reaches execution exactly as it did
             # before, with no revision row and no extra model call. The
@@ -1829,25 +1878,27 @@ class TeamRuntime:
             # survive a restart.
             if run.plan_negotiation_enabled and cycle_id is not None:
                 if not await self._negotiate_plan(run, leader, workers, cycle_id):
-                    return self._teams.get_team_run(run.id)
+                    return self._close_collaboration(self._teams.get_team_run(run.id))
                 run = self._teams.get_team_run(run.id)
 
             run = self._teams.set_run_status(run.id, "running")
             await self._publish({"type": "team.run.executing", "team_run_id": run.id})
-            return await self._execute_and_synthesize(run, leader, workers, cycle_id)
+            return self._close_collaboration(
+                await self._execute_and_synthesize(run, leader, workers, cycle_id)
+            )
         except asyncio.CancelledError:
             if run is not None:
                 self._settle_canceled(run, cycle_id)
             raise
         except UnparsableLeadOutput:
-            return self._teams.get_team_run(run.id)
+            return self._close_collaboration(self._teams.get_team_run(run.id))
         except (ProviderOperationWaiting, AmbiguousModelOperation):
             raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__
             run = self._settle_failed(run, error, cycle_id)
             await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
-            return run
+            return self._close_collaboration(run)
 
     def _planning_prompt(
         self, run: TeamRun, leader_agent: TeamAgent, cycle_id: str | None
@@ -4085,7 +4136,12 @@ class TeamRuntime:
                 open_operation.stage
                 in {"cycle_contest", "cycle_contest_repair"}
             ):
+                # Not wrapped here: the success paths out of this helper
+                # return through resume() or settle_contest(), which close
+                # collaboration themselves -- wrapping again would record the
+                # same pending count twice.
                 return await self._resume_zero_task_contest(run, cycle_id)
+            # start() closes collaboration on its own way out.
             return await self.start(team_run_id, cycle_id)
         leader: TeamAgent | None = None
         try:
@@ -4103,7 +4159,7 @@ class TeamRuntime:
                 error = "resume has no worker agents"
                 run = self._settle_failed(run, error, cycle_id)
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
-                return run
+                return self._close_collaboration(run)
             # Negotiation runs after the tasks exist, so the empty-task
             # delegation to start() above never covers it: without this, a
             # restart mid-negotiation walked straight into execution with an
@@ -4121,9 +4177,11 @@ class TeamRuntime:
                     # Settled already, and settled explicitly:
                     # _execute_and_synthesize would re-derive `failed` from the
                     # canceled tasks and lose the reason code.
-                    return self._teams.get_team_run(run.id)
+                    return self._close_collaboration(self._teams.get_team_run(run.id))
                 run = self._teams.get_team_run(run.id)
-            return await self._execute_and_synthesize(run, leader, workers, cycle_id)
+            return self._close_collaboration(
+                await self._execute_and_synthesize(run, leader, workers, cycle_id)
+            )
         except asyncio.CancelledError:
             if run is not None:
                 self._settle_canceled(run, cycle_id)
@@ -4131,14 +4189,14 @@ class TeamRuntime:
         except UnparsableLeadOutput:
             # The escalation already published the decision request and moved the
             # run to waiting_for_user. Return that state rather than failing.
-            return self._teams.get_team_run(run.id)
+            return self._close_collaboration(self._teams.get_team_run(run.id))
         except (ProviderOperationWaiting, AmbiguousModelOperation):
             raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__
             run = self._settle_failed(run, error, cycle_id)
             await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
-            return run
+            return self._close_collaboration(run)
 
     async def add_work(
         self, team_run_id: str, instruction: str, cycle_id: str | None = None
@@ -4297,7 +4355,7 @@ class TeamRuntime:
         """
         run = self._teams.get_team_run(team_run_id)
         if self._teams.get_cycle(cycle_id).status != "running":
-            return run
+            return self._close_collaboration(run)
         leader = _find_leader(self._teams.list_agents(run.id))
         self._teams.set_agent_status(leader.id, "completed")
         self._teams.set_cycle_status(cycle_id, "completed")
@@ -4305,7 +4363,7 @@ class TeamRuntime:
         await self._publish(
             {"type": "team.run.completed", "team_run_id": run.id}
         )
-        return run
+        return self._close_collaboration(run)
 
     async def _resume_zero_task_contest(
         self, run: TeamRun, cycle_id: str
