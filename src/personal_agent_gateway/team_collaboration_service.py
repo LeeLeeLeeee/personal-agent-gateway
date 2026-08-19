@@ -1,9 +1,15 @@
 """쪽지를 저장하고 라벨을 agent로 해석한다."""
 
 from collections.abc import Sequence
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from personal_agent_gateway.team_collaboration import agent_label
 from personal_agent_gateway.team_outcomes import Mention
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class UnknownRecipient(ValueError):
@@ -74,3 +80,131 @@ class TeamCollaborationService:
             )
             stored.append(message.id)
         return tuple(stored)
+
+    # 전달 완료의 판정 근거는 원장이다: 이 쪽지를 실은 배달의 operation이
+    # applied이면 전달된 것이다. 배달 표에 상태를 따로 쓰면 같은 사실이 두 곳에
+    # 살고, 그 쓰기가 effect 트랜잭션 안으로 들어가 락을 만든다.
+    _UNDELIVERED_SQL = """
+        select m.id, m.sender_agent_id, m.content
+        from team_messages m
+        where m.team_run_id = ?
+          and m.recipient_agent_id = ?
+          and m.kind = 'peer_mention'
+          and not exists (
+              select 1
+              from team_collaboration_delivery_items i
+              join team_collaboration_deliveries d on d.id = i.delivery_id
+              join team_model_operations o on o.operation_key = d.operation_key
+              where i.message_id = m.id and o.status = 'applied'
+          )
+        order by m.created_at, m.id
+    """
+
+    def undelivered(
+        self, team_run_id: str, agent_id: str
+    ) -> tuple[tuple[str, str, str], ...]:
+        """이 에이전트가 아직 받지 못한 쪽지.
+
+        저장하지 않고 유도한다: 적용된 배달에 묶이지 않은 것이 미전달이다.
+        커서를 따로 두면 같은 사실이 두 곳에 살고, 그 둘은 조용히 어긋난다.
+        """
+        rows = self._db.fetchall(self._UNDELIVERED_SQL, (team_run_id, agent_id))
+        return self._as_notes(team_run_id, rows)
+
+    def _as_notes(self, team_run_id: str, rows) -> tuple[tuple[str, str, str], ...]:
+        by_id = {
+            agent: label for label, agent in self.labels_for_run(team_run_id).items()
+        }
+        return tuple(
+            (row["id"], by_id.get(row["sender_agent_id"], "?"), row["content"])
+            for row in rows
+        )
+
+    def notes_by_id(
+        self, team_run_id: str, message_ids: Sequence[str]
+    ) -> tuple[tuple[str, str, str], ...]:
+        if not message_ids:
+            return ()
+        placeholders = ",".join("?" for _ in message_ids)
+        rows = self._db.fetchall(
+            "select id, sender_agent_id, content from team_messages"
+            f" where id in ({placeholders}) order by created_at, id",
+            tuple(message_ids),
+        )
+        return self._as_notes(team_run_id, rows)
+
+    def open_delivery(
+        self,
+        team_run_id: str,
+        agent_id: str,
+        operation_key: str,
+        message_ids: Sequence[str],
+    ) -> str:
+        """이 호출에 실을 쪽지를 확정한다.
+
+        같은 operation_key로 다시 부르면 기존 items를 유지한다. 복구가 새로
+        조회하면 그 사이 도착한 쪽지가 섞여 프롬프트가 달라지고, 프롬프트는
+        operation의 request digest에 들어가므로 원장이 복구를 거부한다.
+
+        `reserve`가 자기 트랜잭션을 여므로(team_model_operations.py:158) spec이
+        말한 "예약과 같은 트랜잭션"은 불가능하다. 예약 **전에** 확정하는 것으로
+        의도적으로 완화한다: 확정 뒤 예약 전에 죽으면 배달은 prepared로 남고
+        다음 시도가 같은 items를 재사용한다.
+        """
+        existing = self._db.fetchone(
+            "select id from team_collaboration_deliveries where operation_key = ?",
+            (operation_key,),
+        )
+        if existing is not None:
+            return existing["id"]
+        delivery_id = uuid4().hex
+        with self._db.connection() as connection:
+            connection.execute(
+                "insert into team_collaboration_deliveries"
+                " (id, team_run_id, agent_id, operation_key, status, created_at,"
+                " settled_at) values (?, ?, ?, ?, 'prepared', ?, null)",
+                (delivery_id, team_run_id, agent_id, operation_key, _now()),
+            )
+            for message_id in message_ids:
+                connection.execute(
+                    "insert into team_collaboration_delivery_items"
+                    " (delivery_id, message_id) values (?, ?)",
+                    (delivery_id, message_id),
+                )
+        return delivery_id
+
+    def delivery_for(self, operation_key: str) -> str | None:
+        """그 키로 열린 배달의 id. 쪽지가 0개인 배달도 존재하는 배달이다.
+
+        호출자가 쪽지 수로 판단하면, 쪽지 0개로 한 번 확정된 호출이 재진입할 때
+        새로 조회해 다른 접두사를 만들고, 원장이 바뀐 지문을 거부해 런이 죽는다.
+        """
+        row = self._db.fetchone(
+            "select id from team_collaboration_deliveries where operation_key = ?",
+            (operation_key,),
+        )
+        return row["id"] if row else None
+
+    def delivery_message_ids(self, operation_key: str) -> tuple[str, ...]:
+        rows = self._db.fetchall(
+            "select i.message_id from team_collaboration_delivery_items i"
+            " join team_collaboration_deliveries d on d.id = i.delivery_id"
+            " join team_messages m on m.id = i.message_id"
+            " where d.operation_key = ? order by m.created_at, m.id",
+            (operation_key,),
+        )
+        return tuple(row["message_id"] for row in rows)
+
+    def undelivered_count(self, team_run_id: str) -> int:
+        """런 전체의 미전달 쪽지 수. undelivered와 같은 판정 근거를 쓴다."""
+        row = self._db.fetchone(
+            "select count(*) as total from team_messages m"
+            " where m.team_run_id = ? and m.kind = 'peer_mention'"
+            " and not exists ("
+            "   select 1 from team_collaboration_delivery_items i"
+            "   join team_collaboration_deliveries d on d.id = i.delivery_id"
+            "   join team_model_operations o on o.operation_key = d.operation_key"
+            "   where i.message_id = m.id and o.status = 'applied')",
+            (team_run_id,),
+        )
+        return int(row["total"]) if row else 0
