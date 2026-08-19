@@ -387,6 +387,24 @@ class UnparsableLeadOutput(RuntimeError):
         self.operation_id = operation_id
 
 
+class PinnedNotesUnavailable(RuntimeError):
+    """이 호출에 이미 묶인 쪽지를 다시 읽지 못해 호출을 포기한다.
+
+    강등(접두사 없이 그대로 보내기)은 아무것도 묶이지 않은 첫 시도에서만
+    정직하다. 이 operation_key에 배달이 이미 열려 있는 재진입에서는 강등이
+    두 가지 금지된 결과 중 하나로 끝난다 -- 프롬프트에 실린 적 없는 쪽지가
+    '전달됨'으로 굳는 조용한 유실, 또는 원장이 거부하는 지문 불일치. 그래서
+    모델을 부르지 않고 이 예외로 단계를 포기한다: 쪽지는 묶인 채 미전달로
+    남고 다음 시도가 같은 접두사를 다시 만든다.
+    """
+
+    def __init__(self, operation_key: str) -> None:
+        super().__init__(
+            f"pinned peer notes could not be read for {operation_key}"
+        )
+        self.operation_key = operation_key
+
+
 @dataclass(frozen=True)
 class OpenOperationRecovery:
     operation: TeamModelOperation
@@ -932,13 +950,17 @@ class TeamRuntime:
         messages: list[dict[str, object]],
         parser: Callable[[ModelResponse], ValidatedOperationResult],
     ) -> TeamModelOperation:
-        messages, spec = self._with_radio(spec, agent, messages)
         open_operation = self._operations.get_open_for_cycle(spec.cycle_id)
         if (
             open_operation is not None
             and open_operation.operation_key != spec.operation_key
         ):
             raise OperationConflict("Cycle already has an open model operation")
+        # 예약 직전에 둔다. 이 검사보다 앞서면 그 흔한 OperationConflict가
+        # 배달만 열어둔 채 예약 없이 나가고, 그 뒤 같은 키로 재진입하면
+        # _with_radio가 배달을 보고 접두사를 재현해야 하는데 읽기가 실패하면
+        # 접두사 없는 지문으로 예약되어 쪽지가 조용히 유실된다.
+        messages, spec = self._with_radio(spec, agent, messages)
         operation = self._operations.reserve(spec)
         if (
             operation.status == "prepared"
@@ -1014,16 +1036,26 @@ class TeamRuntime:
         """
         if self._collaboration is None or not messages:
             return messages, spec
+        # 아래 except가 이 값으로 갈린다. 무엇이 묶였는지 **모르는** 상태(첫
+        # 조회 자체가 던진 경우)는 묶이지 않은 쪽으로 센다: 그때는 강등이
+        # 오늘과 같은 정직한 요청이고, 여기서 refuse로 기울면 아무것도 묶이지
+        # 않은 첫 시도가 사소한 읽기 실패로 죽는다.
+        pinned = False
         try:
             if self._collaboration.delivery_for(spec.operation_key) is not None:
                 # 이미 확정된 호출이다. 쪽지가 0개였더라도 그 사실을 재현해야
                 # 한다 -- 다시 조회하면 그 사이 도착한 쪽지가 섞여 지문이 달라지고
                 # reserve가 거부한다.
+                #
+                # pinned를 조회 **전에** 세운다: 아래 두 조회나 명단 조회가
+                # 던지면(측정된 5.5초 write-lock 경합이 그 경로다) except가
+                # 접두사 없는 요청으로 강등하는데, 이 호출은 이미 쪽지를 묶고
+                # 있으므로 그 강등이 곧 유실이거나 지문 충돌이다.
+                pinned = True
                 notes = self._collaboration.notes_by_id(
                     spec.team_run_id,
                     self._collaboration.delivery_message_ids(spec.operation_key),
                 )
-                pinned = True
             elif self._operations.get_by_key(spec.operation_key) is not None:
                 # operation은 이미 있는데 배달은 없다: 이 기능이 배선되기 전에
                 # 예약된 호출이다. 새로 붙이면 지문이 달라져 복구가 영구히
@@ -1071,6 +1103,21 @@ class TeamRuntime:
                     content,
                     exc_info=True,
                 )
+            if pinned:
+                # 양쪽이 다르게 끝나는 이유. 아직 아무것도 묶이지 않은 첫 시도
+                # (branch 2·3)에서는 강등이 정직하다: 접두사 없는 요청이 그 호출의
+                # 진실이고, 쪽지는 그대로 미전달로 남고, 지문도 어긋나지 않는다.
+                # 그러나 이 키에 배달이 이미 열린 재진입에서는 강등이 반드시 두
+                # 금지된 결과 중 하나로 끝난다 -- (a) operation이 아직 없으면
+                # 접두사 없는 지문으로 예약되어 applied까지 가고 _UNDELIVERED_SQL이
+                # 그 쪽지를 영구히 제외한다(프롬프트에 실린 적 없는 쪽지가 '전달됨'
+                # 으로 굳는 조용한 유실), (b) operation이 있으면 접두사 없는 지문이
+                # _validate_existing_spec에 거부되어 OperationConflict가 이 try
+                # 밖에서 런을 실패로 정리한다.
+                # 그래서 계획의 "radio 실패는 절대 전파되지 않는다"를 이 한쪽에서만
+                # 좁힌다: 유실 0인 재시도 가능한 실패가 쪽지 열 장을 먹은 완주보다
+                # 낫다. 강등은 위에 이미 기록했고, 쪽지는 묶인 채 미전달로 남는다.
+                raise PinnedNotesUnavailable(spec.operation_key) from exc
             return messages, spec
         head, *rest = messages
         amended = [{**head, "content": prefix + str(head["content"])}, *rest]

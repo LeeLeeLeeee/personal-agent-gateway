@@ -8705,6 +8705,123 @@ async def test_a_prefix_that_cannot_be_built_pins_nothing(collab_setup) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_degraded_re_entry_does_not_lose_notes_already_pinned(
+    collab_setup,
+) -> None:
+    """쪽지가 이미 묶인 재진입에서는 강등이 조용한 유실이 된다.
+
+    첫 시도가 배달을 열고 예약 전에 죽으면 그 키에는 배달만 남는다. 그 뒤
+    재진입에서 쪽지 조회가 실패하면 강등은 접두사 없는 지문으로 예약해
+    모델을 부르고, 그 operation은 applied까지 간다 -- _UNDELIVERED_SQL은
+    그 시점부터 그 쪽지를 영구히 제외하므로 프롬프트에 실린 적 없는 쪽지가
+    '전달됨'으로 굳고 undelivered_count도 0을 보고한다.
+
+    기존 강등 테스트 두 개는 모두 아무것도 묶이지 않은 첫 시도만 지나가므로
+    이 경로를 잡지 못했다.
+    """
+    setup = collab_setup
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[1].id, [Mention("LEAD", "계획을 보라")]
+    )
+    real_reserve = setup.operations.reserve
+
+    def die_before_reserving_the_plan(spec):
+        # 배달 확정과 예약 사이에서 죽는 것 -- 접두사 없이 예약된 operation이
+        # 아니라 배달만 남은 상태가 이 결함이 필요로 하는 상태다.
+        if spec.stage == "cycle_planning":
+            raise RuntimeError("process died before the operation was reserved")
+        return real_reserve(spec)
+
+    setup.operations.reserve = die_before_reserving_the_plan
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+    setup.operations.reserve = real_reserve
+    planning_key = f"{setup.cycle.id}:cycle_planning:0"
+    assert setup.collab.delivery_for(planning_key) is not None
+    assert setup.operations.get_by_key(planning_key) is None
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the notes table is broken")
+
+    healthy_notes_by_id = setup.collab.notes_by_id
+    setup.collab.notes_by_id = explode
+    with contextlib.suppress(Exception):
+        await setup.new_runtime().resume(setup.run.id, setup.cycle.id)
+    setup.collab.notes_by_id = healthy_notes_by_id
+
+    leader = setup.teams.get_team_run(setup.run.id).leader_agent_id
+    # 강등은 오늘처럼 남는다.
+    assert {
+        m.metadata["reason_code"]
+        for m in setup.teams.list_messages(setup.run.id)
+        if m.kind == "collaboration_degraded"
+    } == {"collaboration_unavailable"}
+    # 모델은 부르지 않았고 원장에도 그 호출이 없다.
+    assert setup.lead_client.call_count == 0
+    assert setup.operations.get_by_key(planning_key) is None
+    # 그리고 쪽지는 여전히 미전달이다 -- 강등한 옛 코드에서는 이 호출이
+    # applied에 도달해 이 목록이 비어 있었다.
+    assert [
+        note[2] for note in setup.collab.undelivered(setup.run.id, leader)
+    ] == ["계획을 보라"]
+
+    # 포기한 단계는 다음 resume이 다시 시도한다: 조회가 돌아오면 그 쪽지가
+    # 실제로 프롬프트에 실리고 런은 끝까지 간다.
+    run = await setup.new_runtime().resume(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    assert any("계획을 보라" in p for p in setup.lead_client.all_prompts)
+    assert setup.collab.undelivered(setup.run.id, leader) == ()
+
+
+@pytest.mark.asyncio
+async def test_a_degraded_re_entry_refuses_before_the_ledger_sees_a_new_digest(
+    collab_setup,
+) -> None:
+    """배달과 operation이 모두 있는 재진입에서의 나머지 절반.
+
+    강등하면 접두사 없는 지문이 _validate_existing_spec에 거부되고, 그
+    OperationConflict는 radio의 try 밖에서 올라와 런을 실패로 정리한다 --
+    곁다리 조회의 일시적 실패가 런을 죽이는 결과다. 포기는 같은 실패를
+    남기지만 원장에는 어긋난 지문이 닿지 않고, 예약된 operation은 prepared로
+    남아 다음 resume이 그 단계를 그대로 다시 시도한다.
+    """
+    setup = collab_setup
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[1].id, [Mention("W-01", "first")]
+    )
+    # 예약 뒤 호출 전에 죽는다: 배달과 prepared operation이 함께 남는다.
+    setup.worker_clients[0].die_after_fetches = 0
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+    setup.worker_clients[0].die_after_fetches = None
+    prepared = setup.operations.get_open_for_cycle(setup.cycle.id)
+    assert prepared is not None and prepared.status == "prepared"
+    assert setup.collab.delivery_for(prepared.operation_key) is not None
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the notes table is broken")
+
+    healthy_notes_by_id = setup.collab.notes_by_id
+    setup.collab.notes_by_id = explode
+    resumed = await setup.new_runtime().resume(setup.run.id, setup.cycle.id)
+    setup.collab.notes_by_id = healthy_notes_by_id
+
+    assert resumed.status == "failed"
+    # 옛 코드는 원장이 거부한 지문("Operation key is already bound to another
+    # request")으로 실패했다. 이제는 원장에 닿기 전에 포기한다.
+    assert "pinned peer notes could not be read" in (resumed.error_message or "")
+    assert setup.worker_clients[0].call_count == 0
+    still_open = setup.operations.get_by_key(prepared.operation_key)
+    assert still_open.status == "prepared"
+    assert still_open.request_digest == prepared.request_digest
+    assert [
+        note[2]
+        for note in setup.collab.undelivered(setup.run.id, setup.workers[0].id)
+    ] == ["first"]
+
+
+@pytest.mark.asyncio
 async def test_notes_that_never_landed_are_recorded_when_the_run_ends(
     collab_setup,
 ) -> None:
