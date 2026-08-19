@@ -20,6 +20,9 @@ from personal_agent_gateway.team_acceptance import AcceptanceResult
 from personal_agent_gateway.team_artifact_publisher import ArtifactPublicationError
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
+from personal_agent_gateway.team_collaboration_service import (
+    TeamCollaborationService,
+)
 from personal_agent_gateway.team_model_effects import (
     TeamModelEffectService,
     team_model_effect_result_validators,
@@ -202,22 +205,27 @@ def _outcome_json(
     *,
     deliverables: list[dict[str, str]] | None = None,
     verification: str = "worker-result",
+    mentions: list[dict[str, str]] | None = None,
 ) -> str:
-    return json.dumps(
-        {
-            "status": "completed",
-            "summary": summary,
-            "reason_code": None,
-            "deliverables": deliverables or [],
-            "verifications": [
-                {
-                    "name": verification,
-                    "status": "passed",
-                    "evidence": "checked",
-                }
-            ],
-        }
-    )
+    payload = {
+        "status": "completed",
+        "summary": summary,
+        "reason_code": None,
+        "deliverables": deliverables or [],
+        "verifications": [
+            {
+                "name": verification,
+                "status": "passed",
+                "evidence": "checked",
+            }
+        ],
+    }
+    # An empty list is left out rather than emitted: the contract accepts both
+    # shapes, and adding the key everywhere would change what every other test
+    # sends.
+    if mentions:
+        payload["mentions"] = mentions
+    return json.dumps(payload)
 
 
 def _retry_review(instruction: str = "Return a corrected outcome.") -> str:
@@ -7737,12 +7745,16 @@ class NegotiationWorkerModel:
         # time, which is after that operation is reserved.
         self.fetches = 0
         self.die_after_fetches: int | None = None
+        # Notes this worker attaches to the outcome it answers work with.
+        self.outcome_mentions: list[dict[str, str]] = []
 
     async def complete_operation(self, messages, *, consumer_run_id):
         self.call_count += 1
         if _is_worker_prompt(messages):
             self.execution_calls += 1
-            return ModelResponse(_outcome_json("done"), [])
+            return ModelResponse(
+                _outcome_json("done", mentions=self.outcome_mentions), []
+            )
         self.review_calls += 1
         if self.responses:
             scripted = self.responses.pop(0)
@@ -7775,7 +7787,12 @@ class NegotiationSetup(SimpleNamespace):
             operations=self.operations,
             model_invoker=TeamModelInvoker(self.operations, sleep=_no_sleep),
             model_effects=TeamModelEffectService(
-                self.db, self.teams, self.operations
+                self.db,
+                self.teams,
+                self.operations,
+                # Read off the setup so the ~20 tests that never set it keep
+                # building a runtime with collaboration off.
+                collaboration=getattr(self, "collab", None),
             ),
         )
 
@@ -8321,3 +8338,61 @@ async def test_a_failed_negotiation_stays_completed_with_failures(
     run = setup.teams.get_team_run(setup.run.id)
     assert run.status == "completed_with_failures"
     assert run.error_message == "collaboration_plan_approval_incomplete"
+
+
+@pytest.fixture
+def collab_setup(tmp_path):
+    """The negotiation fixture with the collaboration channel turned on."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=False)
+    setup.collab = TeamCollaborationService(setup.db, setup.teams)
+    setup.runtime = setup.new_runtime()
+    return setup
+
+
+@pytest.mark.asyncio
+async def test_a_worker_mention_is_stored_when_the_outcome_is_applied(
+    collab_setup,
+) -> None:
+    """Parsing without storing loses whatever the model wrote."""
+    setup = collab_setup
+    setup.worker_clients[0].outcome_mentions = [{"to": "W-02", "text": "확인 필요"}]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    peer = [
+        m for m in setup.teams.list_messages(setup.run.id) if m.kind == "peer_mention"
+    ]
+    assert [m.content for m in peer] == ["확인 필요"]
+    assert peer[0].recipient_agent_id == setup.workers[1].id
+    assert peer[0].sender_agent_id == setup.workers[0].id
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_recipient_does_not_undo_the_applied_task(
+    collab_setup,
+) -> None:
+    """Notes are auxiliary: a bad label must not void finished work."""
+    setup = collab_setup
+    setup.worker_clients[0].outcome_mentions = [{"to": "W-99", "text": "x"}]
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    tasks = setup.teams.list_tasks(setup.run.id, setup.cycle.id)
+    assert [task.status for task in tasks] == ["completed", "completed"]
+    kinds = [m.kind for m in setup.teams.list_messages(setup.run.id)]
+    assert "collaboration_degraded" in kinds
+    assert "peer_mention" not in kinds
+
+
+@pytest.mark.asyncio
+async def test_without_a_collaboration_service_mentions_are_ignored(tmp_path) -> None:
+    """The default is None, so the ~80 existing construction sites keep working."""
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=False)
+    setup.worker_clients[0].outcome_mentions = [{"to": "W-02", "text": "x"}]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert not [
+        m for m in setup.teams.list_messages(setup.run.id) if m.kind == "peer_mention"
+    ]

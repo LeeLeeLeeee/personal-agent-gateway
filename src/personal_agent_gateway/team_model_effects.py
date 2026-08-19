@@ -33,7 +33,11 @@ from personal_agent_gateway.team_plan_negotiation import (
     parse_plan_review,
 )
 from personal_agent_gateway.team_repair_stages import REPAIR_STAGE
-from personal_agent_gateway.team_outcomes import TaskOutcomeError, parse_task_outcome
+from personal_agent_gateway.team_outcomes import (
+    TaskOutcome,
+    TaskOutcomeError,
+    parse_task_outcome,
+)
 from personal_agent_gateway.team_verification_checks import (
     CHECK_TYPES,
     VerificationCheck,
@@ -54,6 +58,9 @@ from personal_agent_gateway.teams import (
 )
 
 if TYPE_CHECKING:
+    from personal_agent_gateway.team_collaboration_service import (
+        TeamCollaborationService,
+    )
     from personal_agent_gateway.team_runtime import AcceptanceReviewResolution
 
 
@@ -122,10 +129,14 @@ class TeamModelEffectService:
         db: Database,
         teams: TeamRunService,
         operations: TeamModelOperationService,
+        collaboration: TeamCollaborationService | None = None,
     ) -> None:
         self._db = db
         self._teams = teams
         self._operations = operations
+        # None means the peer-message channel is off, which is what every
+        # construction site that predates it keeps getting.
+        self._collaboration = collaboration
 
     def apply_plan(self, operation_id: str) -> list[TeamTask]:
         now = _now()
@@ -276,6 +287,7 @@ class TeamModelEffectService:
         workspace_changes: Mapping[str, object],
     ) -> WorkerEffectResult:
         now = _now()
+        applied_outcome: TaskOutcome | None = None
         with self._db.connection() as connection:
             connection.execute("begin immediate")
             operation = self._operations._get(connection, operation_id)
@@ -326,6 +338,7 @@ class TeamModelEffectService:
                     normalized_changes,
                     now,
                 )
+                applied_outcome = _task_outcome(operation)
             _promote_actor_session(connection, operation, now)
             _mark_applied(
                 connection,
@@ -339,7 +352,40 @@ class TeamModelEffectService:
                 ),
                 now=now,
             )
-            return result
+        # Outside the transaction: append_message opens a second connection, so
+        # calling this inside `begin immediate` deadlocks on the write lock, and
+        # the failure path then rolls back a task that was already applied.
+        self._store_mentions(operation, applied_outcome)
+        return result
+
+    def _store_mentions(
+        self, operation: TeamModelOperation, outcome: TaskOutcome | None
+    ) -> None:
+        """Store the worker's notes. A failure must not undo the applied task.
+
+        Collaboration is auxiliary: if a bad label or a failed write voided a
+        finished worker task, the ADR's promise that a run which never turned
+        this on keeps its lifecycle would not hold.
+        """
+        if self._collaboration is None or outcome is None or not outcome.mentions:
+            return
+        try:
+            self._collaboration.record_mentions(
+                operation.team_run_id,
+                operation.cycle_id,
+                operation.agent_id,
+                outcome.mentions,
+            )
+        except Exception as exc:  # noqa: BLE001 - auxiliary work never voids the task
+            self._teams.append_message(
+                operation.team_run_id,
+                None,
+                operation.agent_id,
+                "collaboration_degraded",
+                f"mentions were not stored: {exc}",
+                {"reason_code": "mention_rejected"},
+                cycle_id=operation.cycle_id,
+            )
 
     def apply_worker_query(self, operation_id: str) -> WorkerEffectResult:
         now = _now()
@@ -1943,7 +1989,7 @@ class TeamModelEffectService:
     ) -> WorkerEffectResult:
         outcome = _task_outcome(operation)
         _validate_acceptance_result(acceptance)
-        outcome_payload = asdict(outcome)
+        outcome_payload = _stored_outcome(outcome)
         acceptance_payload = asdict(acceptance)
         connection.execute(
             """
@@ -2163,7 +2209,7 @@ class TeamModelEffectService:
             task.acceptance_recovery_attempts,
             is_worker_declared_outcome(outcome),
         )
-        expected_outcome = _json_object(asdict(outcome))
+        expected_outcome = _json_object(_stored_outcome(outcome))
         expected_message_metadata = {
             "operation_id": operation.id,
             "task_id": task.id,
@@ -3464,6 +3510,19 @@ def _canonical_digest(value: object) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _stored_outcome(outcome: TaskOutcome) -> dict[str, object]:
+    """The outcome as it is stored and compared. `mentions` is left out.
+
+    The notes are stored as messages instead, and putting the field in the
+    stored payload would make the replay comparison disagree for every
+    operation applied before this upgrade, where the stored JSON has no such
+    key.
+    """
+    return {
+        key: value for key, value in asdict(outcome).items() if key != "mentions"
+    }
 
 
 def _json_object(value: object) -> dict[str, object]:

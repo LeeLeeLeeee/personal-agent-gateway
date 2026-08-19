@@ -89,6 +89,9 @@ from personal_agent_gateway.space_policies import (
     policy_from_snapshot,
 )
 from personal_agent_gateway.team_artifact_publisher import TeamArtifactPublisher
+from personal_agent_gateway.team_collaboration_service import (
+    TeamCollaborationService,
+)
 from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycle_loop import TeamCycleLoop
 from personal_agent_gateway.team_cycles import TeamCycleService
@@ -222,10 +225,17 @@ def create_app(
         app.state.database,
         result_validators=team_model_effect_result_validators(),
     )
+    # One instance: the delivery side reads the same rows this write side
+    # creates.
+    collaboration_service = TeamCollaborationService(
+        app.state.database,
+        app.state.team_run_service,
+    )
     effect_service = TeamModelEffectService(
         app.state.database,
         app.state.team_run_service,
         operation_service,
+        collaboration=collaboration_service,
     )
     operation_invoker = TeamModelInvoker(operation_service)
     provider_recovery = TeamProviderRecovery(
