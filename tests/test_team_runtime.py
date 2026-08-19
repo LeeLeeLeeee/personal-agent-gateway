@@ -8822,6 +8822,50 @@ async def test_a_degraded_re_entry_refuses_before_the_ledger_sees_a_new_digest(
 
 
 @pytest.mark.asyncio
+async def test_an_unreadable_delivery_lookup_counts_as_pinned(collab_setup) -> None:
+    """배달이 있는지 **확인조차 못한** 호출은 묶인 쪽으로 센다.
+
+    delivery_for가 던지면 이 키에 배달이 열렸는지 알 수 없다. 모르는 채 강등하면
+    배달이 실제로 있던 경우에 조용한 유실(접두사 없는 지문으로 예약되어 applied에
+    도달)이나 지문 충돌이 그대로 남는다. 그래서 판단이 서기 전까지는 포기한다.
+
+    대가는 이 테스트가 그대로 보여준다: 아무것도 묶이지 않은 첫 시도인데도 런이
+    실패한다. 재시도 가능한 실패를 성공한 호출과 맞바꾼 것이고, 그것이 이 분기가
+    이미 받아들인 거래다.
+    """
+    setup = collab_setup
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[1].id, [Mention("LEAD", "계획을 보라")]
+    )
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the delivery table is broken")
+
+    healthy_delivery_for = setup.collab.delivery_for
+    setup.collab.delivery_for = explode
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    setup.collab.delivery_for = healthy_delivery_for
+    assert run.status == "failed"
+    assert "pinned peer notes could not be read" in (run.error_message or "")
+    # 모델은 한 번도 부르지 않았다 -- 첫 호출이 리더의 계획이다.
+    assert setup.lead_client.call_count == 0
+    assert all(client.call_count == 0 for client in setup.worker_clients)
+    # 그리고 아무것도 묶지 않았다: 포기한 단계는 다음 시도가 그대로 다시 만든다.
+    assert setup.collab.delivery_for(f"{setup.cycle.id}:cycle_planning:0") is None
+    leader = setup.teams.get_team_run(setup.run.id).leader_agent_id
+    assert [
+        note[2] for note in setup.collab.undelivered(setup.run.id, leader)
+    ] == ["계획을 보라"]
+    assert {
+        m.metadata["reason_code"]
+        for m in setup.teams.list_messages(setup.run.id)
+        if m.kind == "collaboration_degraded"
+    } == {"collaboration_unavailable"}
+
+
+@pytest.mark.asyncio
 async def test_notes_that_never_landed_are_recorded_when_the_run_ends(
     collab_setup,
 ) -> None:

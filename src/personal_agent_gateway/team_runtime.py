@@ -390,12 +390,13 @@ class UnparsableLeadOutput(RuntimeError):
 class PinnedNotesUnavailable(RuntimeError):
     """이 호출에 이미 묶인 쪽지를 다시 읽지 못해 호출을 포기한다.
 
-    강등(접두사 없이 그대로 보내기)은 아무것도 묶이지 않은 첫 시도에서만
-    정직하다. 이 operation_key에 배달이 이미 열려 있는 재진입에서는 강등이
-    두 가지 금지된 결과 중 하나로 끝난다 -- 프롬프트에 실린 적 없는 쪽지가
-    '전달됨'으로 굳는 조용한 유실, 또는 원장이 거부하는 지문 불일치. 그래서
-    모델을 부르지 않고 이 예외로 단계를 포기한다: 쪽지는 묶인 채 미전달로
-    남고 다음 시도가 같은 접두사를 다시 만든다.
+    강등(접두사 없이 그대로 보내기)은 아무것도 묶이지 않았음이 **확인된** 첫
+    시도에서만 정직하다. 배달이 이미 열려 있거나, 열렸는지 확인조차 못한
+    (delivery_for가 던진) 호출에서는 강등이 두 가지 금지된 결과 중 하나로
+    끝난다 -- 프롬프트에 실린 적 없는 쪽지가 '전달됨'으로 굳는 조용한 유실,
+    또는 원장이 거부하는 지문 불일치. 그래서 모델을 부르지 않고 이 예외로
+    단계를 포기한다: 쪽지는 묶인 채 미전달로 남고 다음 시도가 같은 접두사를
+    다시 만든다.
     """
 
     def __init__(self, operation_key: str) -> None:
@@ -1036,22 +1037,27 @@ class TeamRuntime:
         """
         if self._collaboration is None or not messages:
             return messages, spec
-        # 아래 except가 이 값으로 갈린다. 무엇이 묶였는지 **모르는** 상태(첫
-        # 조회 자체가 던진 경우)는 묶이지 않은 쪽으로 센다: 그때는 강등이
-        # 오늘과 같은 정직한 요청이고, 여기서 refuse로 기울면 아무것도 묶이지
-        # 않은 첫 시도가 사소한 읽기 실패로 죽는다.
-        pinned = False
+        # 아래 except가 이 값으로 갈린다. 기본이 True인 이유: 첫 조회
+        # (delivery_for)가 던지면 배달이 있는지 **알 수 없고**, 모르는 채로
+        # 강등하면 배달이 실제로 있던 경우에 (a) 조용한 유실이나 (b) 지문
+        # 충돌이 그대로 남는다. 그래서 판단이 서기 전까지는 묶인 쪽으로 센다.
+        #
+        # 대가를 분명히 해 둔다: 아무것도 묶이지 않은 진짜 첫 시도인데
+        # delivery_for가 일시적으로 던지면, 예전에는 접두사 없이 성공했던
+        # 그 호출이 이제 런을 실패시킨다. 재시도 가능한 실패를 성공한 호출과
+        # 맞바꾸는 것이고, 이는 아래 pinned 분기가 이미 받아들인 거래를
+        # "어느 쪽인지 알 수 없는 경우"까지 넓힌 것이다.
+        pinned = True
         try:
             if self._collaboration.delivery_for(spec.operation_key) is not None:
                 # 이미 확정된 호출이다. 쪽지가 0개였더라도 그 사실을 재현해야
                 # 한다 -- 다시 조회하면 그 사이 도착한 쪽지가 섞여 지문이 달라지고
                 # reserve가 거부한다.
                 #
-                # pinned를 조회 **전에** 세운다: 아래 두 조회나 명단 조회가
-                # 던지면(측정된 5.5초 write-lock 경합이 그 경로다) except가
-                # 접두사 없는 요청으로 강등하는데, 이 호출은 이미 쪽지를 묶고
-                # 있으므로 그 강등이 곧 유실이거나 지문 충돌이다.
-                pinned = True
+                # pinned는 위에서 이미 True다. 이 조회들(그리고 아래 명단 조회)이
+                # 던지는 것이(측정된 5.5초 write-lock 경합이 그 경로다) 바로 이
+                # 결함의 경로였다: 그때 강등하면 이미 쪽지를 묶은 호출이 접두사
+                # 없이 나가 유실이거나 지문 충돌로 끝난다.
                 notes = self._collaboration.notes_by_id(
                     spec.team_run_id,
                     self._collaboration.delivery_message_ids(spec.operation_key),
@@ -1062,10 +1068,12 @@ class TeamRuntime:
                 # 막히므로, 접두사 없이 원래 요청을 재현한다.
                 return messages, spec
             else:
+                # 여기서 비로소 이 키에 묶인 것이 없음을 안다: 이 아래의 실패는
+                # 접두사 없는 정직한 요청으로 강등해도 아무것도 잃지 않는다.
+                pinned = False
                 notes = self._collaboration.undelivered(spec.team_run_id, agent.id)[
                     :MENTION_BATCH_LIMIT
                 ]
-                pinned = False
             prefix = roster_block(self._roster_entries(spec.team_run_id)) + radio_block(
                 [(sender, text) for _, sender, text in notes]
             )
@@ -1104,8 +1112,9 @@ class TeamRuntime:
                     exc_info=True,
                 )
             if pinned:
-                # 양쪽이 다르게 끝나는 이유. 아직 아무것도 묶이지 않은 첫 시도
-                # (branch 2·3)에서는 강등이 정직하다: 접두사 없는 요청이 그 호출의
+                # 양쪽이 다르게 끝나는 이유. 아무것도 묶이지 않은 것이 **확인된**
+                # 첫 시도(branch 3, 그리고 반환으로 빠지는 branch 2)에서는 강등이
+                # 정직하다: 접두사 없는 요청이 그 호출의
                 # 진실이고, 쪽지는 그대로 미전달로 남고, 지문도 어긋나지 않는다.
                 # 그러나 이 키에 배달이 이미 열린 재진입에서는 강등이 반드시 두
                 # 금지된 결과 중 하나로 끝난다 -- (a) operation이 아직 없으면
