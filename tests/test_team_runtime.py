@@ -8380,9 +8380,47 @@ async def test_an_unknown_recipient_does_not_undo_the_applied_task(
     assert run.status == "completed"
     tasks = setup.teams.list_tasks(setup.run.id, setup.cycle.id)
     assert [task.status for task in tasks] == ["completed", "completed"]
-    kinds = [m.kind for m in setup.teams.list_messages(setup.run.id)]
-    assert "collaboration_degraded" in kinds
-    assert "peer_mention" not in kinds
+    degraded = [
+        m
+        for m in setup.teams.list_messages(setup.run.id)
+        if m.kind == "collaboration_degraded"
+    ]
+    assert [m.metadata["reason_code"] for m in degraded] == ["mention_rejected"]
+    assert not [
+        m for m in setup.teams.list_messages(setup.run.id) if m.kind == "peer_mention"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_mention_write_does_not_undo_the_applied_task(
+    collab_setup,
+) -> None:
+    """The isolation contract has to hold for every exception, not one type.
+
+    A bad label is the only failure the other test can reach, so a bug in the
+    store itself -- which is what `mention_store_failed` names -- would
+    otherwise be asserted nowhere.
+    """
+    setup = collab_setup
+    setup.worker_clients[0].outcome_mentions = [{"to": "W-02", "text": "x"}]
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the store is broken")
+
+    setup.collab.record_mentions = explode
+
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    assert run.status == "completed"
+    tasks = setup.teams.list_tasks(setup.run.id, setup.cycle.id)
+    assert [task.status for task in tasks] == ["completed", "completed"]
+    degraded = [
+        m
+        for m in setup.teams.list_messages(setup.run.id)
+        if m.kind == "collaboration_degraded"
+    ]
+    assert [m.metadata["reason_code"] for m in degraded] == ["mention_store_failed"]
+    assert "RuntimeError" in degraded[0].content
 
 
 @pytest.mark.asyncio
@@ -8391,8 +8429,11 @@ async def test_without_a_collaboration_service_mentions_are_ignored(tmp_path) ->
     setup = make_negotiation_runtime(tmp_path, plan_negotiation=False)
     setup.worker_clients[0].outcome_mentions = [{"to": "W-02", "text": "x"}]
 
-    await setup.runtime.start(setup.run.id, setup.cycle.id)
+    run = await setup.runtime.start(setup.run.id, setup.cycle.id)
 
+    # Without this the absence below is also satisfied by a run that died
+    # before any worker finished.
+    assert run.status == "completed"
     assert not [
         m for m in setup.teams.list_messages(setup.run.id) if m.kind == "peer_mention"
     ]

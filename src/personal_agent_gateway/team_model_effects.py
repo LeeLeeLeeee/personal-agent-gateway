@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.team_collaboration_service import UnknownRecipient
 from personal_agent_gateway.team_acceptance import (
     AcceptanceResult,
     is_recoverable_acceptance_failure,
@@ -56,6 +58,9 @@ from personal_agent_gateway.teams import (
     _validate_task_acceptance,
     parse_required_verifications,
 )
+
+_LOGGER = logging.getLogger(__name__)
+
 
 if TYPE_CHECKING:
     from personal_agent_gateway.team_collaboration_service import (
@@ -377,15 +382,38 @@ class TeamModelEffectService:
                 outcome.mentions,
             )
         except Exception as exc:  # noqa: BLE001 - auxiliary work never voids the task
-            self._teams.append_message(
-                operation.team_run_id,
-                None,
-                operation.agent_id,
-                "collaboration_degraded",
-                f"mentions were not stored: {exc}",
-                {"reason_code": "mention_rejected"},
-                cycle_id=operation.cycle_id,
+            # A worker naming a recipient that does not exist and a bug in our
+            # own code are different facts: reporting both as mention_rejected
+            # would send someone reading the run to the model's note when the
+            # cause is a TypeError here.
+            reason_code = (
+                "mention_rejected"
+                if isinstance(exc, UnknownRecipient)
+                else "mention_store_failed"
             )
+            content = (
+                f"mentions were not stored: {type(exc).__name__}: {exc}"
+            )
+            try:
+                self._teams.append_message(
+                    operation.team_run_id,
+                    None,
+                    operation.agent_id,
+                    "collaboration_degraded",
+                    content,
+                    {"reason_code": reason_code},
+                    cycle_id=operation.cycle_id,
+                )
+            except Exception:  # noqa: BLE001 - recording the degradation cannot fail the run
+                # This write can fail for the same reason the one above did (the
+                # write lock), and letting it escape would tell the caller that
+                # an operation the ledger already marked applied had failed.
+                _LOGGER.warning(
+                    "could not record degraded collaboration for run %s: %s",
+                    operation.team_run_id,
+                    content,
+                    exc_info=True,
+                )
 
     def apply_worker_query(self, operation_id: str) -> WorkerEffectResult:
         now = _now()
