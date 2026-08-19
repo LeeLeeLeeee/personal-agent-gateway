@@ -8731,3 +8731,34 @@ async def test_a_continuous_run_mid_cycle_does_not_record_undelivered_notes(
     assert setup.collab.undelivered_count(setup.run.id) > 0
     kinds = [m.kind for m in setup.teams.list_messages(setup.run.id)]
     assert "collaboration_undelivered" not in kinds
+
+
+@pytest.mark.asyncio
+async def test_the_undelivered_record_is_written_at_most_once(
+    collab_setup,
+) -> None:
+    """같은 진입점이 이미 닫힌 런을 두 번째로 종단까지 이끌어도 -- resume이
+    start로 위임하거나 settle_contest가 이미 끝난 사이클에 다시 불려도 --
+    collaboration_undelivered는 런당 한 번만 남아야 한다. 아니라면 그
+    중복 자체가 연속 런 가드가 막으려는 바로 그 소음이 된다."""
+    setup = collab_setup
+    setup.collab.record_mentions(
+        setup.run.id, None, setup.workers[0].id, [Mention("W-02", "미전달")]
+    )
+    # 수신자가 호출 전에 죽으므로 그 operation은 결코 applied에 이르지 못하고,
+    # 두 번의 호출 모두 같은 미전달 쪽지를 본다.
+    setup.worker_clients[1].die_after_fetches = 0
+
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+    with contextlib.suppress(Exception):
+        await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    run = setup.teams.get_team_run(setup.run.id)
+    assert run.status in TERMINAL_RUN_STATUSES
+    undelivered = [
+        m
+        for m in setup.teams.list_messages(setup.run.id)
+        if m.kind == "collaboration_undelivered"
+    ]
+    assert len(undelivered) == 1

@@ -1798,8 +1798,18 @@ class TeamRuntime:
             # 않는다.
             return run
         try:
+            already_recorded = any(
+                message.kind == "collaboration_undelivered"
+                for message in self._teams.list_messages(run.id)
+            )
             pending = self._collaboration.undelivered_count(run.id)
-            if pending:
+            if pending and not already_recorded:
+                # At most one collaboration_undelivered message per run:
+                # start()/resume()/settle_contest() can each close the same
+                # run (resume delegating into start, settle_contest called
+                # again on an already-closed cycle), and a second identical
+                # message would be exactly the noise the continuous-run guard
+                # above exists to prevent.
                 self._teams.append_message(
                     run.id,
                     None,
