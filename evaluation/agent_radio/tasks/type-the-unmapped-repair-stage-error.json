@@ -3,7 +3,7 @@
   "id": "type-the-unmapped-repair-stage-error",
   "type": "bounded_implementation",
   "title": "복구 대상이 없는 stage에 전용 예외를 내게 하라",
-  "goal": "team_repair_stages.py의 repair_stage_for가 복구 대상이 등재되지 않은 stage에 대해 KeyError 대신 전용 예외를 내게 하라. 예외 메시지에는 문제가 된 stage 이름이 들어가야 한다. 등재된 stage의 반환값은 바꾸지 마라. 미등재 stage에서 그 예외가 나는 것과 메시지에 이름이 들어가는 것을 검증하는 테스트를 작성하라.",
+  "goal": "team_repair_stages.py의 repair_stage_for가 복구 대상이 등재되지 않은 stage에 대해 KeyError 대신 전용 예외를 내게 하라. 예외 메시지에는 문제가 된 stage 이름이 들어가야 한다. 등재된 stage의 반환값은 바꾸지 마라. 미등재 stage에서 그 예외가 나는 것과 메시지에 이름이 들어가는 것을 검증하는 테스트를 작성하라. tests/test_team_repair_stages.py 의 기존 테스트는 새 예외 타입 반영 외에는 건드리지 마라.",
   "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
   "execution_profile": "bounded_write",
   "rubric": [
