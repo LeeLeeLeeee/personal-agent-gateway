@@ -3626,6 +3626,43 @@ def test_worker_prompt_uses_cycle_space_instead_of_run_space(tmp_path) -> None:
     assert "- Write mode: isolated" in prompt
 
 
+def test_the_space_block_says_staged_inputs_are_read_only(tmp_path) -> None:
+    """The policy grants writes to the working root, and staged inputs live
+    inside it.
+
+    So "Write mode: isolated" plus "Do not write outside the working root"
+    reads, correctly, as permission to write anywhere in there -- including the
+    snapshot that source staging copied to _inputs/ and that acceptance then
+    verifies byte for byte. Three evaluation runs were refused with
+    input_snapshot_modified, all of them read-only tasks that had nothing to
+    edit. Nothing in the prompt said the directory was different.
+    """
+    from personal_agent_gateway.team_runtime import _space_block
+
+    working = tmp_path / "ws"
+    (working / "_inputs" / "01-source").mkdir(parents=True)
+    run = SimpleNamespace(working_root=str(working), artifact_root=None,
+                          workspace_root=str(working))
+
+    block = _space_block(run, {"write_mode": "isolated"})
+
+    assert "_inputs" in block
+    assert "read-only" in block
+
+
+def test_the_space_block_stays_quiet_when_nothing_was_staged(tmp_path) -> None:
+    """Most runs stage nothing, and a rule about a directory that does not
+    exist is noise in a prompt whose every line is read."""
+    from personal_agent_gateway.team_runtime import _space_block
+
+    working = tmp_path / "ws"
+    working.mkdir()
+    run = SimpleNamespace(working_root=str(working), artifact_root=None,
+                          workspace_root=str(working))
+
+    assert "_inputs" not in _space_block(run, {"write_mode": "isolated"})
+
+
 def test_worker_prompt_without_cycle_keeps_run_space(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
     db.initialize()

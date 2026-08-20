@@ -670,13 +670,34 @@ def _space_block(
         if write_mode == "full_access"
         else "- Do not write outside the working root or artifact root.\n"
     )
+    # Staged inputs sit inside the working root, so every line above grants
+    # writes over them: acceptance then verifies that directory byte for byte
+    # and refuses the task with input_snapshot_modified. Three evaluation runs
+    # were lost that way, all of them read-only tasks with nothing to edit --
+    # the permission was stated and the exception was not.
+    #
+    # Said only when something was actually staged. Most runs stage nothing,
+    # and a rule about a directory that is not there is noise in a prompt whose
+    # every line is read.
+    staged_note = ""
+    if working_root:
+        try:
+            if (Path(working_root) / "_inputs").is_dir():
+                staged_note = (
+                    "- _inputs/ is a read-only snapshot of what this task was "
+                    "given. It is verified byte for byte after the run; editing "
+                    "anything there fails the task. Write your own files "
+                    "elsewhere under the working root.\n"
+                )
+        except OSError:
+            staged_note = ""
     return (
         f"SPACE POLICY (frozen at {frozen_at} start):\n"
         f"- Read scope: {read_scope}\n"
         f"- Write mode: {write_mode}\n"
         f"- Working root: {working_root}\n"
         f"- Artifact root: {artifact_root}\n"
-        f"{write_instruction}\n"
+        f"{write_instruction}{staged_note}\n"
     )
 
 
