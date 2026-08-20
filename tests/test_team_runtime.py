@@ -3466,6 +3466,30 @@ def test_the_planner_is_not_told_to_decompose_by_requirement() -> None:
     assert "look thorough" not in flat
 
 
+def test_verification_names_must_say_which_part_of_the_goal_they_settle() -> None:
+    """The lever, found after pulling the wrong one.
+
+    Two approved plans were read against the answers they produced. One
+    declared `report-covers-origin-and-timing` for a goal that asked three
+    things -- the missing third was visible in the plan and the reviewer
+    approved anyway. The other declared `조사 보고서 생성` and `최종 설명 보고서
+    생성`, which say a file will exist and nothing about its content, so there
+    was no coverage to check. `file_nonempty` already says a file exists; a
+    name that says only that is a verification in appearance.
+
+    Naming coverage does not require splitting the work, which is what made
+    answers worse when it was tried: the planner already declares verifications
+    per task, and when asked to name coverage it produced
+    `final-explanation-covers-ledger` and the like without being told to
+    decompose.
+    """
+    flat = " ".join(PLANNING_PROMPT.lower().split())
+    assert "part of the goal" in flat
+    # The counter-example matters more than the rule: it is what stops
+    # "report-exists" from coming back as a name.
+    assert "already says" in flat
+
+
 def test_the_reviewer_must_check_the_goal_item_by_item() -> None:
     """The gap objection existed already and was never sent. Telling the
     reviewer what a gap is does not tell it how to find one; enumerating the

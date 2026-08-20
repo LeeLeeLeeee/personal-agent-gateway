@@ -115,6 +115,13 @@ Return ONLY one of:
    {{"type":"file_matches","path":"relative/path","pattern":"regex, at most 200 characters"}}
    {{"type":"json_parses","path":"relative/path"}}
    A check you supply decides the outcome; your own claim about it is ignored.
+   Name each verification for the part of the goal it settles, not for the file
+   it looks at: "covers-the-missing-snapshot-case", not "report-exists". A name
+   that says only that a file was produced leaves nobody able to tell which
+   part of the goal is covered, and file_nonempty already says that much. Read
+   the goal as the parts it asks for, and make every part appear in some task's
+   verification names. This is about naming, not about how many tasks there
+   are.
    Assign the member whose persona role and responsibilities best match the task.
    Use null only when no member is available. Do not assign by list order or
    previous completion status. Every task needs at least one required output or
