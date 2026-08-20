@@ -3450,21 +3450,20 @@ def test_planning_prompts_teach_the_check_vocabulary() -> None:
         assert "exactly the fields shown" in prompt
 
 
-def test_the_planner_must_show_which_requirements_each_task_covers() -> None:
-    """A measured sweep found the negotiation arm losing on omissions -- an
-    answer that covered most of the goal and dropped one part of it. Half of
-    those runs planned a single task, so the reviewer had nothing to object to:
-    with one task there is no overlap, no dependency conflict, and no visible
-    gap. Coverage has to be stated at plan time or the gap objection cannot
-    reach the failure it is for.
+def test_the_planner_is_not_told_to_decompose_by_requirement() -> None:
+    """Measured and reverted, so it does not come back by intuition.
+
+    Telling the planner to split the goal by requirement did split it -- one
+    task became two to four. It also made the answers worse: on three fixtures
+    graded blind by one grader against both versions, requirements that went
+    unaddressed rose from 2 to 4 and the baseline arm fell from 13/13 to 11/13.
+    The parts a single long answer used to sweep up fell between the tasks
+    instead, and output dropped to about a third. Splitting the work created
+    the omissions it was meant to prevent.
     """
-    # Prompts wrap, so a sentence spans lines. Collapse whitespace or the
-    # assertion passes and fails on where the line happens to break.
     flat = " ".join(PLANNING_PROMPT.lower().split())
-    assert "list of the things it asks for" in flat
-    assert "covers" in flat
-    # The point is naming what is covered, not inflating the task count.
-    assert "look thorough" in flat
+    assert "list of the things it asks for" not in flat
+    assert "look thorough" not in flat
 
 
 def test_the_reviewer_must_check_the_goal_item_by_item() -> None:
@@ -3476,6 +3475,51 @@ def test_the_reviewer_must_check_the_goal_item_by_item() -> None:
     flat = " ".join(PLAN_REVIEW_PROMPT.lower().split())
     assert "list of the things it asks for" in flat
     assert "check each one against the plan" in flat
+
+
+def test_the_plan_the_reviewer_sees_carries_what_the_objections_are_about() -> None:
+    """Three of the five objection kinds were about data the reviewer never got.
+
+    It is asked to report overlap ("two tasks would write the same file") and
+    dependency_conflict ("a task assumes something another has not produced"),
+    while the plan it was shown held only label, owner, title and description.
+    The files and the dependencies were in the plan the leader submitted and
+    were dropped on the way. Across 28 negotiation runs the reviewer objected
+    twice; asking it to check what it cannot see is the first thing to rule
+    out before concluding it is lax.
+    """
+    from personal_agent_gateway.team_runtime import PlanReviewEntry, plan_review_block
+
+    block = plan_review_block(
+        [
+            PlanReviewEntry(
+                label="T-01",
+                owner="YOURS",
+                title="검증 정책 조사",
+                description="읽기 규칙을 조사한다",
+                outputs=("data/artifacts/policy.md",),
+                verifications=("policy-covers-path-rules",),
+                depends_on=(),
+            ),
+            PlanReviewEntry(
+                label="T-02",
+                owner="W-02",
+                title="최종 설명",
+                description="조사 결과로 설명한다",
+                outputs=("data/artifacts/policy.md",),
+                verifications=("final-covers-size-and-encoding",),
+                depends_on=("T-01",),
+            ),
+        ]
+    )
+
+    # overlap is decidable only if the files are on the page.
+    assert block.count("data/artifacts/policy.md") == 2
+    # gap is decidable from what each task claims to cover.
+    assert "policy-covers-path-rules" in block
+    assert "final-covers-size-and-encoding" in block
+    # dependency_conflict needs the edge, by the label the reviewer can cite.
+    assert "T-01" in block.split("T-02", 1)[1]
 
 
 def test_planning_prompts_require_task_identity_and_dependency_fields() -> None:
@@ -7765,9 +7809,15 @@ class NegotiationWorkerModel:
         # time, which is after that operation is reserved.
         self.fetches = 0
         self.die_after_fetches: int | None = None
+        # Every prompt this client was handed. A test that checks what reached
+        # the reviewer cannot read it off a counter.
+        self.all_prompts: list[str] = []
 
     async def complete_operation(self, messages, *, consumer_run_id):
         self.call_count += 1
+        self.all_prompts.append(
+            "\n".join(str(message.get("content", "")) for message in messages)
+        )
         if _is_worker_prompt(messages):
             self.execution_calls += 1
             return ModelResponse(_outcome_json("done"), [])
@@ -8019,6 +8069,36 @@ async def test_an_objection_supersedes_the_revision_and_replans(tmp_path) -> Non
     assert [r.revision for r in revisions] == [1, 2]
     assert revisions[0].status == "superseded"
     assert revisions[1].status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_the_review_prompt_a_reviewer_receives_carries_the_task_contracts(
+    tmp_path,
+) -> None:
+    """Pins the wiring, not the renderer.
+
+    plan_review_block has its own test, and it would keep passing if nothing
+    called it -- which is the state this repo was in for the fields the block
+    now adds: the leader declared them, the reviewer's page dropped them, and
+    three of the five objection kinds asked about data that never arrived.
+    Asserting on the prompt a reviewer actually received is the only way to
+    catch the call site going away.
+    """
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_approve()]
+    setup.worker_clients[1].responses = [_approve()]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    reviews = [
+        prompt
+        for client in setup.worker_clients
+        for prompt in client.all_prompts
+        if "Review it before any work starts" in prompt
+    ]
+    assert reviews, "no reviewer was given a plan to review"
+    for prompt in reviews:
+        assert "answers: worker-result" in prompt
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal, Protocol
@@ -100,14 +100,6 @@ Available team members: {team_roster_json}
 
 Before creating tasks, identify any consequential choice that only the user can make.
 First resolve ambiguity from the goal, frozen rules, and prior user decisions.
-
-Read the goal as a list of the things it asks for, and make the plan show that
-every one of them is covered: name the ones it covers in each task's
-description. When one task covers several, name them all. A single task whose
-description restates the goal is not a plan -- it hides which requirements were
-considered, so nobody can tell before the work starts that one of them will be
-missed. Decompose because the goal has distinct parts, not to make the plan
-look thorough.
 Return ONLY one of:
 1. A JSON array of task objects. Each object must contain exactly:
    {{"plan_task_id":"stable-key", "title":"...", "description":"...", "owner_agent_id":"member-id or null",
@@ -2141,12 +2133,32 @@ class TeamRuntime:
             member.id: member.name
             for member in self._teams.list_agents(run.id)
         }
-        plan_block = "\n".join(
-            f"{label} "
-            f"[{_plan_owner_label(task, agent.id, names)}] "
-            f"{task.title} — {task.description}"
+        # The reviewer cites task_ref by label, so dependencies have to be
+        # rendered as labels rather than task ids -- an id it cannot name is an
+        # objection it cannot file.
+        label_of = {task.id: label for label, task in labels.items()}
+        depends = self._teams.list_task_dependency_map(run.id, cycle_id)
+        entries = [
+            PlanReviewEntry(
+                label=label,
+                owner=_plan_owner_label(task, agent.id, names),
+                title=task.title,
+                description=task.description,
+                outputs=tuple(task.acceptance.required_outputs) if task.acceptance else (),
+                verifications=(
+                    tuple(v.name for v in task.acceptance.required_verifications)
+                    if task.acceptance
+                    else ()
+                ),
+                depends_on=tuple(
+                    label_of[dep]
+                    for dep in depends.get(task.id, ())
+                    if dep in label_of
+                ),
+            )
             for label, task in labels.items()
-        )
+        ]
+        plan_block = plan_review_block(entries)
         prompt = PLAN_REVIEW_PROMPT.format(
             agent_label=agent.name,
             goal=self._goal_context(run, cycle_id),
@@ -4588,6 +4600,48 @@ def _plan_labels(tasks: list[TeamTask]) -> dict[str, TeamTask]:
     real label in every round.
     """
     return {task_label(index): task for index, task in enumerate(tasks, start=1)}
+
+
+@dataclass(frozen=True)
+class PlanReviewEntry:
+    """One task as the reviewer needs to see it.
+
+    Kept separate from TeamTask so the rendering can be read and tested without
+    a database: the defect this exists to fix was in what reached the page, not
+    in how a task is stored.
+    """
+
+    label: str
+    owner: str
+    title: str
+    description: str
+    outputs: tuple[str, ...]
+    verifications: tuple[str, ...]
+    depends_on: tuple[str, ...]
+
+
+def plan_review_block(entries: Sequence[PlanReviewEntry]) -> str:
+    """The plan as text for the reviewer.
+
+    Three of the five objection kinds are about data an earlier version of this
+    dropped. overlap is "two tasks would write the same file", so the files have
+    to be here. dependency_conflict is "a task assumes something another has not
+    produced", so the edges have to be here, by the label the reviewer cites in
+    task_ref. And a task's verification names are where the plan says which part
+    of the goal it answers, which is what makes gap decidable. Asking for an
+    objection about something the page never showed is how a reviewer that
+    objected twice in 28 runs happens.
+    """
+    lines: list[str] = []
+    for entry in entries:
+        lines.append(f"{entry.label} [{entry.owner}] {entry.title} — {entry.description}")
+        if entry.depends_on:
+            lines.append(f"    needs: {', '.join(entry.depends_on)}")
+        if entry.outputs:
+            lines.append(f"    writes: {', '.join(entry.outputs)}")
+        if entry.verifications:
+            lines.append(f"    answers: {', '.join(entry.verifications)}")
+    return "\n".join(lines)
 
 
 def _plan_owner_label(
