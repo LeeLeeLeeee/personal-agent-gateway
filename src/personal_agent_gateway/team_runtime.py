@@ -100,6 +100,14 @@ Available team members: {team_roster_json}
 
 Before creating tasks, identify any consequential choice that only the user can make.
 First resolve ambiguity from the goal, frozen rules, and prior user decisions.
+
+Read the goal as a list of the things it asks for, and make the plan show that
+every one of them is covered: name the ones it covers in each task's
+description. When one task covers several, name them all. A single task whose
+description restates the goal is not a plan -- it hides which requirements were
+considered, so nobody can tell before the work starts that one of them will be
+missed. Decompose because the goal has distinct parts, not to make the plan
+look thorough.
 Return ONLY one of:
 1. A JSON array of task objects. Each object must contain exactly:
    {{"plan_task_id":"stable-key", "title":"...", "description":"...", "owner_agent_id":"member-id or null",
@@ -322,7 +330,10 @@ Plan:
 
 Report only these five kinds of problem:
 - overlap: two tasks would do the same work or write the same file
-- gap: the goal needs work that no task covers
+- gap: the goal needs work that no task covers. Read the goal as a list of the
+  things it asks for, then check each one against the plan before deciding.
+  Approving without doing that is how a plan that will answer most of the goal
+  and quietly drop one part of it gets through.
 - dependency_conflict: a task assumes something another task has not produced yet
 - scope: a task assigned to you is not something you can carry out
 - unverified_premise: the goal states something as fact and no task checks it
@@ -333,7 +344,7 @@ out and whose answer will rest on facts some task establishes. A plan you can
 execute while stating unchecked claims as fact is not workable.
 
 The final response must contain only this JSON object and no prose or code fences:
-{{"decision":"approve|object","objections":[{{"kind":"overlap|gap|dependency_conflict|scope","task_ref":"T-01","detail":"what is wrong"}}]}}
+{{"decision":"approve|object","objections":[{{"kind":"overlap|gap|dependency_conflict|scope|unverified_premise","task_ref":"T-01","detail":"what is wrong"}}]}}
 Use "objections":[] when you approve. Every objection needs a task_ref from the
 plan above and a concrete detail the leader can act on."""
 

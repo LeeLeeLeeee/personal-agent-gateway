@@ -3450,6 +3450,34 @@ def test_planning_prompts_teach_the_check_vocabulary() -> None:
         assert "exactly the fields shown" in prompt
 
 
+def test_the_planner_must_show_which_requirements_each_task_covers() -> None:
+    """A measured sweep found the negotiation arm losing on omissions -- an
+    answer that covered most of the goal and dropped one part of it. Half of
+    those runs planned a single task, so the reviewer had nothing to object to:
+    with one task there is no overlap, no dependency conflict, and no visible
+    gap. Coverage has to be stated at plan time or the gap objection cannot
+    reach the failure it is for.
+    """
+    # Prompts wrap, so a sentence spans lines. Collapse whitespace or the
+    # assertion passes and fails on where the line happens to break.
+    flat = " ".join(PLANNING_PROMPT.lower().split())
+    assert "list of the things it asks for" in flat
+    assert "covers" in flat
+    # The point is naming what is covered, not inflating the task count.
+    assert "look thorough" in flat
+
+
+def test_the_reviewer_must_check_the_goal_item_by_item() -> None:
+    """The gap objection existed already and was never sent. Telling the
+    reviewer what a gap is does not tell it how to find one; enumerating the
+    goal first is the step that turns the kind into a check."""
+    from personal_agent_gateway.team_runtime import PLAN_REVIEW_PROMPT
+
+    flat = " ".join(PLAN_REVIEW_PROMPT.lower().split())
+    assert "list of the things it asks for" in flat
+    assert "check each one against the plan" in flat
+
+
 def test_planning_prompts_require_task_identity_and_dependency_fields() -> None:
     for prompt in (PLANNING_PROMPT, ADD_WORK_PROMPT):
         assert '"plan_task_id"' in prompt
