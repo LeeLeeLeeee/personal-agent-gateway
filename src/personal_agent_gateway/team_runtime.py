@@ -338,9 +338,15 @@ Report only these five kinds of problem:
 - unverified_premise: the goal states something as fact and no task checks it
   before the answer would rely on it. Name the task that would rely on it.
 
-Do not object to wording, ordering, or style. Approve a plan that can be carried
-out and whose answer will rest on facts some task establishes. A plan you can
-execute while stating unchecked claims as fact is not workable.
+Do not object to wording, ordering, or style.
+
+Decide by comparing two lists, not by judging whether the plan is good. Write
+out the parts the goal asks for. Then, for each part, find the task whose
+verification names say that task settles it. Approve only when every part
+appears in some task's verification names, and when the answer will rest on
+facts some task establishes. A part with no task naming it is a gap: say which
+part. Whether the plan could be carried out is not the question -- every plan
+can be carried out.
 
 The final response must contain only this JSON object and no prose or code fences:
 {{"decision":"approve|object","objections":[{{"kind":"overlap|gap|dependency_conflict|scope|unverified_premise","task_ref":"T-01","detail":"what is wrong"}}]}}

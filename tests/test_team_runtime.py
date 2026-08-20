@@ -3490,6 +3490,24 @@ def test_verification_names_must_say_which_part_of_the_goal_they_settle() -> Non
     assert "already says" in flat
 
 
+def test_approval_is_gated_on_coverage_not_on_being_carryable() -> None:
+    """"Approve a plan that can be carried out" is a bar every plan clears.
+
+    With the coverage now named per verification, the reviewer was shown a goal
+    asking three things and a plan whose names covered two, and approved it.
+    Information was no longer the problem; the standing instruction was. Naming
+    coverage worked because it turned a judgement into a comparison, so the
+    approval bar gets the same treatment: match two lists rather than decide
+    whether the plan is good.
+    """
+    from personal_agent_gateway.team_runtime import PLAN_REVIEW_PROMPT
+
+    flat = " ".join(PLAN_REVIEW_PROMPT.lower().split())
+    assert "appears in some task's verification names" in flat
+    # The old bar must be gone, not merely outvoted by a new sentence.
+    assert "approve a plan that can be carried out" not in flat
+
+
 def test_the_reviewer_must_check_the_goal_item_by_item() -> None:
     """The gap objection existed already and was never sent. Telling the
     reviewer what a gap is does not tell it how to find one; enumerating the
