@@ -4,7 +4,7 @@
   "type": "understanding",
   "title": "어느 stage가 어느 stage로 복구되는지 설명하라",
   "goal": "구조화된 출력 파싱이 실패했을 때 각 OperationStage가 어떤 stage로 복구되는지, 그 대응이 어떻게 정해지는지 설명하라. 이름 규칙에서 벗어나는 경우가 있으면 그것도 밝히라. 대응이 없는 stage를 조회하면 어떻게 되는지도 밝히라.",
-  "repo_ref": "05bb9c0b7aa1df14f9dac2e9cac380b47eba0968",
+  "repo_ref": "b125268f8713752304e12bdc7ddd05677afded5b",
   "execution_profile": "read_only",
   "rubric": [
     {

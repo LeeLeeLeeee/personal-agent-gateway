@@ -4,7 +4,7 @@
   "type": "bounded_implementation",
   "title": "파일이 없어야 통과하는 검증 검사를 추가하라",
   "goal": "team_verification_checks.py에 새 검사 종류 file_absent 를 추가하라: 지정한 워크스페이스 상대 경로에 읽을 수 있는 파일이 없으면 통과, 있으면 실패로 판정한다. path 외에 추가 필드는 요구하지 않는다. 파일이 존재해 실패하는 경우와 없어서 통과하는 경우를 각각 검증하는 테스트를 작성하라. 기존 네 검사 종류의 동작은 바꾸지 마라.",
-  "repo_ref": "05bb9c0b7aa1df14f9dac2e9cac380b47eba0968",
+  "repo_ref": "b125268f8713752304e12bdc7ddd05677afded5b",
   "execution_profile": "bounded_write",
   "rubric": [
     {

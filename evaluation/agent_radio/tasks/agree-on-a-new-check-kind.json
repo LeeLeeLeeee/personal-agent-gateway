@@ -1,0 +1,41 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "agree-on-a-new-check-kind",
+  "type": "bounded_implementation",
+  "title": "이름을 정해 주지 않은 검사 종류를 서로 연결되지 않은 세 곳에 같은 이름으로 등록한다",
+  "goal": "검증 검사 종류 하나를 추가하라. 판정 규칙은 '지정한 경로의 파일 크기가 지정한 상한을 넘으면 실패, 상한 이하면 통과' 다. 종류 이름과 상한 필드 이름은 정해 주지 않는다 — 하나씩 골라 아래 세 곳 전부에서 같은 이름을 쓰라. 세 곳은 서로를 코드로 참조하지 않으므로 한 곳만 고치면 나머지는 그 이름을 모른다. (1) team_verification_checks.py 의 CHECK_TYPES 와 parse_verification_check 와 run_verification_check. 상한은 정수로 검증하고 1보다 작으면 파싱 단계에서 거부하라. (2) team_model_operations.py 의 _valid_verification_check 가 따로 들고 있는 허용 목록과 종류별 필드 규칙. 이 곳을 갱신하지 않으면 리더가 그 종류를 담은 계획을 내도 페이로드 검증에서 거부된다. (3) team_runtime.py 에서 리더에게 허용 검사 목록을 알려 주는 프롬프트 세 곳. 테스트는 두 가지를 각각 증명하라: 상한을 넘긴 파일이 실패하고 상한과 같은 크기는 통과하는 것, 그리고 (2) 의 검증기가 그 종류를 담은 acceptance 를 받아들이는 것. 기존 네 종류(file_nonempty, file_contains, file_matches, json_parses)의 동작과 그 판정 분기 코드는 바꾸지 마라.",
+  "repo_ref": "b125268f8713752304e12bdc7ddd05677afded5b",
+  "execution_profile": "bounded_write",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "세 등록 지점이 같은 종류 이름을 쓴다",
+      "check": "고른 종류 이름 문자열이 team_verification_checks.py 의 CHECK_TYPES, team_model_operations.py 의 _valid_verification_check 허용 목록, team_runtime.py 의 리더 프롬프트 중 최소 한 곳에 모두 같은 철자로 나타남을 확인한다. 어느 한 곳에 다른 철자나 다른 이름이 있으면 실패"
+    },
+    {
+      "id": "R2",
+      "criterion": "상한 필드 이름도 두 곳에서 일치한다",
+      "check": "parse_verification_check 가 요구하는 상한 필드 이름과 team_model_operations.py 의 종류별 필드 규칙이 요구하는 이름이 같은 철자임을 확인한다. 한쪽만 갱신했거나 이름이 다르면 실패"
+    },
+    {
+      "id": "R3",
+      "criterion": "파싱과 판정이 명세대로다",
+      "check": "run_verification_check 에 새 종류 분기가 있고 파일 크기가 상한을 넘을 때 passed=False, 상한과 같거나 작을 때 passed=True 임을 코드에서 확인한다(경계값 포함). 그리고 정수가 아닌 값과 1보다 작은 값을 parse 단계에서 거부함을 확인한다 — bool 은 int 의 하위형이므로 True 가 1 로 통과하면 실패"
+    },
+    {
+      "id": "R4",
+      "criterion": "페이로드 검증기가 새 종류를 받아들이는 것을 테스트가 증명한다",
+      "check": "제출물 안에 _valid_verification_check(또는 그것을 쓰는 acceptance 검증 경로)가 새 종류를 담은 payload 에 대해 참을 돌려주는 것을 단언하는 테스트가 코드로 존재한다. 구현만 있고 그 경로를 검증하는 테스트가 없으면 실패"
+    },
+    {
+      "id": "R5",
+      "criterion": "기존 네 종류의 동작이 바뀌지 않았다",
+      "check": "file_nonempty, file_contains, file_matches, json_parses 의 판정 로직과 반환값이 그대로임을 확인한다(줄바꿈 문자 차이는 무시한다)"
+    },
+    {
+      "id": "R6",
+      "criterion": "제출된 테스트가 실제로 통과한다",
+      "check": "채점자가 제출된 테스트를 직접 실행했을 때 새 테스트를 포함해 전부 통과한다(하니스 실행 로그가 아니라 그 자리에서 실행해 얻은 결과로 확인한다)"
+    }
+  ]
+}
