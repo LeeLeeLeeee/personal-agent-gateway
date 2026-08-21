@@ -4,7 +4,7 @@
   "type": "understanding",
   "title": "프로세스가 죽은 뒤 열린 연산이 어떻게 회복되는지 설명하라",
   "goal": "cycle 실행 중 프로세스가 종료된 뒤 재개될 때, 원장에 열려 있는 연산이 어떻게 처리되는지 설명하라. 연산 상태에 따라 처리가 어떻게 갈리는지 구체적으로 밝히라. 그 처리가 stage 종류에 따라서도 달라지는지 함께 밝히라.",
-  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
+  "repo_ref": "05bb9c0b7aa1df14f9dac2e9cac380b47eba0968",
   "execution_profile": "read_only",
   "rubric": [
     {

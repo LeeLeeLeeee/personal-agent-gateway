@@ -4,7 +4,7 @@
   "type": "architecture_impact",
   "title": "새 검증 검사 종류를 추가할 때 바뀌어야 하는 지점을 전부 들라",
   "goal": "새 검증 검사 종류 하나를 추가한다고 할 때, 코드를 수정하지 말고 이 코드베이스에서 실제로 바뀌어야 하는 지점을 전부 설명하라. 파서와 실행기 외에 같은 어휘를 따로 들고 있는 곳이 있으면 그것도 밝히라.",
-  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
+  "repo_ref": "05bb9c0b7aa1df14f9dac2e9cac380b47eba0968",
   "execution_profile": "read_only",
   "rubric": [
     {

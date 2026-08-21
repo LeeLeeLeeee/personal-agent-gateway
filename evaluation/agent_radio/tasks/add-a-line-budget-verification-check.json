@@ -4,7 +4,7 @@
   "type": "bounded_implementation",
   "title": "줄 수 상한을 검사하는 검증 종류를 추가하라",
   "goal": "team_verification_checks.py에 새 검사 종류 file_at_most_lines 를 추가하라: path 와 정수 필드 max_lines 를 받아, 파일의 줄 수가 max_lines 이하이면 통과, 넘으면 실패로 판정한다. max_lines 가 정수가 아니거나 1보다 작으면 파싱 단계에서 거부해야 한다. 상한을 넘겨 실패하는 경우를 검증하는 테스트를 작성하라. 기존 네 검사 종류의 동작은 바꾸지 마라.",
-  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
+  "repo_ref": "05bb9c0b7aa1df14f9dac2e9cac380b47eba0968",
   "execution_profile": "bounded_write",
   "rubric": [
     {
