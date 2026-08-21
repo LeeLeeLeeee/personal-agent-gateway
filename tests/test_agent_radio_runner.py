@@ -1658,7 +1658,7 @@ def test_the_evaluation_config_does_not_point_at_the_products_data():
         lmg_base_url="http://127.0.0.1:9999",
     )
 
-    eval_config = _evaluation_config(product_config)
+    eval_config = _evaluation_config(product_config, mode="legacy")
 
     assert eval_config.app_db_path != product_config.app_db_path
     assert eval_config.workspace_root != product_config.workspace_root
@@ -1728,9 +1728,67 @@ def test_the_evaluation_workspace_lives_outside_the_repository():
             session_dir=Path("/product/data/sessions"),
             app_db_path=Path("/product/data/app.sqlite"),
             lmg_base_url="http://127.0.0.1:9999",
-        )
+        ),
+        mode="legacy",
     )
 
     workspace = eval_config.workspace_root.resolve()
     with pytest.raises(ValueError):
         workspace.relative_to(_REPO_ROOT)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [("legacy", False), ("radio_lite", True)],
+)
+def test_the_mode_decides_whether_peer_messages_are_wired(mode, expected):
+    """The two arms differ by this flag and nothing else. Decided here because
+    the channel is wired when the app is built, so run_fixture is already too
+    late to choose."""
+    eval_config = _evaluation_config(
+        AppConfig(
+            workspace_root=Path("/product/data/workspace"),
+            session_dir=Path("/product/data/sessions"),
+            app_db_path=Path("/product/data/app.sqlite"),
+            lmg_base_url="http://127.0.0.1:9999",
+        ),
+        mode=mode,
+    )
+
+    assert eval_config.team_peer_messages_enabled is expected
+
+
+def test_the_mode_overrides_what_the_environment_asked_for():
+    """A sweep's arms have to differ by the arm. If .env could turn notes on,
+    a legacy run on one machine would carry them and the same run elsewhere
+    would not, and the comparison would silently stop being controlled."""
+    product_config = AppConfig(
+        workspace_root=Path("/product/data/workspace"),
+        session_dir=Path("/product/data/sessions"),
+        app_db_path=Path("/product/data/app.sqlite"),
+        lmg_base_url="http://127.0.0.1:9999",
+        team_peer_messages_enabled=True,
+    )
+
+    assert (
+        _evaluation_config(product_config, mode="legacy").team_peer_messages_enabled
+        is False
+    )
+
+
+async def test_a_harness_wired_for_one_arm_refuses_the_other_label(tmp_path: Path):
+    """A legacy harness labelled radio_lite writes a record that reads as one
+    half of a controlled comparison and is not one. Nothing downstream can
+    catch it -- both arms are legal on their own -- so it is refused here.
+
+    _stub_harness wires TeamRuntime without a collaboration service, so its
+    harness is a legacy arm. Labelling it radio_lite is the mismatch.
+    """
+    harness, repo = _stub_harness(tmp_path)
+
+    with pytest.raises(RunnerError) as error:
+        await run_fixture(
+            harness, _understanding_fixture(), mode="radio_lite", repo_root=repo
+        )
+
+    assert "peer messages" in str(error.value)

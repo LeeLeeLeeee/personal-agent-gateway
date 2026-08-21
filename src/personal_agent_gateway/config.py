@@ -55,6 +55,14 @@ class AppConfig(BaseModel):
     access_mode: Literal["restricted", "full_access"] = "restricted"
     audit_enabled: bool = True
     observability_enabled: bool = True
+    # Whether workers can pass notes to each other. On by default: the
+    # feature shipped enabled and turning it off silently would change what
+    # a running team does. It is switchable for two reasons. An operator may
+    # need it off while the note prefix still lands ahead of instructions on
+    # prompts that carry no space policy, and the evaluation has no control
+    # arm without it -- "notes helped" cannot be measured against a run that
+    # also had notes.
+    team_peer_messages_enabled: bool = True
     audit_retention_days: int = 90
     environment_title: str | None = None
     openai_api_key: str | None = None
@@ -137,6 +145,7 @@ class AppConfig(BaseModel):
         "auth_require_token_and_otp",
         "audit_enabled",
         "observability_enabled",
+        "team_peer_messages_enabled",
         mode="before",
     )
     @classmethod
@@ -213,6 +222,9 @@ class AppConfig(BaseModel):
                 access_mode=env.get("AGENT_ACCESS_MODE") or "restricted",
                 audit_enabled=env.get("AGENT_AUDIT_ENABLED") or True,
                 observability_enabled=env.get("AGENT_OBSERVABILITY_ENABLED") or True,
+                team_peer_messages_enabled=(
+                    env.get("AGENT_TEAM_PEER_MESSAGES") or True
+                ),
                 audit_retention_days=int(env.get("AGENT_AUDIT_RETENTION_DAYS") or "90"),
                 environment_title=env.get("AGENT_ENVIRONMENT_TITLE") or env.get("PAG_ENV_TITLE") or None,
                 openai_api_key=env.get("OPENAI_API_KEY"),

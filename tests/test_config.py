@@ -97,3 +97,27 @@ def test_team_run_concurrency_rejects_values_outside_limit(tmp_path, value):
                 "LMG_LOCAL_TOKEN": "local-secret",
             }
         )
+
+
+def test_peer_messages_are_on_unless_asked_otherwise(tmp_path):
+    """The feature shipped enabled. A default of off would turn it off for
+    every existing installation on upgrade, silently."""
+    config = AppConfig(workspace_root=tmp_path, session_dir=tmp_path / "sessions")
+
+    assert config.team_peer_messages_enabled is True
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("0", False), ("false", False), ("off", False), ("1", True), ("on", True)],
+)
+def test_peer_messages_read_the_environment(tmp_path, value, expected):
+    config = AppConfig.from_env({
+        "AGENT_WORKSPACE_ROOT": str(tmp_path),
+        "AGENT_SESSION_DIR": str(tmp_path / "sessions"),
+        "AGENT_TEAM_PEER_MESSAGES": value,
+        "LMG_LOCAL_TOKEN": "local-secret",
+    })
+
+    assert config.team_peer_messages_enabled is expected
+

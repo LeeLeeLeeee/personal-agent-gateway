@@ -226,10 +226,16 @@ def create_app(
         result_validators=team_model_effect_result_validators(),
     )
     # One instance: the delivery side reads the same rows this write side
-    # creates.
-    collaboration_service = TeamCollaborationService(
-        app.state.database,
-        app.state.team_run_service,
+    # creates. None when peer messages are off, which both the effect service
+    # and the runtime already accept -- their `collaboration` parameters default
+    # to None and each guards on it, so nothing here has to branch twice.
+    collaboration_service = (
+        TeamCollaborationService(
+            app.state.database,
+            app.state.team_run_service,
+        )
+        if app_config.team_peer_messages_enabled
+        else None
     )
     effect_service = TeamModelEffectService(
         app.state.database,

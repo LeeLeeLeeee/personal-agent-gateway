@@ -275,3 +275,22 @@ def test_lifespan_cancels_session_runs_on_shutdown(tmp_path: Path) -> None:
         pass
 
     assert calls == ["called"], "shutdown did not cancel session runs"
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_the_flag_decides_whether_the_runtime_has_a_note_channel(
+    tmp_path: Path, enabled: bool
+) -> None:
+    """The switch has to reach the object that reads it. Asserting only that
+    the configuration parsed would pass with the wiring left untouched, which
+    is the one failure that matters: a run labelled "notes off" that still
+    carries notes measures nothing.
+    """
+    config = make_config(tmp_path).model_copy(
+        update={"team_peer_messages_enabled": enabled}
+    )
+
+    app = create_app(config)
+
+    assert (app.state.team_runtime._collaboration is not None) is enabled
+

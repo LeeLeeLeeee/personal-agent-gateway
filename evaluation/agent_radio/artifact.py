@@ -20,7 +20,13 @@ from agent_radio.fixture import (
 )
 
 ARTIFACT_SCHEMA = "gateway.eval-run/v1"
-IMPLEMENTED_MODES = frozenset({"legacy"})
+# radio_lite is legacy plus the peer-message channel, and nothing else. The
+# product wires that channel unconditionally, so the two modes are one
+# configuration flag apart (AGENT_TEAM_PEER_MESSAGES); the runner sets it
+# from the mode before it builds the harness. Without both arms there is no
+# control: every run so far had notes available, so none of them measures
+# what having them is worth.
+IMPLEMENTED_MODES = frozenset({"legacy", "radio_lite"})
 # The product's terminal statuses that mean "the Team produced an answer".
 # `completed_with_failures` is one of them: the product writes it when every
 # *required* task completed and some *optional* task did not, and it carries a

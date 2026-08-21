@@ -499,6 +499,19 @@ async def run_fixture(
     """
     if mode not in IMPLEMENTED_MODES:
         raise RunnerError(f"mode is not implemented: {mode!r}")
+    # The mode names a wiring the harness was built with, and the artefact
+    # records the name rather than the wiring. A harness built for one arm and
+    # labelled the other produces a record that reads as a controlled
+    # comparison and is not one -- which no downstream check can catch, because
+    # both arms are legal on their own.
+    expects_notes = mode == "radio_lite"
+    has_notes = getattr(harness.runtime, "_collaboration", None) is not None
+    if has_notes is not expects_notes:
+        raise RunnerError(
+            f"mode {mode!r} needs peer messages "
+            f"{'on' if expects_notes else 'off'}, but the harness was built "
+            f"with them {'on' if has_notes else 'off'}"
+        )
     # Resolved once, here: a relative path passes the repository-root check
     # (git resolves it) and then fails deep inside the space policy, which
     # requires an absolute directory. Normalizing at the entrance means one
@@ -875,18 +888,24 @@ def _git_bytes(repo_root: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def _evaluation_config(config: AppConfig) -> AppConfig:
+def _evaluation_config(config: AppConfig, *, mode: str) -> AppConfig:
     """Point storage at an evaluation-only database and workspace root.
 
     Everything else -- the LMG base URL, provider settings, and the rest of
     what `.env` configures -- passes through from `config` unchanged.
     Isolating storage is the whole point; building a second configuration is
     not.
+
+    `mode` is here rather than at run_fixture because the peer-message channel
+    is decided when the app is wired, and the harness is built from this
+    config. Whatever `.env` says about the flag is overridden: a sweep's arms
+    must differ by the arm and not by the machine it ran on.
     """
     return config.model_copy(
         update={
             "app_db_path": EVAL_DATA_ROOT / "app.sqlite",
             "workspace_root": EVAL_WORKSPACE_ROOT,
+            "team_peer_messages_enabled": mode == "radio_lite",
         }
     )
 
@@ -944,7 +963,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: no such fixture: {args.fixture!r}", file=sys.stderr)
         return 1
 
-    config = _evaluation_config(load_config())
+    config = _evaluation_config(load_config(), mode=args.mode)
     print(f"database: {config.app_db_path}")
     print(f"workspace: {config.workspace_root}")
 
