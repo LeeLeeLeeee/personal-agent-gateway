@@ -1,0 +1,54 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "understand-acceptance-gate",
+  "fixture_sha256": "00d718d48b0606762d3418234f649fac7174759597da6cdc55bdac1c5d2c858d",
+  "run_id": "3d3e4b186db642bd910366cd329bfcda",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-19T13:39:13.451940Z",
+  "finished_at": "2026-08-19T13:45:40.309085Z",
+  "wall_ms": 386857,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 2704470,
+    "output_tokens": 13791,
+    "cached_input_tokens": 2542080
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 네 이름을 원문 식별자로 정확히 적고 CHECK_TYPES 와 run_verification_check 분기를 지목했다. 없는 이름을 실재하는 것처럼 열거한 곳이 없다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 네 종류가 모두 파일을 읽어 텍스트를 보는 것뿐이며 게이트가 빌드·테스트·명령을 실행하지 않는다고 명시했다. json_parses 를 내부 json.loads 로 정확히 지목했다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "양쪽 다 check 유무가 갈림 조건이고 결과가 verified / attested / unverified 세 라벨로 기록된다고 구분했다. attested 를 '재확인' 으로 뒤집지 않았다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "한쪽은 '서버가 직접 실행한 결과가 판정의 유일한 기준이며 워커가 passed·failed·checked=false 중 무엇을 보고했는지는 서버 판정을 바꾸지 않는다', 다른 쪽은 '무엇을 보고했는지는 무시된다'. 양쪽 다 '대조·교차확인' 이라는 실패 서술을 피했다."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "양쪽 다 checked=false 는 거부 사유가 아니라 mode unverified / status unknown 으로 기록되고 태스크는 수용될 수 있다고 밝혔고, '보고 누락' 은 거부라는 구분도 함께 했다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "다섯 항목 양쪽 통과. 지어낸 검사 이름(build_passes 류)이 양쪽 다 0건이고, 오히려 둘 다 'shell·pytest·typecheck 같은 실행형 검사는 어휘에 없다' 고 명시적으로 부정했다.",
+    "outside_rubric": "한쪽 요약문에 '모든 검증 항목이 통과해야 성공' 이라는 느슨한 문장이 있으나 본문이 checked=false 예외를 정확히 적었으므로 항목 5 는 통과다. 다른 한쪽은 보고서 두 개(조사·설명)로 나눠 냈다."
+  }
+}

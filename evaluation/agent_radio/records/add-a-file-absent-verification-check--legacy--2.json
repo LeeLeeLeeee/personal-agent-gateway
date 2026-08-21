@@ -1,0 +1,59 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "add-a-file-absent-verification-check",
+  "fixture_sha256": "4b7ba38ede0010d9ccdfbf4d89facb4b1f11dab5c33bad8034370d6f9fac6429",
+  "run_id": "e85197b301d04ed2b2e1e5da6348132d",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-19T07:51:02.041469Z",
+  "finished_at": "2026-08-19T07:57:13.846427Z",
+  "wall_ms": 371804,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 201157,
+    "output_tokens": 1933,
+    "cached_input_tokens": 194560
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 file_absent 처리를 `resolved = safe_workspace_file(...)` 직후, `if resolved is None: return CheckResult(False, ...)` 보다 앞에 뒀다. 따라서 파일이 없을 때 passed=True 에 실제로 도달한다. 기존 분기 사슬 뒤에만 추가한 답은 없다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 resolved 가 not None 이면 CheckResult(False, ...) 를 돌려준다. 한쪽은 여기서 한 걸음 더 나아가 파일을 열어 1바이트를 읽어 보고 OSError 면 통과로 처리한다 — 목표 문구의 '읽을 수 있는' 을 권한 실패까지 포함해 해석한 것이며 safe_workspace_file 이 검사하지 않는 경우를 덮는다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "양쪽 다 CHECK_TYPES 에만 추가하고 _VALUE_TYPES / _PATTERN_TYPES 는 원문 그대로 뒀다. 따라서 expected = {type, path} 로 파싱되고 부가 키가 있으면 ValueError 다. 양쪽 다 payload 왕복 테스트로 이것을 고정했다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "양쪽 다 두 방향을 각각 단언한다 — 없는 경로에서 passed 참, 존재하는 경로에서 passed 거짓. evidence 문자열까지 확인하고, parse 테스트에 file_absent 항목도 추가했다."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "기존 네 분기를 원본 스냅샷과 바이트 비교했고 양쪽 모두 차이 없음. 공용 전처리(크기 상한·read_text 오류 처리)도 그대로다."
+    },
+    {
+      "id": "R6",
+      "passed": true,
+      "note": "격리 사본에서 직접 실행: 16 passed / 15 passed. 원본 기준선 대조에서 새로 깨진 것 없음."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "여섯 항목 양쪽 통과. 이 픽스처의 함정(조기 반환이 종류 분기보다 앞에 있어 '없는 파일 → 통과' 가 도달 불가가 되는 것)을 양쪽 다 피했다.",
+    "outside_rubric": ""
+  }
+}

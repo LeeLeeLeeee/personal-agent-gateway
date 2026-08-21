@@ -1,0 +1,49 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "where-the-provider-snapshot-comes-from",
+  "fixture_sha256": "81b74490d206076406eab7737feecc37a58bdd0b72f83dcc756c14fe43e27c86",
+  "run_id": "19777ca4f06c451d901ea0ea166c9c53",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T05:58:38.269710Z",
+  "finished_at": "2026-08-20T06:06:41.513039Z",
+  "wall_ms": 483243,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 3362306,
+    "output_tokens": 13463,
+    "cached_input_tokens": 3197952
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A: '_team_model_factory 는 cycle 이 있는 경우 capabilities_for_cycle 만 호출한다. 이 경로에서는 global AgentRegistry 를 다시 조회하지 않는다'. B: 같은 취지 + app.py:659-707 지목. 양쪽 다 레지스트리 폴백을 부정했다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "A: 'team_cycle_dispatcher.py:151-168 에서 cycle row 를 만든 직후, planning/preparer 와 모델 호출보다 먼저 freeze_cycle 을 호출한다'. B: 'create_cycle() 직후, preparer 와 orchestrator 실행 전' + :151-180. 양쪽 다 로스터의 모든 provider 를 동결한다고 적어 '해당 에이전트만' 오류를 피했다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A: parse_provider_execution_capabilities(None) → LMGProtocolMismatch → ProviderRecoveryRequired 변환 경로를 그대로 짚고 '폴백으로 global capability 를 가져오는 동작은 없다'고 명시. B: 같은 경로 + '이 cycle 경로에는 live registry 로 대체하는 fallback 이 없다'. 양쪽 다 실패 조건(레지스트리 재조회)을 피했다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "A: 세 가지 이유를 들고 '영구히 고정한다는 뜻이 아니라 cycle 시작 시점에 고정한다는 뜻' 이라고 못박음(기준의 실패 조건 회피). B: '동결하지 않으면 task 사이 refresh 로 같은 cycle 안에서 조건이 바뀌거나 서로 다른 capability 로 섞여 실행될 수 있다'. 양쪽 다 '성능/캐싱' 으로 뭉개지 않았다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "네 항목 모두 양쪽 통과. 분량 차이가 크다(13,463 대 3,511 출력 토큰) — 짧은 쪽이 빠뜨린 것 없이 같은 네 지점을 다 짚었다.",
+    "outside_rubric": "양쪽 모두 설계 문서와 구현이 갈리는 지점(스냅샷 없는 cycle 이 waiting_for_provider 인가 failed 인가)을 스스로 발견해 구분했다. B 는 '이 설명은 설계 의도가 아니라 확인된 현재 구현을 기준으로 답한다'고 명시했고, A 는 waiting_for_provider 가 어느 경로의 것인지(호출 중 열린 operation) 를 짚어 구분했다. 둘 다 문서를 코드로 착각하지 않았다."
+  }
+}

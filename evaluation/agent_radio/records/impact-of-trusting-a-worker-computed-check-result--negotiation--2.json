@@ -1,0 +1,49 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-trusting-a-worker-computed-check-result",
+  "fixture_sha256": "20765e0aabddf880c80ef45f7698dab80d4264eebc28a35a4c42dcbd42e9b137",
+  "run_id": "574fc945021d45fbb4b070f7b804786a",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-19T03:11:39.551487Z",
+  "finished_at": "2026-08-19T03:27:45.144011Z",
+  "wall_ms": 965592,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 2175339,
+    "output_tokens": 19800,
+    "cached_input_tokens": 1759488
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 긴장을 정면으로 다루고 무엇을 구분하면 양립하는지 밝혔다: 워커의 최종 JSON(주장 채널)과 플랫폼이 포착한 실행 영수증(측정 채널)을 분리하면, 게이트는 워커가 실행한 결과를 신뢰하면서도 워커의 주장은 판정에 쓰지 않는다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 check 가 있는 분기에서 게이트가 outcome.verifications 를 읽지 않고 run_verification_check 결과만으로 판정한다는 것을 코드(team_acceptance.py:100-121)와 테스트(tests/test_team_acceptance.py:223-288, 443-468)로 들었다. 한쪽은 프롬프트 문구 'A check you supply decides the outcome; your own claim about it is ignored'(team_runtime.py:117)까지 인용했다."
+    },
+    {
+      "id": "R3",
+      "passed": false,
+      "note": "기준은 '두 요구 중 무엇을 포기하면 나머지가 성립하는지 선택지로 갈라 제시' 를 요구하고, 실패 조건에 '선택지를 나누지 않고 절충안 하나만 제시' 를 명시했다. 두 답변 전체를 훑었고 '선택지·대안·포기·양립·trade·Option' 어느 표현도 없다. 양쪽 다 영수증 설계 하나만 냈다. | rubric_doubt: 이 항목은 두 요구가 양립 불가라는 전제를 깔고 있는데, 두 답변이 독립적으로 같은 제3의 길을 찾았다 — 실행 결과를 워커의 텍스트가 아니라 플랫폼 실행 경계에서 포착해 check 에 바인딩하면, '워커가 계산한 결과를 신뢰' 와 '워커의 주장은 판정에 쓰이지 않음' 이 동시에 성립한다. 영수증은 워커의 주장이 아니라 플랫폼의 측정이기 때문이다. 그렇다면 이 항목은 불필요한 양보를 요구하는 것이고, 어제 22건 고친 '계측기 결함' 과 같은 계열이다. 다만 양쪽이 같이 실패했으므로 비교 결과를 왜곡하지는 않는다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "양쪽 다 영수증·바인딩 메커니즘이 현재 없다는 것을 확인하고 새로 만들어야 한다고 밝혔다. 한쪽은 '워커 프롬프트 경로에 워커측 check 실행기도 실행 영수증도 없다', 다른 쪽은 '서버가 실행한 결과를 전달하는 단계가 프롬프트 조립 경로에 없다'. 존재하지 않는 서명·증명 기반을 있는 것처럼 전제한 곳이 없다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "1·2·4 양쪽 통과, 3 양쪽 실패. 대칭이라 비교에는 기여하지 않지만 루브릭 결함 후보다.",
+    "outside_rubric": ""
+  }
+}

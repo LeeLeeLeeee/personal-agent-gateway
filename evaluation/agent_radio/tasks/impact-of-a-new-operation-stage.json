@@ -3,8 +3,8 @@
   "id": "impact-of-a-new-operation-stage",
   "type": "architecture_impact",
   "title": "새 OperationStage 하나를 추가할 때 무엇이 바뀌어야 하는지 분석한다",
-  "goal": "가상의 새 OperationStage 하나(예: 'cycle_new_thing')를 추가한다고 할 때, 코드를 수정하지 말고 이 코드베이스에서 실제로 바뀌어야 하는 지점을 전부 설명하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "goal": "가상의 새 OperationStage 하나(예: 'cycle_new_thing')를 추가한다고 할 때, 코드를 수정하지 말고 이 코드베이스에서 실제로 바뀌어야 하는 지점을 전부 설명하라. 각 지점을 빠뜨렸을 때 실패 방식이 어떻게 다른지, 그 실패를 잡아내는 기존 검증이 있는지도 설명하라.",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "read_only",
   "rubric": [
     {
@@ -21,11 +21,6 @@
       "id": "R3",
       "criterion": "team_provider_recovery.py의 그룹 분류 요구사항을 언급한다",
       "check": "답변이 team_provider_recovery.py 의 _WORKER_STAGES 또는 _LEAD_STAGES 를 이름으로 들며, 새 stage를 둘 중 하나로 분류해야 한다고 말한다(단, 새 stage 이름이 cycle_ 접두사라 이 분류가 면제된다고 명시적으로 판단한 경우도 인정한다)"
-    },
-    {
-      "id": "R4",
-      "criterion": "이 누락을 실제로 잡아내는 completeness 테스트를 구체적으로 짚는다",
-      "check": "답변이 tests/test_team_repair_stages.py 안의 구체적인 테스트 이름을 최소 하나 이름으로 든다(test_every_stage_has_a_repair_target, test_every_stage_is_grouped_for_provider_recovery, test_every_repair_stage_validates_the_same_kinds_as_its_base 중 하나 이상)"
     },
     {
       "id": "R5",

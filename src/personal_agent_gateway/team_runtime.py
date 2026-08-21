@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal, Protocol
@@ -127,6 +127,13 @@ Return ONLY one of:
    {{"type":"file_matches","path":"relative/path","pattern":"regex, at most 200 characters"}}
    {{"type":"json_parses","path":"relative/path"}}
    A check you supply decides the outcome; your own claim about it is ignored.
+   Name each verification for the part of the goal it settles, not for the file
+   it looks at: "covers-the-missing-snapshot-case", not "report-exists". A name
+   that says only that a file was produced leaves nobody able to tell which
+   part of the goal is covered, and file_nonempty already says that much. Read
+   the goal as the parts it asks for, and make every part appear in some task's
+   verification names. This is about naming, not about how many tasks there
+   are.
    Assign the member whose persona role and responsibilities best match the task.
    Use null only when no member is available. Do not assign by list order or
    previous completion status. Every task needs at least one required output or
@@ -339,18 +346,27 @@ Plan:
 
 Report only these five kinds of problem:
 - overlap: two tasks would do the same work or write the same file
-- gap: the goal needs work that no task covers
+- gap: the goal needs work that no task covers. Read the goal as a list of the
+  things it asks for, then check each one against the plan before deciding.
+  Approving without doing that is how a plan that will answer most of the goal
+  and quietly drop one part of it gets through.
 - dependency_conflict: a task assumes something another task has not produced yet
 - scope: a task assigned to you is not something you can carry out
 - unverified_premise: the goal states something as fact and no task checks it
   before the answer would rely on it. Name the task that would rely on it.
 
-Do not object to wording, ordering, or style. Approve a plan that can be carried
-out and whose answer will rest on facts some task establishes. A plan you can
-execute while stating unchecked claims as fact is not workable.
+Do not object to wording, ordering, or style.
+
+Decide by comparing two lists, not by judging whether the plan is good. Write
+out the parts the goal asks for. Then, for each part, find the task whose
+verification names say that task settles it. Approve only when every part
+appears in some task's verification names, and when the answer will rest on
+facts some task establishes. A part with no task naming it is a gap: say which
+part. Whether the plan could be carried out is not the question -- every plan
+can be carried out.
 
 The final response must contain only this JSON object and no prose or code fences:
-{{"decision":"approve|object","objections":[{{"kind":"overlap|gap|dependency_conflict|scope","task_ref":"T-01","detail":"what is wrong"}}]}}
+{{"decision":"approve|object","objections":[{{"kind":"overlap|gap|dependency_conflict|scope|unverified_premise","task_ref":"T-01","detail":"what is wrong"}}]}}
 Use "objections":[] when you approve. Every objection needs a task_ref from the
 plan above and a concrete detail the leader can act on."""
 
@@ -690,13 +706,34 @@ def _space_block(
         if write_mode == "full_access"
         else "- Do not write outside the working root or artifact root.\n"
     )
+    # Staged inputs sit inside the working root, so every line above grants
+    # writes over them: acceptance then verifies that directory byte for byte
+    # and refuses the task with input_snapshot_modified. Three evaluation runs
+    # were lost that way, all of them read-only tasks with nothing to edit --
+    # the permission was stated and the exception was not.
+    #
+    # Said only when something was actually staged. Most runs stage nothing,
+    # and a rule about a directory that is not there is noise in a prompt whose
+    # every line is read.
+    staged_note = ""
+    if working_root:
+        try:
+            if (Path(working_root) / "_inputs").is_dir():
+                staged_note = (
+                    "- _inputs/ is a read-only snapshot of what this task was "
+                    "given. It is verified byte for byte after the run; editing "
+                    "anything there fails the task. Write your own files "
+                    "elsewhere under the working root.\n"
+                )
+        except OSError:
+            staged_note = ""
     return (
         f"SPACE POLICY (frozen at {frozen_at} start):\n"
         f"- Read scope: {read_scope}\n"
         f"- Write mode: {write_mode}\n"
         f"- Working root: {working_root}\n"
         f"- Artifact root: {artifact_root}\n"
-        f"{write_instruction}\n"
+        f"{write_instruction}{staged_note}\n"
     )
 
 
@@ -2360,12 +2397,32 @@ class TeamRuntime:
             member.id: member.name
             for member in self._teams.list_agents(run.id)
         }
-        plan_block = "\n".join(
-            f"{label} "
-            f"[{_plan_owner_label(task, agent.id, names)}] "
-            f"{task.title} — {task.description}"
+        # The reviewer cites task_ref by label, so dependencies have to be
+        # rendered as labels rather than task ids -- an id it cannot name is an
+        # objection it cannot file.
+        label_of = {task.id: label for label, task in labels.items()}
+        depends = self._teams.list_task_dependency_map(run.id, cycle_id)
+        entries = [
+            PlanReviewEntry(
+                label=label,
+                owner=_plan_owner_label(task, agent.id, names),
+                title=task.title,
+                description=task.description,
+                outputs=tuple(task.acceptance.required_outputs) if task.acceptance else (),
+                verifications=(
+                    tuple(v.name for v in task.acceptance.required_verifications)
+                    if task.acceptance
+                    else ()
+                ),
+                depends_on=tuple(
+                    label_of[dep]
+                    for dep in depends.get(task.id, ())
+                    if dep in label_of
+                ),
+            )
             for label, task in labels.items()
-        )
+        ]
+        plan_block = plan_review_block(entries)
         prompt = PLAN_REVIEW_PROMPT.format(
             agent_label=agent.name,
             goal=self._goal_context(run, cycle_id),
@@ -4814,6 +4871,48 @@ def _plan_labels(tasks: list[TeamTask]) -> dict[str, TeamTask]:
     real label in every round.
     """
     return {task_label(index): task for index, task in enumerate(tasks, start=1)}
+
+
+@dataclass(frozen=True)
+class PlanReviewEntry:
+    """One task as the reviewer needs to see it.
+
+    Kept separate from TeamTask so the rendering can be read and tested without
+    a database: the defect this exists to fix was in what reached the page, not
+    in how a task is stored.
+    """
+
+    label: str
+    owner: str
+    title: str
+    description: str
+    outputs: tuple[str, ...]
+    verifications: tuple[str, ...]
+    depends_on: tuple[str, ...]
+
+
+def plan_review_block(entries: Sequence[PlanReviewEntry]) -> str:
+    """The plan as text for the reviewer.
+
+    Three of the five objection kinds are about data an earlier version of this
+    dropped. overlap is "two tasks would write the same file", so the files have
+    to be here. dependency_conflict is "a task assumes something another has not
+    produced", so the edges have to be here, by the label the reviewer cites in
+    task_ref. And a task's verification names are where the plan says which part
+    of the goal it answers, which is what makes gap decidable. Asking for an
+    objection about something the page never showed is how a reviewer that
+    objected twice in 28 runs happens.
+    """
+    lines: list[str] = []
+    for entry in entries:
+        lines.append(f"{entry.label} [{entry.owner}] {entry.title} — {entry.description}")
+        if entry.depends_on:
+            lines.append(f"    needs: {', '.join(entry.depends_on)}")
+        if entry.outputs:
+            lines.append(f"    writes: {', '.join(entry.outputs)}")
+        if entry.verifications:
+            lines.append(f"    answers: {', '.join(entry.verifications)}")
+    return "\n".join(lines)
 
 
 def _plan_owner_label(

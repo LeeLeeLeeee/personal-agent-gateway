@@ -3460,6 +3460,120 @@ def test_planning_prompts_teach_the_check_vocabulary() -> None:
         assert "exactly the fields shown" in prompt
 
 
+def test_the_planner_is_not_told_to_decompose_by_requirement() -> None:
+    """Measured and reverted, so it does not come back by intuition.
+
+    Telling the planner to split the goal by requirement did split it -- one
+    task became two to four. It also made the answers worse: on three fixtures
+    graded blind by one grader against both versions, requirements that went
+    unaddressed rose from 2 to 4 and the baseline arm fell from 13/13 to 11/13.
+    The parts a single long answer used to sweep up fell between the tasks
+    instead, and output dropped to about a third. Splitting the work created
+    the omissions it was meant to prevent.
+    """
+    flat = " ".join(PLANNING_PROMPT.lower().split())
+    assert "list of the things it asks for" not in flat
+    assert "look thorough" not in flat
+
+
+def test_verification_names_must_say_which_part_of_the_goal_they_settle() -> None:
+    """The lever, found after pulling the wrong one.
+
+    Two approved plans were read against the answers they produced. One
+    declared `report-covers-origin-and-timing` for a goal that asked three
+    things -- the missing third was visible in the plan and the reviewer
+    approved anyway. The other declared `조사 보고서 생성` and `최종 설명 보고서
+    생성`, which say a file will exist and nothing about its content, so there
+    was no coverage to check. `file_nonempty` already says a file exists; a
+    name that says only that is a verification in appearance.
+
+    Naming coverage does not require splitting the work, which is what made
+    answers worse when it was tried: the planner already declares verifications
+    per task, and when asked to name coverage it produced
+    `final-explanation-covers-ledger` and the like without being told to
+    decompose.
+    """
+    flat = " ".join(PLANNING_PROMPT.lower().split())
+    assert "part of the goal" in flat
+    # The counter-example matters more than the rule: it is what stops
+    # "report-exists" from coming back as a name.
+    assert "already says" in flat
+
+
+def test_approval_is_gated_on_coverage_not_on_being_carryable() -> None:
+    """"Approve a plan that can be carried out" is a bar every plan clears.
+
+    With the coverage now named per verification, the reviewer was shown a goal
+    asking three things and a plan whose names covered two, and approved it.
+    Information was no longer the problem; the standing instruction was. Naming
+    coverage worked because it turned a judgement into a comparison, so the
+    approval bar gets the same treatment: match two lists rather than decide
+    whether the plan is good.
+    """
+    from personal_agent_gateway.team_runtime import PLAN_REVIEW_PROMPT
+
+    flat = " ".join(PLAN_REVIEW_PROMPT.lower().split())
+    assert "appears in some task's verification names" in flat
+    # The old bar must be gone, not merely outvoted by a new sentence.
+    assert "approve a plan that can be carried out" not in flat
+
+
+def test_the_reviewer_must_check_the_goal_item_by_item() -> None:
+    """The gap objection existed already and was never sent. Telling the
+    reviewer what a gap is does not tell it how to find one; enumerating the
+    goal first is the step that turns the kind into a check."""
+    from personal_agent_gateway.team_runtime import PLAN_REVIEW_PROMPT
+
+    flat = " ".join(PLAN_REVIEW_PROMPT.lower().split())
+    assert "list of the things it asks for" in flat
+    assert "check each one against the plan" in flat
+
+
+def test_the_plan_the_reviewer_sees_carries_what_the_objections_are_about() -> None:
+    """Three of the five objection kinds were about data the reviewer never got.
+
+    It is asked to report overlap ("two tasks would write the same file") and
+    dependency_conflict ("a task assumes something another has not produced"),
+    while the plan it was shown held only label, owner, title and description.
+    The files and the dependencies were in the plan the leader submitted and
+    were dropped on the way. Across 28 negotiation runs the reviewer objected
+    twice; asking it to check what it cannot see is the first thing to rule
+    out before concluding it is lax.
+    """
+    from personal_agent_gateway.team_runtime import PlanReviewEntry, plan_review_block
+
+    block = plan_review_block(
+        [
+            PlanReviewEntry(
+                label="T-01",
+                owner="YOURS",
+                title="검증 정책 조사",
+                description="읽기 규칙을 조사한다",
+                outputs=("data/artifacts/policy.md",),
+                verifications=("policy-covers-path-rules",),
+                depends_on=(),
+            ),
+            PlanReviewEntry(
+                label="T-02",
+                owner="W-02",
+                title="최종 설명",
+                description="조사 결과로 설명한다",
+                outputs=("data/artifacts/policy.md",),
+                verifications=("final-covers-size-and-encoding",),
+                depends_on=("T-01",),
+            ),
+        ]
+    )
+
+    # overlap is decidable only if the files are on the page.
+    assert block.count("data/artifacts/policy.md") == 2
+    # gap is decidable from what each task claims to cover.
+    assert "policy-covers-path-rules" in block
+    assert "final-covers-size-and-encoding" in block
+    # dependency_conflict needs the edge, by the label the reviewer can cite.
+    assert "T-01" in block.split("T-02", 1)[1]
+
+
 def test_planning_prompts_require_task_identity_and_dependency_fields() -> None:
     for prompt in (PLANNING_PROMPT, ADD_WORK_PROMPT):
         assert '"plan_task_id"' in prompt
@@ -3520,6 +3634,43 @@ def test_worker_prompt_uses_cycle_space_instead_of_run_space(tmp_path) -> None:
     assert "- Read scope: all" in prompt
     assert "- Read scope: none" not in prompt
     assert "- Write mode: isolated" in prompt
+
+
+def test_the_space_block_says_staged_inputs_are_read_only(tmp_path) -> None:
+    """The policy grants writes to the working root, and staged inputs live
+    inside it.
+
+    So "Write mode: isolated" plus "Do not write outside the working root"
+    reads, correctly, as permission to write anywhere in there -- including the
+    snapshot that source staging copied to _inputs/ and that acceptance then
+    verifies byte for byte. Three evaluation runs were refused with
+    input_snapshot_modified, all of them read-only tasks that had nothing to
+    edit. Nothing in the prompt said the directory was different.
+    """
+    from personal_agent_gateway.team_runtime import _space_block
+
+    working = tmp_path / "ws"
+    (working / "_inputs" / "01-source").mkdir(parents=True)
+    run = SimpleNamespace(working_root=str(working), artifact_root=None,
+                          workspace_root=str(working))
+
+    block = _space_block(run, {"write_mode": "isolated"})
+
+    assert "_inputs" in block
+    assert "read-only" in block
+
+
+def test_the_space_block_stays_quiet_when_nothing_was_staged(tmp_path) -> None:
+    """Most runs stage nothing, and a rule about a directory that does not
+    exist is noise in a prompt whose every line is read."""
+    from personal_agent_gateway.team_runtime import _space_block
+
+    working = tmp_path / "ws"
+    working.mkdir()
+    run = SimpleNamespace(working_root=str(working), artifact_root=None,
+                          workspace_root=str(working))
+
+    assert "_inputs" not in _space_block(run, {"write_mode": "isolated"})
 
 
 def test_worker_prompt_without_cycle_keeps_run_space(tmp_path) -> None:
@@ -7752,10 +7903,17 @@ class NegotiationWorkerModel:
         # Every prompt this worker was actually handed. `complete` delegates
         # here, so both entry points are recorded by the one append.
         self.prompts: list[str] = []
+        # The same prompts, kept under the name the negotiation tests use. Two
+        # branches added prompt capture independently; both names have tests
+        # reading them, and one append feeds each.
+        self.all_prompts: list[str] = []
 
     async def complete_operation(self, messages, *, consumer_run_id):
         self.prompts.append(messages[-1]["content"])
         self.call_count += 1
+        self.all_prompts.append(
+            "\n".join(str(message.get("content", "")) for message in messages)
+        )
         if _is_worker_prompt(messages):
             self.execution_calls += 1
             return ModelResponse(
@@ -8015,6 +8173,36 @@ async def test_an_objection_supersedes_the_revision_and_replans(tmp_path) -> Non
     assert [r.revision for r in revisions] == [1, 2]
     assert revisions[0].status == "superseded"
     assert revisions[1].status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_the_review_prompt_a_reviewer_receives_carries_the_task_contracts(
+    tmp_path,
+) -> None:
+    """Pins the wiring, not the renderer.
+
+    plan_review_block has its own test, and it would keep passing if nothing
+    called it -- which is the state this repo was in for the fields the block
+    now adds: the leader declared them, the reviewer's page dropped them, and
+    three of the five objection kinds asked about data that never arrived.
+    Asserting on the prompt a reviewer actually received is the only way to
+    catch the call site going away.
+    """
+    setup = make_negotiation_runtime(tmp_path, plan_negotiation=True)
+    setup.worker_clients[0].responses = [_approve()]
+    setup.worker_clients[1].responses = [_approve()]
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    reviews = [
+        prompt
+        for client in setup.worker_clients
+        for prompt in client.all_prompts
+        if "Review it before any work starts" in prompt
+    ]
+    assert reviews, "no reviewer was given a plan to review"
+    for prompt in reviews:
+        assert "answers: worker-result" in prompt
 
 
 @pytest.mark.asyncio

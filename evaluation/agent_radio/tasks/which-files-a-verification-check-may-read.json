@@ -3,8 +3,8 @@
   "id": "which-files-a-verification-check-may-read",
   "type": "understanding",
   "title": "검증 검사가 읽을 수 있는 파일의 조건을 설명하라",
-  "goal": "서버가 실행하는 검증 검사가 어떤 파일을 읽을 수 있고 어떤 파일을 거부하는지 전부 설명하라. 경로 규칙과 크기·인코딩 제한을 포함하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "goal": "서버가 실행하는 검증 검사가 어떤 파일을 읽을 수 있고 어떤 파일을 거부하는지 전부 설명하라. 경로 규칙과 크기·인코딩 제한을 포함하라. 검사 종류별로 추가되는 제한이 있는지도 밝히라.",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "read_only",
   "rubric": [
     {

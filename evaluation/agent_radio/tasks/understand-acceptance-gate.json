@@ -4,7 +4,7 @@
   "type": "understanding",
   "title": "수용 게이트가 무엇을 실제로 검사하는지 설명한다",
   "goal": "Team Run의 수용 게이트가 required_verifications를 어떻게 판정하는지, 그리고 어떤 검사 종류가 실제로 실행되는지 설명하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "read_only",
   "rubric": [
     {

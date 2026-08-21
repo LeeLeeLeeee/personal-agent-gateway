@@ -1,0 +1,59 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "type-the-unmapped-repair-stage-error",
+  "fixture_sha256": "5069fc24295da24054ee67ec68917822a3da5f2e9b0eedb362e0da23a2a28c12",
+  "run_id": "09ecc781b11c472bb3a2351843f2ef7c",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T10:10:05.276666Z",
+  "finished_at": "2026-08-20T10:25:59.378249Z",
+  "wall_ms": 954101,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 303253,
+    "output_tokens": 3603,
+    "cached_input_tokens": 282112
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 전용 예외 클래스를 모듈 상단에 정의하고 repair_stage_for 안에서 raise 한다. 한쪽은 try/except KeyError → raise ... from exc, 다른 쪽은 if stage not in REPAIR_STAGE: raise. 기준이 둘 다 허용한다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 f\"No repair stage is registered for {stage!r}\" — stage 값이 메시지에 보간된다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "REPAIR_STAGE 10개 항목이 양쪽 다 원문 그대로다(주석까지 동일). 등재 stage 경로는 여전히 표 조회 결과를 반환한다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "기존 6개 테스트의 이름·본문·단언이 양쪽 다 그대로이고, import pytest 와 새 예외 import 만 늘었다. 테스트 수는 양쪽 7개."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "한쪽은 pytest.raises(...) as error 로 잡아 assert stage in str(error.value), 다른 쪽은 pytest.raises(..., match=stage). 양쪽 다 미등재 값으로 호출하고 새 타입과 이름 포함을 단언한다."
+    },
+    {
+      "id": "R6",
+      "passed": true,
+      "note": "격리 사본에서 실행: 양쪽 7 passed. 원본 스냅샷 기준선 대조에서 새로 깨진 것 없음."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "여섯 항목 양쪽 통과. 제출물이 거의 같다 — 예외 클래스 이름과 기반 클래스, raise 형태만 다르다.",
+    "outside_rubric": "루브릭 밖 차이 하나: 기반 클래스가 한쪽은 LookupError(KeyError 의 부모), 다른 쪽은 ValueError 다. LookupError 쪽은 기존에 except LookupError 로 잡던 코드가 계속 동작하지만, 확인해 보면 repair_stage_for 호출자 두 곳(team_runtime.py:791, 2102) 모두 아무것도 잡지 않으므로 실제 차이는 없다. 목표가 기반 클래스를 지정하지 않았으므로 항목 판정에 쓰지 않는다."
+  }
+}

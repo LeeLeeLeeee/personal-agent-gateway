@@ -1,0 +1,54 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "refuse-private-key-files",
+  "fixture_sha256": "6a28ba31ee42086d4b62004300895b90e43aaf4a0b1d7ea61a3be38781cadb4e",
+  "run_id": "93b5174ec6e9435ca7c45edfdcebf6ba",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-19T15:27:57.254695Z",
+  "finished_at": "2026-08-19T15:33:37.933037Z",
+  "wall_ms": 340678,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 137065,
+    "output_tokens": 1262,
+    "cached_input_tokens": 133376
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": false,
+      "note": "양쪽 모두 lowered 를 재사용해 endswith('.pem') 과 startswith('id_rsa') 를 최종 반환식에 or 로 엮었다. 코드가 바이트 단위로 같다."
+    },
+    {
+      "id": "R2",
+      "passed": false,
+      "note": "lowered == '.env' or lowered.startswith('.env.') 가 원문 그대로 남아 있다."
+    },
+    {
+      "id": "R3",
+      "passed": false,
+      "note": "시그니처 is_sensitive_file(name: str) 유지, 문자열 메서드만 사용. 변경 파일 목록에 호출부가 없어 세 호출부 모두 그대로다."
+    },
+    {
+      "id": "R4",
+      "passed": false,
+      "note": "A: ('private.pem', True) 와 ('notes.txt', False). B: ('certificate.pem', True) 와 ('notes.txt', False). 양쪽 다 대문자 변형(.PEM)까지 넣었다."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "제출된 테스트를 격리 사본에서 실행: 양쪽 8 passed. 본 저장소의 editable 설치가 그림자를 만들지 않는 별도 venv 를 쓰고, 모듈 출처가 제출물임을 확인했다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "구현 코드가 두 답변에서 완전히 동일하다 — 같은 네 줄, 같은 순서. 차이는 테스트 표의 부정 사례 하나(A: '.envexample', B: 'my_id_rsa')와 파일을 쓴 위치뿐이다.",
+    "outside_rubric": "한쪽은 받은 소스(source/src/...)를 고쳤고, 다른 쪽은 source/ 를 손대지 않고 워크스페이스 루트에 src/·tests/ 를 새로 만들었다. 픽스처가 경로를 지정하지 않으므로 루브릭으로는 판정 대상이 아니다. 다만 사람이 워크스페이스를 병합한다면 후자는 아무것도 전달하지 않는다. 항목을 새로 만들지 않고 관찰로만 남긴다 — 답변을 본 뒤 기준을 넓히는 것이 어제 없앤 문제다."
+  }
+}

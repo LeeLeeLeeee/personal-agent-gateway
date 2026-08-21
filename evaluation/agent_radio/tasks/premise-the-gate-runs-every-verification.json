@@ -3,8 +3,8 @@
   "id": "premise-the-gate-runs-every-verification",
   "type": "understanding",
   "title": "게이트가 모든 검증을 실행한 뒤 판정한다는 전제를 검토하라",
-  "goal": "수용 게이트는 required_verifications를 모두 실행해 결과를 모은 뒤 종합해서 통과 여부를 정한다. 이 수집과 종합이 어떻게 이루어지는지, 결과 증거에 각 항목이 어떻게 담기는지 설명하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "goal": "수용 게이트는 required_verifications를 모두 실행해 결과를 모은 뒤 종합해서 통과 여부를 정한다. 이 수집과 종합이 어떻게 이루어지는지, 결과 증거에 각 항목이 어떻게 담기는지 설명하라. 순회 순서가 어떻게 정해지는지와, 검증 루프에 이르기 전의 다른 단계들에서도 조기 반환이 일어나는지도 밝히라.",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "read_only",
   "rubric": [
     {

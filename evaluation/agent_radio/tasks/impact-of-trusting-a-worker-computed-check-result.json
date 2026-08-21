@@ -4,7 +4,7 @@
   "type": "architecture_impact",
   "title": "워커가 계산한 검사 결과를 신뢰하면서 기존 보장을 유지할 수 있는지 판단하라",
   "goal": "required_verifications의 check를 워커가 직접 실행해 그 결과를 게이트가 신뢰하도록 바꾸되, 'check가 있는 항목에서 워커의 주장은 판정에 쓰이지 않는다'는 현재 보장은 그대로 유지하라. 코드를 수정하지 말고, 이 요구를 만족시키기 위해 무엇이 바뀌어야 하는지 설명하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "read_only",
   "rubric": [
     {

@@ -1,0 +1,59 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "add-a-line-budget-verification-check",
+  "fixture_sha256": "ae342458a94b431e44ae94ead84fe5f51b37185bbd2dcef902730c557a9abe97",
+  "run_id": "e8cf80082ca44120823ce18a1fcdfe4f",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-19T08:41:56.256240Z",
+  "finished_at": "2026-08-19T08:51:21.788056Z",
+  "wall_ms": 565531,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 212700,
+    "output_tokens": 1627,
+    "cached_input_tokens": 206848
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 max_lines 를 문자열 경로에 끼워 넣지 않고 별도 정수 검증 경로를 만들었다. 한쪽은 기존 스타일대로 _LINE_LIMIT_TYPES 집합을 새로 두었고, 다른 쪽은 check_type == 'file_at_most_lines' 직접 비교를 썼다. 양쪽 다 문자열 detail 검증(_VALUE_TYPES | _PATTERN_TYPES)에 새 타입을 넣지 않았다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 isinstance(max_lines, bool) 을 먼저 배제하고 not isinstance(int) 또는 < 1 이면 ValueError 를 던진다. bool 이 int 의 하위형이라 True 가 1 로 통과하는 함정을 양쪽 다 막았다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "양쪽 다 passed = line_count <= check.max_lines 로 경계값(같을 때)을 통과로 둔다. 한쪽은 테스트 이름 자체가 'passes_at_the_limit_and_fails_above_it' 로 경계를 명시한다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "양쪽 다 상한을 넘긴 파일에 대해 passed 거짓을 단언하는 테스트가 있고, payload 왕복 테스트와 parse 거부 목록도 확장했다."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "기존 네 분기를 원본 스냅샷과 바이트 비교했고 양쪽 모두 차이 없음. 새 분기를 넣은 위치만 다르다(한쪽은 json_parses 앞, 다른 쪽은 file_nonempty 앞)."
+    },
+    {
+      "id": "R6",
+      "passed": true,
+      "note": "격리 사본에서 직접 실행: 15 passed / 387 passed(4개 파일). 원본 기준선 대조에서 새로 깨진 것 없음 — 8개 파일을 고친 쪽도 회귀가 없다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "여섯 항목 양쪽 통과. 그러나 변경 범위가 크게 다르다 — 한쪽은 파일 2개, 다른 쪽은 8개.",
+    "outside_rubric": "한쪽은 team_verification_checks.py 만 고쳤고, 다른 쪽은 team_model_operations.py 의 _valid_verification_check(두 번째 어휘 사본)에 새 타입과 max_lines 정수 규칙까지 복제하고, team_runtime.py 의 계획 프롬프트 어휘와 team_model_effects.py 의 canonical payload 도 갱신했으며 각각에 테스트를 붙였다(프롬프트 어휘 테스트, effects replay 보존 테스트, operations 검증기 테스트). 목표가 team_verification_checks.py 로 한정되어 있어 루브릭 항목으로는 양쪽 동점이지만, 좁은 쪽 버전은 리더가 이 검사를 계획에 담아도 오퍼레이션 페이로드 검증에서 거부되므로 실제로는 제안 불가능한 검사 종류가 된다. 이 차이는 add-a-verification-check-kind 픽스처에서 양쪽이 모두 놓쳤던 바로 그 지점이다."
+  }
+}

@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -146,6 +147,23 @@ def test_the_review_prompt_offers_the_premise_objection():
 
     for kind in OBJECTION_KINDS:
         assert kind in PLAN_REVIEW_PROMPT, kind
+
+
+def test_every_objection_kind_is_allowed_by_the_schema_the_prompt_shows():
+    """Describing a kind in prose is not offering it.
+
+    The prompt ends with the exact JSON the reviewer must return, and that
+    JSON enumerates the allowed values of "kind". A kind described above but
+    missing from that enum reads as "not one of my options", so the reviewer
+    never sends it -- which is what happened to unverified_premise. Checking
+    only that the string appears somewhere in the prompt cannot catch it,
+    because the prose mention satisfies that.
+    """
+    from personal_agent_gateway.team_runtime import PLAN_REVIEW_PROMPT
+
+    (enum,) = re.findall(r'"kind":"([a-z_|]+)"', PLAN_REVIEW_PROMPT)
+    offered = set(enum.split("|"))
+    assert offered == set(OBJECTION_KINDS), sorted(set(OBJECTION_KINDS) - offered)
 
 
 def test_a_fenced_response_still_parses():

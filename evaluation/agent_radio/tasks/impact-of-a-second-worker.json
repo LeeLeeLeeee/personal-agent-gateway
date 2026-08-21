@@ -3,8 +3,8 @@
   "id": "impact-of-a-second-worker",
   "type": "architecture_impact",
   "title": "워커를 둘 이상으로 늘릴 때 실제로 달라지는 것을 설명하라",
-  "goal": "한 cycle에서 동시에 일하는 워커 수를 늘린다고 할 때, 코드를 수정하지 말고 실제로 달라지는 지점을 설명하라. 이미 여러 워커를 전제한 부분과 그렇지 않은 부분을 구분하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "goal": "한 cycle에서 동시에 일하는 워커 수를 늘린다고 할 때, 코드를 수정하지 말고 실제로 달라지는 지점을 설명하라. 이미 여러 워커를 전제한 부분과 그렇지 않은 부분을 구분하라. 동시 쓰기가 파일 변경 귀속에 영향을 주는지, 연산 식별에 충돌을 일으키는지도 판단하라.",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "read_only",
   "rubric": [
     {

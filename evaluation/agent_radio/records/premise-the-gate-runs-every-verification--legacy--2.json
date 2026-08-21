@@ -1,0 +1,49 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "premise-the-gate-runs-every-verification",
+  "fixture_sha256": "eeeb64d9274b84e2474be948ba7777681f912a11d84995221ef5a9bcc2a6fe91",
+  "run_id": "a7c53de8b38c41d28ebbdfab7c356f05",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T09:47:49.780638Z",
+  "finished_at": "2026-08-20T09:53:30.130158Z",
+  "wall_ms": 340349,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1669653,
+    "output_tokens": 12941,
+    "cached_input_tokens": 1529600
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A: '모든 required_verifications 를 항상 실행한 뒤 결과를 종합한다는 설명은 현재 소스에 대해서는 정확하지 않다'. B: '전제는 실제 구현과 다릅니다' + '수정이 필요한 전제' 라는 별도 절. 양쪽 다 '성공 경로에서만 참' 이라는 정확한 경계를 달았다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 rejected_verification_names 가 '도달하지 못해 증거에 없는 항목을 실패로 넣지 않는다'는 설계를 지목했다(A: :185-217, B: :190-201). 기준이 요구한 바로 그 지점이다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A: parse_required_verifications 가 append 로 입력 순서를 보존하며 정렬하지 않는다(teams.py:4221-4248). B: '입력 배열의 순서가 정규화된 튜플의 순서로 보존된다' + '이름순 정렬은 하지 않습니다'."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "양쪽 다 루프 전 세 지점(워커 completed 여부 :85-86, 산출물 집합 일치 :88-93, 산출물 경로 안전성 :95-98)을 모두 짚었다. 기준의 '완전 통과' 조건."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "전제가 거짓인 두 번째 픽스처. 양쪽 다 전제를 이름 대고 바로잡았다 — 앞의 premise 픽스처와 달리 여기서는 애매함이 없다.",
+    "outside_rubric": "양쪽 다 루브릭이 묻지 않은 것을 추가로 짚었다: 루프 뒤의 staged input snapshot 검사(:152-156)와 런타임의 artifact publication 실패 재판정. 즉 '조기 반환'을 게이트 안쪽만이 아니라 호출자까지 확장해 봤다."
+  }
+}
