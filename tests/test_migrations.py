@@ -93,7 +93,7 @@ def test_migration_21_adds_knowledge_request_draft_failure_columns_idempotently(
         "last_draft_failed_at",
         "last_draft_cycle_id",
     } <= columns
-    assert LATEST_SCHEMA_VERSION == 31
+    assert LATEST_SCHEMA_VERSION == 32
 
 
 def test_migration_18_adds_nullable_cycle_space_snapshot() -> None:
@@ -516,3 +516,44 @@ def test_migration_adds_operation_failure_columns(tmp_path: Path) -> None:
             for row in connection.execute("pragma table_info(team_model_operations)")
         }
     assert {"failure_digest", "failure_shape_json"} <= columns
+
+
+def test_migration_32_creates_delivery_tables(tmp_path):
+    """배달 표와 items 표가 생기고, operation_key는 unique다."""
+    from personal_agent_gateway.db import Database
+
+    db = Database(tmp_path / "app.sqlite")
+    db.initialize()
+
+    with db.connection() as connection:
+        columns = {
+            row[1]
+            for row in connection.execute(
+                "pragma table_info(team_collaboration_deliveries)"
+            )
+        }
+        assert columns == {
+            "id",
+            "team_run_id",
+            "agent_id",
+            "operation_key",
+            "status",
+            "created_at",
+            "settled_at",
+        }
+        items = {
+            row[1]
+            for row in connection.execute(
+                "pragma table_info(team_collaboration_delivery_items)"
+            )
+        }
+        assert items == {"delivery_id", "message_id"}
+        connection.execute(
+            "insert into team_collaboration_deliveries values"
+            " ('d1','r1','a1','k1','prepared','t',null)"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "insert into team_collaboration_deliveries values"
+                " ('d2','r1','a2','k1','prepared','t',null)"
+            )

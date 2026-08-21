@@ -1,4 +1,4 @@
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from hashlib import sha256
 import json
 from types import SimpleNamespace
@@ -20,8 +20,12 @@ from personal_agent_gateway.team_model_operations import (
     TeamModelOperationService,
     ValidatedOperationResult,
 )
+from personal_agent_gateway.team_collaboration_service import (
+    TeamCollaborationService,
+)
 from personal_agent_gateway.team_outcomes import (
     Deliverable,
+    Mention,
     TaskOutcome,
     VerificationEvidence,
 )
@@ -1474,6 +1478,72 @@ def test_duplicate_worker_outcome_does_not_append_another_message(tmp_path):
             if message.kind == "agent_output"
         ]
     ) == 1
+
+
+def test_a_replay_stores_notes_an_interrupted_store_never_wrote(tmp_path):
+    """The store runs after the transaction commits, so there is a gap.
+
+    If the process dies in it -- or if `record_mentions` raises for the very
+    reason this code anticipates, a locked database -- the operation is already
+    applied and every later entry returns on the replay path. Without storing
+    there too the worker's note is gone for good and undelivered_count reports
+    0, which is the one thing the channel promises cannot happen.
+    """
+    outcome = replace(
+        completed_outcome("draft.md"),
+        mentions=(Mention("LEAD", "스키마를 확인해달라"),),
+    )
+    services = make_completed_worker_operation(tmp_path, outcome=outcome)
+    collab = TeamCollaborationService(services.db, services.teams)
+    effects = TeamModelEffectService(
+        services.db,
+        services.teams,
+        services.operations,
+        collaboration=collab,
+    )
+    acceptance = AcceptanceResult(
+        accepted=False,
+        status="failed",
+        reason_code="undeclared_deliverable",
+        evidence={},
+    )
+    changes = {"created": ["draft.md"], "modified": [], "deleted": []}
+    healthy_record = collab.record_mentions
+
+    def locked(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    collab.record_mentions = locked
+    effects.apply_worker_outcome(
+        services.operation.id,
+        acceptance,
+        workspace_changes=changes,
+    )
+    collab.record_mentions = healthy_record
+    # Without this the assertions below are also satisfied by a first store
+    # that quietly worked.
+    assert services.operations.get(services.operation.id).status == "applied"
+    assert not [
+        message
+        for message in services.teams.list_messages(services.run.id)
+        if message.kind == "peer_mention"
+    ]
+
+    effects.apply_worker_outcome(
+        services.operation.id,
+        acceptance,
+        workspace_changes=changes,
+    )
+
+    notes = [
+        message
+        for message in services.teams.list_messages(services.run.id)
+        if message.kind == "peer_mention"
+    ]
+    assert [message.content for message in notes] == ["스키마를 확인해달라"]
+    assert notes[0].recipient_agent_id == services.run.leader_agent_id
+    assert notes[0].sender_agent_id == services.worker.id
+    assert collab.undelivered_count(services.run.id) == 1
 
 
 def test_worker_result_validator_rejects_unknown_fields(tmp_path):

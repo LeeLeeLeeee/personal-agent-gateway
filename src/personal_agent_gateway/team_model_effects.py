@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.team_collaboration_service import UnknownRecipient
 from personal_agent_gateway.team_acceptance import (
     AcceptanceResult,
     is_recoverable_acceptance_failure,
@@ -33,7 +35,11 @@ from personal_agent_gateway.team_plan_negotiation import (
     parse_plan_review,
 )
 from personal_agent_gateway.team_repair_stages import REPAIR_STAGE
-from personal_agent_gateway.team_outcomes import TaskOutcomeError, parse_task_outcome
+from personal_agent_gateway.team_outcomes import (
+    TaskOutcome,
+    TaskOutcomeError,
+    parse_task_outcome,
+)
 from personal_agent_gateway.team_verification_checks import (
     CHECK_TYPES,
     VerificationCheck,
@@ -53,7 +59,13 @@ from personal_agent_gateway.teams import (
     parse_required_verifications,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
+
 if TYPE_CHECKING:
+    from personal_agent_gateway.team_collaboration_service import (
+        TeamCollaborationService,
+    )
     from personal_agent_gateway.team_runtime import AcceptanceReviewResolution
 
 
@@ -122,10 +134,14 @@ class TeamModelEffectService:
         db: Database,
         teams: TeamRunService,
         operations: TeamModelOperationService,
+        collaboration: TeamCollaborationService | None = None,
     ) -> None:
         self._db = db
         self._teams = teams
         self._operations = operations
+        # None means the peer-message channel is off, which is what every
+        # construction site that predates it keeps getting.
+        self._collaboration = collaboration
 
     def apply_plan(self, operation_id: str) -> list[TeamTask]:
         now = _now()
@@ -276,6 +292,7 @@ class TeamModelEffectService:
         workspace_changes: Mapping[str, object],
     ) -> WorkerEffectResult:
         now = _now()
+        applied_outcome: TaskOutcome | None = None
         with self._db.connection() as connection:
             connection.execute("begin immediate")
             operation = self._operations._get(connection, operation_id)
@@ -287,59 +304,172 @@ class TeamModelEffectService:
                 normalized_changes,
             )
             if operation.status == "applied":
-                return self._replay_worker(
+                result = self._replay_worker(
                     connection,
                     operation,
                     input_digest,
                 )
-            if operation.status != "completed":
-                raise StaleOperation(
-                    f"Expected operation status completed, got {operation.status}"
-                )
-            if task.status != "in_progress":
-                raise OperationConflict("Worker task is not in progress")
-            if agent.status != "running" or agent.current_task_id != task.id:
-                raise OperationConflict("Worker is not running the operation task")
-
-            _apply_mediation_reinvocation(
-                connection,
-                operation,
-                now,
-            )
-            if operation.result_kind == "user_decision":
-                result = self._apply_worker_decision(
-                    connection,
-                    operation,
-                    task,
-                    agent,
-                    now,
-                )
+                if operation.result_kind == "task_outcome":
+                    # The replay path stores the notes too. Storing happens
+                    # after this transaction commits (it has to -- see below),
+                    # so a process death or a `database is locked` in that gap
+                    # leaves the operation applied with the notes unwritten,
+                    # and every later entry ends here. Without this the
+                    # worker's note is gone with nothing to recover it from and
+                    # undelivered_count reports 0.
+                    applied_outcome = _task_outcome(operation)
             else:
-                if acceptance is None:
-                    raise ValueError("Acceptance result is required for a task outcome")
-                result = self._apply_task_outcome(
+                if operation.status != "completed":
+                    raise StaleOperation(
+                        f"Expected operation status completed, got {operation.status}"
+                    )
+                if task.status != "in_progress":
+                    raise OperationConflict("Worker task is not in progress")
+                if agent.status != "running" or agent.current_task_id != task.id:
+                    raise OperationConflict(
+                        "Worker is not running the operation task"
+                    )
+
+                _apply_mediation_reinvocation(
                     connection,
                     operation,
-                    task,
-                    agent,
-                    acceptance,
-                    normalized_changes,
                     now,
                 )
-            _promote_actor_session(connection, operation, now)
-            _mark_applied(
-                connection,
-                operation,
-                effect_type=operation.result_kind or "worker_outcome",
-                effect_ref=_worker_effect_ref(
+                if operation.result_kind == "user_decision":
+                    result = self._apply_worker_decision(
+                        connection,
+                        operation,
+                        task,
+                        agent,
+                        now,
+                    )
+                else:
+                    if acceptance is None:
+                        raise ValueError(
+                            "Acceptance result is required for a task outcome"
+                        )
+                    result = self._apply_task_outcome(
+                        connection,
+                        operation,
+                        task,
+                        agent,
+                        acceptance,
+                        normalized_changes,
+                        now,
+                    )
+                    applied_outcome = _task_outcome(operation)
+                _promote_actor_session(connection, operation, now)
+                _mark_applied(
                     connection,
                     operation,
-                    result,
-                    input_digest,
-                ),
-                now=now,
+                    effect_type=operation.result_kind or "worker_outcome",
+                    effect_ref=_worker_effect_ref(
+                        connection,
+                        operation,
+                        result,
+                        input_digest,
+                    ),
+                    now=now,
+                )
+        # Outside the transaction: append_message opens a second connection, so
+        # calling this inside `begin immediate` deadlocks on the write lock, and
+        # the failure path then rolls back a task that was already applied.
+        self._store_mentions(operation, applied_outcome)
+        return result
+
+    def _store_mentions(
+        self, operation: TeamModelOperation, outcome: TaskOutcome | None
+    ) -> None:
+        """Store the worker's notes. A failure must not undo the applied task.
+
+        Collaboration is auxiliary: if a bad label or a failed write voided a
+        finished worker task, the ADR's promise that a run which never turned
+        this on keeps its lifecycle would not hold.
+
+        Called on the replay path as well, which can store the same note twice.
+        That is deliberate and within the ADR's licence -- duplicates are
+        allowed, loss is forbidden -- and it is not made idempotent on purpose.
+        A note carries no operation identity (`record_mentions` writes only
+        `to_label` in the metadata), so the only key available here is
+        (cycle, sender, label, text), and one worker can legitimately send the
+        same text to the same teammate from two stages of one cycle. Skipping
+        on that key would drop a real note to avoid a duplicate, which is the
+        trade the ADR refuses.
+        """
+        if outcome is None:
+            return
+        if outcome.mention_refusals:
+            # A note the parse turned away and a note addressed to nobody are
+            # the same fault -- a malformed mention -- so they end the same way:
+            # the task stands and the loss is written down. Only the reason_code
+            # differs, because "the worker wrote a note we could not accept" and
+            # "the worker named someone who is not here" send a reader looking
+            # in different places.
+            #
+            # Above the `_collaboration is None` guard on purpose: writing this
+            # down needs the message log, not the channel. TeamRuntime's own
+            # default builds the shape where the two disagree -- pass
+            # `collaboration` to the runtime and let `model_effects` default --
+            # and under it the runtime renders the radio prefix while every
+            # refusal here would go unrecorded.
+            self._record_degraded_collaboration(
+                operation,
+                "mention_malformed",
+                "mentions were refused as malformed: "
+                + ", ".join(outcome.mention_refusals),
             )
-            return result
+        if self._collaboration is None or not outcome.mentions:
+            return
+        try:
+            self._collaboration.record_mentions(
+                operation.team_run_id,
+                operation.cycle_id,
+                operation.agent_id,
+                outcome.mentions,
+            )
+        except Exception as exc:  # noqa: BLE001 - auxiliary work never voids the task
+            # A worker naming a recipient that does not exist and a bug in our
+            # own code are different facts: reporting both as mention_rejected
+            # would send someone reading the run to the model's note when the
+            # cause is a TypeError here.
+            reason_code = (
+                "mention_rejected"
+                if isinstance(exc, UnknownRecipient)
+                else "mention_store_failed"
+            )
+            self._record_degraded_collaboration(
+                operation,
+                reason_code,
+                f"mentions were not stored: {type(exc).__name__}: {exc}",
+            )
+
+    def _record_degraded_collaboration(
+        self,
+        operation: TeamModelOperation,
+        reason_code: str,
+        content: str,
+    ) -> None:
+        """The one shape every collaboration loss is recorded in."""
+        try:
+            self._teams.append_message(
+                operation.team_run_id,
+                None,
+                operation.agent_id,
+                "collaboration_degraded",
+                content,
+                {"reason_code": reason_code},
+                cycle_id=operation.cycle_id,
+            )
+        except Exception:  # noqa: BLE001 - recording the degradation cannot fail the run
+            # This write can fail for the same reason the note write did (the
+            # write lock), and letting it escape would tell the caller that an
+            # operation the ledger already marked applied had failed.
+            _LOGGER.warning(
+                "could not record degraded collaboration for run %s: %s",
+                operation.team_run_id,
+                content,
+                exc_info=True,
+            )
 
     def apply_worker_query(self, operation_id: str) -> WorkerEffectResult:
         now = _now()
@@ -1943,7 +2073,7 @@ class TeamModelEffectService:
     ) -> WorkerEffectResult:
         outcome = _task_outcome(operation)
         _validate_acceptance_result(acceptance)
-        outcome_payload = asdict(outcome)
+        outcome_payload = _stored_outcome(outcome)
         acceptance_payload = asdict(acceptance)
         connection.execute(
             """
@@ -2163,7 +2293,7 @@ class TeamModelEffectService:
             task.acceptance_recovery_attempts,
             is_worker_declared_outcome(outcome),
         )
-        expected_outcome = _json_object(asdict(outcome))
+        expected_outcome = _json_object(_stored_outcome(outcome))
         expected_message_metadata = {
             "operation_id": operation.id,
             "task_id": task.id,
@@ -3464,6 +3594,21 @@ def _canonical_digest(value: object) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _stored_outcome(outcome: TaskOutcome) -> dict[str, object]:
+    """The outcome as it is stored and compared, minus the note fields.
+
+    The notes are stored as messages instead, and a refused note is stored as a
+    degradation message; putting either field in the stored payload would make
+    the replay comparison disagree for every operation applied before this
+    upgrade, where the stored JSON has no such key.
+    """
+    return {
+        key: value
+        for key, value in asdict(outcome).items()
+        if key not in {"mentions", "mention_refusals"}
+    }
 
 
 def _json_object(value: object) -> dict[str, object]:

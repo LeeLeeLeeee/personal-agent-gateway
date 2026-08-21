@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "attested_only가 워커의 자기 보증 범위를 기록하는 방식과, 워커가 보증하지 않은 항목과의 구분을 한국어 문서로 정리했습니다. 실패한 작업은 없습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\951b27e7e9104eb2b2b4446ec57bb446\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

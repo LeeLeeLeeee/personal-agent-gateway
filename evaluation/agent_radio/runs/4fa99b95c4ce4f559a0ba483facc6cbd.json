@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "`attested_only`가 워커가 직접 보증한 검증 항목만 표시하고, 미보증 항목은 별도로 구분됨을 설명하는 문서를 작성했습니다. 보고된 실패는 없습니다.\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\4fa99b95c4ce4f559a0ba483facc6cbd\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

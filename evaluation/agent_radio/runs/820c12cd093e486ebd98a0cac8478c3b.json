@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "수용 게이트 흐름과 증거 구조를 조사·문서화했습니다. `data/artifacts/gate-acceptance-explanation.md`에 결과를 기록했습니다.\n\n현재 구현은 모든 `required_verifications`를 끝까지 실행하지 않습니다. 선언 순서대로 처리하다가 첫 번째 검증 실패나 필수 결과 누락 시 즉시 반환하는 fail-fast 방식입니다. 성공 경로에서는 항목별로 `mode`, `status`, `evidence`가 `acceptance_result.evidence.verifications[검증명]`에 저장되며, 원본 상세 증거는 raw acceptance result에도 보존됩니다.\n\n실행 작업 자체는 모두 완료됐지만, 목표의 “모든 항목 실행 후 종합” 전제와 현재 구현 사이에 차이가 확인됐습니다.\n\n\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\820c12cd093e486ebd98a0cac8478c3b\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

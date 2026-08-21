@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "워커가 신뢰 경계, 게이트 판정 규칙, 책임 분리, 회귀 시나리오를 설계 문서로 정리했습니다. 코드 변경은 수행하지 않았으며, 보고된 실패는 없습니다.\n\nLibrary에 요청되었습니다",
   "workspace_path": "C:\\pag-eval\\workspace\\98adfac71971444d92063b42355e535f\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

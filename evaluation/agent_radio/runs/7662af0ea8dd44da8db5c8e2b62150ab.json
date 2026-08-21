@@ -21,6 +21,7 @@
   "run_status": "completed",
   "summary": "Provider 실행 능력의 원천, cycle 동결 시점, 모델 클라이언트까지의 전달 경로를 근거와 함께 보고서로 작성했습니다. 최초 artifact root 쓰기는 거부됐으나 작업 루트의 `data/artifacts`로 산출물 위치를 정정해 완료했으며, 관련 소스 동작 테스트 4개가 통과했습니다.",
   "workspace_path": "C:\\pag-eval\\workspace\\7662af0ea8dd44da8db5c8e2b62150ab\\workspace",
+  "workers": 1,
   "repository_unchanged": true,
   "repository_diff": null,
   "error": null

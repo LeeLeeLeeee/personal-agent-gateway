@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -18,6 +19,14 @@ from personal_agent_gateway.team_acceptance import (
     is_worker_declared_outcome,
     rejected_verification_names,
     terminal_rejected_status,
+)
+from personal_agent_gateway.team_collaboration import (
+    MENTION_BATCH_LIMIT,
+    radio_block,
+    roster_block,
+)
+from personal_agent_gateway.team_collaboration_service import (
+    TeamCollaborationService,
 )
 from personal_agent_gateway.team_coverage_report import extract_coverage_gaps
 from personal_agent_gateway.team_artifact_publisher import (
@@ -42,6 +51,7 @@ from personal_agent_gateway.team_model_invoker import (
     TeamModelInvoker,
 )
 from personal_agent_gateway.team_lifecycle import (
+    TERMINAL_RUN_STATUSES,
     LifecycleIntegrityError,
     cycle_execution_disposition,
 )
@@ -92,6 +102,8 @@ from personal_agent_gateway.teams import (
     _validate_task_acceptance,
     parse_required_verifications,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 PLANNING_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
 Goal: {goal}
@@ -154,6 +166,11 @@ Set "checked":false with "status":null when you could not actually confirm a
 verification -- a tool that is missing, a command that failed to run, a check you
 had no way to perform -- and say why in "evidence". Do not report a status you did
 not observe.
+
+You may also include an optional "mentions" array to leave a short note for a
+teammate: [{{"to":"roster label","text":"a single line, no line breaks, up to
+2000 characters"}}]. Name the recipient by its roster label; at most 10
+mentions per response.
 
 The same rule applies to what your result says, not just to its verifications.
 When you state something as fact about this repository, name the file that shows
@@ -373,6 +390,25 @@ class UnparsableLeadOutput(RuntimeError):
         super().__init__(f"{stage} output could not be parsed twice")
         self.stage = stage
         self.operation_id = operation_id
+
+
+class PinnedNotesUnavailable(RuntimeError):
+    """이 호출에 이미 묶인 쪽지를 다시 읽지 못해 호출을 포기한다.
+
+    강등(접두사 없이 그대로 보내기)은 아무것도 묶이지 않았음이 **확인된** 첫
+    시도에서만 정직하다. 배달이 이미 열려 있거나, 열렸는지 확인조차 못한
+    (delivery_for가 던진) 호출에서는 강등이 두 가지 금지된 결과 중 하나로
+    끝난다 -- 프롬프트에 실린 적 없는 쪽지가 '전달됨'으로 굳는 조용한 유실,
+    또는 원장이 거부하는 지문 불일치. 그래서 모델을 부르지 않고 이 예외로
+    단계를 포기한다: 쪽지는 묶인 채 미전달로 남고 다음 시도가 같은 접두사를
+    다시 만든다.
+    """
+
+    def __init__(self, operation_key: str) -> None:
+        super().__init__(
+            f"pinned peer notes could not be read for {operation_key}"
+        )
+        self.operation_key = operation_key
 
 
 @dataclass(frozen=True)
@@ -688,6 +724,7 @@ class TeamRuntime:
         model_invoker: TeamModelInvoker | None = None,
         model_effects: TeamModelEffectService | None = None,
         provider_recovery: TeamProviderRecovery | None = None,
+        collaboration: TeamCollaborationService | None = None,
     ) -> None:
         self._teams = teams
         self._model_factory = model_factory
@@ -708,6 +745,7 @@ class TeamRuntime:
             self._operations,
         )
         self._provider_recovery = provider_recovery
+        self._collaboration = collaboration
         self._task_input_stager = TaskInputStager(teams._db, teams)
 
     def _model(
@@ -924,6 +962,11 @@ class TeamRuntime:
             and open_operation.operation_key != spec.operation_key
         ):
             raise OperationConflict("Cycle already has an open model operation")
+        # 예약 직전에 둔다. 이 검사보다 앞서면 그 흔한 OperationConflict가
+        # 배달만 열어둔 채 예약 없이 나가고, 그 뒤 같은 키로 재진입하면
+        # _with_radio가 배달을 보고 접두사를 재현해야 하는데 읽기가 실패하면
+        # 접두사 없는 지문으로 예약되어 쪽지가 조용히 유실된다.
+        messages, spec = self._with_radio(spec, agent, messages)
         operation = self._operations.reserve(spec)
         if (
             operation.status == "prepared"
@@ -980,6 +1023,133 @@ class TeamRuntime:
                 upstream_session_id=None,
             )
             raise
+
+    def _with_radio(
+        self,
+        spec: OperationSpec,
+        agent: TeamAgent,
+        messages: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], OperationSpec]:
+        """명단과 미전달 쪽지를 첫 메시지 앞에 붙이고 지문을 다시 계산한다.
+
+        stage를 가리지 않는다: 목록을 만들면 새 stage에서 조용히 누락되고, 이
+        저장소는 그 실패로 completeness 테스트를 두고 있다.
+
+        프롬프트 템플릿에 자리를 만들지 않는 이유는 별개다 -- WORKER_PROMPT를
+        정확히 네 키로 .format()하는 테스트가 있어(tests/test_team_runtime.py:3413)
+        새 자리를 만들면 KeyError가 된다. 접두사로 붙이면 SPACE 정책 블록보다
+        앞에 와서 마지막 말이 정책이 되는 배치까지 동시에 만족한다.
+        """
+        if self._collaboration is None or not messages:
+            return messages, spec
+        # 아래 except가 이 값으로 갈린다. 기본이 True인 이유: 첫 조회
+        # (delivery_for)가 던지면 배달이 있는지 **알 수 없고**, 모르는 채로
+        # 강등하면 배달이 실제로 있던 경우에 (a) 조용한 유실이나 (b) 지문
+        # 충돌이 그대로 남는다. 그래서 판단이 서기 전까지는 묶인 쪽으로 센다.
+        #
+        # 대가를 분명히 해 둔다: 아무것도 묶이지 않은 진짜 첫 시도인데
+        # delivery_for가 일시적으로 던지면, 예전에는 접두사 없이 성공했던
+        # 그 호출이 이제 런을 실패시킨다. 재시도 가능한 실패를 성공한 호출과
+        # 맞바꾸는 것이고, 이는 아래 pinned 분기가 이미 받아들인 거래를
+        # "어느 쪽인지 알 수 없는 경우"까지 넓힌 것이다.
+        pinned = True
+        try:
+            if self._collaboration.delivery_for(spec.operation_key) is not None:
+                # 이미 확정된 호출이다. 쪽지가 0개였더라도 그 사실을 재현해야
+                # 한다 -- 다시 조회하면 그 사이 도착한 쪽지가 섞여 지문이 달라지고
+                # reserve가 거부한다.
+                #
+                # pinned는 위에서 이미 True다. 이 조회들(그리고 아래 명단 조회)이
+                # 던지는 것이(측정된 5.5초 write-lock 경합이 그 경로다) 바로 이
+                # 결함의 경로였다: 그때 강등하면 이미 쪽지를 묶은 호출이 접두사
+                # 없이 나가 유실이거나 지문 충돌로 끝난다.
+                notes = self._collaboration.notes_by_id(
+                    spec.team_run_id,
+                    self._collaboration.delivery_message_ids(spec.operation_key),
+                )
+            elif self._operations.get_by_key(spec.operation_key) is not None:
+                # operation은 이미 있는데 배달은 없다: 이 기능이 배선되기 전에
+                # 예약된 호출이다. 새로 붙이면 지문이 달라져 복구가 영구히
+                # 막히므로, 접두사 없이 원래 요청을 재현한다.
+                return messages, spec
+            else:
+                # 여기서 비로소 이 키에 묶인 것이 없음을 안다: 이 아래의 실패는
+                # 접두사 없는 정직한 요청으로 강등해도 아무것도 잃지 않는다.
+                pinned = False
+                notes = self._collaboration.undelivered(spec.team_run_id, agent.id)[
+                    :MENTION_BATCH_LIMIT
+                ]
+            prefix = roster_block(self._roster_entries(spec.team_run_id)) + radio_block(
+                [(sender, text) for _, sender, text in notes]
+            )
+            if not prefix:
+                return messages, spec
+            if not pinned:
+                # 접두사가 만들어진 **뒤에** 확정한다. 확정과 접두사 사이에서 무엇이
+                # 던지면 아래 except가 접두사 없는 요청을 보내는데, 그 operation은
+                # applied에 도달하고 _UNDELIVERED_SQL은 묶인 쪽지를 영구히 제외한다
+                # -- 프롬프트에 실린 적 없는 쪽지가 '전달됨'으로 굳는 조용한 유실이다.
+                self._collaboration.open_delivery(
+                    spec.team_run_id,
+                    agent.id,
+                    spec.operation_key,
+                    [note[0] for note in notes],
+                )
+        except Exception as exc:  # noqa: BLE001 - 곁다리가 런을 죽이지 않는다
+            content = f"radio-lite disabled for this step: {exc}"
+            try:
+                self._teams.append_message(
+                    spec.team_run_id,
+                    None,
+                    agent.id,
+                    "collaboration_degraded",
+                    content,
+                    {"reason_code": "collaboration_unavailable"},
+                )
+            except Exception:  # noqa: BLE001 - 강등 기록이 호출을 죽이지 않는다
+                # 이 쓰기도 위와 같은 이유로 실패할 수 있고, 놓아주면 곁다리의
+                # 실패가 모델 호출 경로로 전파된다 -- radio 실패는 절대 전파되지
+                # 않는다는 제약이 금하는 바로 그것이다.
+                _LOGGER.warning(
+                    "could not record degraded collaboration for run %s: %s",
+                    spec.team_run_id,
+                    content,
+                    exc_info=True,
+                )
+            if pinned:
+                # 양쪽이 다르게 끝나는 이유. 아무것도 묶이지 않은 것이 **확인된**
+                # 첫 시도(branch 3, 그리고 반환으로 빠지는 branch 2)에서는 강등이
+                # 정직하다: 접두사 없는 요청이 그 호출의
+                # 진실이고, 쪽지는 그대로 미전달로 남고, 지문도 어긋나지 않는다.
+                # 그러나 이 키에 배달이 이미 열린 재진입에서는 강등이 반드시 두
+                # 금지된 결과 중 하나로 끝난다 -- (a) operation이 아직 없으면
+                # 접두사 없는 지문으로 예약되어 applied까지 가고 _UNDELIVERED_SQL이
+                # 그 쪽지를 영구히 제외한다(프롬프트에 실린 적 없는 쪽지가 '전달됨'
+                # 으로 굳는 조용한 유실), (b) operation이 있으면 접두사 없는 지문이
+                # _validate_existing_spec에 거부되어 OperationConflict가 이 try
+                # 밖에서 런을 실패로 정리한다.
+                # 그래서 계획의 "radio 실패는 절대 전파되지 않는다"를 이 한쪽에서만
+                # 좁힌다: 유실 0인 재시도 가능한 실패가 쪽지 열 장을 먹은 완주보다
+                # 낫다. 강등은 위에 이미 기록했고, 쪽지는 묶인 채 미전달로 남는다.
+                raise PinnedNotesUnavailable(spec.operation_key) from exc
+            return messages, spec
+        head, *rest = messages
+        amended = [{**head, "content": prefix + str(head["content"])}, *rest]
+        return amended, replace(
+            spec,
+            request_digest=_operation_request_digest(
+                spec.stage, spec.stage_ordinal, agent.id, amended
+            ),
+        )
+
+    def _roster_entries(self, team_run_id: str) -> list[tuple[str, str]]:
+        labels = self._collaboration.labels_for_run(team_run_id)
+        by_agent = {agent.id: agent for agent in self._teams.list_agents(team_run_id)}
+        return [
+            (label, str(by_agent[agent_id].persona_snapshot.get("name", "")))
+            for label, agent_id in sorted(labels.items())
+            if agent_id in by_agent
+        ]
 
     async def _recover_open_operation(
         self,
@@ -1675,6 +1845,62 @@ class TeamRuntime:
         )
         return clean
 
+    def _close_collaboration(self, run: TeamRun) -> TeamRun:
+        """런이 끝났으면 못 전한 쪽지 수를 남긴다.
+
+        조용히 사라지면 "유실 0"을 확인할 방법이 없다. 실패해도 종료를 막지
+        않는다 -- 곁다리 기능이 런의 마무리를 붙잡으면 안 된다.
+        """
+        if self._collaboration is None or run.status not in TERMINAL_RUN_STATUSES:
+            return run
+        if run.lifecycle_mode == "continuous" and run.status == "completed":
+            # 연속 런은 사이클마다 completed를 지난다. 다음 사이클이 전달할 쪽지를
+            # 매번 미전달로 적으면 그 기록은 소음이 되고, 소음이 된 기록은 읽히지
+            # 않는다.
+            return run
+        try:
+            already_recorded = any(
+                message.kind == "collaboration_undelivered"
+                for message in self._teams.list_messages(run.id)
+            )
+            pending = self._collaboration.undelivered_count(run.id)
+            if pending and not already_recorded:
+                # At most one collaboration_undelivered message per run:
+                # start()/resume()/settle_contest() can each close the same
+                # run (resume delegating into start, settle_contest called
+                # again on an already-closed cycle), and a second identical
+                # message would be exactly the noise the continuous-run guard
+                # above exists to prevent.
+                self._teams.append_message(
+                    run.id,
+                    None,
+                    None,
+                    "collaboration_undelivered",
+                    f"{pending} peer notes were never delivered",
+                    {"count": pending},
+                )
+        except Exception as exc:  # noqa: BLE001 - 곁다리가 런을 죽이지 않는다
+            content = f"collaboration close failed for this run: {exc}"
+            try:
+                self._teams.append_message(
+                    run.id,
+                    None,
+                    None,
+                    "collaboration_degraded",
+                    content,
+                    {"reason_code": "collaboration_unavailable"},
+                )
+            except Exception:  # noqa: BLE001 - 강등 기록이 런을 죽이지 않는다
+                # 이 쓰기도 위와 같은 이유로 실패할 수 있고, 놓아주면 곁다리의
+                # 실패가 종료 경로로 전파된다.
+                _LOGGER.warning(
+                    "could not record degraded collaboration close for run %s: %s",
+                    run.id,
+                    content,
+                    exc_info=True,
+                )
+        return run
+
     async def start(self, team_run_id: str, cycle_id: str | None = None) -> TeamRun:
         run = self._teams.get_team_run(team_run_id)
         self._validate_cycle(run, cycle_id)
@@ -1695,7 +1921,9 @@ class TeamRuntime:
                     stage="planning",
                     cycle_id=cycle_id,
                 )
-                return await self._publish_user_decision_request(run, cycle_id)
+                return self._close_collaboration(
+                    await self._publish_user_decision_request(run, cycle_id)
+                )
 
             run = self._teams.get_team_run(run.id)
             if run.run_mode != "plan_and_execute":
@@ -1705,14 +1933,14 @@ class TeamRuntime:
                     self._teams.set_cycle_status(cycle_id, "completed")
                 self._package_results(run, leader, cycle_id)
                 await self._publish({"type": "team.run.completed", "team_run_id": run.id})
-                return run
+                return self._close_collaboration(run)
 
             workers = _find_workers(self._teams.list_agents(run.id))
             if not workers:
                 error = "plan_and_execute run has no worker agents (empty member_persona_ids)"
                 run = self._settle_failed(run, error, cycle_id)
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
-                return run
+                return self._close_collaboration(run)
 
             # Opt-in. A run without the flag reaches execution exactly as it did
             # before, with no revision row and no extra model call. The
@@ -1721,25 +1949,27 @@ class TeamRuntime:
             # survive a restart.
             if run.plan_negotiation_enabled and cycle_id is not None:
                 if not await self._negotiate_plan(run, leader, workers, cycle_id):
-                    return self._teams.get_team_run(run.id)
+                    return self._close_collaboration(self._teams.get_team_run(run.id))
                 run = self._teams.get_team_run(run.id)
 
             run = self._teams.set_run_status(run.id, "running")
             await self._publish({"type": "team.run.executing", "team_run_id": run.id})
-            return await self._execute_and_synthesize(run, leader, workers, cycle_id)
+            return self._close_collaboration(
+                await self._execute_and_synthesize(run, leader, workers, cycle_id)
+            )
         except asyncio.CancelledError:
             if run is not None:
                 self._settle_canceled(run, cycle_id)
             raise
         except UnparsableLeadOutput:
-            return self._teams.get_team_run(run.id)
+            return self._close_collaboration(self._teams.get_team_run(run.id))
         except (ProviderOperationWaiting, AmbiguousModelOperation):
             raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__
             run = self._settle_failed(run, error, cycle_id)
             await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
-            return run
+            return self._close_collaboration(run)
 
     def _planning_prompt(
         self, run: TeamRun, leader_agent: TeamAgent, cycle_id: str | None
@@ -3977,7 +4207,12 @@ class TeamRuntime:
                 open_operation.stage
                 in {"cycle_contest", "cycle_contest_repair"}
             ):
+                # Not wrapped here: the success paths out of this helper
+                # return through resume() or settle_contest(), which close
+                # collaboration themselves -- wrapping again would record the
+                # same pending count twice.
                 return await self._resume_zero_task_contest(run, cycle_id)
+            # start() closes collaboration on its own way out.
             return await self.start(team_run_id, cycle_id)
         leader: TeamAgent | None = None
         try:
@@ -3995,7 +4230,7 @@ class TeamRuntime:
                 error = "resume has no worker agents"
                 run = self._settle_failed(run, error, cycle_id)
                 await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
-                return run
+                return self._close_collaboration(run)
             # Negotiation runs after the tasks exist, so the empty-task
             # delegation to start() above never covers it: without this, a
             # restart mid-negotiation walked straight into execution with an
@@ -4013,9 +4248,11 @@ class TeamRuntime:
                     # Settled already, and settled explicitly:
                     # _execute_and_synthesize would re-derive `failed` from the
                     # canceled tasks and lose the reason code.
-                    return self._teams.get_team_run(run.id)
+                    return self._close_collaboration(self._teams.get_team_run(run.id))
                 run = self._teams.get_team_run(run.id)
-            return await self._execute_and_synthesize(run, leader, workers, cycle_id)
+            return self._close_collaboration(
+                await self._execute_and_synthesize(run, leader, workers, cycle_id)
+            )
         except asyncio.CancelledError:
             if run is not None:
                 self._settle_canceled(run, cycle_id)
@@ -4023,14 +4260,14 @@ class TeamRuntime:
         except UnparsableLeadOutput:
             # The escalation already published the decision request and moved the
             # run to waiting_for_user. Return that state rather than failing.
-            return self._teams.get_team_run(run.id)
+            return self._close_collaboration(self._teams.get_team_run(run.id))
         except (ProviderOperationWaiting, AmbiguousModelOperation):
             raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__
             run = self._settle_failed(run, error, cycle_id)
             await self._publish({"type": "team.run.failed", "team_run_id": run.id, "error": error})
-            return run
+            return self._close_collaboration(run)
 
     async def add_work(
         self, team_run_id: str, instruction: str, cycle_id: str | None = None
@@ -4189,7 +4426,7 @@ class TeamRuntime:
         """
         run = self._teams.get_team_run(team_run_id)
         if self._teams.get_cycle(cycle_id).status != "running":
-            return run
+            return self._close_collaboration(run)
         leader = _find_leader(self._teams.list_agents(run.id))
         self._teams.set_agent_status(leader.id, "completed")
         self._teams.set_cycle_status(cycle_id, "completed")
@@ -4197,7 +4434,7 @@ class TeamRuntime:
         await self._publish(
             {"type": "team.run.completed", "team_run_id": run.id}
         )
-        return run
+        return self._close_collaboration(run)
 
     async def _resume_zero_task_contest(
         self, run: TeamRun, cycle_id: str
@@ -4914,8 +5151,8 @@ def _acceptance_worker_repair_messages(
                 "Do not repeat the task or modify files. Re-emit only the "
                 "previous final result as one raw JSON object with exactly "
                 "these keys: status, summary, reason_code, deliverables, "
-                "verifications. Do not include explanations, Markdown, or "
-                "code fences."
+                "verifications, and mentions if the previous response carried "
+                "any. Do not include explanations, Markdown, or code fences."
             ),
         }
     ]
