@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "document_count": 224,
+  "document_count": 225,
   "documents": [
     {
       "path": "docs/adr/2026-07-15-audit-retention-and-redaction.md",
@@ -15366,6 +15366,92 @@
         }
       ],
       "excerpt": "작성일: 2026-07-22"
+    },
+    {
+      "path": "docs/todo/2026-08-21-agent-radio-next-steps.md",
+      "title": "agent-radio 다음 단계",
+      "type": "todo",
+      "domain": "personal-agent-gateway",
+      "feature": "agent-radio-evaluation",
+      "status": "active",
+      "updated_at": "2026-08-21",
+      "excerpt": "작성일: 2026-08-21 상태: OPEN 기준 커밋: 87df4ab",
+      "tags": [
+        "agent-radio",
+        "evaluation",
+        "plan-negotiation",
+        "peer-messages",
+        "next-steps"
+      ],
+      "aliases": [
+        "agent-radio 다음 할 일",
+        "협상 측정 다음 단계",
+        "쪽지 기능 남은 과제",
+        "radio_lite 측정 계획",
+        "평가 스윕 병렬화"
+      ],
+      "headings": [
+        {
+          "level": 1,
+          "text": "agent-radio 다음 단계"
+        },
+        {
+          "level": 2,
+          "text": "이 문서가 답하는 것"
+        },
+        {
+          "level": 2,
+          "text": "확정된 사실 세 가지"
+        },
+        {
+          "level": 3,
+          "text": "1. 계획 협상은 이 과제군에서 차이를 만들지 않는다"
+        },
+        {
+          "level": 3,
+          "text": "2. 어제의 \"협상 열세\"는 모델이 아니라 루브릭이었다"
+        },
+        {
+          "level": 3,
+          "text": "3. 워커 간 쪽지는 작동하지만 완료 보고로 쓰인다"
+        },
+        {
+          "level": 2,
+          "text": "오늘 예측이 깨진 것 — 다시 봐야 하는 결론"
+        },
+        {
+          "level": 2,
+          "text": "갈림길"
+        },
+        {
+          "level": 3,
+          "text": "A. 협상을 워커 2명에서 다시 잰다 — 권장"
+        },
+        {
+          "level": 3,
+          "text": "B. 쪽지 수신자 유도 — 싸고 되돌리기 쉽다"
+        },
+        {
+          "level": 3,
+          "text": "C. 스윕 병렬화 — 유료 호출 없음"
+        },
+        {
+          "level": 3,
+          "text": "D. cycle 당 동시 연산 허용 — 크고 위험하다"
+        },
+        {
+          "level": 2,
+          "text": "미해결로 남긴 결함"
+        },
+        {
+          "level": 2,
+          "text": "다시 밟지 말아야 할 함정"
+        },
+        {
+          "level": 2,
+          "text": "관련"
+        }
+      ]
     }
   ]
 }
