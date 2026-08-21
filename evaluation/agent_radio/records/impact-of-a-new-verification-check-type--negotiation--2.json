@@ -1,0 +1,54 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-verification-check-type",
+  "fixture_sha256": "82071ac2d4fe44704e93085dae03025a10c68037c4787c00e7a2c27069aa2df9",
+  "run_id": "566555f039834035a4517b6ac48a4aba",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T07:42:36.828311Z",
+  "finished_at": "2026-08-20T07:57:49.828837Z",
+  "wall_ms": 913000,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 2375242,
+    "output_tokens": 8478,
+    "cached_input_tokens": 2294016
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 CHECK_TYPES(:11) 와 parse_verification_check 를 이름으로 들고 _VALUE_TYPES / _PATTERN_TYPES(:12-13) 로 필드 요구가 종류별로 갈린다는 점을 짚었다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 run_verification_check 에 판정 분기를 더해야 한다고 명시했다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "양쪽 다 team_runtime.py 의 프롬프트 세 곳(113-116, 184-187, 263-266)이 목록을 복제한다는 것과, 더 무거운 사본인 team_model_operations.py:817-835 의 _valid_verification_check 까지 짚었다. 후자는 루브릭 문구에 없는데 양쪽이 스스로 찾았다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "양쪽 다 프런트 렌더러(index.jsx:265-306)가 type/path/value/pattern 을 타입 allowlist 없이 일반적으로 렌더한다는 근거로 '기존 payload shape 를 유지하면 변경 불필요' 라고 판단하고, 새 필드나 파일 읽기가 아닌 의미라면 필요하다는 조건을 달았다. 근거 있는 조건부 판단이므로 통과다."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "양쪽 다 acceptance 가 db.py:231 의 acceptance_json(generic text)으로 저장되고 검사 종류 enum·컬럼·CHECK 제약이 없다는 근거로 migration 불필요라고 판단했다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "다섯 항목 양쪽 통과. 어제 새로 기준을 쓴 두 픽스처 중 하나이고, 양쪽 다 내가 기준을 쓰며 발견한 '두 번째 어휘 사본' 을 스스로 찾아냈다.",
+    "outside_rubric": "양쪽 다 BuildEvidence.jsx 의 주석이 세 종류만 열거해 json_parses 를 빠뜨렸다는 것을 발견했다. 런타임 등록소는 아니지만 낡은 어휘 서술이다. 한쪽은 pyproject·package.json·Makefile·scripts·API request model 까지 훑어 '검사 타입 registry 가 없음' 을 확인 목록으로 남겼다."
+  }
+}

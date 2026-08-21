@@ -1,0 +1,49 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-operation-stage",
+  "fixture_sha256": "ea373558935ab0a8e854ff64fbce8295088e5882a66ba0de54ae2c9a5f19c812",
+  "run_id": "18b0b6e7d25b403dac0e8defa41c32af",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T07:25:15.399470Z",
+  "finished_at": "2026-08-20T07:42:29.120730Z",
+  "wall_ms": 1033721,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1310673,
+    "output_tokens": 9127,
+    "cached_input_tokens": 1035520
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 team_model_operations.py 의 OperationStage Literal 을 파일·심볼로 지목하고 새 stage 를 그 목록에 넣어야 한다고 말했다. 'DB CHECK 제약을 늘려야 한다' 는 사실 오류를 쓴 곳이 없다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 team_repair_stages.py 의 REPAIR_STAGE 를 이름으로 들고 새 매핑을 추가해야 한다고 말했다. 한쪽은 'REPAIR_STAGE[\"cycle_new_thing\"] = \"cycle_new_thing_repair\" 를 명시한다. 이름 조합으로 자동 생성하지 않는 설계다' 라고 적어 파생 규칙 오해를 정면으로 부정했다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "양쪽 다 _WORKER_STAGES / _LEAD_STAGES 를 이름으로 들었고, 나아가 기준이 인정하는 (b) 형태 — cycle_ 접두사면 그 분류가 면제된다는 판단 — 까지 했다. 한쪽은 '테스트가 non-cycle_* 만 검사한다', 다른 쪽은 '테스트가 cycle_* 를 의도적으로 제외하므로 cycle stage 의 분류 누락은 잡지 않는다'."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "양쪽 다 두 누락의 실패 방식을 구분했다. REPAIR_STAGE 누락 → repair_stage_for 에서 KeyError 이고 완전성 테스트가 즉시 잡는다. 그룹 분류 누락 → 예외가 아니라 의도된 source-state 불변식을 우회하거나 잘못된 상태를 허용하며, 그 완전성 테스트가 cycle_ 를 제외하므로 잡히지도 않는다. '둘 다 테스트가 잡아 준다' 로 뭉갠 곳도, '그룹에 없으면 OperationConflict' 라고 뒤섞은 곳도 없다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "네 항목 양쪽 통과. 4번은 '실패 방식의 차이를 명시적으로 구분' 을 요구하는 까다로운 항목인데 양쪽이 다른 문장으로 같은 구분을 했다.",
+    "outside_rubric": "이 픽스처는 기준 번호가 밀려 있던 셋 중 하나다(삭제된 항목: '구체적인 테스트 이름을 든다'). 재정렬 후 채점했다."
+  }
+}

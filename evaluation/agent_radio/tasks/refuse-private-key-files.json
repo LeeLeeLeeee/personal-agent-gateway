@@ -4,7 +4,7 @@
   "type": "bounded_implementation",
   "title": "개인 키 파일을 민감 파일로 거부하게 하라",
   "goal": "file_safety.py의 is_sensitive_file이 개인 키 파일 이름도 민감 파일로 판정하게 하라: 확장자가 .pem 인 이름과 id_rsa 로 시작하는 이름을 거부하되, 대소문자를 구분하지 않아야 한다. 기존 .env 및 .env. 접두사 규칙의 동작은 바꾸지 마라. .pem 이름이 거부되고 평범한 이름이 거부되지 않는 것을 검증하는 테스트를 최소 하나 작성하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "bounded_write",
   "rubric": [
     {

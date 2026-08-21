@@ -1,0 +1,49 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "which-repair-stage-repairs-what",
+  "fixture_sha256": "aa16cf3e7794d4fb1a7845af6b5d7a6e1cf4e6c28321cc8a82169498ec1b99a8",
+  "run_id": "d387cf81b12c4eeb80b612ab8c0407a9",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T10:50:40.410221Z",
+  "finished_at": "2026-08-20T11:02:02.217117Z",
+  "wall_ms": 681806,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 775380,
+    "output_tokens": 4859,
+    "cached_input_tokens": 761600
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A: '결정은 stage 문자열을 조합하는 규칙이나 자동 추론이 아니라 명시적으로 선언한 REPAIR_STAGE 를 조회하는 방식' + 닫힌 Literal 이유(:1-6). B: '대응은 stage 문자열을 조합해 계산하지 않는다' + 같은 근거. A 가 뒤에서 '일반 규칙은 _repair 를 붙이는 것' 이라고 쓴 것은 이름 패턴의 서술이고, 기제는 앞에서 이미 명시 선언이라고 밝혔으므로 실패 조건(예외만 표에 적혀 있다는 서술)에 해당하지 않는다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "A: 'worker_execution 은 별도 worker_execution_repair 를 만들지 않고 자기 자신으로 복구' + ordinal 증가. B: 같은 내용 + ordinal 1 의 in-place repair(첫 호출이 0 이므로 맞다)."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A: 'cycle_add_work 는 cycle_add_work_repair 가 아니라 cycle_planning_repair' + ordinal 1/2 구분. B: 같은 내용 + resume 이 ordinal 2 로 add-work 를 식별한다는 dispatcher 근거까지."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "A: 기본값 없는 색인이라 KeyError, fallback·None 없음 — 게다가 실행해 재현. B: '.get() 이나 fallback 을 사용하지 않고 REPAIR_STAGE[stage] 를 실행' + KeyError 가 나는 두 경우를 나열. 양쪽 다 '완전성 테스트가 있으니 실패 경로가 없다' 는 회피를 하지 않았다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "네 항목 양쪽 통과. 한쪽은 실제로 코드를 돌려 확인했다 — REPAIR_STAGE 출력, repair_stage_for('cycle_planning_repair') 로 KeyError 재현(위치 team_repair_stages.py:30 까지 일치), pytest 6 passed. read_only 프로파일에서 파이썬으로 값을 찍어 보는 것은 읽기이며 허용 범위다.",
+    "outside_rubric": "B 는 사소한 오기 하나: baseline 분류를 'provider recovery 의' 라고 적었는데 실제 집합은 team_runtime.py:916-920 의 워크스페이스 baseline 이다. 취지(별도 이름을 만들면 분류가 바뀐다)는 맞아서 항목 실패로 보지 않는다."
+  }
+}

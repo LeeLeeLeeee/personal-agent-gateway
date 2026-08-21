@@ -1,0 +1,54 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-write-mode",
+  "fixture_sha256": "a5bc5c65e68f71c7d09fc3f422bd1e1fff5f6cd545869dc8c5c944d3d5a52de3",
+  "run_id": "d7bbbb4970484275a2dba918fc7bbc25",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T11:13:16.624437Z",
+  "finished_at": "2026-08-20T11:27:39.742423Z",
+  "wall_ms": 863117,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 2074766,
+    "output_tokens": 14027,
+    "cached_input_tokens": 1753344
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 space_policies.py:13 의 WriteMode Literal 을 이름과 줄로 지목했다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 execution_contract.compile_execution 이 모드로 sandbox(danger-full-access / workspace-write)와 워크스페이스 루트 요구를 가른다고 설명했다. 나아가 양쪽 모두 내가 기준을 쓰며 발견한 것을 스스로 찾았다: WorkspaceMode 가 별도 Literal 이고, runtime_factory 가 workspace_mode=policy.write_mode 로 넘기며, dataclass 는 Literal 을 런타임에 강제하지 않고, :70 의 '!= isolated' 가 포괄 조건이라 새 값이 오류가 아니라 조용히 직접 워크스페이스 취급을 받는다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "양쪽 다 write_mode 가 'text not null' 이고 CHECK·enum 이 없다는 것을 db.py:304-314 와 migrations.py:463-487 로 확인해 '값 추가에는 schema migration 불필요' 라고 판단했다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "양쪽 다 team_delivery.py:210-238 이 worktree 만 통과시키는 gate 라는 것을 짚고, 새 모드를 전달 가능하게 할지 명시적으로 결정해야 한다고 지적했다."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "양쪽 다 api/spaces.py 의 Pydantic Literal 이 실제 멤버십 검증 지점이라고 지목하고 프런트 SpacesView 를 변경 대상으로 들었다. 내가 직접 확인한 결과 두 주장 모두 사실이다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "다섯 항목 양쪽 통과. 어제 새로 기준을 쓴 두 번째 픽스처다. 내가 '확정 못 함' 으로 남겼던 5번 기준은 답변들의 주장을 받아 직접 확인했고 사실로 확정했다(api/spaces.py:12-16 Pydantic Literal, SpacesView/index.jsx:168-175 select).",
+    "outside_rubric": "한쪽은 _migration_16(migrations.py:627-634)의 'home + isolated' 데이터 마이그레이션이 새 모드를 열거하지 않으므로 대상 여부를 따로 결정해야 한다고 지적했다. 양쪽 다 project-feature-map 스킬의 vocabularies.py 로 어휘 등록 지점을 세었다."
+  }
+}

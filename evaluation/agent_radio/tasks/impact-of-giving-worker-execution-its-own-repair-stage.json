@@ -4,7 +4,7 @@
   "type": "architecture_impact",
   "title": "worker_execution에 전용 복구 stage를 만들면 무엇이 조용히 깨지는지 설명하라",
   "goal": "worker_execution이 전용 복구 stage를 갖도록 바꾼다고 할 때, 코드를 수정하지 말고 지금 그 stage의 복구가 어디서 어떻게 일어나는지, 그리고 무엇이 바뀌어야 하는지 설명하라. 그 변경이 에러 없이 조용히 약화시키는 보장이 있으면 반드시 밝히라. 조용히 깨지는 것과 검증에서 걸러지는 것을 모두 구분해 설명하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "read_only",
   "rubric": [
     {

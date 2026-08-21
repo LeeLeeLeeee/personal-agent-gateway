@@ -1,0 +1,44 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "what-attested-only-counts",
+  "fixture_sha256": "f5ec85ab126ee95b0428b32b2257709530b81a03a5e44440758755a07a6a207f",
+  "run_id": "fdefedce95464dc5b66f0596b64f538b",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-19T14:01:09.427268Z",
+  "finished_at": "2026-08-19T14:11:41.222368Z",
+  "wall_ms": 631795,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 4093126,
+    "output_tokens": 16476,
+    "cached_input_tokens": 3910912
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A: 'verified_count == 0일 때 true' + team_acceptance.py:158-168 지목. B: 'attested_only = (verified_count == 0)' + :158-167 지목. 둘 다 '서버가 실행해 통과시킨 검사 수'라는 동치 표현을 씀."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "A: checked:false 신고도 unverified로 기록될 뿐 attested_only를 false로 만들지 않는다고 명시하고, 반례 두 가지(필수 검증 0개 / 전부 check-less에 checked:false)를 모두 든다. B: 표에 'checked=False로 신고되어 unverified가 된 경우 → true; true가 워커의 보증을 뜻하지 않음' 행이 있다. 양쪽 다 '워커 신고만인 경우'로 끝내지 않았다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A: check가 있으면 run_verification_check를 실행하고 통과 시에만 verified_count가 증가, 워커 신고 status는 쓰지 않는다고 설명. B: 4단계에서 동일 내용. 양쪽 다 실패는 즉시 거절이라 증가 지점에 도달하지 않는다고 적었다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "두 답변 모두 정의를 정확히 잡았고 오해(워커 보증)를 명시적으로 부정했다. 인용한 행 번호도 사실과 일치한다. 이 픽스처는 두 팔을 가르지 못한다.",
+    "outside_rubric": "루브릭 밖 강점: B는 '거절 경로에는 키가 아예 없으므로 부재를 false로 읽지 말라'를 별도 항목으로 경고했고, A는 낡은 저장 결과에서 bool(evidence.get(...))이 False가 되는 호환 동작을 짚었다. 서로 다른 함정을 각각 하나씩 잡았다."
+  }
+}

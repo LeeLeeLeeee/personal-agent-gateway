@@ -1,0 +1,49 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-terminal-cycle-status",
+  "fixture_sha256": "c55dfe394fc05f73f04651e0d591a159a240f0204f64a7d5c4ef568ff718d168",
+  "run_id": "673e68c4073741d6bb573874e00059b5",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-19T11:06:45.079453Z",
+  "finished_at": "2026-08-19T11:22:04.063910Z",
+  "wall_ms": 918984,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1059664,
+    "output_tokens": 6622,
+    "cached_input_tokens": 1020928
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 team_lifecycle.py:54-56 의 TERMINAL_CYCLE_STATUSES 를 이름과 줄로 들고 새 값을 넣어야 한다고 말했다. 양쪽 다 짝이 되는 CycleStatus·TerminalCycleStatus Literal 까지 짚어 기준이 '더 정확하다' 고 한 형태를 만족한다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 dispatcher 가 이 집합을 보고 정산과 team.cycle.settled 발행을 가른다는 점을 짚었다. 한쪽은 세 지점(233 예외 경로 / 264 이벤트 / 331 interrupt 덮어쓰기 방지)을 표로 나눴다. 이벤트 이름을 발명한 곳이 없다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "양쪽 다 집합 추가만으로는 부족하다고 말하고 새 상태의 의미를 정의해야 하는 지점을 지목했다. 한쪽은 _execute_and_synthesize(3789-3849)의 blocked/failed 분기와 cycle_execution_disposition, team_model_effects 의 _terminal_status 를 모두 들었고, 다른 쪽은 cycle_execution_disposition·_terminal_status 를 들며 '이 집합 하나에만 의존하지 않고, 갱신하지 않으면 새 상태가 잘못된 branch 로 빠진다' 고 적었다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "양쪽 다 waiting_for_user·waiting_for_provider 가 종단이 아니라는 사실을 말하고 구별되는 동작을 댔다 — finished_at 스탬프 여부, 정산 대신 파킹, 재개 가능성. '대기 상태를 종단 집합에 넣어야 한다' 는 오답이 없다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "네 항목 양쪽 통과. 출력 토큰이 34,649 대 6,622 로 5배 차이인데 보고서 분량은 17KB 대 25KB 로 오히려 반대다 — 토큰 회계가 무엇을 세는지 확인하지 않았으므로 비용 비교에 쓰지 않는다.",
+    "outside_rubric": ""
+  }
+}

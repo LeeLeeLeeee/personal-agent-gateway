@@ -4,7 +4,7 @@
   "type": "bounded_implementation",
   "title": "동결된 provider 능력 스냅샷을 되읽는 함수를 만들라",
   "goal": "동결된 provider 능력 스냅샷을 다시 ProviderExecutionCapabilities 로 되읽는 함수를 추가하고, capability_payload 로 만든 값이 그 함수를 통해 원본과 같아지는 것을 검증하는 테스트를 작성하라. 기존 capability_payload 와 파서의 동작은 바꾸지 마라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "bounded_write",
   "rubric": [
     {

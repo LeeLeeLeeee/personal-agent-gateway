@@ -1,0 +1,54 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "which-files-a-verification-check-may-read",
+  "fixture_sha256": "6c71068709901360dc4895cf4a04a6164ab182e6c03b41b59de5b739977e0e34",
+  "run_id": "31049cce10b340d1a47fc7a384e05e81",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T10:26:02.875584Z",
+  "finished_at": "2026-08-20T10:38:37.368472Z",
+  "wall_ms": 754492,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1029003,
+    "output_tokens": 6725,
+    "cached_input_tokens": 978176
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 POSIX·Windows 절대 경로와 '..' 구성요소가 거부되고, 결합 후 resolve() 결과가 워크스페이스 안이어야 한다는 두 단계를 나눠 설명했다(:175-184 와 :92-109)."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 후보와 중간 구성요소의 symlink 거부, 디렉터리·비파일 거부를 짚었다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "양쪽 다 '.env' 와 '.env.' 접두사 둘 다 들었다('.env.' 문자열이 A 2회·B 7회). 한쪽은 대소문자 무시와 'foo.env 는 차단되지 않는다' 까지 덧붙였다. 기준의 실패 조건(.env 만 언급)을 피했다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "양쪽 다 1,000,000 을 숫자로 들고 읽기 전에 실패한다고 밝혔다. 양쪽 모두 '정확히 1,000,000 은 통과한다'(> 비교)까지 정확히 구분했다 — 기준이 요구한 것보다 정밀하다."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "양쪽 다 pattern 200자 상한과 검색 64,000 제한을 들고, 이것이 파일 크기 상한과 다른 층위임을 구분했다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "다섯 항목 양쪽 통과. 양쪽 다 두 상한(1,000,000 바이트 / 200자 pattern / 64,000 검색)을 숫자로 들고 층위를 구분했다.",
+    "outside_rubric": "한쪽이 실제 불일치를 찾았다: file_matches 의 증거 문구는 64,000 을 'bytes' 라 적는데 구현은 디코드된 문자 수를 센다(text[:CAP]). 그리고 해당 테스트가 ASCII 패딩을 쓰므로 멀티바이트 동작은 고정되어 있지 않다고 밝혔다. 양쪽 다 errors='replace' 때문에 잘못된 UTF-8 이 거부 조건이 아니라는 점도 짚었다."
+  }
+}

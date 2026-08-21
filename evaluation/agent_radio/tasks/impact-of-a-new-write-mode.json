@@ -4,7 +4,7 @@
   "type": "architecture_impact",
   "title": "새 write mode를 추가할 때 바뀌어야 하는 지점을 전부 들라",
   "goal": "space policy의 write mode에 새 값 하나를 추가한다고 할 때, 코드를 수정하지 말고 실제로 바뀌어야 하는 지점을 전부 설명하라. 저장 계층과 실행 계약 중 무엇이 값을 검증하는지 분명히 하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "read_only",
   "rubric": [
     {

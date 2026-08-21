@@ -1,0 +1,49 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-second-worker",
+  "fixture_sha256": "6755ed3786a257b0f6a24909295b3b581fcbcf6b15ab875f1b7ab2ea667c3462",
+  "run_id": "bf83814b9efd4d6abc005a2d6082f3db",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T07:59:25.114591Z",
+  "finished_at": "2026-08-20T08:08:54.216757Z",
+  "wall_ms": 569102,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 5424751,
+    "output_tokens": 19115,
+    "cached_input_tokens": 5204992
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A: 표로 계획의 member id 집합·owner_agent_id 검증(1789-1834, 1855-1863)·라운드로빈(2417-2423)을 근거와 함께 나눔. B: 같은 세 축 + teams.py:1763-1804. 양쪽 다 '팀에 멤버를 넣을 수 있다'로 끝내지 않았다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "A: '_execute() 가 ready_tasks[0] 만 고르고 await 한 뒤에야 다음 반복' + team_run_concurrency 는 '서로 다른 Team Run 을 병렬 처리하는 설정' 이라고 정확히 규정. B: 같은 근거 + claim_next 가 같은 run 의 두 cycle 동시 claim 을 막는다는 점까지. 기준이 명시한 실패 조건(그 값을 cycle 내부 병렬로 읽기)을 양쪽 다 피했다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A: 전 트리 (size, mtime_ns) 스냅샷 차분이고 writer/lock/content lineage 가 없다 → A 의 차분에 B 의 변경이 섞인다. B: 같은 메커니즘 + 'baseline receipt 의 agent_id 는 호출한 Agent 의 귀속이며 파일별 writer 를 증명하지 않는다'. 양쪽 다 'worktree 로 격리되니 문제없다' 오답을 피했다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "A: 키가 cycle:stage:ordinal / cycle:task:stage:ordinal 이라 다른 태스크면 문자열은 안 겹치고, 실제 차단점은 'cycle 당 열린 operation 하나' 라고 판정. B: 동일 판정 + '두 번째 reserve 가 key 충돌이 아니라 Cycle already has an open model operation 으로 실패한다'. 기준이 말한 가장 강한 통과 형태다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "네 항목 모두 양쪽 통과. 이 픽스처는 함정이 세 개(team_run_concurrency 의 이름 오해, worktree 가 워커별 격리라는 오해, operation_key 충돌 단정)인데 양쪽 다 셋을 모두 피했다.",
+    "outside_rubric": "B 요약에 '초기에는 지정 artifact 경로의 권한 문제로 제출이 거부되었으나 결과물을 working root 의 파일로 재제출' 이라는 기록이 있다. 이는 어제 고친 공간 정책/스테이징 모순과 같은 계열의 마찰이며, 내가 고친 결함이 평가 중 실제로 비용을 물렸다는 별도 증거다."
+  }
+}

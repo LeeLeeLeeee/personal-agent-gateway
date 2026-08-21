@@ -1,0 +1,54 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "add-a-verification-check-kind",
+  "fixture_sha256": "34e2a5db99dcef328a7749ff5a49921795bafa062198a295a9e70ef39e55c81e",
+  "run_id": "5cea3e0136494449a58f11a3245e1e3b",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T06:57:55.755446Z",
+  "finished_at": "2026-08-20T07:04:05.244316Z",
+  "wall_ms": 369488,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 75864,
+    "output_tokens": 803,
+    "cached_input_tokens": 72192
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 CHECK_TYPES 에 'file_not_contains' 를 리터럴로 넣고 _VALUE_TYPES = {'file_contains', 'file_not_contains'} 로 확장했다. 따라서 필드 파싱은 file_contains 와 같은 코드 경로(52-68행)를 그대로 탄다 — 새 파싱 로직을 만들지 않았다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 passed = check.value not in text. 부호가 반대로 뒤집혔고 폴백으로 새지 않는다(새 분기가 unknown 폴백보다 앞에 있음을 오프셋으로 확인)."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "한쪽은 한 테스트에서 있음→실패·없음→통과를 함께 단언. 다른 쪽은 두 테스트로 나누고 실패 쪽에서 evidence 에 'contains' 가 들어가는지까지 단언. 양쪽 다 '실패를 단언하는 코드'가 실제로 있다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "기존 네 분기(file_nonempty/file_contains/file_matches/json_parses) 블록을 원본 스냅샷과 바이트 비교했고 양쪽 모두 차이 없음. 눈으로 보지 않고 대조로 확인했다."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "격리 사본에서 직접 실행: 14 passed / 15 passed. 원본 기준선과 대조해 새로 깨진 것 없음. 하네스 로그가 아니라 그 자리 실행 결과다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "다섯 항목 양쪽 통과. 소스 파일이 바이트 단위로 동일하다 — 새 분기의 증거 문구('lacks'/'contains')와 파일 내 오프셋(5241)까지 같다. 차이는 테스트 구성뿐이다.",
+    "outside_rubric": "양쪽 다 team_model_operations.py:821 의 별도 어휘 사본은 갱신하지 않았다. 목표가 team_verification_checks.py 로 한정되어 있고 어떤 항목도 그 파일을 요구하지 않으므로 감점 사유가 아니다. 다만 그 결과로 모델 오퍼레이션 제출 경로에서는 file_not_contains 가 여전히 거부된다 — 두 답변 모두 이 사실을 언급하지 않았다."
+  }
+}

@@ -4,7 +4,7 @@
   "type": "architecture_impact",
   "title": "새 OperationStage 하나를 추가할 때 무엇이 바뀌어야 하는지 분석한다",
   "goal": "가상의 새 OperationStage 하나(예: 'cycle_new_thing')를 추가한다고 할 때, 코드를 수정하지 말고 이 코드베이스에서 실제로 바뀌어야 하는 지점을 전부 설명하라. 각 지점을 빠뜨렸을 때 실패 방식이 어떻게 다른지, 그 실패를 잡아내는 기존 검증이 있는지도 설명하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "read_only",
   "rubric": [
     {

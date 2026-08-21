@@ -4,7 +4,7 @@
   "type": "understanding",
   "title": "모델 클라이언트가 provider 능력을 어디서 읽는지 설명하라",
   "goal": "cycle에 속한 모델 클라이언트를 만들 때 provider의 실행 능력을 어디서 가져오는지, 그 값이 언제 정해지는지 설명하라. 스냅샷이 없는 cycle에서는 어떻게 되는지, 그 값을 왜 동결하는지도 설명하라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "read_only",
   "rubric": [
     {

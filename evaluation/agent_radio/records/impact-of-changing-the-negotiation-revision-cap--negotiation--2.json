@@ -1,0 +1,44 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-changing-the-negotiation-revision-cap",
+  "fixture_sha256": "eae292b194614decee282e81c94db85b7d56ca329c7718aa319ecc29504fe6ca",
+  "run_id": "50cc2e15796640aa93364df8bc07b1e2",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T08:29:48.139594Z",
+  "finished_at": "2026-08-20T08:41:49.637643Z",
+  "wall_ms": 721498,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 5921332,
+    "output_tokens": 22068,
+    "cached_input_tokens": 5642752
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "양쪽 다 상한 소진 시 실행에 들어가지 않고 cycle·run 모두 completed_with_failures 로 설정되며 error_message 가 collaboration_plan_approval_incomplete 라고 밝혔다. 한쪽은 '이벤트 종류는 team.run.completed 이지 failed 가 아니다' 까지, 다른 쪽은 '취소된 required task 를 일반 계산에 넣으면 failed 가 될 수 있으나 제품 의미는 실행하지 않음' 이라는 도킹 근거까지 짚었다. 기준의 실패 조건(failed 로 끝난다·예외로 죽는다)을 양쪽 다 피했다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 다 (team_run_id, cycle_id, revision) 유일 색인을 migrations.py:992-993 로 지목하고, cycle_id 가 NULL 이면 SQLite 가 NULL 을 서로 다른 값으로 취급해 상한 보호가 깨진다는 teams.py:3430-3433 도킹을 인용했다. 그리고 상한을 올리는 것에 스키마 migration 이 필요 없다고 정확히 판단했다 — '색인 위반이 난다' 는 오답을 피했다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "양쪽 다 discarded_task_ids 규칙을 두 예외까지 포함해 정확히 썼다: 승인된 리비전이 같은 태스크를 다시 제안하면 보존되고, 어떤 리비전에도 없는 후속 add_work 태스크도 제외되지 않는다. 행이 삭제되는 것이 아니라 status 가 canceled 로 남는다는 점도 양쪽 다 명시했다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "세 항목 양쪽 통과. 이 픽스처는 삭제된 항목 때문에 기준 번호가 밀려 있던 것 중 하나이고, 재정렬 후 채점했다.",
+    "outside_rubric": "루브릭 밖 관찰: 한쪽은 '저장 status 는 completed_with_failures 인데 이벤트 종류는 team.run.completed 라서 UI·hook·메트릭이 정상 완료로 오해할 수 있다' 를 지적했고, 상한을 내리는 경우의 데이터 호환(이미 저장된 번호가 새 상한보다 큰 상태)까지 다뤘다. 목표가 묻지 않은 지점이다."
+  }
+}

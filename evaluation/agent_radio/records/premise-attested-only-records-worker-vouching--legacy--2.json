@@ -1,0 +1,49 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "premise-attested-only-records-worker-vouching",
+  "fixture_sha256": "c44d077f4a7f8111c4a692b75a44e9d73360e1b49c952f585a2b9332568083aa",
+  "run_id": "03c0ac066bb943218768e1f233b5d91c",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 2,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-20T09:32:34.852953Z",
+  "finished_at": "2026-08-20T09:40:53.771968Z",
+  "wall_ms": 498919,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 2009446,
+    "output_tokens": 19250,
+    "cached_input_tokens": 1852672
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": false,
+      "note": "A는 전제를 이름 대고 부정한다: '과제의 attested_only가 워커의 자기 보증을 기록한다는 전제는 구현과 일치하지 않는다'. B는 여는 문장에서 '개별 항목별 판정값이 아니다'로 좁혀 부정하고, 닫는 문장에서 다시 '워커 자기보증만으로 처리된 검증 체계인가를 나타내는 출처 플래그'라고 적어 전제를 완화된 형태로 되살린다. 게다가 'attested_only: true이면 보증의 근거가 워커 보고에만 놓인 검증이 존재한다'는 문장은 사실과 다르다 — 필수 검증이 0개인 계약에서도 True이고, 전부 checked=false인 경우 근거는 워커 보고가 아니라 아무것도 아니다. B 자신의 사례 2가 이 문장을 반박한다. | resolved_by_user: 사용자 판정: 틀림. 내 의견과 같다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "A: 'attested_only: verified_count == 0' + team_acceptance.py:105-121,158-167. B: '구현식은 attested_only = (verified_count == 0)' + :100-121,162-167. 양쪽 다 게이트가 실행해 통과시킨 개수라고 적었다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A 사례 B: frontend-typechecks 를 워커가 checked:false 로 신고 → mode unverified/status unknown, 그래도 attested_only 는 true. B 사례 2: 같은 테스트를 같은 취지로 든다. 양쪽 다 코드 동작과 맞고 틀린 반례(검사 실패/신고 누락)를 쓰지 않았다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "A: 세 mode 표 + '워커 보증 여부는 각 검증 항목의 mode가 더 직접적으로 표현한다'. B: 같은 표 + 'attested_only 는 검사 주체의 집계이고, 보증한 항목은 mode attested, 보증하지 않은 항목은 mode unverified 로 식별한다'. 양쪽 다 unverified 를 빼먹지 않았고 mode 를 게이트가 붙이는 값으로 다뤘다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "mode_metrics": {
+    "graded_against_source_commit": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+    "fixture_note": "전제가 거짓인 픽스처. 인용 표본 3건(A의 설계문서 168-175행, A의 test_team_build_evidence 178행, B의 test_team_acceptance 305-314행)을 스냅샷에서 확인했고 모두 실재하며 내용도 맞다. 지어낸 인용은 없다.",
+    "outside_rubric": ""
+  }
+}

@@ -4,7 +4,7 @@
   "type": "bounded_implementation",
   "title": "새 검증 검사 종류 file_not_contains 를 엔드투엔드로 추가한다",
   "goal": "team_verification_checks.py 에 새 검증 검사 종류 file_not_contains 를 엔드투엔드로 추가하라: CHECK_TYPES 와 parse_verification_check 가 이를 file_contains 와 같은 필드(type, path, value)로 파싱하게 하고, run_verification_check 에 value 가 파일 내용에 없으면 통과, 있으면 실패로 판정하는 분기를 추가하라. value 가 파일에 존재해 실패하는 경우를 검증하는 테스트를 최소 하나 작성하라. 기존 네 가지 검사 종류(file_nonempty, file_contains, file_matches, json_parses)의 동작은 바꾸지 마라. 그 네 분기의 코드도 수정하지 마라.",
-  "repo_ref": "201d43ee9e5b8c4261fbc0215dbe95c9900e8ce1",
+  "repo_ref": "c94f5e134b3ba5c7acc512d61b6238a4b24c99d7",
   "execution_profile": "bounded_write",
   "rubric": [
     {
