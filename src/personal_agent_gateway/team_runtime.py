@@ -689,6 +689,29 @@ def _rules_block(snapshot: dict | None, include_persona_baseline: bool) -> str:
     return "TEAM RULES (frozen at run start):\n" + "\n".join(lines).strip() + "\n\n"
 
 
+ASSIGNMENT_TITLE_LIMIT = 70
+ASSIGNMENT_TITLES_SHOWN = 2
+
+
+def _assignment_summary(titles: Sequence[str]) -> str:
+    """동료의 담당을 한 줄로. 없으면 빈 문자열.
+
+    두 개까지만 보이고 각 제목은 잘라 쓴다. 이 문자열은 모든 모델 호출 앞에
+    붙는 접두사로 들어가므로, 태스크가 여덟 개인 사이클에서 상한이 없으면
+    로스터가 지시문을 밀어낸다. 잘렸다는 사실은 남긴다 -- 잘린 제목을 온전한
+    것으로 읽으면 워커가 없는 담당을 근거로 쪽지를 쓴다.
+    """
+    shown = [" ".join(str(t).split()) for t in titles if str(t).strip()]
+    if not shown:
+        return ""
+    clipped = [
+        t if len(t) <= ASSIGNMENT_TITLE_LIMIT else t[: ASSIGNMENT_TITLE_LIMIT - 1] + "…"
+        for t in shown[:ASSIGNMENT_TITLES_SHOWN]
+    ]
+    rest = len(shown) - len(clipped)
+    return "; ".join(clipped) + (f" (+{rest})" if rest > 0 else "")
+
+
 def _space_block(
     run: TeamRun,
     policy: dict | None,
@@ -1116,9 +1139,9 @@ class TeamRuntime:
                 notes = self._collaboration.undelivered(spec.team_run_id, agent.id)[
                     :MENTION_BATCH_LIMIT
                 ]
-            prefix = roster_block(self._roster_entries(spec.team_run_id)) + radio_block(
-                [(sender, text) for _, sender, text in notes]
-            )
+            prefix = roster_block(
+                self._roster_entries(spec.team_run_id, spec.cycle_id)
+            ) + radio_block([(sender, text) for _, sender, text in notes])
             if not prefix:
                 return messages, spec
             if not pinned:
@@ -1179,11 +1202,35 @@ class TeamRuntime:
             ),
         )
 
-    def _roster_entries(self, team_run_id: str) -> list[tuple[str, str]]:
+    def _roster_entries(
+        self, team_run_id: str, cycle_id: str | None = None
+    ) -> list[tuple[str, str, str]]:
+        """라벨, 이름, 그리고 그 동료가 이 사이클에서 맡은 일.
+
+        담당은 이 사이클의 태스크만 본다. 런 전체를 보면 지난 사이클에서 끝난
+        일이 현재 담당으로 실려, 워커가 이미 지나간 태스크를 근거로 쪽지를
+        보내게 된다.
+
+        태스크 제목을 잘라 쓴다. 접두사는 이미 I4 -- 공간 정책 없는 프롬프트
+        앞에 남의 글이 최대 2만 자 붙는 문제 -- 를 열어 둔 상태이고, 담당을
+        더하는 것은 같은 방향으로 나빠지는 일이다. 상한을 두지 않으면 태스크가
+        많은 사이클에서 로스터가 프롬프트를 밀어낸다.
+        """
         labels = self._collaboration.labels_for_run(team_run_id)
         by_agent = {agent.id: agent for agent in self._teams.list_agents(team_run_id)}
+        titles: dict[str, list[str]] = {}
+        try:
+            for task in self._teams.list_tasks(team_run_id, cycle_id):
+                if task.owner_agent_id:
+                    titles.setdefault(task.owner_agent_id, []).append(task.title)
+        except Exception:  # noqa: BLE001 - 곁다리가 호출을 막지 않는다
+            titles = {}
         return [
-            (label, str(by_agent[agent_id].persona_snapshot.get("name", "")))
+            (
+                label,
+                str(by_agent[agent_id].persona_snapshot.get("name", "")),
+                _assignment_summary(titles.get(agent_id, ())),
+            )
             for label, agent_id in sorted(labels.items())
             if agent_id in by_agent
         ]

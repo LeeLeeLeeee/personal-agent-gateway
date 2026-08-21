@@ -25,11 +25,22 @@ def agent_label(role: str, worker_ordinal: int | None) -> str:
     return f"W-{worker_ordinal:02d}"
 
 
-def roster_block(entries: Sequence[tuple[str, str]]) -> str:
-    """워커가 동료의 존재를 알게 하는 블록.
+def roster_block(entries: Sequence[tuple[str, str, str]]) -> str:
+    """워커가 동료의 존재와 **담당**을 알게 하는 블록.
 
     이것 없이는 수신자를 지정할 방법이 없다: 프롬프트는 자기 페르소나와 자기
     태스크만 담고 있어 동료가 있다는 사실조차 전달하지 않는다.
+
+    담당까지 실어야 하는 이유는 측정이 알려줬다. 두 워커로 돈 첫 스윕에서 쪽지
+    다섯 건이 전부 리드에게 갔다. 이름만 아는 워커는 자기가 방금 찾은 사실을
+    **어느** 동료가 필요로 하는지 알 수 없고, 그러면 일을 시킨 리드에게 보고하는
+    것이 유일하게 합리적인 선택이 된다. 담당 한 줄이 이름을 주소로 바꾼다.
+
+    담당이 비어 있어도 항목은 남긴다. 리더는 태스크를 소유하지 않고, 계획이
+    쪼개지기 전 워커도 소유하지 않는다 -- 지우면 그 시점에 수신자가 사라진다.
+
+    남의 담당이 내 프롬프트에 실리므로 그것을 지시로 읽지 말라고 한 마디
+    덧붙인다. 계약에 없는 산출물을 만들면 수용 게이트가 거부한다.
 
     라벨의 쓰임을 괄호 안에서 한정한다. 이 블록은 리더 프롬프트 위에도 붙고,
     그 바로 아래에 `Available team members`가 UUID와 `owner_agent_id`를 함께
@@ -39,10 +50,15 @@ def roster_block(entries: Sequence[tuple[str, str]]) -> str:
     """
     if not entries:
         return ""
-    lines = [f"- {label}: {name}" for label, name in entries]
+    lines = [
+        f"- {label}: {name}" + (f" -- {assignment}" if assignment else "")
+        for label, name, assignment in entries
+    ]
     return (
-        "TEAM ROSTER (label -> teammate; a label names a person in a note, "
-        "never in owner_agent_id):\n" + "\n".join(lines) + "\n\n"
+        "TEAM ROSTER (label -> teammate and what they are assigned; a label "
+        "names a person in a note, never in owner_agent_id). Another "
+        "teammate's assignment is context for addressing a note, not work for "
+        "you -- do only your own task:\n" + "\n".join(lines) + "\n\n"
     )
 
 

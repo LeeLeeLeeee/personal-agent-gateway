@@ -9225,3 +9225,54 @@ async def test_the_undelivered_record_is_written_at_most_once(
         if m.kind == "collaboration_undelivered"
     ]
     assert len(undelivered) == 1
+
+
+def test_an_assignment_summary_is_bounded():
+    """This string rides in front of every model call. Without a cap, a cycle
+    with eight tasks lets the roster push the instruction out of the prompt --
+    and I4 already has teammate text landing ahead of instructions on prompts
+    that carry no space policy."""
+    from personal_agent_gateway.team_runtime import (
+        ASSIGNMENT_TITLE_LIMIT,
+        ASSIGNMENT_TITLES_SHOWN,
+        _assignment_summary,
+    )
+
+    assert _assignment_summary([]) == ""
+    assert _assignment_summary(["", "   "]) == ""
+
+    long = "가" * (ASSIGNMENT_TITLE_LIMIT + 40)
+    one = _assignment_summary([long])
+    assert len(one) <= ASSIGNMENT_TITLE_LIMIT
+    # Truncation has to be visible: a clipped title read as a whole one makes a
+    # worker address a note about an assignment that does not exist.
+    assert one.endswith("…")
+
+    many = _assignment_summary([f"task {i}" for i in range(5)])
+    assert many.count(";") == ASSIGNMENT_TITLES_SHOWN - 1
+    assert "(+3)" in many
+
+
+@pytest.mark.asyncio
+async def test_a_worker_is_told_what_its_teammate_is_assigned(collab_setup) -> None:
+    """A label and a name give a worker nobody to write to. In the first
+    two-worker sweep every note went to the lead -- five of five -- because a
+    worker that knows only who exists cannot tell which teammate needs the fact
+    it just found. This asserts on a prompt a worker actually received, not on
+    the helper, because the helper being right is not the same as the runtime
+    passing it anything.
+    """
+    setup = collab_setup
+
+    await setup.runtime.start(setup.run.id, setup.cycle.id)
+
+    tasks = setup.teams.list_tasks(setup.run.id, setup.cycle.id)
+    owned = [t for t in tasks if t.owner_agent_id]
+    assert owned, "no task carried an owner, so there was no assignment to show"
+    prompts = [p for client in setup.worker_clients for p in client.prompts]
+    assert prompts, "no worker prompt was captured"
+    joined = "\n".join(prompts)
+    assert any(task.title in joined for task in owned)
+    # The peer's work is context for addressing a note, not work to do.
+    assert "do only your own task" in joined
+

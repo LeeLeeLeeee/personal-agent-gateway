@@ -24,7 +24,7 @@ def test_a_worker_label_without_an_ordinal_is_a_bug_not_a_default():
 
 
 def test_roster_block_names_every_teammate():
-    block = roster_block([("LEAD", "설계 리드"), ("W-02", "구현 담당")])
+    block = roster_block([("LEAD", "설계 리드", ""), ("W-02", "구현 담당", "")])
 
     assert "LEAD" in block and "설계 리드" in block
     assert "W-02" in block and "구현 담당" in block
@@ -36,7 +36,7 @@ def test_the_roster_scopes_its_labels_away_from_owner_agent_id():
     leader writes `owner_agent_id: "W-01"`, `_parse_task_plan` raises, and a
     planning repair round is burned -- the same wasted-round failure class the
     roster wording was filed against."""
-    block = roster_block([("LEAD", "설계 리드"), ("W-01", "구현 담당")])
+    block = roster_block([("LEAD", "설계 리드", ""), ("W-01", "구현 담당", "")])
 
     assert "owner_agent_id" in block
     assert "note" in block
@@ -58,7 +58,7 @@ def test_only_the_worker_outcome_contract_tells_a_model_to_send_mentions():
     assert len(prompts) >= 8
     assert '"mentions"' in prompts.pop("WORKER_PROMPT")
 
-    roster = roster_block([("LEAD", "설계 리드"), ("W-01", "구현 담당")])
+    roster = roster_block([("LEAD", "설계 리드", ""), ("W-01", "구현 담당", "")])
     for name, prompt in prompts.items():
         assert "mentions" not in (roster + prompt).lower(), name
 
@@ -105,3 +105,36 @@ def test_a_flood_of_notes_cannot_push_the_assignment_out():
     # 직접 보여야 한다 -- 50개 중 10개만 실리고, 나머지는 개수로 남는다.
     assert block.count("from W-02:") == MENTION_BATCH_LIMIT
     assert "40 more notes withheld" in block
+
+
+def test_the_roster_says_what_a_teammate_is_working_on():
+    """A label and a name give a worker nobody to write to. Every note in the
+    first two-worker sweep went to the lead -- five of five -- because a worker
+    that knows only who exists cannot tell which teammate needs a fact it just
+    found. The assignment is what turns a name into an address.
+    """
+    block = roster_block([
+        ("LEAD", "설계 리드", ""),
+        ("W-02", "구현 담당", "중복 허용 목록과 프롬프트 갱신"),
+    ])
+
+    assert "중복 허용 목록과 프롬프트 갱신" in block
+
+
+def test_a_teammate_with_nothing_assigned_still_appears():
+    """The lead owns no task, and a worker whose task has not been planned yet
+    owns none either. Dropping them would remove the only recipient a worker
+    has before the plan is split."""
+    block = roster_block([("LEAD", "설계 리드", ""), ("W-01", "구현 담당", "")])
+
+    assert "LEAD" in block and "W-01" in block
+
+
+def test_the_roster_does_not_read_as_an_instruction_to_do_a_peers_work():
+    """Naming a peer's assignment puts another task in this worker's prompt. A
+    worker that treats it as work reaches outside its own contract, and the
+    acceptance gate refuses deliverables it did not declare."""
+    block = roster_block([("W-02", "구현 담당", "중복 허용 목록 갱신")])
+
+    assert "yours" in block.lower() or "your own" in block.lower()
+
