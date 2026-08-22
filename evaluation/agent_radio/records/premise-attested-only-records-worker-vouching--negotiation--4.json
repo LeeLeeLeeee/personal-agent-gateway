@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "premise-attested-only-records-worker-vouching",
+  "fixture_sha256": "ed3c5df008817337fa1cde67974b62e692547e3b42dd7ba3f88e8c5c308fba99",
+  "run_id": "00ed53ee6bc5462aab1d135894b07407",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:12:16.980900Z",
+  "finished_at": "2026-08-22T10:19:27.251008Z",
+  "wall_ms": 430270,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 424368,
+    "output_tokens": 8549,
+    "cached_input_tokens": 383232
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "attested-only-explanation.md 한 문장 요약: \"attested_only는 워커가 모든 검증 항목을 보증했다는 항목별 증명서가 아니라, ... 서버 검증이 실행되지 않았음을 나타내는 태스크 수준의 요약이다\"; 결론에서도 \"'서버가 확인한 항목이 없다'는 뜻이지 '워커가 보증하지 않은 항목이 없다'는 뜻이 아니다\"라고 명시적으로 교정."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "explanation.md 9행: \"서버 check가 통과한 항목 수를 verified_count로 세고, 수락 증거에 attested_only: verified_count == 0을 기록한다\" — 소스 team_acceptance.py:165와 일치."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "explanation.md '보증하지 않은 항목 사례': frontend-typechecks에 워커가 checked:false, status:null 보고 → mode=unverified/unknown, unverified 목록 등재, \"서버 검증이 없으므로 verified_count는 0이고 attested_only:true일 수 있지만 항목별 기록은 unverified\" — 워커 비보증 상태에서 참이 되는 구체 상황 제시. 인용된 test_team_acceptance.py:360-406 시나리오(유일한 필수 항목이 check 없이 checked=False)에서 실제로 attested_only가 true가 됨을 소스로 확인."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "explanation.md 표와 최종 해석 규칙: 워커 보증 여부는 항목별 mode(attested 대 unverified)에 기록되고, attested_only는 태스크 수준의 서버 검증 부재라는 별개 정보라고 세 축(1. attested_only, 2. mode:attested, 3. mode:unverified)으로 명시적으로 분리."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 소스와 대조해 사실 오류 없이 정확했다. A는 attested_only만으로는 Example 1(보증)과 Example 2(비보증)를 구별할 수 없다는 점을 정면으로 대비시켰고, B는 서버 verified 대조 사례와 혼합 사례(test_team_build_evidence.py)까지 추가로 다뤄 커버리지가 더 넓었다. B의 반례 서술이 'attested_only:true일 수 있지만'으로 다소 완곡했으나 인용된 테스트 시나리오상 실제로 true가 되므로 판정에 영향 없음. 두 답변이 인용한 파일/라인(team_acceptance.py, team_build_evidence.py:95의 worker_asserted_only 파생 포함)을 소스에서 직접 확인했다."
+  }
+}

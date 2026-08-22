@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "round-trip-a-frozen-capability-snapshot",
+  "fixture_sha256": "4e277854c4ebeca24188b4087596f9c3a46290b36c088f7b28156b7a1c41c4fa",
+  "run_id": "df681a0a5b8343a58a281aee66f8a555",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:43:09.422134Z",
+  "finished_at": "2026-08-22T10:51:55.499684Z",
+  "wall_ms": 526077,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 150104,
+    "output_tokens": 2048,
+    "cached_input_tokens": 127744
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "runB의 capabilities_from_payload 가 payload를 {\"execution\": payload} 로 감싸 parse_provider_execution_capabilities 를 호출한다(team_provider_recovery.py). 형태 비대칭을 명시적으로 처리함."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "tests/test_team_provider_recovery.py에 test_capability_payload_round_trips_to_execution_capabilities 가 추가됨. capability_payload 결과의 리터럴 dict 동등성 검증 후 capabilities_from_payload(payload) == capabilities 를 단언함."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "동일하게 파서가 튜플을 재구성하고, 테스트의 dataclass 동등성 단언(원본 튜플 필드 포함)이 리스트 변질 시 실패하는 구조. 실행 결과 통과로 튜플 보존 확인됨."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "diff에서 capability_payload 와 parse_provider_execution_capabilities 본문 무변경 확인. 변경은 capabilities_from_payload 추가와 capabilities_for_cycle 내부에서 execution 키 추출 후 새 함수 호출로의 교체뿐이며, 두 명명 함수의 동작은 그대로임."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "runB 격리 사본에서 __file__ 확인 후 동일하게 실행: 33 passed, -k round_trip 1 passed. 새 테스트 포함 전부 통과."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물 모두 새 함수를 capabilities_for_cycle 호출부에도 연결했다. A의 경우 'execution' 키가 없는 snapshot dict를 통째로 {\"execution\": snapshot} 으로 감싸므로, 이전에는 LMGProtocolMismatch 로 거부되던 비정형 snapshot(내부 payload 형태의 dict)이 이제 파싱에 성공할 수 있는 미묘한 capabilities_for_cycle 동작 변화가 있다(루브릭이 명명한 두 함수 자체는 무변경). B는 snapshot에서 execution 을 추출해 다시 감싸는 방식이라 기존 동작과 사실상 동치다. 두 제출물의 새 테스트 모두 튜플 반환을 isinstance 로 직접 단언하지는 않고 dataclass 동등성에 의존하지만, 튜플/리스트가 == 에서 불일치하므로 검증력은 충분하다."
+  }
+}

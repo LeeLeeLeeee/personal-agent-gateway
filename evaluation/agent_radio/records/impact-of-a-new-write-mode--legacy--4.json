@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-write-mode",
+  "fixture_sha256": "4ab155849cbc9d66cf2a74977f110197b918c74642035d8df35c8e1ba8eca12e",
+  "run_id": "ff81b1fbb5d643228bacf0503d4fb2cb",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T09:09:07.288981Z",
+  "finished_at": "2026-08-22T09:24:04.883178Z",
+  "wall_ms": 897594,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1601636,
+    "output_tokens": 19523,
+    "cached_input_tokens": 1358848
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "reports/new-write-mode-impact-report.md 섹션 1 첫 행: `space_policies.py:11-28` (`WriteMode`, ...) \"Add the value to the canonical type declaration\"으로 이름과 위치를 명시. 소스와 일치(space_policies.py:13)."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "메인 보고서 섹션 4와 execution-contract-write-mode-impact.md에서 compile_execution이 full_access를 특수 처리(샌드박스 danger-full-access vs workspace-write, :52-56)하고 비isolated를 direct workspace로 보낸다(:70-86)고 정확히 설명하며 새 모드의 명시적 분기 추가를 요구. approval_policy는 컴파일 산출 필드로 언급(execution 보고서 6번)하되 '모드별 계산'으로 직접 명명하진 않음. 다만 소스에서 approval_policy는 sandbox 유무에서 파생되고 sandbox가 모드별로 갈리므로, 모드별 sandbox 계산 설명이 실질적으로 승인 정책 분기를 포괄한다고 판정. [check_ambiguous]"
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "섹션 2에서 migrations.py:463-487이 text-only이며 enum CHECK가 없음을 확인하고 \"A new value fits without a schema migration if opaque text remains intentional... a constraint/backfill decision requires a migration\"으로 조건부 판단까지 제시. migration 16(:627-633) 조건도 검토. 소스와 일치."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "메인 보고서 섹션 1(TeamSpaceManager 행)과 execution 보고서 1-2번에서 worktree의 git worktree add/브랜치 생성과 exact 'worktree'일 때만 Git 상태를 정리하는 수명주기를 정확히 서술하고, \"Add the new preparation and cleanup semantics or explicitly prove that aliasing an existing branch is safe\"로 새 모드의 수명주기 필요 여부 판단을 요구. 소스와 일치."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "섹션 5에서 api/spaces.py:12-16 request Literal 갱신과 frontend/src/components/organisms/SpacesView/index.jsx:4-25,161-185의 옵션 추가·scope 가용성·path 라벨·payload 정규화를 변경 대상으로 명시. 소스와 일치."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 read_only 과제를 준수해 소스를 수정하지 않고 보고서만 산출했으며, 루브릭 5항목을 모두 충족한다. 핵심 결론(저장 계층·실행 계약 모두 membership을 검증하지 않고 HTTP API의 Pydantic Literal이 유일한 런타임 멤버십 검증 지점이라는 점)도 두 답변이 동일하게 정확히 짚었고 소스 코드와 부합한다. B는 execution_contract가 unknown 값을 direct/workspace-write로 조용히 통과시키고 TeamSpaceManager가 worktree로 오인하는 위험 경로를 end-to-end로 추적한 점이 돋보이고, A는 compile_execution을 권위 검증 지점으로 승격하라는 설계 권고와 approval policy 명시가 더 직접적이다. 두 답변 모두 인용한 파일·라인 근거를 표본 검증한 범위에서 사실과 일치했다."
+  }
+}

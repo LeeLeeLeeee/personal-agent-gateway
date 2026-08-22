@@ -1,0 +1,60 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "agree-on-a-new-check-kind",
+  "fixture_sha256": "57f707b5d378494f639fc54aa6f9faab3d26b184f6c4f5ca23103100b76982f4",
+  "run_id": "2ca7c0af88b84a1cac68fcfca46de019",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T07:16:41.898380Z",
+  "finished_at": "2026-08-22T07:24:53.051165Z",
+  "wall_ms": 491152,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 605239,
+    "output_tokens": 2648,
+    "cached_input_tokens": 590080
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "종류 이름 'file_size_at_most'가 세 곳 모두 같은 철자로 존재. source/src/personal_agent_gateway/team_verification_checks.py CHECK_TYPES(5번째 항목), team_model_operations.py _valid_verification_check 허용 집합, team_runtime.py 129/220/300행(PLANNING_PROMPT, ACCEPTANCE_REVIEW_PROMPT, ADD_WORK_PROMPT 세 프롬프트 전부)에서 grep으로 확인."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "parse_verification_check가 요구하는 필드와 _valid_verification_check의 종류별 필드 규칙(expected.add(\"max_bytes\"), value.get(\"max_bytes\"))이 모두 'max_bytes'로 동일. 직접 실행으로 두 경로 모두 max_bytes=4 페이로드를 수용함을 확인."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "run_verification_check에 file_size_at_most 분기 존재(size <= check.max_bytes). 직접 실행: 5바이트/상한4 → passed=False, 4바이트/상한4 → passed=True, 3바이트 → True. parse 단계에서 True(bool), 0, -3, \"4\", 4.5, None 전부 ValueError로 거부됨을 직접 실행으로 확인(isinstance(max_bytes, bool) 선행 검사 포함)."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "source/tests/test_file_size_verification_check.py의 test_acceptance_validator_accepts_file_size_at_most_check가 _valid_verification_check(check)와 _valid_acceptance(acceptance)가 참임을 직접 단언. 격리 실행에서 통과."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "source 대비 diff 결과 team_verification_checks.py 변경은 전부 추가분(신규 분기·필드)이며 file_nonempty/file_contains/file_matches/json_parses의 판정 분기와 반환값 코드는 한 줄도 수정되지 않음. 기존 test_team_verification_checks/model_operations/runtime 스위트 전부(51+292개) 통과."
+    },
+    {
+      "id": "R6",
+      "passed": true,
+      "note": "제출물을 /tmp/grading/.../run/A로 격리 복사 후 /tmp/grading-venv/bin/python -m pytest 실행. 임포트된 team_verification_checks.__file__이 제출물 사본(/tmp/grading/agree-on-a-new-check-kind/run/A/src/...)을 가리킴을 확인. 신규 test_file_size_verification_check.py 포함 3개 파일 51 passed, 수정된 team_runtime.py에 대한 기존 tests/test_team_runtime.py도 292 passed(의존성 httpx/pydantic/python-dotenv/pytest-asyncio는 venv에 추가 설치)."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물은 종류 이름(file_size_at_most)과 필드 이름(max_bytes), 코드 구조까지 거의 동일하다. 차이점: B는 run_verification_check 안에 max_bytes 유효성 방어 검사를 한 번 더 두고 기존 테스트 파일 3개에 케이스를 병합해 넣었으며 리더 프롬프트에 새 종류가 있음을 단언하는 프롬프트 테스트를 추가했다. A는 별도 신규 테스트 파일 1개로 커버하고 _valid_verification_check를 직접 단언하는 테스트가 있다. B의 workspace 루트 tests/test_file_size_at_most.py는 source 트리 밖에 있어 실행 시 PYTHONPATH 지정이 필요했다. 채점 venv에는 pytest만 있어 test_team_runtime.py 실행을 위해 httpx, pydantic, python-dotenv, pytest-asyncio를 추가 설치했다(personal_agent_gateway는 미설치 상태 유지, 임포트 __file__로 그림자 없음 확인)."
+  }
+}

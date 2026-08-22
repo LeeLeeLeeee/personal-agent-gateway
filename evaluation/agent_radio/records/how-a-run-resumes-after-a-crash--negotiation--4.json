@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "how-a-run-resumes-after-a-crash",
+  "fixture_sha256": "f08a860b853159a3fcb9c6b247b00e87d0635796b3e7df01961bfa157138c49b",
+  "run_id": "b56c531d89fb48c985b08a058321256a",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T07:24:54.588672Z",
+  "finished_at": "2026-08-22T07:47:03.323058Z",
+  "wall_ms": 1328734,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1378611,
+    "output_tokens": 14777,
+    "cached_input_tokens": 1193984
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "ledger-resume-trace.md 상태별 분기 표와 final-resume-answer.md 표에서 prepared(runnable로 분류, 재호출)와 completed(locally_applicable, provider 재호출 없이 effect 적용)를 명확히 구분해 설명한다 (예: '`completed`는 provider를 다시 호출하지 않고 저장된 결과를 stage별 effect에 적용', '`prepared`는 runnable로 분류되어 dispatcher가 재개'). team_provider_recovery.py:482-518, team_runtime.py:1271-1334 인용도 실제 코드와 일치."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "ledger-resume-trace.md 'completed' 절: 'completed operation을 provider에 다시 invoke하지 않고 이미 있는 결과를 recovered로 사용해 stage별 effect를 적용... completed는 \"모델 호출 재개\"가 아니라 \"로컬 ledger 결과 적용 재개\"다'. 모든 열린 연산을 재호출한다는 서술 없음. 소스 team_runtime.py:1276-1280(planning completed는 apply_plan만 반환)과 부합."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "ledger-resume-trace.md: '_recover_open_operation()이 stage별 prompt/context를 복원하고, prepared일 때만 _invoke_existing_operation()을 호출해 같은 operation을 다시 실행'. stage-resume-analysis.md에서 저장된 instruction(add-work, team_runtime.py:1283-1305)과 persisted objection(contest)으로 메시지를 재구성함을 명시. 소스 1289-1304, 1660-1671과 일치."
+    },
+    {
+      "id": "R4",
+      "passed": false,
+      "note": "세 보고서 어디에도 _recover_open_operation 말미의 fallback인 'Open operation stage {stage} is not recoverable here' (team_runtime.py:1701-1703) 언급이 없고, 분기되지 않은 stage가 회복 불가로 실패한다는 서술도 없다. grep으로 'recoverable/회복 불가/1701/fallback'을 확인했으나 provider_recovery의 source 복원 fallback(다른 의미)만 언급된다. plan-review가 '일반 execution branch가 아니다'라는 서술은 있으나 미등록 stage의 실패 처리를 짚지 않음."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 소스와 대조 시 인용 라인이 정확했다(reconcile_startup의 status 분기, _invoke_existing_operation, invoking→ambiguous 격리 등). B는 추가로 objection replan ordinal 20/30 경로(_resume_interrupted_replan)와 stage_ordinal 의존성을 짚었고, A는 startup control flow(app.py lifespan → dispatcher reconcile)와 canceled source 우선 규칙을 더 상세히 다뤘다. 유일한 판정 차이는 R4의 미등록 stage fallback 언급 유무다."
+  }
+}

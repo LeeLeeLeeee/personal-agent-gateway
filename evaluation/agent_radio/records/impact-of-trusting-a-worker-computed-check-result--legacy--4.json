@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-trusting-a-worker-computed-check-result",
+  "fixture_sha256": "78718981400fe8e79b028acfc88e59193c7f7d10d2e9acaffa3bf0a406ba7608",
+  "run_id": "9ad6cb8a5e524e2a9b2813af5e0cf0c6",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:11:34.706330Z",
+  "finished_at": "2026-08-22T10:21:09.735864Z",
+  "wall_ms": 575029,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 783604,
+    "output_tokens": 11256,
+    "cached_input_tokens": 646400
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "reports/required-change-explanation.md:5,21 'gate trusts the worker execution result, while worker claims remain excluded'과 trust-boundary-design.md의 'A model claim, a printed shell result, or checked: true is not a trusted execution receipt', 'the proposed transport only moves an assertion across a boundary', 'A free-form worker_check_result field ... would remain a claim'이 긴장을 정면으로 다룬다. 모델이 쓴 주장과 task/run/attempt/nonce/workspace generation에 바인딩된 실행 영수증을 구분하고, 구분 없이는 '워커가 계산한 결과'가 또 하나의 주장으로 전락해 보장이 무너진다는 이유를 명시한다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "current-gate-audit.md '§Existing guarantee excluding worker claims'가 team_acceptance.py:100-121(체크 분기에서 reported 미사용, run_verification_check 결과만 판정), :185-217(recovery도 acceptance evidence 기준), tests/test_team_acceptance.py:223-289, 443-469를 근거로 든다. 소스 확인 결과 team_acceptance.py:108-122에서 required.check가 있으면 reported를 읽지 않고 서버 검사 결과로만 판정·continue하며, 인용된 테스트(예: test_a_gate_run_check_ignores_the_worker_claim_entirely, 443행)도 실제 존재함을 확인했다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "check 문구는 '무엇을 포기하면 나머지가 성립하는지 선택지로 갈라 제시'를 요구하는데, A는 예시(서버 재실행=재검증) 형태의 명시적 양자택일 대신 조건 분기로 갈라 말한다: (i) 자유형 worker_check_result/모델 주장을 신뢰하면 그것은 여전히 claim이라 보장을 포기하는 것이 되고('would not solve the requirement because it would remain a claim', 'moving the evaluator to the worker only moves the assertion'), (ii) 실행기 신원·바인딩·검증을 갖춘 영수증만 소비하면 무조건적 신뢰를 포기하는 대신 보장이 성립한다. 각 선택지에서 무엇이 희생되는지 밝히므로 인정했으나, check의 예시 프레이밍(서버 재실행 옵션)을 직접 다루지는 않아 채점자 간 갈릴 수 있어 모호 표시. [check_ambiguous]"
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "required-change-explanation.md 'Unresolved risks': 'The source tree has no existing worker receipt protocol; the audits found only model JSON claims and the server evaluator' — 영수증/서명/바인딩 메커니즘이 현재 코드베이스에 없음을 감사로 확인하고, executor identity·authenticated transport·replay 방지 등을 새로 정의해야 한다고 명시한다. 존재하지 않는 기반을 이미 있는 것처럼 전제하지 않는다. 소스 grep으로도 워커 검증 영수증 프로토콜이 없음을 확인했다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 코드를 수정하지 않는 read_only 제약을 지켰고, 인용한 소스·테스트 라인(team_acceptance.py:106-122, tests/test_team_acceptance.py:223-289, 443-469)이 실제 코드와 일치함을 직접 확인했다. A는 영어 보고서 3편(감사/설계/설명), B는 한국어 보고서 3편(워커 2편+종합 계획)으로 구성이 다르지만 결론 구조(별도 실행 결과 채널, task/attempt/check digest/workspace 바인딩, fail-closed, check-less attestation 보존, rejected_verification_names 분리 유지)는 사실상 동일하다. A의 trust-boundary-design.md 말미에 knowledge_request JSON 블록이 남아 있는 점, B의 worker1 보고서에 오타 경로(/Users/iyeonghyeon/pag-b125268/...)가 하나 있는 점은 사소한 흠이다."
+  }
+}

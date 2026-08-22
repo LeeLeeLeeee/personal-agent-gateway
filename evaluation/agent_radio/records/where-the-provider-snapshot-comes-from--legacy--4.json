@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "where-the-provider-snapshot-comes-from",
+  "fixture_sha256": "45587e3efd8f4c225a6c1a2cdb28721206db3d0446c0585f0289f077eb8d889d",
+  "run_id": "989be3da4066414fb79d11c80b22bb78",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T11:11:22.286819Z",
+  "finished_at": "2026-08-22T11:20:58.893340Z",
+  "wall_ms": 576606,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1137334,
+    "output_tokens": 12149,
+    "cached_input_tokens": 997120
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "B의 summary와 reports/missing-snapshot-freeze.md 결론이 'cycle.execution_metadata[\"provider_capabilities\"]에 저장된 snapshot을 capabilities_for_cycle()가 파싱'한다고 명시하고 app.py:706-724를 지목. 소스(app.py:708-717)와 일치하며 non-cycle 경로만 registry descriptor를 읽는다는 구분도 정확. 레지스트리 직접 질의 주장 없음."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "B의 summary가 'cycle 생성 직후 freeze_cycle이 preparer·orchestrator·모델 클라이언트 실행 전에 snapshot 저장'을 명시하고, reports/missing-snapshot-freeze.md:15와 provider-execution-source.md:19가 호출 지점 team_cycle_dispatcher.py:157-184(정확히 :168)를 지목. 소스와 일치."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "B의 summary가 'live registry fallback 없이 ProviderRecoveryRequired 발생'을 명시하고, missing-snapshot-freeze.md:27-31이 capabilities_for_cycle의 파싱 실패 경로(team_provider_recovery.py:76-82, 521-526)와 fallback 부재를 정확히 지목. 소스와 일치."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "B의 summary가 '실행 중 provider capability 변경 차단, cycle 내 실행 계약의 일관성·재현성 보장'을 명시하고, provider-execution-source.md:32-38이 '실행 계약을 cycle 시작 시점에 고정해 이후 registry/LMG capability 변화가 같은 cycle의 client 구성에 영향을 주지 않게 하는 lifecycle 경계'라고 설명. 시작 시점 고정 취지를 충족."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 소스와 대조해 오류가 발견되지 않았고 근거 인용의 라인 번호도 실제 소스와 일치했다. B는 '동결이 DB의 절대적 write-once는 아니다'라는 뉘앙스(set_cycle_provider_capabilities가 기술적으로 재기록 가능)를 추가로 짚었고, A는 fail-closed 경계와 no-refresh 계약 테스트를 근거로 제시하는 등 강조점만 다르다. A의 summary 끝에 'Library에 요청되었습니다'라는 과제와 무관한 문구가 붙어 있으나 채점에 영향은 없다."
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-operation-stage",
+  "fixture_sha256": "e3eb8c2f6f5075e430d13348f33129396a1dd18297cbed3e10bee17e465feda7",
+  "run_id": "5f45c659497f4618be0bfe704fd9eb32",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T07:51:54.170457Z",
+  "finished_at": "2026-08-22T08:07:12.311111Z",
+  "wall_ms": 918140,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1730575,
+    "output_tokens": 18061,
+    "cached_input_tokens": 1529856
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "new-operation-stage-impact.md 첫 행: \"Add the literal to `OperationStage` in `src/personal_agent_gateway/team_model_operations.py:16-40`\". 파일명과 Literal을 이름으로 명시함."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "core-stage-surfaces.md:20에 \"add its repair target to `REPAIR_STAGE` in `src/personal_agent_gateway/team_repair_stages.py:10-29`\"라고 딕셔너리를 이름으로 언급하고 매핑 추가를 요구함. 최종 보고서도 같은 파일/라인 범위로 등록을 요구함."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "new-operation-stage-impact.md 행 7: \"Put the stage in `_WORKER_STAGES`/`_LEAD_STAGES` at src/personal_agent_gateway/team_provider_recovery.py:538-550\" (worker/lead 소유일 때) 및 taskless면 별도 명시 분기 필요라고 조건부 분류를 요구함. 그룹 테스트가 non-cycle_만 검사해 이 이름을 놓친다는 점도 명시함."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "REPAIR_STAGE 누락: contract-validation-surfaces.md:15 \"the test fails immediately\" (test_every_stage_has_a_repair_target), 본 보고서에도 \"A missing repair target is caught structurally\". 그룹 분류 누락: 본 보고서 행 7 \"A task-owning stage omitted from a group skips role invariants\" — 조용히 role 불변식 검사를 건너뛰며, 그룹 테스트는 non-cycle_만 검사해 이 이름을 \"intentionally misses\"한다고 명시. 두 실패 방식을 명시적으로 구분함."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 루브릭을 넘어 recovery 분기(team_runtime.py:1238-1703), _execute 분류, effect family, validator registry, dispatcher resume, hook/API projection, 마이그레이션 불필요(stage 컬럼이 free text)까지 소스 라인 단위로 정확히 짚었다. 소스 확인 결과 두 답변이 인용한 라인 번호(_WORKER_STAGES=538, REPAIR_STAGE=10-29, 그룹 테스트의 cycle_ 면제)는 실제와 일치한다. A는 grouping 누락의 런타임 결과를 최종 보고서 본문에서는 'rejected as an invalid source'로 다소 혼합해 서술했지만 validation 보고서에서 silent-skip을 정확히 구분했다. read_only 과제라 실행 가능한 제출 테스트는 없었다."
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "understand-acceptance-gate",
+  "fixture_sha256": "6fc65ab48f972f3c8be8f21e1c0d7c4430303ef3224508782249fbb8dac0e284",
+  "run_id": "9599d5fd53314fb3893139832cb3b3e9",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:54:51.498607Z",
+  "finished_at": "2026-08-22T11:04:48.097562Z",
+  "wall_ms": 596598,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1026416,
+    "output_tokens": 11862,
+    "cached_input_tokens": 898304
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "summary와 final_report.md 모두 네 가지 타입을 정확히 열거하고 'parse_verification_check exposes exactly these four types through CHECK_TYPES'(team_verification_checks.py:8-11 인용)로 소스와 일치. workspace의 acceptance_gate/*.md grep 결과 지어낸 검사 이름 없음."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "final_report.md에 'The verifier performs only local file reads, parsing, and regex matching; it does not invoke shell, subprocess, arbitrary executable, or test-runner checks'(team_verification_checks.py:117-172 인용) 명시. 테스트/빌드를 돌린다는 서술 없음."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "summary가 non-null check(서버 결과 권위)와 check:null(worker 보고서 처리)을 구분. final_report.md도 verified 경로(run_verification_check 권위)와 attested/unverified 경로를 단계별로 구분(항목 2와 3)."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "summary: 'non-null check는 서버 결과를 권위 있는 판정으로 사용'; final_report.md: 'its result is authoritative and a failure immediately returns required_verification_failed... The worker's report is not used to override that server result'. 워커 보고와 대조한다는 서술 없이 서버 결과 단독 판정을 명시. rejected_verification_names의 'never the worker's self-report' 동작(team_acceptance.py:185-217)도 정확히 인용."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "summary: \"'checked:false, status:null'은 'unverified'로 허용됩니다\"; final_report.md: 'A valid checked:false, status:null report is accepted as unverified... but is not counted as a pass'. 나아가 중간 보고서(executed_check_types.md)의 지나치게 넓은 서술을 최종 합성본에서 소스 근거로 교정했음을 명시."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 5개 항목을 모두 충족하며 소스와 대조해 오류가 발견되지 않았다. B는 짧은 summary의 R4 표현('not used to override')이 단독으로는 다소 약하지만 final_report.md가 서버 결과 단독 권위를 명확히 한다. B는 추가로 team_outcomes.py의 checked/status null 계약, 단락 평가(short-circuit)와 rejected_verification_names의 미도달 검사 비난 제외, 의존성 처리까지 다뤄 범위가 더 넓다. A는 파서의 unknown type 거부와 파일 preflight(크기/민감파일/심링크) 제한을 정확히 기술했다. A summary의 '누락된 attestation, 또는 실패한 attestation은 수용을 거부'는 checked=False 케이스와 모순되지 않는다(누락/failed만 거부)."
+  }
+}

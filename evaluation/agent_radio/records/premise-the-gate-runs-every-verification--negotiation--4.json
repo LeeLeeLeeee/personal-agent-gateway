@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "premise-the-gate-runs-every-verification",
+  "fixture_sha256": "4f74b83933ff7042788f64fc44a3d1261fa7b173d6cd9a936324189994a1832b",
+  "run_id": "c06c8ca0b4f24c1b85fbffb076a0468b",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:19:29.132322Z",
+  "finished_at": "2026-08-22T10:28:05.629487Z",
+  "wall_ms": 516497,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 955498,
+    "output_tokens": 13445,
+    "cached_input_tokens": 858368
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "reports/acceptance-gate-explanation.md 판단 요약에서 'acceptance gate가 required_verifications를 무조건 전부 실행하는 것은 아니다 ... 실패하거나 필수 결과가 없으면 그 자리에서 거부한다'로 전제를 명시적으로 부정. summary에도 '성공 경로에서만 전체 항목이 종합되며 ... 조기 반환' 명시. 소스와 일치."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "reports/...md:32 '첫 실패 뒤의 항목은 기록되지 않는다 ... 전체가 결과에 있다는 보장은 성공적으로 끝난 실행에만 성립' + analysis/gate-collection-trace.md:98-108 '뒤에 있던 항목은 실행·수집되지 않으며 evidence에도 나타나지 않는다', 'loop가 닿지 않아 entry가 없는 checked 항목은 blame하지 않는다'로 두 요소 모두 충족."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "reports/...md 순회 순서 절: '순회 순서는 acceptance payload에서 받은 배열 순서', '정렬이나 set 변환 없이 for required in ... 직접 순회', worker 보고 dict는 lookup용일 뿐이라는 설명 포함. 소스와 일치하며 중복 이름 거부(teams.py:4244-4245)까지 정확히 짚음."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "reports/...md:11에서 task_not_completed, required_output_missing, undeclared_deliverable, unsafe_deliverable 네 가지 사전 조기 거부를 모두 명시하고 '이 네 경로에서는 required_verifications를 하나도 실행하지 않는다'고 결론. 소스 team_acceptance.py:85-98과 일치."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "루브릭 외 정확도 차이: B는 recorded를 리스트('recorded=[]', 'append한 항목별 결과 목록', 'evidence[\"verifications\"] 배열')로 서술했으나 소스(team_acceptance.py:103)는 이름 키의 dict이며, B 보고서 항목 4는 attested 통과 시 verified_count가 증가한다고 썼으나 소스에서는 check 경로(:121)에서만 증가한다. 그 결과 B의 attested_only 의미 설명이 자기모순이 된다. A는 recorded가 dict라는 점과 attested_only가 '서버 검사식 항목 0개'라는 의미를 정확히 서술했다. 두 답 모두 루브릭 항목 자체는 정확한 소스 근거로 충족."
+  }
+}

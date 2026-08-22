@@ -1,0 +1,60 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "type-the-unmapped-repair-stage-error",
+  "fixture_sha256": "52436f841a79a1d1472d2bab4eee1e91199005cb4ed5cffab86ddf85d7add46a",
+  "run_id": "54697c6ebd054596b7ce127b126ca94f",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:40:15.006986Z",
+  "finished_at": "2026-08-22T10:44:59.528166Z",
+  "wall_ms": 284521,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 213230,
+    "output_tokens": 1903,
+    "cached_input_tokens": 203008
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "source/src/personal_agent_gateway/team_repair_stages.py에 class UnmappedRepairStageError(LookupError)를 정의하고 repair_stage_for에서 KeyError를 잡아 raise ... from None 으로 발생시킴. LookupError 서브클래스이지만 KeyError가 아닌 별도 예외 클래스임."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "메시지 f\"No repair stage is registered for {stage!r}\" 에 stage 이름 포함. 테스트 match=stage로도 검증됨."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "REPAIR_STAGE 무변경, 등재 stage는 그대로 반환. 동일 두 기존 테스트가 격리 실행에서 통과."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "diff는 pytest import, 새 예외 import, 새 테스트 추가뿐. 기존 테스트 본문 무수정."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "test_unregistered_stage_raises_with_stage_name 이 stage=\"unregistered_stage\"에 대해 pytest.raises(UnmappedRepairStageError, match=stage)로 단언."
+    },
+    {
+      "id": "R6",
+      "passed": true,
+      "note": "scratchpad/gradeB 격리 사본에서 동일 방식으로 실행, __file__ 이 사본을 가리킴을 확인. 결과 7 passed(신규 테스트 포함)."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물 모두 사실상 동일한 구조의 해법이다. 차이점: A는 ValueError 기반 예외에 원인 체이닝(from exc)을 유지하고 미등재 테스트 입력으로 실제 OperationStage 값인 'cycle_planning_repair'(repair stage 자체는 매핑에 없음)를 사용했다. B는 LookupError 기반 예외에 from None으로 체인을 끊었고 임의 문자열 'unregistered_stage'를 사용했다. B의 LookupError 상속은 KeyError를 기대하던 기존 except LookupError 호출자와의 호환 측면에서 더 보수적일 수 있으나 루브릭 판정에는 영향 없다. B의 workspace에는 verification/test_team_repair_stages.txt 실행 기록도 있었다."
+  }
+}

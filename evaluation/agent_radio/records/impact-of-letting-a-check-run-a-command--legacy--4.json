@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-letting-a-check-run-a-command",
+  "fixture_sha256": "c94f738fa1b61e47d500f0a4b1b9d8c68c9066267144ef89cd2b30f0cd16da66",
+  "run_id": "5e2b294a9eae4f8283657953c79a8357",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T09:58:45.033807Z",
+  "finished_at": "2026-08-22T10:11:32.661586Z",
+  "wall_ms": 767627,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 838918,
+    "output_tokens": 14223,
+    "cached_input_tokens": 717568
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "reports/current-check-boundary.md와 reports/final-evaluation.md가 허용 타입이 file_nonempty/file_contains/file_matches/json_parses 네 가지뿐이고 모두 workspace 내부 파일을 읽는 판정임을 명시하며, \"check가 셸 명령, 테스트 러너, 임의 subprocess...를 실행할 수 있는 경로는 현재 없다. run_verification_check 안에 subprocess 호출이나 실행기 위임도 없다\"고 진술. 소스 team_verification_checks.py(CHECK_TYPES 4종, run_verification_check에 subprocess 없음)와 대조해 사실로 확인됨."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "final-evaluation.md \"계약에 check가 있으면 acceptance 서버가 직접 실행하고 worker의 checked/status 주장은 무시한다\"(team_acceptance.py:100-121 인용, 소스와 일치), current-check-boundary.md \"결과가 workspace 파일만으로 결정된다는 재현성이 약해진다. PATH, toolchain, 환경 변수, 현재 시각, 외부 네트워크에 의존할 수 있다\"로 명령 실행이 서버 재현성·워커 독립 판정을 어떻게 약화시키는지 설명함."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "final-evaluation.md \"safe_workspace_file은 validator가 읽는 파일만 보호한다. 자식 command는 절대 경로·상속 환경·네트워크로 그 밖에 접근할 수 있다\"고 명시하고, 변경 요구사항 2-3항에서 process-group timeout, OS/container sandbox, 명시적 network 차단, 자원 상한을 별도 제약으로 요구함. ShellRunner에 timeout이 없다는 인용(runners/shell.py:19-33)도 소스와 일치."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "final-evaluation.md 재사용 절에서 execution_contract.py의 ExecutionRequirements/CompiledExecution이 sandbox, network, staged-input manifest를 모델링함을 지목하고 \"새 verifier가 이 컴파일된 계약을 소비하면 좋지만 현재 ShellRunner에 적용되지 않는다\"고 재사용을 권고. SourceStager, safe_workspace_file, capability/approval 배관도 재사용 부품으로 열거함. 소스 execution_contract.py에 해당 구조(sandbox_modes/network_modes 검증) 존재 확인."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 인용한 소스 라인(team_verification_checks.py의 4종 check와 safe_workspace_file, team_acceptance.py의 서버 우선 판정, runners/shell.py의 timeout 없는 create_subprocess_shell, execution_contract.py의 capability 검증)을 직접 대조한 결과 사실과 일치했다. B의 execution-constraints.md 48행에 source_staging 경로 오타(/Users/iyeonghyeon/pag-b125268/...)가 하나 있으나 판정에 영향 없는 수준. A는 스냅샷 검증이 check 이후에 실행된다는 순서 문제까지 짚었고, B는 execution_contract 기본값(workspace-write, approval never) 상속 위험을 짚는 등 각자 루브릭 밖의 정확한 추가 관찰이 있었다."
+  }
+}

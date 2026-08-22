@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "how-a-run-resumes-after-a-crash",
+  "fixture_sha256": "f08a860b853159a3fcb9c6b247b00e87d0635796b3e7df01961bfa157138c49b",
+  "run_id": "74f1ec9aeee84126a9dad5ee709d47f8",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T07:23:26.168375Z",
+  "finished_at": "2026-08-22T07:45:14.456600Z",
+  "wall_ms": 1308288,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 2399696,
+    "output_tokens": 22062,
+    "cached_input_tokens": 2096384
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "operation-recovery.md 결론부에서 'prepared → runnable_cycle_ids: 같은 연산을 다시 호출', 'completed → locally_applicable_cycle_ids: 모델을 다시 호출하지 않고 결과의 로컬 효과를 적용'으로 두 상태의 처리를 구분해 설명하며, summary에도 동일 구분이 있다. 인용 라인(team_provider_recovery.py:482-518)이 실제 소스의 reconcile_startup 분기와 일치."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "operation-recovery.md 표의 completed 행: '모델을 재호출하지 않고 stage의 effect를 적용한다', stage-recovery-differences.md에도 '모델을 다시 부르지 않고 stage별 효과를 적용'. 모든 열린 연산 재호출이라는 오서술 없음. 소스와 일치."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "operation-recovery.md prepared 행: '재개된 runtime은 stage에 맞는 입력을 재구성한 뒤 같은 operation key/digest/session을 가진 _invoke_existing_operation()으로 다시 호출한다'. stage-recovery-differences.md에서 add-work는 '원장에 저장된 effective instruction/objective를 사용해 메시지를 재구성', contest는 'persisted objection으로 메시지를 재구성'이라고 구체적으로 서술. 소스와 일치."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "stage-recovery-differences.md plan review 절: '이 경로는 일반 _recover_open_operation()의 worker/planning/synthesis/contest 분기와 별개이며, 그 함수의 미지원 stage fallback은 team_runtime.py:1701-1703에 있다'. 소스 확인 결과 해당 라인이 정확히 raise OperationConflict(f\"Open operation stage {operation.stage} is not recoverable here\")로, 마지막 fallback 지목 요건을 충족."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 소스와 대조 시 인용 라인이 정확했다(reconcile_startup의 status 분기, _invoke_existing_operation, invoking→ambiguous 격리 등). B는 추가로 objection replan ordinal 20/30 경로(_resume_interrupted_replan)와 stage_ordinal 의존성을 짚었고, A는 startup control flow(app.py lifespan → dispatcher reconcile)와 canceled source 우선 규칙을 더 상세히 다뤘다. 유일한 판정 차이는 R4의 미등록 stage fallback 언급 유무다."
+  }
+}

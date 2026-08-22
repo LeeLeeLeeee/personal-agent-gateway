@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-terminal-cycle-status",
+  "fixture_sha256": "bbeaddec694ba0c3704e7c4a72f68700d50ef82ee9cb0152c8b6f49353175bb2",
+  "run_id": "607198d4715742b9aa419615ebfbfadf",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T08:07:13.733547Z",
+  "finished_at": "2026-08-22T08:51:10.088326Z",
+  "wall_ms": 2636354,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 2808171,
+    "output_tokens": 23469,
+    "cached_input_tokens": 2480384
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "reports/terminal-status-definitions.md:10과 terminal-predicate-consumers.md:12,25가 team_lifecycle.py:42-56의 TerminalCycleStatus·TERMINAL_CYCLE_STATUSES를 이름으로 들고, 새 상태가 cycle 종단이면 두 타입/집합을 모두 갱신해야 한다고 명시한다. 소스와 일치."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "terminal-predicate-consumers.md §1 표가 team_cycle_dispatcher.py의 run_one 예외 처리(:225-245), on_team_run_settled의 settle_cycle 호출과 종단 시 team.cycle.settled 발행(:252-279), _interrupt_cycle의 종단 보존(:320-345)을 각각 짚는다. 소스의 실제 분기(233,264,331행)와 일치."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "terminal-status-definitions.md §2가 _execute_and_synthesize가 _terminal_status로 cycle_execution_disposition을 호출해 '결과가 blocked/failed면 run과 cycle을 같은 상태로 저장'하고 apply_synthesis가 terminal_status를 run/cycle 양쪽에 저장한다고 명시하며, terminal-predicate-consumers.md §3이 '단순히 consumer 집합만 확장해서는 새 상태가 생성되지 않는다'고 판정 로직의 별도 정의 필요성을 설명한다. 소스(team_runtime.py:4151-4184, team_lifecycle.py:131-180)와 일치."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "terminal-status-definitions.md:9가 '현재 비종단 상태는 queued, running, waiting_for_provider, waiting_for_user, interrupted'라고 대기 상태의 비종단성을 명시하고, terminal-predicate-consumers.md가 teams.py:2492-2510의 waiting_for_user 재전환 방지, 취소 SQL의 active(waits 포함) 목록에서 새 종단 제외, recovery의 waiting_for_provider 재개 대상에서 새 종단 배제(:55)를 지적해 새 상태를 대기 상태와 구분해 정의해야 함을 밝힌다. [check_ambiguous]"
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 루브릭 4개 항목을 넘어 정확한 전수 조사를 수행했다. A는 영어 보고서 3부로 검증 시나리오까지 제시했고 직접 참조 지점(team_cycles.py:11,523,965 / dispatcher:12,233,264,331 / teams.py:21,2500)을 grep 수준으로 정확히 열거했다(소스 grep으로 전부 확인됨). B는 한국어 보고서 2부로 latest_final_cycle SQL(team_cycles.py:675-689)과 AUTO due-request SQL이 종단 5개를 하드코딩 복제한다는 점, set_cycle_status의 finished_at literal set(teams.py:1292-1297)을 정확히 짚었으며 소스 확인 결과 모두 사실이다. B의 summary 자체는 매우 짧아 근거가 전부 workspace 보고서에 있다. 두 답변 모두 TERMINAL_RUN_STATUSES/TERMINAL_TASK_STATUSES가 별개 도메인이라 자동 확장하면 안 된다는 경계도 정확히 구분했다."
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "refuse-private-key-files",
+  "fixture_sha256": "6ca81c2bc8cb6d1cc32c10c2b02d0f696aec76ce5da83d4006b3554795554ffb",
+  "run_id": "291187ea080e439fb3865c1f5c2231ac",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:37:49.273680Z",
+  "finished_at": "2026-08-22T10:43:07.956711Z",
+  "wall_ms": 318683,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 481765,
+    "output_tokens": 6774,
+    "cached_input_tokens": 439296
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "source/src/personal_agent_gateway/file_safety.py의 is_sensitive_file이 lowered = name.lower() 후 lowered.endswith(\".pem\")과 lowered.startswith(\"id_rsa\")를 판정에 추가함. 기존과 동일하게 소문자 정규화된 이름으로 비교."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "lowered == \".env\" or lowered.startswith(\".env.\") 비교가 원본(/Users/iyeonghyeon/pag-eval/source/pag-b125268/src/personal_agent_gateway/file_safety.py)과 문자 그대로 동일하게 유지됨. 새 조건은 or로 뒤에 추가."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "시그니처 is_sensitive_file(name: str) -> bool 그대로이며 os.path/pathlib 분해나 디렉터리 검사 없이 이름 문자열만 비교함. iter_safe_files도 변경 없음."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "source/tests/test_file_safety.py에 is_sensitive_file(\"server.pem\")·(\"SERVER.PEM\") 거부 단언과 not is_sensitive_file(\"ordinary.txt\") 비거부 단언이 존재. .env 유지 테스트도 별도 존재."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "격리 사본(/tmp/grading/refuse-private-key-files/runA)에서 PYTHONPATH=runA/src로 /tmp/grading-venv/bin/python -m pytest tests/test_file_safety.py 실행: 2 passed. 임포트된 file_safety.__file__이 /tmp/grading/refuse-private-key-files/runA/src/personal_agent_gateway/file_safety.py로 제출물 사본을 가리킴을 확인. file_safety를 참조하는 tests/test_team_build_evidence.py도 14 passed."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물의 file_safety.py 구현 diff가 완전히 동일하다(조건 순서·줄바꿈까지 일치). 차이는 테스트 파일뿐으로, B의 테스트가 대소문자 변형과 경계 사례(certificate.pem.bak, .envexample)를 더 촘촘히 다룬다. A의 workspace에는 test_run.log와 verification_report.md가, B에는 verification/file_safety_verification.txt가 추가로 존재한다."
+  }
+}

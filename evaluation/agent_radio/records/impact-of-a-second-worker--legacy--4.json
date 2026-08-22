@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-second-worker",
+  "fixture_sha256": "c1fe61ed921eac3e2458f60fe96501092e4b62899f8ba2ba1dea8edd4b8ed1ac",
+  "run_id": "dba1da4373fc4f27805d555e9d2195d0",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T09:24:10.708629Z",
+  "finished_at": "2026-08-22T09:33:40.887002Z",
+  "wall_ms": 570178,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 2520895,
+    "output_tokens": 18154,
+    "cached_input_tokens": 2238720
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "reports/concurrency-architecture.md '이미 여러 워커를 전제한 부분' 절이 팀 구성(member_persona_ids 전체를 team_agents 행으로 생성, teams.py:357-373 — 소스에서 leader/member insert 확인), 계획 결과의 owner_agent_id 저장(team_runtime.py:2149-2159 — 소스 2150행 owner_agent_id 확인), round-robin 할당(2761-2768 — 소스에서 workers[counter % len(workers)] 확인)을 파일:행 근거와 함께 지목한다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "concurrency-architecture.md 결론이 '여러 워커를 데이터 모델·계획·할당에서 지원하지만 한 cycle 안의 task 실행은 순차적'이라고 명시하고, _execute가 ready_tasks[0] 하나를 골라 await self._run_task 완료까지 다음 task를 시작하지 않는다는 근거(team_runtime.py:2758-2780)를 든다. 소스에서 ready_tasks[0] 선택과 순차 await 구조를 직접 확인했다. dispatcher concurrency(run 간 병렬)와 cycle 내부 순차성도 구분한다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "write-attribution-operation-identity.md가 귀속이 task 전후 workspace snapshot(size, mtime_ns) 비교에 의존함(team_results.py:56-76 — 소스에서 workspace_snapshot/workspace_changes 확인)과 모든 agent가 같은 working_root를 공유함(teams.py:357-373 — 소스 확인)을 짚고, 동시 쓰기 시 상대 task의 변경이 snapshot 구간에 섞여 잘못된 task에 귀속되거나 중간 변경이 누락될 수 있음을 설명한다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "write-attribution 보고서가 operation key가 cycle_id[:task_id]:stage:ordinal로 결정적이며 worker ID를 포함하지 않음(team_runtime.py:5090-5099 — 소스의 _operation_key와 일치)을 근거로, 동일 key 정확 중복은 idempotent 재사용, spec 불일치는 OperationConflict, cycle당 open operation 1개 partial unique index(migrations.py:713-719 — 소스 확인)로 조용한 충돌 없이 fail-closed라고 판정한다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 read_only 프로파일을 준수했고(코드 수정 없음, 보고서만 산출), 핵심 인용 파일:행이 소스 export와 실제로 일치했다. B는 dispatcher worker_id가 lineage/큐 항목에 포함되지 않는다는 점, deliverable publisher의 task별 destination 분리, run-result.json 등 package 파일의 last-writer 위험까지 다뤄 커버리지가 다소 넓고, 동시 쓰기 귀속 오염 시나리오를 표로 체계화했다. A도 API의 max_workers=1 고정과 configured_max_workers 노출 등 실행 경로 제약을 정확히 짚었다. 품질 차이는 있으나 루브릭 4개 항목 기준으로는 양쪽 모두 충족한다."
+  }
+}

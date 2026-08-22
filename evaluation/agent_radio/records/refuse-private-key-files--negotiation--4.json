@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "refuse-private-key-files",
+  "fixture_sha256": "6ca81c2bc8cb6d1cc32c10c2b02d0f696aec76ce5da83d4006b3554795554ffb",
+  "run_id": "e9559ffcdd234abbaf055a9f83753e31",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:28:06.742712Z",
+  "finished_at": "2026-08-22T10:33:09.592345Z",
+  "wall_ms": 302849,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 239599,
+    "output_tokens": 2405,
+    "cached_input_tokens": 231168
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A와 동일한 구현: lowered = name.lower() 뒤 lowered.endswith(\".pem\") or lowered.startswith(\"id_rsa\") 추가 (source/src/personal_agent_gateway/file_safety.py)."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": ".env / .env. 접두사 판정이 원본과 동일하게 유지됨. 테스트로도 .ENV, .env.local 거부와 .envexample, .environment 허용을 검증함."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "시그니처와 이름 기반 비교 계약 유지, 경로 분해/디렉터리 검사 추가 없음. iter_safe_files 변경 없음."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "source/tests/test_file_safety.py에 parametrize로 private.pem/PRIVATE.PEM/server.Pem 거부 단언과 ordinary.txt/certificate.pem.bak/env 비거부 단언이 존재. id_rsa 및 .env 규칙 테스트도 포함."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "격리 사본(/tmp/grading/refuse-private-key-files/runB)에서 동일 방식으로 실행: tests/test_file_safety.py 15 passed. __file__이 runB 사본을 가리킴 확인. tests/test_team_build_evidence.py도 14 passed."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물의 file_safety.py 구현 diff가 완전히 동일하다(조건 순서·줄바꿈까지 일치). 차이는 테스트 파일뿐으로, B의 테스트가 대소문자 변형과 경계 사례(certificate.pem.bak, .envexample)를 더 촘촘히 다룬다. A의 workspace에는 test_run.log와 verification_report.md가, B에는 verification/file_safety_verification.txt가 추가로 존재한다."
+  }
+}

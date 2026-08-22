@@ -1,0 +1,60 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "add-a-file-absent-verification-check",
+  "fixture_sha256": "894a675afa88bec1b1b06eac42774dd08e237177ab27a05a89ae38cd54c68e87",
+  "run_id": "93e545adf15d463baf0e17e048602500",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T11:44:11.194516Z",
+  "finished_at": "2026-08-22T11:50:17.300991Z",
+  "wall_ms": 366106,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 107458,
+    "output_tokens": 1041,
+    "cached_input_tokens": 102656
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "B의 source/src/personal_agent_gateway/team_verification_checks.py도 동일하게 종류 분기 이전, 기존 resolved is None 실패 반환보다 앞에 file_absent 분기를 두어 'resolved is None -> CheckResult(True, ...)'를 반환한다. test_file_absent_passes_when_file_is_missing이 격리 실행에서 통과했다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "B 구현도 읽기 가능한 파일이 있으면 CheckResult(False, f\"file_absent: {check.path} is readable\")를 반환한다. test_file_absent_fails_when_file_exists가 격리 실행에서 통과했다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "B도 _VALUE_TYPES/_PATTERN_TYPES를 변경하지 않았고, 새 테스트 두 개가 모두 parse_verification_check({\"type\": \"file_absent\", \"path\": ...}) 형태(path만)로 파싱해 사용하며 격리 실행에서 통과했다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "B의 source/tests/test_team_verification_checks.py에 test_file_absent_fails_when_file_exists(존재 시 not result.passed)와 test_file_absent_passes_when_file_is_missing(부재 시 result.passed) 두 테스트가 별도로 존재한다."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "B의 diff도 CHECK_TYPES 재포맷과 file_absent 블록 추가뿐이며 기존 네 분기의 로직/반환값은 그대로다. src 트리에서 team_verification_checks.py 외 변경 파일 없음. 격리 실행에서 기존 테스트 13개가 전부 통과했다."
+    },
+    {
+      "id": "R6",
+      "passed": true,
+      "note": "제출물 source/를 run/B로 복사하고 PYTHONPATH=run/B/src로 동일하게 실행. __file__이 run/B/src/... 사본을 가리킴을 확인. 결과 15 passed(새 테스트 2개 포함, 0 failed)."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물의 구현 diff는 사실상 동일한 구조(종류 분기 전 file_absent 조기 처리 + open('rb') 가독성 확인)다. A는 team_model_operations.py의 별도 검사 종류 허용 집합에도 file_absent를 추가해 상위 파서와 일관성을 맞췄고(B는 해당 파일 미변경), workspace 루트에 verification_report.md를 남겼다. B의 summary가 언급한 '기존 검사 회귀 테스트 추가'는 실제로는 새 테스트 2개뿐이고 기존 테스트는 원본 그대로였다."
+  }
+}

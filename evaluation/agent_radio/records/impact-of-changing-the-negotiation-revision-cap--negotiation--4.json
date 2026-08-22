@@ -1,0 +1,45 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-changing-the-negotiation-revision-cap",
+  "fixture_sha256": "b6ca3b99e4b2eeb8dd3381092e672f79d9aae8432870b8ff2d2baf274e96cbec",
+  "run_id": "a3b4283c8ded40fdbc3ca572ad000e94",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T09:30:06.985145Z",
+  "finished_at": "2026-08-22T09:37:56.052605Z",
+  "wall_ms": 469067,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1353642,
+    "output_tokens": 10581,
+    "cached_input_tokens": 1231104
+  },
+  "rubric_results": [
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "A의 reports/final-revision-cap-impact-review.md '상한 초과 시 런 종료' 절이 next_revision()==None 시 _abandon_negotiation() 호출, pending 태스크 canceled, 활성 리비전 abandoned, 사이클·런 completed_with_failures + error collaboration_plan_approval_incomplete, team.run.completed 발행까지 설명. 소스 team_runtime.py의 _abandon_negotiation(2610~) 실제 코드와 일치함을 직접 확인함."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A 보고서 '저장·식별' 절이 (team_run_id, cycle_id, revision) 고유 인덱스(migrations.py:979-993)를 명시하고, 새 순번이 max(revision)에서 계산되며 상한 변경 시 기존 저장 번호와 새 상한의 경계·None 처리·고유 제약을 함께 검토해야 한다고 연결함. migrations.py의 idx_team_plan_revisions_number unique index를 소스에서 직접 확인함."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "A 보고서 '승인되지 않은 리비전의 태스크' 절이 superseded/abandoned 리비전의 pending 태스크가 canceled로 전환되고(행 삭제는 아님), _live_plan_tasks()/_live_cycle_task_rows()와 discarded_task_ids() 규칙(team_plan_negotiation.py:150-178)으로 실행·합성 대상에서 제외되며 생존 리비전 공유 태스크는 보존됨을 설명. 소스의 discarded_task_ids() 구현과 일치 확인."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 코드 미수정 요구를 지켰고 소스 라인 인용이 실제 코드와 일치했다. B는 operation ordinal 규칙(revision*100+approver_index, 10*(superseded+1))과 재시작 복구(_resume_interrupted_replan), 다운스트림 skipped_by_dependency 파급까지 더 세밀하게 다뤘고, A는 별도 하위 보고서 2건(cap-and-termination-review.md, revision-lifecycle-review.md)을 함께 산출했다. 품질 차이는 있으나 루브릭 3개 항목은 양쪽 모두 충족."
+  }
+}

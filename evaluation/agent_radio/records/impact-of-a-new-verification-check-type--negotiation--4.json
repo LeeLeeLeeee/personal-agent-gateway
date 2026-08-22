@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-verification-check-type",
+  "fixture_sha256": "ac9265cfebeaf88ee77aafe5f6b060e186220af609bf885ad90ae1adcd657f27",
+  "run_id": "edbf0fa958db479880c91fd3cc466ff1",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T08:51:13.340316Z",
+  "finished_at": "2026-08-22T09:05:55.435229Z",
+  "wall_ms": 882094,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 805522,
+    "output_tokens": 17230,
+    "cached_input_tokens": 683264
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A의 new-verification-check-type-impact.md:39-41이 team_verification_checks.py:8-13의 CHECK_TYPES와 :39-80의 parse_verification_check를 이름·라인으로 들고, _VALUE_TYPES/_PATTERN_TYPES가 타입별 detail 필드를 분류하므로 'CHECK_TYPES만 늘리는 것은 충분하지 않다'고 명시. 실제 소스(team_verification_checks.py:11-13,39-80)와 일치."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "A 보고서 68-70행: run_verification_check(:117-172)의 미등록 type fail-closed(:171-172)를 지적하며 'allowlist만 추가하고 실행 분기를 추가하지 않으면 새 검사는 성공 판정되지 않는다', '새 종류마다 성공/실패 조건, evidence를 run_verification_check에 추가해야 한다'고 명시."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A 보고서 89-93행: team_runtime.py의 PLANNING_PROMPT(:108-129), ACCEPTANCE_REVIEW_PROMPT(:189-219), ADD_WORK_PROMPT(:282-298)가 네 종류와 JSON 필드를 직접 열거함을 들고 '새 종류를 모델이 선택할 수 있어야 한다면 세 prompt를 함께 바꿔야 한다'고 명시. 소스 확인 결과 실제로 :125-128, :215-218, :294-297에 종류가 열거됨."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "A 보고서 113-114행: TeamRunDetail/index.jsx:265-305가 check.type/path를 일반 표시하고 value/pattern만 조건부 표시하므로 기존 shape면 변경 불필요, 새 필드·의미면 변경 대상이라고 근거와 함께 판단. BuildEvidence.jsx:1-4가 모든 검사를 file read로 설명하며 json_parses 누락 drift까지 지적하고, 새 종류가 file-read가 아니면 이 계약을 수정해야 한다고 판단. 소스 확인과 일치(BuildEvidence.jsx 1-2행 주석)."
+    },
+    {
+      "id": "R5",
+      "passed": false,
+      "note": "A의 세 보고서 어디에도 'migration'이나 DB enum/CHECK 제약 언급이 없음(전체 grep 결과 0건). acceptance가 JSON으로 저장·재수화된다는 서술(_task_acceptance_json, _team_task_from_row)과 VerificationCheck.type이 일반 str이라는 서술은 있으나, migration이 필요 없다는 판단 자체를 내리지 않음. migration 필요를 주장하지도 않았지만 check 문구가 요구하는 '필요 없다고 근거를 들어 말한다'를 충족하지 못함."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 team_model_operations.py:821의 중복 allowlist(operation-ledger validator)를 정확히 찾았고 라인 인용이 실제 소스와 일치했다. A는 저장 경로가 JSON임을 사실상 파악했으나 migration 여부라는 질문 형태로 결론을 내리지 않아 R5에서만 갈렸다. B는 team_model_effects.py가 CHECK_TYPES를 import해 정본 집합을 공유한다는 점과 _canonical_check_payload의 필드 유실 가능성 등 A에 없는 canonicalizer 경계도 추가로 짚었다."
+  }
+}

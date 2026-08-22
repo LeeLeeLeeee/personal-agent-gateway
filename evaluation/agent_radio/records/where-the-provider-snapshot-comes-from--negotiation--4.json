@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "where-the-provider-snapshot-comes-from",
+  "fixture_sha256": "45587e3efd8f4c225a6c1a2cdb28721206db3d0446c0585f0289f077eb8d889d",
+  "run_id": "fe136a3c73a345299662aaeac76c8431",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:58:19.749873Z",
+  "finished_at": "2026-08-22T11:04:49.893065Z",
+  "wall_ms": 390143,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 975555,
+    "output_tokens": 8342,
+    "cached_input_tokens": 849152
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A의 보고서(reports/cycle-provider-explanation.md §2)가 cycle-aware factory가 저장된 snapshot을 capabilities_for_cycle()로 파싱한다고 명시하고 app.py:677-710, team_provider_recovery.py:61-82를 지목. 소스 확인 결과 app.py:709에서 cycle이 있으면 capabilities_for_cycle(cycle, agent.backend)만 호출하고 registry 조회는 else 분기(non-cycle)에만 있어 서술이 정확함. 레지스트리 직접 질의 주장 없음."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "A의 summary가 'cycle 생성 직후 동결'을 서술하고, workspace 보고서(reports/provider-execution-source.md:24-25, provider-snapshot-edge-cases.md:9)가 TeamProviderRecovery.freeze_cycle()을 이름으로 지목하며 호출 지점 team_cycle_dispatcher.py:151-169를 인용. 소스 확인 결과 run_one이 create_cycle 직후 line 168에서 freeze_cycle(cycle.id)를 호출함과 일치."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A의 보고서 §3이 snapshot 없거나 malformed면 capabilities_for_cycle() 파싱이 ProviderRecoveryRequired를 내고 'cycle 경로는 live registry로 fallback하지 않는다'고 명시(team_provider_recovery.py:61-82 지목). freeze 단계 실패 시 dispatcher가 cycle을 failed 처리한다는 서술도 소스(dispatcher:168-179)와 일치. 레지스트리 대체 조회 주장 없음."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "A의 보고서 §4가 '동결된 값은 cycle 시작 시점의 실행 계약'이며 실행 중 provider catalog refresh나 capability 변경에도 sandbox/network/permission 동작이 cycle 도중 달라지지 않게 한다고 설명. registry lookup을 실패시키는 no-refresh 계약 테스트(tests/test_app_team_factory.py:449-479)까지 근거로 제시."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 소스와 대조해 오류가 발견되지 않았고 근거 인용의 라인 번호도 실제 소스와 일치했다. B는 '동결이 DB의 절대적 write-once는 아니다'라는 뉘앙스(set_cycle_provider_capabilities가 기술적으로 재기록 가능)를 추가로 짚었고, A는 fail-closed 경계와 no-refresh 계약 테스트를 근거로 제시하는 등 강조점만 다르다. A의 summary 끝에 'Library에 요청되었습니다'라는 과제와 무관한 문구가 붙어 있으나 채점에 영향은 없다."
+  }
+}

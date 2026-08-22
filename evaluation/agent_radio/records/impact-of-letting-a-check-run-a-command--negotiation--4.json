@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-letting-a-check-run-a-command",
+  "fixture_sha256": "c94f738fa1b61e47d500f0a4b1b9d8c68c9066267144ef89cd2b30f0cd16da66",
+  "run_id": "780df023b27b43609a88316094fb8667",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T09:50:55.343390Z",
+  "finished_at": "2026-08-22T10:01:35.786980Z",
+  "wall_ms": 640443,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1304849,
+    "output_tokens": 17671,
+    "cached_input_tokens": 1162496
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "data/check-permissions.md가 \"현재 수용 게이트의 서버 검사는 셸 명령, 테스트 명령, 임의 프로세스를 실행하지 않는다\", 검사 4종이 workspace 안의 안전한 일반 파일 읽기임을 명시하고 \"구현에 subprocess, Popen, create_subprocess 호출이 없다\"고 진술. 소스 확인 결과 정확함(team_verification_checks.py:8-11, 115-172)."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "check-permissions.md가 \"worker가 무엇이라고 보고했는지와 무관하게 서버가 run_verification_check 결과로 결정한다\"를 짚고(소스와 일치), execution-constraints.md 결론이 \"서버가 재현 가능한 파일 관찰 결과로 판정한다는 경계가 더 이상 성립하지 않는다\", 6항에서 \"종료 코드 하나만으로는 명령이 어떤 환경·네트워크·입력·시간에 의존했는지 알 수 없다\"로 약화 경로를 설명함."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "command-check-impact-report.md \"이 범위는 ... 실행 샌드박스가 아니라, 서버 파일 판정 함수가 읽는 대상만 제한하는 경계다\", execution-constraints.md \"safe_workspace_file의 ... 방어는 ... command의 권한 sandbox를 대신하지는 않는다\"(원문은 '이 파일 경로 검사는 셸 프로세스의 파일 접근을 제한하는 샌드박스가 아니다')를 명시하고, 실행에는 provider 샌드박스, network=denied, wall-clock timeout, CPU/메모리/프로세스 제한이 별도로 필요하다고 지적함."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "execution-constraints.md가 ExecutionRequirements/CompiledExecution의 네트워크·샌드박스·권한 모드 capability 검증(execution_contract.py:40-68)을 재사용 후보로 지목하고 \"새 검사도 동일한 동결 공간 정책과 입력 스냅샷을 입력으로 삼아야 한다\"고 재사용을 권고. 나아가 기본값이 workspace-write/승인 never라 그대로 상속하면 과한 권한이 된다는 주의까지 부기함(소스 compile_execution의 approval_policy='never' 분기와 일치)."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 인용한 소스 라인(team_verification_checks.py의 4종 check와 safe_workspace_file, team_acceptance.py의 서버 우선 판정, runners/shell.py의 timeout 없는 create_subprocess_shell, execution_contract.py의 capability 검증)을 직접 대조한 결과 사실과 일치했다. B의 execution-constraints.md 48행에 source_staging 경로 오타(/Users/iyeonghyeon/pag-b125268/...)가 하나 있으나 판정에 영향 없는 수준. A는 스냅샷 검증이 check 이후에 실행된다는 순서 문제까지 짚었고, B는 execution_contract 기본값(workspace-write, approval never) 상속 위험을 짚는 등 각자 루브릭 밖의 정확한 추가 관찰이 있었다."
+  }
+}

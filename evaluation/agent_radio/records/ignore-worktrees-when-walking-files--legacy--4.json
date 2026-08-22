@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "ignore-worktrees-when-walking-files",
+  "fixture_sha256": "3ae92792fad290e5ffbd373416ffd1cf038a5b8131501f83317be4fef9056133",
+  "run_id": "506b766b83574a8abbaa061c72f5f28d",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T07:45:19.295370Z",
+  "finished_at": "2026-08-22T07:49:12.244185Z",
+  "wall_ms": 232948,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 280161,
+    "output_tokens": 5242,
+    "cached_input_tokens": 245760
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A의 source/src/personal_agent_gateway/file_safety.py 를 원본(/Users/iyeonghyeon/pag-eval/source/pag-b125268)과 diff한 결과 유일한 변경이 IGNORED_DIRECTORY_NAMES 집합에 \".worktrees\", 한 줄 추가(17a18)임을 확인했다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "iter_safe_files의 비교 로직(name.lower() not in IGNORED_DIRECTORY_NAMES)이 원본과 바이트 단위로 동일하며, diff에 집합 원소 추가 외 변경이 없다. 별도의 경로 패턴 검사(startswith, fnmatch 등)를 새로 만들지 않았다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A의 file_safety.py 34-39행에 'and not (Path(current) / name).is_symlink()' 조건이 원본 그대로 남아 있어 심볼릭 링크 디렉터리 제외가 유지된다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "tests/test_file_safety.py의 test_iter_safe_files_skips_worktrees_but_includes_ordinary_directory 가 .worktrees/excluded.txt 와 ordinary/included.txt 를 만든 뒤 결과 전체가 [(\"included.txt\", \"ordinary/included.txt\")] 와 같음을 단언한다. 전체 목록 동등성 단언이므로 ordinary 파일 포함과 .worktrees 파일 부재를 모두 검증한다. 단일 테스트 함수에 두 방향이 함께 들어 있다. [check_ambiguous]"
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "제출물을 스크래치패드 격리 사본(grade/A/source)으로 복사 후 PYTHONPATH=사본 src로 /tmp/grading-venv/bin/python -m pytest tests/test_file_safety.py 실행. 임포트된 file_safety의 __file__이 격리 사본 경로(.../grade/A/source/src/personal_agent_gateway/file_safety.py)를 가리킴을 확인했고, 1 passed."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물의 프로덕션 코드 변경은 사실상 동일(집합에 .worktrees 한 줄 추가, 삽입 위치만 다름). B는 run_status=failed(summary 없음)였으나 workspace 산출물은 완전하고 모든 항목을 통과했다 — 실패는 산출물 품질과 무관한 하니스 단계 실패로 보인다. B의 테스트는 IGNORED_DIRECTORY_NAMES 전체를 하드코딩 집합과 동등 비교하므로 향후 무시 목록이 늘어나면 깨지는 다소 취약한 단언이지만 루브릭 위반은 아니다. A의 workspace에는 verification-report.md, B에는 reports/ignore-worktrees-implementation.md 보고서가 함께 있었다."
+  }
+}

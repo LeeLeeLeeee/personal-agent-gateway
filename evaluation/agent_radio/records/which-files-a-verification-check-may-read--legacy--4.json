@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "which-files-a-verification-check-may-read",
+  "fixture_sha256": "73bb9d95f26341e3515c87e0feba3dae6f6ec93b15a5965f17d8b6ed408debb7",
+  "run_id": "bc8190bdf7134a2182f49ce5fafc0f46",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T11:21:00.255019Z",
+  "finished_at": "2026-08-22T11:33:14.983610Z",
+  "wall_ms": 734728,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1074955,
+    "output_tokens": 20173,
+    "cached_input_tokens": 916736
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A의 보고서(data/verification-read-policy.md 41-47행)가 POSIX/Windows 절대 경로와 .. 컴포넌트가 _safe_relative에서 거부되고, safe_workspace_file이 resolved 후보가 workspace root 아래에 남아야 함을 요구한다고 설명. 소스 team_verification_checks.py:175-184, 92-114와 일치."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "A 보고서 49-53행이 경로의 모든 컴포넌트에서 symlink 거부, candidate.is_file() 요구, 최종 symlink 거부를 설명하고 61행이 디렉터리·비일반 파일·symlink 거부를 명시. safe_workspace_file(team_verification_checks.py:95-114)과 일치."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A 보고서 64-65행: \"final basename is .env or starts with .env., case-insensitively\", 71-73행에서 .env.secret 거부/.envfoo 비해당까지 정확히 구분. file_safety.py:21-24(lowered == '.env' or startswith('.env.'))와 일치."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "A 보고서 91-94행: MAX_CHECK_BYTES = 1_000_000, stat().st_size로 초과 여부를 확인해 read_text 호출 전에 거부한다고 숫자로 명시. 소스 team_verification_checks.py:124-131(크기 검사 후 read_text)과 일치."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "A 보고서 106-112행이 FILE_MATCHES_SEARCH_CAP = 64_000을 \"second search limit\"(크기 상한과 별개)로 명시하고, 120행 표에서 패턴 최대 200자와 64,000자 검색 프리픽스를 모두 제시. len(text) 슬라이싱이라 바이트가 아닌 문자 기준이라는 뉘앙스까지 소스(:154-156)와 일치."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 5개 항목을 소스와 일치하게 충족하며, 둘 다 evidence 문자열의 'bytes' 표기와 달리 실제 구현은 64,000 디코딩 문자 기준이라는 세부 사항, 정확히 1,000,000바이트는 허용된다는 경계 조건, UTF-8 errors='replace' 치환 동작까지 정확히 짚었다. 루브릭에 실행 검증 항목이 없어 pytest 실행은 수행하지 않았다. B의 summary 말미 'Library에 요청되었습니다'는 과제와 무관한 잔여 문구다."
+  }
+}

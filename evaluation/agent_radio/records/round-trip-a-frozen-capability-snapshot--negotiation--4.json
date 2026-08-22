@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "round-trip-a-frozen-capability-snapshot",
+  "fixture_sha256": "4e277854c4ebeca24188b4087596f9c3a46290b36c088f7b28156b7a1c41c4fa",
+  "run_id": "c104a0f8ed44482da7f052e57f9d10ac",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:33:11.157544Z",
+  "finished_at": "2026-08-22T10:40:13.434369Z",
+  "wall_ms": 422276,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 405601,
+    "output_tokens": 6182,
+    "cached_input_tokens": 370688
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "runA source/src/personal_agent_gateway/team_provider_recovery.py의 provider_execution_capabilities_from_snapshot 이 'execution' 키가 없는 입력(capability_payload 결과 등)을 {\"execution\": snapshot} 으로 감싼 뒤 parse_provider_execution_capabilities 에 넘긴다. capability_payload 는 내부 딕셔너리를, 파서(lmg_client.py:232)는 execution 래핑 dict를 요구한다는 비대칭을 코드에서 직접 처리함."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "tests/test_team_provider_recovery.py에 test_capability_payload_round_trips_through_frozen_snapshot_reader 가 추가됨. ProviderExecutionCapabilities → capability_payload → provider_execution_capabilities_from_snapshot 결과가 원본과 같음을 assert == 로 단언하고, execution 래핑 형태 입력에 대해서도 단언함."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "파서(lmg_client.py:232~)가 tuple(dict.fromkeys(value)) 로 명시적으로 튜플을 재구성하며, ProviderExecutionCapabilities 는 frozen dataclass라 network_modes 가 리스트로 돌아오면 원본(튜플 (\"unspecified\",\"denied\",\"required\"))과의 == 단언이 실패한다. 테스트가 통과했으므로 튜플 보존이 검증됨."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "source_export 대비 diff에서 capability_payload 와 parse_provider_execution_capabilities(lmg_client.py) 본문은 한 줄도 변경되지 않음. 변경은 새 함수 추가와 capabilities_for_cycle 내부 호출 교체뿐."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "제출물을 /tmp/grading/round-trip-a-frozen-capability-snapshot/runA 로 격리 복사 후 __file__ 이 runA/src/.../team_provider_recovery.py 를 가리킴을 확인하고 /tmp/grading-venv/bin/python -m pytest tests/test_team_provider_recovery.py 실행: 33 passed(신규 round_trip 테스트 1건 포함, -k round_trip 으로 1 passed 재확인)."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물 모두 새 함수를 capabilities_for_cycle 호출부에도 연결했다. A의 경우 'execution' 키가 없는 snapshot dict를 통째로 {\"execution\": snapshot} 으로 감싸므로, 이전에는 LMGProtocolMismatch 로 거부되던 비정형 snapshot(내부 payload 형태의 dict)이 이제 파싱에 성공할 수 있는 미묘한 capabilities_for_cycle 동작 변화가 있다(루브릭이 명명한 두 함수 자체는 무변경). B는 snapshot에서 execution 을 추출해 다시 감싸는 방식이라 기존 동작과 사실상 동치다. 두 제출물의 새 테스트 모두 튜플 반환을 isinstance 로 직접 단언하지는 않고 dataclass 동등성에 의존하지만, 튜플/리스트가 == 에서 불일치하므로 검증력은 충분하다."
+  }
+}

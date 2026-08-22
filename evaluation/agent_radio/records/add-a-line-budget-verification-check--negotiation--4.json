@@ -1,0 +1,60 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "add-a-line-budget-verification-check",
+  "fixture_sha256": "402e5e685182d64510c881e14102c67262f5ba36c6ae30fb0c094ba38d1d06c5",
+  "run_id": "9bccf24cc2424d298fa14c6622063c25",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T07:09:17.216188Z",
+  "finished_at": "2026-08-22T07:16:40.259316Z",
+  "wall_ms": 443043,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 450375,
+    "output_tokens": 11524,
+    "cached_input_tokens": 388096
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "workspace/source/src/personal_agent_gateway/team_verification_checks.py에 _LINE_LIMIT_TYPES와 max_lines: int = 0 필드를 추가하고, `isinstance(max_lines, bool) or not isinstance(max_lines, int)`로 bool을 명시 배제한 정수 검증 경로를 새로 만들었다. 문자열 필드 취급이 아니다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "parse 단계에서 bool/비정수는 'requires an integer max_lines', max_lines < 1은 'requires max_lines >= 1'로 ValueError. 테스트 test_parse_file_at_most_lines_rejects_invalid_max_lines가 None, \"2\", 1.5, True, 0, -1을 모두 검증하며 직접 실행으로 통과 확인."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "`passed = line_count <= check.max_lines`로 방향이 맞고, test_file_at_most_lines_passes_at_limit_and_below가 2줄 파일에 max_lines=2(경계)와 3(미만)을 모두 passed=True로 단언하며 직접 실행으로 통과 확인."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "test_file_at_most_lines_fails_when_over_limit: 3줄 파일에 max_lines=2로 `assert not result.passed`와 evidence('3 lines', 'maximum is 2') 단언."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "diff상 기존 네 분기의 판정 로직·반환값 모두 그대로. 변경은 새 타입 추가와 payload 타입 힌트(dict[str, object]) 변경뿐으로 기존 동작에 영향 없다."
+    },
+    {
+      "id": "R6",
+      "passed": true,
+      "note": "동일 방식으로 격리 사본(scratchpad/gradeB)에서 실행. __file__이 gradeB/src/... 사본을 가리킴 확인, tests/test_team_verification_checks.py 결과 '17 passed'."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물의 구현은 거의 동일한 구조(_LINE_LIMIT_TYPES, max_lines 기본값 0, splitlines 기반 카운트)다. B는 경계값 통과 테스트와 payload 라운드트립 테스트를 추가로 갖췄고, A는 파싱 거부 케이스를 기존 invalid 루프에 통합했다. A는 run_status=failed에 summary가 없었으나 workspace 산출물은 완전했고 테스트도 전부 통과했다. B는 과제에 없는 team_verification_checks_verification.md 보고 파일을 workspace/source에 남겼다."
+  }
+}

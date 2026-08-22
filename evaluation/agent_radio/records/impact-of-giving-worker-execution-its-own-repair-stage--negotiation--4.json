@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-giving-worker-execution-its-own-repair-stage",
+  "fixture_sha256": "4b35c548534463fab72bcf45d74a382ccf8d24fd53e4bd6d03c3f40195768ae4",
+  "run_id": "3fd06c3a7f1544b591dbfad3650deec3",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T09:37:57.461624Z",
+  "finished_at": "2026-08-22T09:50:54.034296Z",
+  "wall_ms": 776572,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1703054,
+    "output_tokens": 17824,
+    "cached_input_tokens": 1518592
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "B의 평가 보고서 판정 요약과 current-recovery.md가 원 operation은 worker_execution:0, 복구는 같은 stage의 worker_execution:1이며 REPAIR_STAGE 자기매핑과 동일-stage ordinal+1 규칙(team_repair_stages.py:10-30, team_runtime.py:900-911)을 명시. 소스와 일치."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "B 평가 보고서 §2.4: '현재 baseline 기록은 worker_execution, mediation_worker, acceptance_worker라는 base stage에만 명시적으로 걸려 있다(team_runtime.py:1031-1050)' — 집합을 멤버 이름까지 정확히 들고 worker_execution 포함을 명시. 소스의 {\"worker_execution\", \"mediation_worker\", \"acceptance_worker\"} 집합과 일치."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "B는 baseline 등록이 세 base stage에만 걸려 있어 새 stage를 추가하며 분기를 그대로 두면 '파일 변경 귀속이 달라질 수 있다'고 하고, 설계 주석의 '별도 이름이 다른 baseline policy로 조용히 이동' 경고를 인용(stage-change-risks.md:69-77)하며, silent 목록에서 '파일은 존재하고 required verification도 통과하지만 귀속 의미가 달라지고 acceptance check가 이를 보장하지 않는다'고 무예외 조용함을 설명(stage-change-risks.md:147-151). :3197 KeyError fallback을 직접 인용하진 않으나(1590-1605의 prepared-snapshot 경로 인용) 조용한 귀속 어긋남 자체는 명확히 지목되어 통과."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "B는 repair 매핑(team_repair_stages.py)과 baseline 등록(team_runtime.py:1031-1045)을 별개 변경 항목으로 나열하고, 두 지점을 잇는 것이 코드가 아니라 주석뿐임을 사실상 지목: '현재 설계 주석도 별도 이름이 다른 baseline policy로 조용히 이동시킬 수 있다고 경고한다(team_repair_stages.py:15-18)'(stage-change-risks.md:75-77). 실제 소스에서도 결합은 team_repair_stages.py의 주석(team_runtime.py:414-419 언급)뿐이며 코드 참조가 없음 — B의 서술과 부합."
+    },
+    {
+      "id": "R5",
+      "passed": false,
+      "note": "B도 _WORKER_STAGES 추가 필요는 설명하지만 cycle_ 접두사 조건은 언급하지 않고, test_team_repair_stages.py:63-70을 오직 'silently skips ... weaker invariant' 주석 인용으로만 사용해 그룹 누락을 '에러 없이 조용히 깨질 수 있는 경우'로 분류(stage-change-risks.md:136-140, 평가 보고서 75행). '검증에서 걸러지는 경우'에 든 테스트는 별개인 :17-29(repair target 테스트)뿐이어서, 그룹 분류 누락이 completeness 테스트(test_every_stage_is_grouped_for_provider_recovery)의 assert로 걸러진다는 구분을 하지 못함."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 read-only 조건을 지켰고 소스 인용이 실제 코드와 대조해 정확했다(REPAIR_STAGE 자기매핑, baseline 집합 3종, provider _WORKER_STAGES, baseline KeyError fallback 모두 검증됨). R5에서 두 답변이 공통으로 실패한 지점은 동일하다: 테스트 docstring('silently skips, weaker invariant')을 런타임 관점 증거로 인용하면서 정작 그 테스트의 assert 자체가 그룹 누락을 CI에서 잡는다는 점(= 검증에서 걸러지는 유형)을 구분하지 못했고, cycle_ 접두사 제외 규칙도 언급하지 않았다. A는 resume whitelist, legacy worker_execution:1 row 호환, operation key/digest, upstream_session_id 보존까지 더 넓은 변경 집합을 다뤘고, B는 baseline 집합 멤버 열거와 두 파일 간 결합이 주석뿐이라는 지적이 더 정확했다."
+  }
+}

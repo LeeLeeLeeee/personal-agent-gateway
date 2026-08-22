@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "which-files-a-verification-check-may-read",
+  "fixture_sha256": "73bb9d95f26341e3515c87e0feba3dae6f6ec93b15a5965f17d8b6ed408debb7",
+  "run_id": "77cd1d14cb84446cad21933660f6bbde",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T11:04:50.837665Z",
+  "finished_at": "2026-08-22T11:12:06.932453Z",
+  "wall_ms": 436094,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 824277,
+    "output_tokens": 11951,
+    "cached_input_tokens": 737024
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "B의 summary(\"상대 경로만 허용하며 .., 절대 경로, Windows 경로, workspace 밖 경로는 거부\")와 보고서(reports/verification-file-read-policy.md 59-64, 86-88, 97행)가 절대 경로·..·workspace 이탈 거부와 workspace 내부 요구를 명시. 소스와 일치."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "B summary(\"파일·부모 경로의 symlink, 디렉터리, 누락 파일 ... 거부\")와 보고서 65-66, 95-96행이 부모 컴포넌트 포함 symlink 거부와 디렉터리/비파일 거부를 명시. 소스와 일치."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "B summary(\".env 및 .env.* basename은 거부\")와 보고서 67-69, 98행이 basename이 .env이거나 소문자화 후 .env.로 시작하면 거부됨을 명시. 소스와 일치."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "B summary(\"최대 크기는 raw bytes 기준 1,000,000바이트\")와 보고서 104행(\"an oversized file returns a too large failure before read_text\"), 118-124행이 1,000,000 초과 파일이 내용 읽기 전에 실패함을 숫자로 명시. 소스와 일치."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "B summary(\"최대 200자 정규식 ... 디코딩된 앞 64,000자만 검색\")와 보고서 139-142행이 1,000,000바이트 상한과 64,000자 검색 캡이 다른 단위의 별개 제한임을 명시(\"The raw size limit and decoded-text limits are different units\"), 197행에서 두 제한이 동시에 적용됨도 언급. 소스와 일치."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 5개 항목을 소스와 일치하게 충족하며, 둘 다 evidence 문자열의 'bytes' 표기와 달리 실제 구현은 64,000 디코딩 문자 기준이라는 세부 사항, 정확히 1,000,000바이트는 허용된다는 경계 조건, UTF-8 errors='replace' 치환 동작까지 정확히 짚었다. 루브릭에 실행 검증 항목이 없어 pytest 실행은 수행하지 않았다. B의 summary 말미 'Library에 요청되었습니다'는 과제와 무관한 잔여 문구다."
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-second-worker",
+  "fixture_sha256": "c1fe61ed921eac3e2458f60fe96501092e4b62899f8ba2ba1dea8edd4b8ed1ac",
+  "run_id": "d9559a0fd7cb44eeb1f97e4190fdf4d4",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T09:18:35.169650Z",
+  "finished_at": "2026-08-22T09:30:04.763761Z",
+  "wall_ms": 689594,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 2553116,
+    "output_tokens": 23598,
+    "cached_input_tokens": 2232576
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "reports/worker-scaling-impact.md '이미 다중 워커를 전제한 부분' 절이 _find_workers의 비-leader agent 목록(team_runtime.py:4895-4897), task의 owner_agent_id 우선 사용과 round-robin(2762-2767 — 소스 확인), run별 workspace/디스패처 다중 worker 구조를 근거와 함께 제시한다. 계획 시 owner_agent_id 배정 구조도 concurrent-write 보고서의 key/digest 분석과 함께 다룬다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "worker-scaling-impact.md가 '워커 수'의 두 의미(디스패처 소비자 수 vs cycle 내부 worker 목록)를 명시적으로 분리하고, worker 목록은 여러 명이어도 _execute가 ready_tasks[0]을 하나씩 await하므로 현재 실행은 순차임을 근거(team_runtime.py:2649-2768, 2778-2780; claim_next의 dispatching 가드 team_cycles.py:453-461 — 소스 확인)로 판정한다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "concurrent-write-and-operation-identity.md가 baseline snapshot이 (st_size, st_mtime_ns)만 비교하고 writer 정보가 없음을 짚고(team_results.py:17,52-76 — 소스 확인), 동시 쓰기 시 귀속 오염 5개 시나리오(타 worker 파일이 내 files_created에 포함, baseline에 이미 흡수돼 누락, 같은 path 이중 귀속, size/mtime 동일 시 변경 누락 등)를 표로 구체화한다. run 간 병렬(workspace 분리)과 cycle 내부 병렬(공유 root)도 구분한다."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "concurrent-write 보고서가 key 구성 cycle_id[:task_id]:stage:stage_ordinal(team_runtime.py:5090-5099 — 소스 일치)을 근거로, 무작위 UUID 충돌 위험은 낮고 실질 위험은 동일 task/stage/ordinal 중복 실행의 결정적 key 재사용이며, 동일 spec은 reserve 재사용, 불일치는 OperationConflict(team_model_operations.py:155-174, 512-533 — 소스 확인), cycle당 단일 open operation 제약이 동시 model 호출 자체를 차단한다고 예/아니오로 명확히 판정한다."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 read_only 프로파일을 준수했고(코드 수정 없음, 보고서만 산출), 핵심 인용 파일:행이 소스 export와 실제로 일치했다. B는 dispatcher worker_id가 lineage/큐 항목에 포함되지 않는다는 점, deliverable publisher의 task별 destination 분리, run-result.json 등 package 파일의 last-writer 위험까지 다뤄 커버리지가 다소 넓고, 동시 쓰기 귀속 오염 시나리오를 표로 체계화했다. A도 API의 max_workers=1 고정과 configured_max_workers 노출 등 실행 경로 제약을 정확히 짚었다. 품질 차이는 있으나 루브릭 4개 항목 기준으로는 양쪽 모두 충족한다."
+  }
+}

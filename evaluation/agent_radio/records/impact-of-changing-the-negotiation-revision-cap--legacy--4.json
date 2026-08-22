@@ -1,0 +1,45 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-changing-the-negotiation-revision-cap",
+  "fixture_sha256": "b6ca3b99e4b2eeb8dd3381092e672f79d9aae8432870b8ff2d2baf274e96cbec",
+  "run_id": "31fc7ac0946f44d0b342e208b2c2c3fe",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T09:33:42.484241Z",
+  "finished_at": "2026-08-22T09:45:29.263051Z",
+  "wall_ms": 706778,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1042205,
+    "output_tokens": 14755,
+    "cached_input_tokens": 900864
+  },
+  "rubric_results": [
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "B의 review/negotiation-revision-cap-impact.md 'When the cap is exceeded' 절이 동일 경로(_abandon_negotiation, pending→canceled, revision→abandoned, cycle/run completed_with_failures, error collaboration_plan_approval_incomplete, team.run.completed 이벤트)를 단계별로 설명하며 generic failed 경로와 구분까지 명시. 소스 team_runtime.py 2333-2339 및 2610-2647과 일치함을 직접 확인함."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "B 보고서 'Revision storage and identification' 절이 (team_run_id, cycle_id, revision) unique index(migrations.py:969-1008)를 명시하고, 검토 권고에서 cycle별 max 조회·unique 제약·최신 revision 선택 로직·operation ordinal 범위가 상한 변경과 어떻게 맞물리는지 설명함. 소스와 일치 확인."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "B 보고서 'Unapproved revision tasks' 절이 폐기 상태 집합 {superseded, abandoned}, 취소는 삭제가 아니라는 점, discarded_task_ids() 공유 규칙으로 runtime/effect 양쪽에서 실행·synthesis 후보에서 제외됨을 설명하고, 승인 전 실행 게이트(_plan_awaits_negotiation)까지 짚음. 소스와 일치 확인."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 코드 미수정 요구를 지켰고 소스 라인 인용이 실제 코드와 일치했다. B는 operation ordinal 규칙(revision*100+approver_index, 10*(superseded+1))과 재시작 복구(_resume_interrupted_replan), 다운스트림 skipped_by_dependency 파급까지 더 세밀하게 다뤘고, A는 별도 하위 보고서 2건(cap-and-termination-review.md, revision-lifecycle-review.md)을 함께 산출했다. 품질 차이는 있으나 루브릭 3개 항목은 양쪽 모두 충족."
+  }
+}

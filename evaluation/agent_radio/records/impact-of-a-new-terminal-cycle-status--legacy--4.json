@@ -1,0 +1,50 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-terminal-cycle-status",
+  "fixture_sha256": "bbeaddec694ba0c3704e7c4a72f68700d50ef82ee9cb0152c8b6f49353175bb2",
+  "run_id": "e1ea1da0165e4ce69e9f2af130e38bda",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T08:04:28.709070Z",
+  "finished_at": "2026-08-22T08:54:32.804003Z",
+  "wall_ms": 3004094,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1386581,
+    "output_tokens": 18744,
+    "cached_input_tokens": 1114112
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "summary와 reports/new-terminal-cycle-status-impact.md 항목 1이 team_lifecycle.py의 CycleStatus·TerminalCycleStatus·TERMINAL_CYCLE_STATUSES(:19-56)를 이름으로 들고 새 값을 추가해야 한다고 명시한다. 소스 확인 결과 team_lifecycle.py:54에 TERMINAL_CYCLE_STATUSES가 실제로 정의돼 있어 인용이 정확하다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "new-terminal-cycle-status-impact.md 항목 5와 'Direct terminal set dependencies' 표가 team_cycle_dispatcher.py:233,264,331을 들어 종단 여부에 따라 실패 덮어쓰기 억제·settle 경로·team.cycle.settled 이벤트 발행·interrupted 전환 방지가 갈린다고 짚는다. 소스 확인 결과 dispatcher의 233/264/331행이 실제로 TERMINAL_CYCLE_STATUSES membership으로 정산과 이벤트 발행을 분기한다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "new-terminal-cycle-status-impact.md 항목 3이 'merely adding it to the broad terminal set is insufficient'라고 명시하고, 항목 6이 cycle_execution_disposition(team_lifecycle.py:131-180)과 team_runtime.py:5051-5058(_terminal_status)에 새 상태의 파생 규칙을 추가해야 한다고 설명한다. cycle-state-terminal-set-impact.md 표는 'Task disposition drives the run/cycle status'라며 새 상태가 산출 가능하려면 status propagation에 별도 분기가 필요하다고 짚는다. 소스에서 _execute_and_synthesize가 _terminal_status 결과를 set_run_status/set_cycle_status에 동일하게 기록함을 확인."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "reports가 CycleStatus 10개 중 종단은 5개뿐이고 waiting_for_provider/waiting_for_user는 종단 밖임을 열거로 보여주며(new-terminal-cycle-status-impact.md:7-8), settle_cycle이 waiting_for_user를 종단 검사 이전에 별도 처리한다는 점(항목 3), teams.py:2500이 종단 cycle을 waiting_for_user로 되돌리지 않게 해야 한다는 점(항목 4), 새 값이 waits 포함 active 집합 밖에 있어야 하고 recovery가 wait 상태로 복원하면 안 된다는 점(항목 8, 검증 시나리오 3·6)을 지적한다. 다만 '두 대기 상태와 어떻게 다른지'는 명시적 비교 문장보다 취급 규칙 형태로 서술됨. [check_ambiguous]"
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 루브릭 4개 항목을 넘어 정확한 전수 조사를 수행했다. A는 영어 보고서 3부로 검증 시나리오까지 제시했고 직접 참조 지점(team_cycles.py:11,523,965 / dispatcher:12,233,264,331 / teams.py:21,2500)을 grep 수준으로 정확히 열거했다(소스 grep으로 전부 확인됨). B는 한국어 보고서 2부로 latest_final_cycle SQL(team_cycles.py:675-689)과 AUTO due-request SQL이 종단 5개를 하드코딩 복제한다는 점, set_cycle_status의 finished_at literal set(teams.py:1292-1297)을 정확히 짚었으며 소스 확인 결과 모두 사실이다. B의 summary 자체는 매우 짧아 근거가 전부 workspace 보고서에 있다. 두 답변 모두 TERMINAL_RUN_STATUSES/TERMINAL_TASK_STATUSES가 별개 도메인이라 자동 확장하면 안 된다는 경계도 정확히 구분했다."
+  }
+}

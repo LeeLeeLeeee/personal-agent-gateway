@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-giving-worker-execution-its-own-repair-stage",
+  "fixture_sha256": "4b35c548534463fab72bcf45d74a382ccf8d24fd53e4bd6d03c3f40195768ae4",
+  "run_id": "a5ce113ab8794f149d736fb944980d66",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T09:45:30.555352Z",
+  "finished_at": "2026-08-22T09:58:40.720420Z",
+  "wall_ms": 790165,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1684164,
+    "output_tokens": 18218,
+    "cached_input_tokens": 1506560
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "A의 current-recovery-trace.md와 평가 보고서가 REPAIR_STAGE가 worker_execution을 자기 자신으로 매핑하고(team_repair_stages.py:10-26 인용) _repair_operation이 같은 stage일 때 failed.stage_ordinal+1을 써서 worker_execution:1로 재시도한다고 정확히 기술. 소스(team_repair_stages.py:18, team_runtime.py의 ordinal+1 규칙)와 일치."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "A는 baseline이 team_runtime.py:1031-1050의 'baseline capture stage set'에 속한 stage에서만 기록된다고 짚고(current-recovery-trace.md:47), '현재 worker repair가 같은 worker_execution이어서 baseline이 기록되지만 새 stage를 빠뜨리면 fallback'이라고 말해 worker_execution이 집합에 있음을 밝힘. 다만 집합의 세 멤버(mediation_worker, acceptance_worker 포함)를 열거하지는 않음 — check 문구는 열거를 요구하지 않으므로 통과."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "A는 새 stage가 baseline capture 대상에서 빠지면 team_runtime.py:3197-3206의 KeyError→현재 workspace snapshot fallback이 적용되어 repair 직전 변경이 기존 파일처럼 취급되고, 'operation이 성공하고 acceptance도 통과해 조용히 배포되는 유형'이라고 명시(current-recovery-trace.md:54, 평가 보고서 96, 118행). baseline 없는 진행·귀속 어긋남·무예외 조용함을 모두 지목."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "A는 repair map(team_repair_stages.py:10-30)과 workspace baseline 정책(team_runtime.py:1031-1050 등)을 별개 변경 지점으로 각각 열거하고, '현재 stage 분류가 중앙 registry가 아니라 여러 하드코딩 목록으로 분산되어 있어 타입 선언만 추가해도 런타임 완전성이 보장되지 않는다'(impact.md:65), 'stage type, repair map, runtime branch, provider group, effect validator가 서로 분리된 목록'(평가 보고서 116행)이라고 두 지점이 코드로 연결되지 않은 별개 목록임을 짚음."
+    },
+    {
+      "id": "R5",
+      "passed": false,
+      "note": "A는 _WORKER_STAGES(team_provider_recovery.py:538-550)에 새 stage 추가가 필요함을 상세히 설명하고 test_team_repair_stages.py:63-70이 '어느 stage도 worker/lead group 밖에 놓이지 않도록 검사'한다고 언급하지만, (1) 새 stage 이름이 cycle_ 접두사가 아니어서 분류 대상이 된다는 근거(테스트가 cycle_ stage를 제외하는 startswith 규칙)를 어디에도 언급하지 않고(보고서 3편 grep 결과 cycle_ 접두사/prefix 언급 없음), (2) 그 누락을 '검증에서 걸리는 사례'가 아니라 '조용히 깨지는 사례 1'로 분류해(평가 보고서 94행) check가 요구하는 'completeness 테스트가 잡는다'는 구분과 반대 방향으로 결론지음. 테스트의 존재·검사 내용을 인용한 점에서 채점자가 갈릴 수 있어 ambiguous 표기."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 read-only 조건을 지켰고 소스 인용이 실제 코드와 대조해 정확했다(REPAIR_STAGE 자기매핑, baseline 집합 3종, provider _WORKER_STAGES, baseline KeyError fallback 모두 검증됨). R5에서 두 답변이 공통으로 실패한 지점은 동일하다: 테스트 docstring('silently skips, weaker invariant')을 런타임 관점 증거로 인용하면서 정작 그 테스트의 assert 자체가 그룹 누락을 CI에서 잡는다는 점(= 검증에서 걸러지는 유형)을 구분하지 못했고, cycle_ 접두사 제외 규칙도 언급하지 않았다. A는 resume whitelist, legacy worker_execution:1 row 호환, operation key/digest, upstream_session_id 보존까지 더 넓은 변경 집합을 다뤘고, B는 baseline 집합 멤버 열거와 두 파일 간 결합이 주석뿐이라는 지적이 더 정확했다."
+  }
+}

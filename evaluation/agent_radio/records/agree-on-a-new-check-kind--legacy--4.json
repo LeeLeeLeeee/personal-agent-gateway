@@ -1,0 +1,60 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "agree-on-a-new-check-kind",
+  "fixture_sha256": "57f707b5d378494f639fc54aa6f9faab3d26b184f6c4f5ca23103100b76982f4",
+  "run_id": "7e58db8ce8594dae9d8f5e48f2363d49",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T07:16:08.204255Z",
+  "finished_at": "2026-08-22T07:23:24.633877Z",
+  "wall_ms": 436429,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 318856,
+    "output_tokens": 4749,
+    "cached_input_tokens": 285184
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "종류 이름 'file_size_at_most'가 세 곳 모두 같은 철자. CHECK_TYPES, _valid_verification_check 허용 집합, team_runtime.py 129/220/300행의 세 리더 프롬프트에서 확인. 프롬프트 포함 여부를 단언하는 테스트(test_planning_prompts_teach_the_check_vocabulary)도 통과."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "양쪽 모두 'max_bytes'. team_model_operations.py 837/841행에서 expected.add(\"max_bytes\")와 value.get(\"max_bytes\") 확인, parse_verification_check도 같은 이름 요구. 직접 실행으로 확인."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "동일 구조의 분기(size <= check.max_bytes, 런타임 방어 검사 추가 포함). 직접 실행: 초과 False, 동일 True, 미만 True. parse에서 True/0/-3/\"4\"/4.5/None 모두 ValueError 거부 확인."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "tests/test_file_size_at_most.py와 source/tests/test_team_model_operations.py 양쪽에 _valid_acceptance(_valid_verification_check 경유 경로)가 file_size_at_most 검사를 담은 acceptance에 참을 돌려주는 단언 존재. 격리 실행에서 통과."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "diff 결과 기존 네 종류 분기는 무변경(추가분만 존재, 테스트 파일 말미 빈 줄 차이는 무시 대상). 기존 스위트 포함 53+292개 테스트 통과."
+    },
+    {
+      "id": "R6",
+      "passed": true,
+      "note": "격리 사본 /tmp/grading/.../run/B에서 __file__이 제출물 사본을 가리킴을 확인 후 실행. 신규 tests/test_file_size_at_most.py + 수정된 test_team_verification_checks.py/test_team_model_operations.py 53 passed, 수정된 tests/test_team_runtime.py(신규 단언 포함) 292 passed."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물은 종류 이름(file_size_at_most)과 필드 이름(max_bytes), 코드 구조까지 거의 동일하다. 차이점: B는 run_verification_check 안에 max_bytes 유효성 방어 검사를 한 번 더 두고 기존 테스트 파일 3개에 케이스를 병합해 넣었으며 리더 프롬프트에 새 종류가 있음을 단언하는 프롬프트 테스트를 추가했다. A는 별도 신규 테스트 파일 1개로 커버하고 _valid_verification_check를 직접 단언하는 테스트가 있다. B의 workspace 루트 tests/test_file_size_at_most.py는 source 트리 밖에 있어 실행 시 PYTHONPATH 지정이 필요했다. 채점 venv에는 pytest만 있어 test_team_runtime.py 실행을 위해 httpx, pydantic, python-dotenv, pytest-asyncio를 추가 설치했다(personal_agent_gateway는 미설치 상태 유지, 임포트 __file__로 그림자 없음 확인)."
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "impact-of-a-new-verification-check-type",
+  "fixture_sha256": "ac9265cfebeaf88ee77aafe5f6b060e186220af609bf885ad90ae1adcd657f27",
+  "run_id": "28a73392e39f43a3a59eccf3a9e246c6",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T08:54:38.411010Z",
+  "finished_at": "2026-08-22T09:09:05.210500Z",
+  "wall_ms": 866799,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 728259,
+    "output_tokens": 16642,
+    "cached_input_tokens": 588032
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "B의 verification-type-impact-report.md:64-68이 CHECK_TYPES, _VALUE_TYPES, _PATTERN_TYPES(:8-13)와 parse_verification_check(:39-80)를 이름으로 들고, 타입별 필드 분류에 새 타입을 추가해야 한다고 짚음. 소스와 라인까지 일치."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "B 보고서 81-87행: 'run_verification_check에 새 실행 분기를 추가한다'고 명시하고 기존 4개 분기 라인과 미지원 타입 fallback(:171-172)까지 인용. 체크리스트에도 '실행기 분기 갱신' 항목 포함."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "B 보고서 132-145행: 세 프롬프트(PLANNING_PROMPT :120-128, ACCEPTANCE_REVIEW_PROMPT :211-218, ADD_WORK_PROMPT :289-297)가 네 종류와 JSON 예시를 직접 열거함을 들고, '한 프롬프트만 고치면 경로별 허용 목록이 갈린다'며 세 곳 모두 변경과 프롬프트 테스트(tests/test_team_runtime.py:3451-3460) 갱신을 명시."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "B 보고서 147-160행: index.jsx:265-306 renderer가 allowlist/dispatch 없이 필드를 표시하므로 기존 shape 재사용 시 dispatch 불필요라고 근거와 함께 판단하고, BuildEvidence.jsx:1-5의 file-read 전제 주석(json_parses 누락 포함)을 지적하며 새 type이 파일 읽기가 아니면 설명·안전 경계를 수정해야 한다고 판단. 소스와 일치."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "B 보고서 125-128행: '확인한 범위에서는 별도 DB enum/migration, 전용 OpenAPI/Pydantic check enum ... 은 네 type literal을 보유한 지점으로 발견되지 않았다. 저장 구조는 acceptance JSON payload로 보인다(team_model_effects.py:2505-2523)'며 근거(JSON payload 저장, enum 부재)와 함께 migration 불필요 판단을 명시. 소스 db.py에도 검사 종류 enum/CHECK 제약이 없어 판단이 사실과 부합."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 team_model_operations.py:821의 중복 allowlist(operation-ledger validator)를 정확히 찾았고 라인 인용이 실제 소스와 일치했다. A는 저장 경로가 JSON임을 사실상 파악했으나 migration 여부라는 질문 형태로 결론을 내리지 않아 R5에서만 갈렸다. B는 team_model_effects.py가 CHECK_TYPES를 import해 정본 집합을 공유한다는 점과 _canonical_check_payload의 필드 유실 가능성 등 A에 없는 canonicalizer 경계도 추가로 짚었다."
+  }
+}

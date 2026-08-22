@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "understand-acceptance-gate",
+  "fixture_sha256": "6fc65ab48f972f3c8be8f21e1c0d7c4430303ef3224508782249fbb8dac0e284",
+  "run_id": "99f9963ae69941678f13fec9b1efe575",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:45:00.853266Z",
+  "finished_at": "2026-08-22T10:50:51.505637Z",
+  "wall_ms": 350652,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 1027744,
+    "output_tokens": 8196,
+    "cached_input_tokens": 939264
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "summary와 acceptance-gate-answer.md 모두 file_nonempty/file_contains/file_matches/json_parses 네 가지를 '네 가지뿐'이라고 명시. 소스 CHECK_TYPES(team_verification_checks.py:11)와 일치. workspace 산출물 3개(acceptance-gate-answer.md, check-execution.md, gate-determination.md)를 grep해도 build_passes/test_passes 등 지어낸 검사 이름 없음. 오히려 'no shell command, test-suite invocation'으로 부재를 명시."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "summary에 '셸 명령이나 테스트 스위트는 실행되지 않습니다' 명시. acceptance-gate-answer.md에 'The acceptance machinery actually runs only the four file-content checks'와 'No shell command, test-suite invocation, JSON-schema check, or arbitrary predicate' 명시. 테스트/빌드를 돌린다는 서술 없음."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "summary가 'check가 있으면 서버 검사를 실행하고, 없으면 워커의 attestation을 사용'으로 두 경로를 구분. acceptance-gate-answer.md는 mode 'verified'와 'attested'(및 'unverified')를 이름 그대로 구분해 설명 — 소스 team_acceptance.py:110-150의 recorded mode와 일치."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "acceptance-gate-answer.md: 'A checked requirement runs its server check and ignores the worker's same-named claim'; check-execution.md: 'it does not consult the worker's same-named report for that decision'. 소스 team_acceptance.py:108-121에서 check가 있으면 reported를 사용하지 않고 run_verification_check 결과만으로 판정하는 것과 정확히 일치. '워커 보고와 대조' 서술 없음."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "acceptance-gate-answer.md: \"'checked=False, status=null' is accepted but recorded as 'unverified'/'unknown'\"; gate-determination.md: 'check-less checked: false items are accepted but visibly marked unverified' — 실패가 아니라 unverified로 기록되며 accepted될 수 있음을 명시. 소스 team_acceptance.py:129-139와 일치."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 답변 모두 5개 항목을 모두 충족하며 소스와 대조해 오류가 발견되지 않았다. B는 짧은 summary의 R4 표현('not used to override')이 단독으로는 다소 약하지만 final_report.md가 서버 결과 단독 권위를 명확히 한다. B는 추가로 team_outcomes.py의 checked/status null 계약, 단락 평가(short-circuit)와 rejected_verification_names의 미도달 검사 비난 제외, 의존성 처리까지 다뤄 범위가 더 넓다. A는 파서의 unknown type 거부와 파일 preflight(크기/민감파일/심링크) 제한을 정확히 기술했다. A summary의 '누락된 attestation, 또는 실패한 attestation은 수용을 거부'는 checked=False 케이스와 모순되지 않는다(누락/failed만 거부)."
+  }
+}

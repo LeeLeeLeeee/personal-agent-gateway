@@ -1,0 +1,60 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "type-the-unmapped-repair-stage-error",
+  "fixture_sha256": "52436f841a79a1d1472d2bab4eee1e91199005cb4ed5cffab86ddf85d7add46a",
+  "run_id": "3bb871dd82544d3f9287ac1c5f82d26f",
+  "mode": "legacy",
+  "plan_negotiation": false,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T10:51:57.006367Z",
+  "finished_at": "2026-08-22T10:54:47.301583Z",
+  "wall_ms": 170295,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 97088,
+    "output_tokens": 1331,
+    "cached_input_tokens": 91392
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "source/src/personal_agent_gateway/team_repair_stages.py에 class RepairStageNotRegisteredError(ValueError)를 정의하고 repair_stage_for에서 KeyError를 잡아 이 예외를 raise ... from exc 로 발생시킴. KeyError 계열이 아님."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "메시지 f\"No repair stage registered for {stage!r}\" 에 stage 이름 포함. 테스트 pytest.raises(..., match=stage)로도 검증됨."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "REPAIR_STAGE 딕셔너리 및 등재 stage 조회 경로 무변경(try 블록에서 그대로 반환). 기존 test_worker_execution_keeps_its_own_stage, test_add_work_repairs_through_the_planning_repair_stage 가 격리 실행에서 통과."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "원본(/Users/iyeonghyeon/pag-eval/source/pag-b125268/tests/test_team_repair_stages.py) 대비 diff는 pytest import 추가, 새 예외 import 추가, 새 테스트 함수 추가뿐. 기존 테스트 본문은 한 줄도 수정되지 않음."
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "tests/test_team_repair_stages.py 의 test_unregistered_stage_raises_with_stage_name 이 stage=\"cycle_planning_repair\"(REPAIR_STAGE 미등재)에 대해 pytest.raises(RepairStageNotRegisteredError, match=stage)로 단언."
+    },
+    {
+      "id": "R6",
+      "passed": true,
+      "note": "제출물을 scratchpad/gradeA 로 격리 복사 후 PYTHONPATH=<사본>/src 로 /tmp/grading-venv/bin/python -m pytest tests/test_team_repair_stages.py 실행. 임포트된 team_repair_stages.__file__ 이 사본 경로를 가리킴을 확인. 결과 7 passed(신규 테스트 포함)."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물 모두 사실상 동일한 구조의 해법이다. 차이점: A는 ValueError 기반 예외에 원인 체이닝(from exc)을 유지하고 미등재 테스트 입력으로 실제 OperationStage 값인 'cycle_planning_repair'(repair stage 자체는 매핑에 없음)를 사용했다. B는 LookupError 기반 예외에 from None으로 체인을 끊었고 임의 문자열 'unregistered_stage'를 사용했다. B의 LookupError 상속은 KeyError를 기대하던 기존 except LookupError 호출자와의 호환 측면에서 더 보수적일 수 있으나 루브릭 판정에는 영향 없다. B의 workspace에는 verification/test_team_repair_stages.txt 실행 기록도 있었다."
+  }
+}

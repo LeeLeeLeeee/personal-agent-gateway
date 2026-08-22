@@ -1,0 +1,55 @@
+{
+  "schema": "gateway.eval-record/v1",
+  "fixture_id": "ignore-worktrees-when-walking-files",
+  "fixture_sha256": "3ae92792fad290e5ffbd373416ffd1cf038a5b8131501f83317be4fef9056133",
+  "run_id": "8a1dbaa5db2642dc8450258de77746c9",
+  "mode": "legacy",
+  "plan_negotiation": true,
+  "repeat": 4,
+  "harness_version": "0.1.0",
+  "started_at": "2026-08-22T07:47:04.859074Z",
+  "finished_at": "2026-08-22T07:51:52.044184Z",
+  "wall_ms": 287185,
+  "cost": {
+    "provider": "codex",
+    "input_tokens": 188863,
+    "output_tokens": 1330,
+    "cached_input_tokens": 177920
+  },
+  "rubric_results": [
+    {
+      "id": "R1",
+      "passed": true,
+      "note": "B의 file_safety.py도 diff 결과 유일한 변경이 IGNORED_DIRECTORY_NAMES에 \".worktrees\", 추가(5a6, .git 다음 위치)이며, B의 테스트도 IGNORED_DIRECTORY_NAMES == 기존집합 | {\".worktrees\"} 를 단언한다."
+    },
+    {
+      "id": "R2",
+      "passed": true,
+      "note": "B도 동일하게 name.lower() 기반 집합 비교를 그대로 사용하며, diff상 집합에 원소 한 줄 추가 외 어떤 로직 변경도 없다."
+    },
+    {
+      "id": "R3",
+      "passed": true,
+      "note": "B의 file_safety.py도 동일 위치에 is_symlink() 제외 조건이 원본 그대로 유지되어 있다(diff상 해당 부분 무변경)."
+    },
+    {
+      "id": "R4",
+      "passed": true,
+      "note": "tests/test_file_safety.py의 테스트가 'ordinary/included.txt' in relatives(포함 방향)와 not any(relative.startswith(\".worktrees/\"))(제외 방향)를 명시적으로 단언한다. 기존 무시 디렉터리들의 제외도 추가로 검증한다. [check_ambiguous]"
+    },
+    {
+      "id": "R5",
+      "passed": true,
+      "note": "동일 방식으로 격리 사본(grade/B/source)에서 실행. __file__이 사본 경로를 가리킴을 확인했고, tests/test_file_safety.py 1 passed."
+    }
+  ],
+  "rework_count": 0,
+  "conflict_count": 0,
+  "critical_defects_found": 0,
+  "workers": 2,
+  "mode_metrics": {
+    "graded_against_source_commit": "b125268f8713752304e12bdc7ddd05677afded5b",
+    "grading": "블라인드 쌍 채점(라벨 A/B 무작위), 채점자당 픽스처 1개",
+    "observations": "두 제출물의 프로덕션 코드 변경은 사실상 동일(집합에 .worktrees 한 줄 추가, 삽입 위치만 다름). B는 run_status=failed(summary 없음)였으나 workspace 산출물은 완전하고 모든 항목을 통과했다 — 실패는 산출물 품질과 무관한 하니스 단계 실패로 보인다. B의 테스트는 IGNORED_DIRECTORY_NAMES 전체를 하드코딩 집합과 동등 비교하므로 향후 무시 목록이 늘어나면 깨지는 다소 취약한 단언이지만 루브릭 위반은 아니다. A의 workspace에는 verification-report.md, B에는 reports/ignore-worktrees-implementation.md 보고서가 함께 있었다."
+  }
+}
