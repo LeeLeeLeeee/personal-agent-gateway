@@ -177,7 +177,10 @@ not observe.
 You may also include an optional "mentions" array to leave a short note for a
 teammate: [{{"to":"roster label","text":"a single line, no line breaks, up to
 2000 characters"}}]. Name the recipient by its roster label; at most 10
-mentions per response.
+mentions per response. Address a fact to the teammate whose assignment needs
+it -- a name you chose, a convention you set, a file you moved -- not to LEAD:
+LEAD already receives your full result, so a note to LEAD carries nothing new,
+while the teammate who builds on your work sees it only if you send it to them.
 
 The same rule applies to what your result says, not just to its verifications.
 When you state something as fact about this repository, name the file that shows
