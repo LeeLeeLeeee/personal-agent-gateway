@@ -12,6 +12,7 @@ import difflib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -814,19 +815,39 @@ def export_source(repo_root: Path, exports_root: Path, ref: str) -> tuple[Path, 
     the export rather than inside it: a directory left half-written by a killed
     run must not be mistaken for a source tree, and the export the model reads
     must contain nothing this harness put there.
+
+    Safe against concurrent callers, because a sweep's slots share this
+    directory: each extracts into its own temporary directory and publishes it
+    with one atomic rename, so no caller can ever read a half-written export.
+    Losing the rename race means someone else published a complete export
+    first -- the loser discards its copy and uses the winner's.
     """
     commit = _git_output(repo_root, "rev-parse", f"{ref}^{{commit}}")
     destination = exports_root / f"pag-{commit[:7]}"
     marker = exports_root / f"pag-{commit[:7]}.complete"
     if marker.exists():
         return destination, commit
-    if destination.exists():
-        shutil.rmtree(destination)
-    destination.mkdir(parents=True)
+    staging = exports_root / f"pag-{commit[:7]}.staging-{os.getpid()}"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
     archive = _git_bytes(repo_root, "archive", "--format=tar", commit)
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-        tar.extractall(destination, filter="data")
-    _remove_evaluation_material(destination)
+        tar.extractall(staging, filter="data")
+    _remove_evaluation_material(staging)
+    if destination.exists():
+        # No marker, so this is a leftover from a run killed mid-extract --
+        # unless a concurrent caller published it between our marker check and
+        # now, in which case the marker says so and the leftover is not one.
+        if marker.exists():
+            shutil.rmtree(staging)
+            return destination, commit
+        shutil.rmtree(destination)
+    try:
+        staging.rename(destination)
+    except OSError:
+        # A concurrent caller renamed its complete copy in first.
+        shutil.rmtree(staging)
     marker.write_text(f"{commit}\n", encoding="utf-8")
     return destination, commit
 
@@ -888,7 +909,9 @@ def _git_bytes(repo_root: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def _evaluation_config(config: AppConfig, *, mode: str) -> AppConfig:
+def _evaluation_config(
+    config: AppConfig, *, mode: str, data_root: Path = EVAL_DATA_ROOT
+) -> AppConfig:
     """Point storage at an evaluation-only database and workspace root.
 
     Everything else -- the LMG base URL, provider settings, and the rest of
@@ -900,10 +923,15 @@ def _evaluation_config(config: AppConfig, *, mode: str) -> AppConfig:
     is decided when the app is wired, and the harness is built from this
     config. Whatever `.env` says about the flag is overridden: a sweep's arms
     must differ by the arm and not by the machine it ran on.
+
+    `data_root` exists for concurrent sweeps: two runs sharing one SQLite file
+    would contend on it, and the run lock lives beside the database, so giving
+    each slot its own root gives it its own database *and* its own lock in one
+    move. The default keeps a plain run exactly where it always was.
     """
     return config.model_copy(
         update={
-            "app_db_path": EVAL_DATA_ROOT / "app.sqlite",
+            "app_db_path": data_root / "app.sqlite",
             "workspace_root": EVAL_WORKSPACE_ROOT,
             "team_peer_messages_enabled": mode == "radio_lite",
         }
@@ -950,7 +978,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="wall-clock bound for the run, in seconds "
         f"(default: {CLI_DEFAULT_TIMEOUT_SECONDS:g})",
     )
+    parser.add_argument(
+        "--slot",
+        default=None,
+        help="run in an isolated slot so runs can execute concurrently: the "
+        "slot gets its own database, its own run lock, and writes its "
+        "artefact under data/eval/slots/<slot>/runs instead of the tracked "
+        "runs directory (a concurrent artefact landing in the tracked tree "
+        "would spoil every other run's isolation snapshot). A sweep collects "
+        "slot artefacts into the tracked directory after it finishes.",
+    )
     args = parser.parse_args(argv)
+
+    if args.slot is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", args.slot):
+        print(f"error: slot is not a safe directory name: {args.slot!r}",
+              file=sys.stderr)
+        return 1
 
     try:
         fixtures = load_fixtures(_TASKS_DIR)
@@ -963,7 +1006,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: no such fixture: {args.fixture!r}", file=sys.stderr)
         return 1
 
-    config = _evaluation_config(load_config(), mode=args.mode)
+    if args.slot is None:
+        data_root = EVAL_DATA_ROOT
+        runs_dir = _RUNS_DIR
+    else:
+        data_root = EVAL_DATA_ROOT / "slots" / args.slot
+        runs_dir = data_root / "runs"
+    config = _evaluation_config(load_config(), mode=args.mode, data_root=data_root)
     print(f"database: {config.app_db_path}")
     print(f"workspace: {config.workspace_root}")
 
@@ -989,7 +1038,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     try:
-        path = write_artifact(_RUNS_DIR, artifact)
+        path = write_artifact(runs_dir, artifact)
     except FixtureError as exc:
         print(f"error: could not write the artefact: {exc}", file=sys.stderr)
         return 1

@@ -1713,6 +1713,63 @@ def test_the_lock_is_released_even_when_the_run_raises(tmp_path: Path):
         pass
 
 
+def test_a_slotted_config_gets_its_own_database_and_lock(tmp_path: Path):
+    """Slots are what let a sweep run fixtures concurrently: two runs sharing
+    one SQLite file would contend on it, and the run lock lives beside the
+    database, so a per-slot data root separates both in one move. Two slots
+    must therefore hold their locks at the same time without refusing each
+    other -- that refusal is the whole thing the slot exists to remove."""
+    product_config = AppConfig(
+        workspace_root=tmp_path / "workspace",
+        session_dir=tmp_path / "sessions",
+        app_db_path=tmp_path / "data" / "app.sqlite",
+        lmg_base_url="http://127.0.0.1:9999",
+    )
+
+    slot_a = _evaluation_config(
+        product_config, mode="legacy", data_root=tmp_path / "slots" / "a"
+    )
+    slot_b = _evaluation_config(
+        product_config, mode="legacy", data_root=tmp_path / "slots" / "b"
+    )
+
+    assert slot_a.app_db_path != slot_b.app_db_path
+    with only_one_run(slot_a):
+        with only_one_run(slot_b):
+            pass
+
+
+def test_exporting_leaves_no_staging_directory_behind(tmp_path: Path):
+    """The export is published with one atomic rename from a staging
+    directory, so a concurrent caller can never read a half-written tree. The
+    staging directory must not survive the publish: a sweep's slots share the
+    exports root, and an accumulating pile of staging copies would read as
+    exports nobody made."""
+    repo = _initialised_repo(tmp_path)
+    exports = tmp_path / "exports"
+
+    export_source(repo, exports, "HEAD")
+
+    assert not list(exports.glob("*.staging-*"))
+
+
+def test_a_leftover_export_without_a_marker_is_replaced(tmp_path: Path):
+    """A directory left half-written by a killed run must not be mistaken for
+    a source tree. No marker means no completed export, whatever is on disk."""
+    repo = _initialised_repo(tmp_path)
+    exports = tmp_path / "exports"
+    commit = _git(repo, "rev-parse", "HEAD")
+    leftover = exports / f"pag-{commit[:7]}"
+    leftover.mkdir(parents=True)
+    (leftover / "half-written.txt").write_text("junk", encoding="utf-8")
+
+    destination, _ = export_source(repo, exports, "HEAD")
+
+    assert destination == leftover
+    assert not (destination / "half-written.txt").exists()
+    assert (destination / "a.txt").read_text(encoding="utf-8") == "x"
+
+
 def test_the_evaluation_workspace_lives_outside_the_repository():
     """Because the repository is the source the fixtures read.
 
