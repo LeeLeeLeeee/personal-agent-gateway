@@ -8,6 +8,7 @@ from personal_agent_gateway.team_model_operations import (
     _built_in_result_validators,
 )
 from personal_agent_gateway.team_provider_recovery import (
+    _CONSULT_STAGES,
     _LEAD_STAGES,
     _WORKER_STAGES,
 )
@@ -66,6 +67,8 @@ def test_every_stage_is_grouped_for_provider_recovery() -> None:
     stages = set(get_args(OperationStage))
     cycle_stages = {stage for stage in stages if stage.startswith("cycle_")}
     for stage in stages - cycle_stages:
-        assert stage in _WORKER_STAGES or stage in _LEAD_STAGES, (
-            f"{stage} belongs to neither worker nor lead group"
-        )
+        assert (
+            stage in _WORKER_STAGES
+            or stage in _LEAD_STAGES
+            or stage in _CONSULT_STAGES
+        ), f"{stage} belongs to no worker, lead, or consult group"

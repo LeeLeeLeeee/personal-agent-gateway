@@ -9276,3 +9276,188 @@ async def test_a_worker_is_told_what_its_teammate_is_assigned(collab_setup) -> N
     # The peer's work is context for addressing a note, not work to do.
     assert "do only your own task" in joined
 
+
+
+@pytest.mark.asyncio
+async def test_a_peer_addressed_query_is_answered_by_the_peer(tmp_path):
+    """The consult cycle: a worker's needs_info that names a teammate's roster
+    label is answered by that teammate's model, not the lead's, and both the
+    question and the answer land on the peer_mention ledger -- the radio
+    channel used as a conversation rather than a completion report."""
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    first = personas.create_persona("W1", "worker", "d", [], [])
+    second = personas.create_persona("W2", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [first.id, second.id],
+        "plan_and_execute",
+        2,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    teams.set_cycle_status(cycle.id, "running")
+    members = [
+        agent for agent in teams.list_agents(run.id) if agent.role == "member"
+    ]
+    asker, peer = members[0], members[1]
+    teams.create_task(
+        run.id,
+        "Register the check",
+        "Register the new check kind.",
+        owner_agent_id=asker.id,
+        cycle_id=cycle.id,
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
+    )
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+    )
+    collaboration = TeamCollaborationService(db, teams)
+    lead_client = OperationModel([ModelResponse("summary", [])])
+    worker_client = OperationModel(
+        [
+            ModelResponse(
+                '```json\n{"needs_info":{"topic":"naming",'
+                '"question":"Which name did you register?","to":"W-02"}}\n```',
+                [],
+            ),
+            ModelResponse(
+                '{"resolution":{"kind":"answer",'
+                '"answer":"file_size_at_most, in team_verification_checks.py"}}',
+                [],
+            ),
+            ModelResponse(_outcome_json("registered the same name"), []),
+        ]
+    )
+    runtime = TeamRuntime(
+        teams,
+        lambda agent, _cycle_id=None: (
+            lead_client if agent.role == "leader" else worker_client
+        ),
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(
+            db, teams, operations, collaboration
+        ),
+        collaboration=collaboration,
+    )
+
+    result = await runtime.resume(run.id, cycle.id)
+
+    assert result.status == "completed"
+    stages = {
+        operation.stage: operation
+        for operation in operations.list_for_cycle(cycle.id)
+    }
+    assert "mediation_lead" not in stages
+    consult = stages["consult_peer"]
+    assert consult.agent_id == peer.id
+    assert consult.status == "applied"
+    assert stages["mediation_worker"].agent_id == asker.id
+    notes = [
+        message
+        for message in teams.list_messages(run.id, cycle.id)
+        if message.kind == "peer_mention"
+    ]
+    assert [
+        (note.sender_agent_id, note.recipient_agent_id) for note in notes
+    ] == [(asker.id, peer.id), (peer.id, asker.id)]
+    assert notes[0].metadata["to_label"] == "W-02"
+    assert "file_size_at_most" in notes[1].content
+    assert teams.get_cycle(cycle.id).rounds_used == 1
+
+
+@pytest.mark.asyncio
+async def test_a_query_with_an_unresolvable_label_falls_back_to_the_lead(
+    tmp_path,
+):
+    """A label that names nobody -- or names the asker or LEAD -- is a routing
+    verdict, not an error: the classic mediation route answers, byte for byte
+    the shape it always had, so a one-character typo costs nothing."""
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    first = personas.create_persona("W1", "worker", "d", [], [])
+    second = personas.create_persona("W2", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [first.id, second.id],
+        "plan_and_execute",
+        2,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    teams.set_cycle_status(cycle.id, "running")
+    asker = next(
+        agent for agent in teams.list_agents(run.id) if agent.role == "member"
+    )
+    teams.create_task(
+        run.id,
+        "Research",
+        "Research the request.",
+        owner_agent_id=asker.id,
+        cycle_id=cycle.id,
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
+    )
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+    )
+    collaboration = TeamCollaborationService(db, teams)
+    lead_client = OperationModel(
+        [
+            ModelResponse(
+                '{"resolution":{"kind":"answer","answer":"Use scope A."}}',
+                [],
+            ),
+            ModelResponse("summary", []),
+        ]
+    )
+    worker_client = OperationModel(
+        [
+            ModelResponse(
+                '```json\n{"needs_info":{"topic":"scope",'
+                '"question":"Which scope?","to":"W-99"}}\n```',
+                [],
+            ),
+            ModelResponse(_outcome_json("done"), []),
+        ]
+    )
+    runtime = TeamRuntime(
+        teams,
+        lambda agent, _cycle_id=None: (
+            lead_client if agent.role == "leader" else worker_client
+        ),
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(
+            db, teams, operations, collaboration
+        ),
+        collaboration=collaboration,
+    )
+
+    result = await runtime.resume(run.id, cycle.id)
+
+    assert result.status == "completed"
+    stages = [
+        operation.stage for operation in operations.list_for_cycle(cycle.id)
+    ]
+    assert "consult_peer" not in stages
+    assert "mediation_lead" in stages
+    query = next(
+        message
+        for message in teams.list_messages(run.id, cycle.id)
+        if message.kind == "query"
+    )
+    assert query.recipient_agent_id == run.leader_agent_id
+    assert "to_label" not in query.metadata

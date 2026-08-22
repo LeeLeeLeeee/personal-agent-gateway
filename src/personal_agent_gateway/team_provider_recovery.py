@@ -548,6 +548,13 @@ _LEAD_STAGES = {
     "acceptance_lead",
     "acceptance_lead_repair",
 }
+# A consult runs in the lead-stage shape -- the asking worker owns and runs
+# the task while the answering actor holds no task -- but the actor is a
+# fellow worker, so the one check that names the leader cannot apply.
+_CONSULT_STAGES = {
+    "consult_peer",
+    "consult_peer_repair",
+}
 
 
 def _validate_single_open_operation(connection, operation) -> None:
@@ -640,7 +647,7 @@ def _validate_operation_source(
         ):
             raise OperationConflict("Waiting Worker source state is invalid")
         if (
-            operation.stage in _LEAD_STAGES
+            operation.stage in _LEAD_STAGES | _CONSULT_STAGES
             and (
                 task is None
                 or worker is None
@@ -712,6 +719,21 @@ def _validate_active_source(operation, run, cycle, task, actor, worker) -> None:
             and worker["current_task_id"] == task["id"]
             and actor["id"] == run["leader_agent_id"]
             and actor["status"] == "running"
+            and run["status"] == "running"
+            and cycle["status"] == "running"
+        )
+    elif operation.stage in _CONSULT_STAGES:
+        # Lead-stage shape with a different respondent: the answering actor is
+        # a fellow worker, never the task owner (a consult with yourself is
+        # refused at record time) and never the leader (that is mediation).
+        valid = (
+            task is not None
+            and worker is not None
+            and task["status"] == "in_progress"
+            and worker["status"] == "running"
+            and worker["current_task_id"] == task["id"]
+            and actor["id"] != run["leader_agent_id"]
+            and actor["id"] != task["owner_agent_id"]
             and run["status"] == "running"
             and cycle["status"] == "running"
         )
@@ -832,7 +854,10 @@ def _restore_operation_source(
             """,
             (timestamp, operation.task_id),
         )
-    if operation.stage in _LEAD_STAGES and operation.task_id is not None:
+    if (
+        operation.stage in _LEAD_STAGES | _CONSULT_STAGES
+        and operation.task_id is not None
+    ):
         task = connection.execute(
             "select owner_agent_id from team_tasks where id = ?",
             (operation.task_id,),

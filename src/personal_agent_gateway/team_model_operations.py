@@ -20,6 +20,13 @@ OperationStage = Literal[
     "worker_execution",
     "mediation_lead",
     "mediation_lead_repair",
+    # A peer answers instead of the lead when the asker addressed its
+    # needs_info to a roster label. Its own stage, not mediation_lead with a
+    # different agent: recovery rebuilds a mediation_lead operation with the
+    # leader, so reusing that name would make a peer-answered consult
+    # unrecoverable the moment it is interrupted.
+    "consult_peer",
+    "consult_peer_repair",
     "mediation_worker",
     "mediation_worker_repair",
     "acceptance_lead",

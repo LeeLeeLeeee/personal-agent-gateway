@@ -17,6 +17,7 @@ REPAIR_STAGE: dict[OperationStage, OperationStage] = {
     # a separate stage name would silently move it to the other baseline policy.
     "worker_execution": "worker_execution",
     "mediation_lead": "mediation_lead_repair",
+    "consult_peer": "consult_peer_repair",
     "mediation_worker": "mediation_worker_repair",
     "acceptance_lead": "acceptance_lead_repair",
     "acceptance_worker": "acceptance_worker_repair",

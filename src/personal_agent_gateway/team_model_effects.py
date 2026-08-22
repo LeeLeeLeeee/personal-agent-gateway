@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from personal_agent_gateway.db import Database
+from personal_agent_gateway.team_collaboration import agent_label
 from personal_agent_gateway.team_collaboration_service import UnknownRecipient
 from personal_agent_gateway.team_acceptance import (
     AcceptanceResult,
@@ -94,6 +95,7 @@ class WorkerEffectResult:
     next_stage: Literal[
         "acceptance_lead",
         "mediation_lead",
+        "consult_peer",
         "user_decision",
     ] | None
     message: TeamMessage | None = None
@@ -501,30 +503,50 @@ class TeamModelEffectService:
             ).fetchone()
             if run is None:
                 raise OperationConflict("Worker query run does not exist")
+            # The routing decision lives here, at effect time, so recovery
+            # replays it from the ledger instead of re-deciding: a query
+            # addressed to a teammate's roster label goes to that teammate as
+            # a peer note and the consult stage answers it; anything else --
+            # no label, an unknown label, the asker's own label, LEAD, or the
+            # peer channel being off -- takes the classic mediation route with
+            # the classic message shape, byte for byte.
+            peer_id = self._consult_recipient(connection, operation, query)
+            if peer_id is not None:
+                recipient_id = peer_id
+                message_kind = "peer_mention"
+                next_stage = "consult_peer"
+                metadata = {
+                    "operation_id": operation.id,
+                    "task_id": task.id,
+                    "topic": query["topic"],
+                    "to_label": query["to"],
+                }
+            else:
+                recipient_id = run["leader_agent_id"]
+                message_kind = "query"
+                next_stage = "mediation_lead"
+                metadata = {
+                    "operation_id": operation.id,
+                    "task_id": task.id,
+                    "topic": query["topic"],
+                }
             message_id = uuid4().hex
             connection.execute(
                 """
                 insert into team_messages (
                     id, team_run_id, cycle_id, sender_agent_id, recipient_agent_id,
                     kind, content, metadata_json, created_at
-                ) values (?, ?, ?, ?, ?, 'query', ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     message_id,
                     operation.team_run_id,
                     operation.cycle_id,
                     operation.agent_id,
-                    run["leader_agent_id"],
+                    recipient_id,
+                    message_kind,
                     query["question"],
-                    json.dumps(
-                        {
-                            "operation_id": operation.id,
-                            "task_id": task.id,
-                            "topic": query["topic"],
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
                     now,
                 ),
             )
@@ -542,16 +564,61 @@ class TeamModelEffectService:
                     "task_id": task.id,
                     "agent_id": agent.id,
                     "message_id": message_id,
-                    "next_stage": "mediation_lead",
+                    "next_stage": next_stage,
                 },
                 now=now,
             )
             return WorkerEffectResult(
                 task=self._teams._task_from_connection(connection, task.id),
                 agent=self._teams._agent_from_connection(connection, agent.id),
-                next_stage="mediation_lead",
+                next_stage=next_stage,
                 message=self._teams._message_from_connection(connection, message_id),
             )
+
+    def _consult_recipient(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        query: dict[str, object],
+    ) -> str | None:
+        """The teammate a query's "to" label names, or None for the lead route.
+
+        None is a routing verdict, never an error: a worker that mislabels a
+        teammate still deserves an answer, and the lead can give one. Raising
+        here would fail the whole worker operation for a one-character label
+        typo. Labels resolve by the same ordering labels_for_run uses
+        (created_at, id), so the mapping is stable across recovery replays.
+        """
+        if self._collaboration is None:
+            return None
+        to = query.get("to")
+        if not isinstance(to, str) or not to.strip():
+            return None
+        rows = connection.execute(
+            """
+            select id, role from team_agents where team_run_id = ?
+            order by created_at asc, id asc
+            """,
+            (operation.team_run_id,),
+        ).fetchall()
+        labels: dict[str, str] = {}
+        ordinal = 0
+        for row in rows:
+            if row["role"] == "leader":
+                labels[agent_label("leader", None)] = row["id"]
+                continue
+            ordinal += 1
+            labels[agent_label("member", ordinal)] = row["id"]
+        recipient = labels.get(to.strip().upper())
+        if recipient is None or recipient == operation.agent_id:
+            return None
+        leader = connection.execute(
+            "select leader_agent_id from team_runs where id = ?",
+            (operation.team_run_id,),
+        ).fetchone()
+        if leader is not None and recipient == leader["leader_agent_id"]:
+            return None
+        return recipient
 
     def apply_mediation_lead(
         self,
@@ -734,6 +801,297 @@ class TeamModelEffectService:
                     else None
                 ),
             )
+
+    def apply_consult_peer(
+        self,
+        operation_id: str,
+        resolution: MediationResolution,
+    ) -> MediationEffectResult:
+        """A teammate's answer to a peer-addressed query, onto the ledger.
+
+        Mirrors apply_mediation_lead with two deliberate narrowings: the
+        respondent is the fellow worker the query named rather than the lead,
+        and the only legal resolution is an answer -- a peer holds no
+        authority to escalate to the user, so a peer that cannot answer says
+        so in the answer text and the asker escalates to the lead itself.
+        Both messages ride the peer_mention ledger: the consult IS the radio
+        channel used as a conversation.
+        """
+        now = _now()
+        normalized = _consult_resolution_payload(resolution)
+        with self._db.connection() as connection:
+            connection.execute("begin immediate")
+            operation = self._operations._get(connection, operation_id)
+            task, peer, worker = self._validate_consult_operation(
+                connection,
+                operation,
+            )
+            stored = _result_payload(operation, "consult_resolution")
+            if stored != normalized:
+                raise OperationConflict(
+                    "Consult resolution does not match the completed operation"
+                )
+            if operation.status == "applied":
+                return self._replay_consult_peer(
+                    connection,
+                    operation,
+                    task,
+                    peer,
+                    worker,
+                    normalized,
+                )
+            if operation.status != "completed":
+                raise StaleOperation(
+                    f"Expected operation status completed, got {operation.status}"
+                )
+            cycle = connection.execute(
+                "select rounds_used from team_run_cycles where id = ?",
+                (operation.cycle_id,),
+            ).fetchone()
+            if (
+                cycle is None
+                or int(cycle["rounds_used"]) + 1 != operation.stage_ordinal
+            ):
+                raise OperationConflict(
+                    "Consult operation does not match the current round"
+                )
+            if task.status != "in_progress":
+                raise OperationConflict("Consult task is not in progress")
+            if worker.status != "running" or worker.current_task_id != task.id:
+                raise OperationConflict("Consult asker is not running the task")
+
+            query_message = self._consult_query_receipt(connection, operation)
+            cursor = connection.execute(
+                """
+                update team_run_cycles
+                set rounds_used = rounds_used + 1, updated_at = ?
+                where id = ? and rounds_used = ?
+                  and rounds_used < rounds_budget
+                """,
+                (
+                    now,
+                    operation.cycle_id,
+                    operation.stage_ordinal - 1,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise OperationConflict(
+                    "Consult round changed before effect application"
+                )
+            message_id = uuid4().hex
+            connection.execute(
+                """
+                insert into team_messages (
+                    id, team_run_id, cycle_id, sender_agent_id,
+                    recipient_agent_id, kind, content, metadata_json,
+                    created_at
+                ) values (?, ?, ?, ?, ?, 'peer_mention', ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    operation.team_run_id,
+                    operation.cycle_id,
+                    peer.id,
+                    worker.id,
+                    normalized["answer"],
+                    json.dumps(
+                        {
+                            "operation_id": operation.id,
+                            "task_id": task.id,
+                            "round": operation.stage_ordinal,
+                            "query_id": query_message.id,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
+            )
+            _promote_actor_session(connection, operation, now)
+            _mark_applied(
+                connection,
+                operation,
+                effect_type="consult_peer",
+                effect_ref={
+                    "task_id": task.id,
+                    "worker_agent_id": worker.id,
+                    "query_message_id": query_message.id,
+                    "answer_message_id": message_id,
+                    "next_stage": "mediation_worker",
+                    "round": operation.stage_ordinal,
+                    "resolution_digest": _canonical_digest(normalized),
+                },
+                now=now,
+            )
+            return MediationEffectResult(
+                task=self._teams._task_from_connection(connection, task.id),
+                agent=self._teams._agent_from_connection(connection, worker.id),
+                next_stage="mediation_worker",
+                message=self._teams._message_from_connection(
+                    connection, message_id
+                ),
+            )
+
+    def _validate_consult_operation(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+    ) -> tuple[TeamTask, TeamAgent, TeamAgent]:
+        if (
+            operation.stage
+            not in {"consult_peer", REPAIR_STAGE.get("consult_peer")}
+            or operation.task_id is None
+        ):
+            raise OperationConflict("Operation is not a consult_peer stage")
+        run = connection.execute(
+            "select leader_agent_id from team_runs where id = ?",
+            (operation.team_run_id,),
+        ).fetchone()
+        cycle = connection.execute(
+            "select team_run_id from team_run_cycles where id = ?",
+            (operation.cycle_id,),
+        ).fetchone()
+        if (
+            run is None
+            or run["leader_agent_id"] == operation.agent_id
+            or cycle is None
+            or cycle["team_run_id"] != operation.team_run_id
+        ):
+            raise OperationConflict("Consult operation actor or cycle is invalid")
+        task = self._teams._task_from_connection(
+            connection,
+            operation.task_id,
+        )
+        peer = self._teams._agent_from_connection(
+            connection,
+            operation.agent_id,
+        )
+        if task.owner_agent_id is None:
+            raise OperationConflict("Consult operation task has no Worker owner")
+        worker = self._teams._agent_from_connection(
+            connection,
+            task.owner_agent_id,
+        )
+        if (
+            task.team_run_id != operation.team_run_id
+            or task.cycle_id != operation.cycle_id
+            or peer.team_run_id != operation.team_run_id
+            or worker.team_run_id != operation.team_run_id
+            or peer.id == worker.id
+        ):
+            raise OperationConflict("Consult operation ownership is invalid")
+        return task, peer, worker
+
+    def _consult_query_receipt(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+    ) -> TeamMessage:
+        row = connection.execute(
+            """
+            select id from team_model_operations
+            where team_run_id = ? and cycle_id = ? and task_id = ?
+              and status = 'applied' and result_kind = 'worker_query'
+            order by applied_at desc, created_at desc, id desc limit 1
+            """,
+            (
+                operation.team_run_id,
+                operation.cycle_id,
+                operation.task_id,
+            ),
+        ).fetchone()
+        if row is None:
+            raise OperationConflict("Consult has no applied Worker query")
+        source = self._operations._get(connection, row["id"])
+        effect_ref = source.effect_ref_json
+        query = _worker_query(source)
+        message_id = (
+            effect_ref.get("message_id")
+            if isinstance(effect_ref, dict)
+            else None
+        )
+        if not isinstance(message_id, str):
+            raise OperationConflict("Applied Worker query receipt is invalid")
+        message = self._teams._message_from_connection(connection, message_id)
+        if (
+            source.effect_type != "worker_query"
+            or not isinstance(effect_ref, dict)
+            or effect_ref.get("task_id") != operation.task_id
+            or effect_ref.get("agent_id") != source.agent_id
+            or effect_ref.get("next_stage") != "consult_peer"
+            or message.team_run_id != operation.team_run_id
+            or message.cycle_id != operation.cycle_id
+            or message.sender_agent_id != source.agent_id
+            or message.recipient_agent_id != operation.agent_id
+            or message.kind != "peer_mention"
+            or message.content != query["question"]
+            or message.metadata
+            != {
+                "operation_id": source.id,
+                "task_id": operation.task_id,
+                "topic": query["topic"],
+                "to_label": query["to"],
+            }
+        ):
+            raise OperationConflict("Applied consult query rows do not match")
+        return message
+
+    def _replay_consult_peer(
+        self,
+        connection: sqlite3.Connection,
+        operation: TeamModelOperation,
+        task: TeamTask,
+        peer: TeamAgent,
+        worker: TeamAgent,
+        resolution: dict[str, object],
+    ) -> MediationEffectResult:
+        effect_ref = operation.effect_ref_json
+        expected_keys = {
+            "task_id",
+            "worker_agent_id",
+            "query_message_id",
+            "answer_message_id",
+            "next_stage",
+            "round",
+            "resolution_digest",
+        }
+        if (
+            operation.effect_type != "consult_peer"
+            or not isinstance(effect_ref, dict)
+            or set(effect_ref) != expected_keys
+            or effect_ref["task_id"] != task.id
+            or effect_ref["worker_agent_id"] != worker.id
+            or effect_ref["round"] != operation.stage_ordinal
+            or effect_ref["next_stage"] != "mediation_worker"
+            or effect_ref["resolution_digest"] != _canonical_digest(resolution)
+            or not _operation_session_matches(operation, peer)
+        ):
+            raise OperationConflict("Applied consult receipt is invalid")
+        answer_id = effect_ref["answer_message_id"]
+        if not isinstance(answer_id, str):
+            raise OperationConflict("Applied consult answer receipt is invalid")
+        message = self._teams._message_from_connection(connection, answer_id)
+        cycle = connection.execute(
+            "select rounds_used from team_run_cycles where id = ?",
+            (operation.cycle_id,),
+        ).fetchone()
+        if (
+            cycle is None
+            or int(cycle["rounds_used"]) < operation.stage_ordinal
+            or message.team_run_id != operation.team_run_id
+            or message.cycle_id != operation.cycle_id
+            or message.sender_agent_id != peer.id
+            or message.recipient_agent_id != worker.id
+            or message.kind != "peer_mention"
+            or message.content != resolution["answer"]
+        ):
+            raise OperationConflict("Applied consult answer rows do not match")
+        return MediationEffectResult(
+            task=task,
+            agent=worker,
+            next_stage="mediation_worker",
+            message=message,
+        )
 
     def apply_acceptance_lead(
         self,
@@ -2022,7 +2380,7 @@ class TeamModelEffectService:
             != {"task_id", "agent_id", "message_id", "next_stage"}
             or effect_ref["task_id"] != operation.task_id
             or effect_ref["agent_id"] != operation.agent_id
-            or effect_ref["next_stage"] != "mediation_lead"
+            or effect_ref["next_stage"] not in {"mediation_lead", "consult_peer"}
             or not isinstance(effect_ref["message_id"], str)
         ):
             raise OperationConflict("Applied Worker query reference is invalid")
@@ -2034,6 +2392,25 @@ class TeamModelEffectService:
             "select leader_agent_id from team_runs where id = ?",
             (operation.team_run_id,),
         ).fetchone()
+        if effect_ref["next_stage"] == "consult_peer":
+            expected_recipient = self._consult_recipient(
+                connection, operation, query
+            )
+            expected_kind = "peer_mention"
+            expected_metadata = {
+                "operation_id": operation.id,
+                "task_id": task.id,
+                "topic": query["topic"],
+                "to_label": query["to"],
+            }
+        else:
+            expected_recipient = None if run is None else run["leader_agent_id"]
+            expected_kind = "query"
+            expected_metadata = {
+                "operation_id": operation.id,
+                "task_id": task.id,
+                "topic": query["topic"],
+            }
         if (
             task.status != "in_progress"
             or agent.status != "running"
@@ -2043,21 +2420,16 @@ class TeamModelEffectService:
             or message.team_run_id != operation.team_run_id
             or message.cycle_id != operation.cycle_id
             or message.sender_agent_id != operation.agent_id
-            or message.recipient_agent_id != run["leader_agent_id"]
-            or message.kind != "query"
+            or message.recipient_agent_id != expected_recipient
+            or message.kind != expected_kind
             or message.content != query["question"]
-            or message.metadata
-            != {
-                "operation_id": operation.id,
-                "task_id": task.id,
-                "topic": query["topic"],
-            }
+            or message.metadata != expected_metadata
         ):
             raise OperationConflict("Applied Worker query rows do not match")
         return WorkerEffectResult(
             task=task,
             agent=agent,
-            next_stage="mediation_lead",
+            next_stage=effect_ref["next_stage"],
             message=message,
         )
 
@@ -3633,6 +4005,12 @@ def team_model_effect_result_validators() -> OperationResultValidatorRegistry:
         "mediation_lead_repair": {
             "mediation_resolution": _valid_mediation_resolution,
         },
+        "consult_peer": {
+            "consult_resolution": _valid_consult_resolution,
+        },
+        "consult_peer_repair": {
+            "consult_resolution": _valid_consult_resolution,
+        },
         "mediation_worker": {
             "task_outcome": _valid_task_outcome,
             "worker_query": _valid_worker_query,
@@ -3673,13 +4051,44 @@ def _valid_task_outcome(payload: dict[str, object]) -> bool:
 
 
 def _valid_worker_query(payload: dict[str, object]) -> bool:
-    return (
-        set(payload) == {"topic", "question"}
-        and all(
-            isinstance(payload[field], str) and bool(payload[field].strip())
-            for field in ("topic", "question")
-        )
-    )
+    # "to" is optional: absent means the lead answers, present names the
+    # roster label of the teammate the asker wants.
+    if set(payload) not in ({"topic", "question"}, {"topic", "question", "to"}):
+        return False
+    if not all(
+        isinstance(payload[field], str) and bool(payload[field].strip())
+        for field in ("topic", "question")
+    ):
+        return False
+    if "to" in payload and (
+        not isinstance(payload["to"], str) or not payload["to"].strip()
+    ):
+        return False
+    return True
+
+
+def _consult_resolution_payload(
+    resolution: Mapping[str, object],
+) -> dict[str, object]:
+    """Answer-only: a peer cannot escalate to the user."""
+    normalized = _json_object(dict(resolution))
+    if (
+        normalized.get("kind") == "answer"
+        and set(normalized) == {"kind", "answer"}
+        and isinstance(normalized["answer"], str)
+        and normalized["answer"].strip()
+    ):
+        normalized["answer"] = normalized["answer"].strip()
+        return normalized
+    raise OperationConflict("Consult resolution must be an answer")
+
+
+def _valid_consult_resolution(payload: dict[str, object]) -> bool:
+    try:
+        _consult_resolution_payload(payload)
+    except (OperationConflict, TypeError, ValueError):
+        return False
+    return True
 
 
 def _valid_mediation_resolution(payload: dict[str, object]) -> bool:

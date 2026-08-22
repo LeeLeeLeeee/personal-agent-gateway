@@ -161,8 +161,12 @@ Task description: {task_description}
 If you need information from another team member to proceed, end your reply with
 ONLY this fenced block and nothing after it:
 ```json
-{{"needs_info": {{"topic": "<short topic>", "question": "<your question>"}}}}
+{{"needs_info": {{"topic": "<short topic>", "question": "<your question>", "to": "<roster label, optional>"}}}}
 ```
+Set "to" to a teammate's roster label when the question is about that
+teammate's assignment or what they produced -- they answer you directly, from
+their own work. Omit "to" to ask the lead: questions about the goal, the
+rules, or anything no teammate's assignment covers belong to the lead.
 Otherwise, the final response must contain only this JSON object and no prose or
 code fences:
 {{"status":"completed|blocked|failed","summary":"concise result",
@@ -281,6 +285,17 @@ Return ONLY one JSON object in one of these forms:
 {{"resolution":{{"kind":"answer","answer":"concise instruction for the worker"}}}}
 {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why work cannot safely continue","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"task or run"}}}}
 Use ask_user only when the user must decide. Prefer task scope; use run scope only when remaining work would be invalid or cause major rework."""
+
+CONSULT_PROMPT = """You are teammate {peer_label} in a Team Run.
+Goal: {goal}
+Teammate {asker_label}, working on task "{task_title}", asks you: {question}
+
+Answer from your own assignment and the work you have already done. Say what
+you actually did or know -- the file you wrote, the name you chose, the
+convention you set -- and name the file when you can. If you do not know,
+say so plainly; do not guess, and do not do the asker's work.
+Return ONLY one JSON object in this form:
+{{"resolution":{{"kind":"answer","answer":"concise factual answer for the teammate"}}}}"""
 
 ADD_WORK_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
 The user is adding work to an in-flight run. Break the request into concrete tasks.
@@ -1387,6 +1402,61 @@ class TeamRuntime:
             )
             return OpenOperationRecovery(recovered, result)
 
+        if operation.stage in {"consult_peer", "consult_peer_repair"}:
+            if operation.task_id is None:
+                raise OperationConflict("Consult operation has no task")
+            task = self._teams.get_task(operation.task_id)
+            worker = self._teams.get_agent(task.owner_agent_id)
+            # The answering peer is the operation's own actor -- unlike
+            # mediation there is no fixed respondent to substitute, so the
+            # ledger is the only place the choice survives a crash.
+            peer = self._teams.get_agent(operation.agent_id)
+            query_operation = next(
+                (
+                    candidate
+                    for candidate in reversed(
+                        self._operations.list_for_cycle(cycle_id)
+                    )
+                    if candidate.task_id == task.id
+                    and candidate.status == "applied"
+                    and candidate.result_kind == "worker_query"
+                ),
+                None,
+            )
+            if query_operation is None:
+                raise OperationConflict(
+                    "Consult operation has no applied Worker query"
+                )
+            query = _operation_worker_query(query_operation)
+            messages = self._consult_messages(
+                run,
+                peer,
+                task,
+                query["question"],
+            )
+            recovered = operation
+            if operation.status == "prepared":
+                recovered = await self._invoke_existing_operation(
+                    operation,
+                    peer,
+                    messages,
+                    _validated_consult_result,
+                )
+            resolution = _operation_consult_resolution(recovered)
+            effect = self._model_effects.apply_consult_peer(
+                recovered.id,
+                resolution,
+            )
+            result = await self._continue_cycle_mediation_effect(
+                run,
+                leader,
+                worker,
+                task,
+                resolution,
+                effect,
+            )
+            return OpenOperationRecovery(recovered, result)
+
         if operation.stage in {"acceptance_lead", "acceptance_lead_repair"}:
             if operation.task_id is None:
                 raise OperationConflict("Acceptance operation has no task")
@@ -1500,6 +1570,25 @@ class TeamRuntime:
                         task_id=task.id,
                     )
                 )
+                if lead_operation is None or lead_operation.status != "applied":
+                    # The answer this stage resumes from may have come from a
+                    # peer consult instead of the lead -- same ordinal, other
+                    # stage. Without this lookup a crash between a consult and
+                    # its mediation_worker replays as budget exhaustion and
+                    # throws the peer's answer away.
+                    consult_operation = self._operations.get_by_key(
+                        _operation_key(
+                            cycle_id,
+                            "consult_peer",
+                            operation.stage_ordinal,
+                            task_id=task.id,
+                        )
+                    )
+                    if (
+                        consult_operation is not None
+                        and consult_operation.status == "applied"
+                    ):
+                        lead_operation = consult_operation
                 if (
                     lead_operation is None
                     or lead_operation.status != "applied"
@@ -1524,7 +1613,9 @@ class TeamRuntime:
                         )
                 else:
                     messages = _mediation_worker_messages(
-                        _operation_mediation_resolution(lead_operation)
+                        _operation_consult_resolution(lead_operation)
+                        if lead_operation.result_kind == "consult_resolution"
+                        else _operation_mediation_resolution(lead_operation)
                     )
 
                     def parser(response):
@@ -2683,6 +2774,8 @@ class TeamRuntime:
                         "worker_execution",
                         "mediation_lead",
                         "mediation_lead_repair",
+                        "consult_peer",
+                        "consult_peer_repair",
                         "mediation_worker",
                         "mediation_worker_repair",
                         "acceptance_lead",
@@ -3191,6 +3284,11 @@ class TeamRuntime:
                 worker,
                 task,
                 query,
+                consult_agent_id=(
+                    applied.message.recipient_agent_id
+                    if applied.next_stage == "consult_peer"
+                    else None
+                ),
             )
         if operation.result_kind != "task_outcome":
             raise OperationConflict("Completed Worker operation result is invalid")
@@ -3271,6 +3369,7 @@ class TeamRuntime:
         worker: TeamAgent,
         task: TeamTask,
         query: dict[str, str],
+        consult_agent_id: str | None = None,
     ) -> TeamDecisionRequest | None:
         cycle = self._teams.get_cycle(task.cycle_id)
         worker_agent = self._teams.get_agent(worker.id)
@@ -3305,6 +3404,45 @@ class TeamRuntime:
                 task,
                 operation,
                 before=None,
+            )
+        if consult_agent_id is not None:
+            # The routing verdict was made once, at worker-query apply time,
+            # and rode in on the applied effect -- re-deciding here could
+            # disagree with the ledger after a label change.
+            peer_agent = self._teams.get_agent(consult_agent_id)
+            round_number = self._teams.get_cycle(task.cycle_id).rounds_used + 1
+            consult_messages = self._consult_messages(
+                run,
+                peer_agent,
+                task,
+                query["question"],
+            )
+            consult_operation = await self._invoke_operation(
+                _operation_spec(
+                    run,
+                    task.cycle_id,
+                    peer_agent,
+                    "consult_peer",
+                    round_number,
+                    consult_messages,
+                    task_id=task.id,
+                ),
+                peer_agent,
+                consult_messages,
+                _validated_consult_result,
+            )
+            resolution = _operation_consult_resolution(consult_operation)
+            effect = self._model_effects.apply_consult_peer(
+                consult_operation.id,
+                resolution,
+            )
+            return await self._continue_cycle_mediation_effect(
+                run,
+                leader,
+                worker,
+                task,
+                resolution,
+                effect,
             )
         leader_agent = self._teams.get_agent(leader.id)
         round_number = (
@@ -3635,6 +3773,40 @@ class TeamRuntime:
                 )
             changes[target] = value
         return changes
+
+    def _consult_messages(
+        self,
+        run: TeamRun,
+        peer: TeamAgent,
+        task: TeamTask,
+        question: str,
+    ) -> list[dict[str, object]]:
+        """The prompt for a peer answering a teammate's addressed question.
+
+        Built only from run, task, roster labels, and the question, so a
+        recovery rebuilds it byte for byte. Deliberately no outputs digest:
+        the answer's value is what the peer knows from its own session, not a
+        summary the asker could read anyway.
+        """
+        labels = {
+            agent_id: label
+            for label, agent_id in self._collaboration.labels_for_run(
+                run.id
+            ).items()
+        }
+        goal_context = self._goal_context(run, task.cycle_id)
+        prompt = _space_block(
+            run,
+            self._space_policy(run, task.cycle_id),
+            task.cycle_id,
+        ) + CONSULT_PROMPT.format(
+            peer_label=labels.get(peer.id, "?"),
+            asker_label=labels.get(task.owner_agent_id, "?"),
+            goal=goal_context,
+            task_title=task.title,
+            question=question,
+        )
+        return [{"role": "user", "content": prompt}]
 
     def _mediation_messages(
         self,
@@ -5466,6 +5638,32 @@ def _validated_mediation_result(
     )
 
 
+def _validated_consult_result(
+    response: ModelResponse,
+) -> ValidatedOperationResult:
+    # A peer has no ask_user authority, so anything that is not an answer --
+    # including an ask_user shape it was never offered -- is kept as the
+    # answer text rather than refused: the asker still gets to read it and
+    # decide whether to escalate to the lead.
+    resolution = _parse_mediation_resolution(response.content)
+    if resolution.get("kind") != "answer":
+        resolution = {"kind": "answer", "answer": response.content.strip()}
+    return ValidatedOperationResult("consult_resolution", resolution)
+
+
+def _operation_consult_resolution(
+    operation: TeamModelOperation,
+) -> dict[str, object]:
+    stored = operation.result_json
+    payload = stored.get("payload") if isinstance(stored, dict) else None
+    if (
+        operation.result_kind != "consult_resolution"
+        or not isinstance(payload, dict)
+    ):
+        raise OperationConflict("Completed consult operation is invalid")
+    return payload
+
+
 def _validated_acceptance_review(
     response: ModelResponse,
 ) -> ValidatedOperationResult:
@@ -5672,16 +5870,20 @@ def _operation_worker_query(
     payload = stored.get("payload") if isinstance(stored, dict) else None
     if (
         not isinstance(payload, dict)
-        or set(payload) != {"topic", "question"}
+        or set(payload) not in ({"topic", "question"}, {"topic", "question", "to"})
         or not isinstance(payload["topic"], str)
         or not isinstance(payload["question"], str)
         or not payload["question"].strip()
+        or ("to" in payload and not isinstance(payload["to"], str))
     ):
         raise OperationConflict("Completed Worker query is invalid")
-    return {
+    query = {
         "topic": payload["topic"],
         "question": payload["question"],
     }
+    if "to" in payload:
+        query["to"] = payload["to"]
+    return query
 
 
 def _worker_query_content(query: dict[str, str]) -> str:
@@ -6192,7 +6394,18 @@ def _parse_needs_info(content: str) -> dict[str, str] | None:
     if not isinstance(question, str) or not question.strip():
         return None
     topic = req.get("topic")
-    return {"topic": topic if isinstance(topic, str) else "", "question": question.strip()}
+    parsed = {
+        "topic": topic if isinstance(topic, str) else "",
+        "question": question.strip(),
+    }
+    # "to" passes through only when it could name someone: the effect layer
+    # resolves it against the roster and quietly takes the lead route for a
+    # label that names nobody, so a malformed value here must not become a
+    # stored key that the ledger validator then refuses.
+    to = req.get("to")
+    if isinstance(to, str) and to.strip():
+        parsed["to"] = to.strip()
+    return parsed
 
 
 def _last_json_block(content: str) -> str | None:
