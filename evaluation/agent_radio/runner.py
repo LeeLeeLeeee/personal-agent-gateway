@@ -786,7 +786,14 @@ EVAL_DATA_ROOT = _REPO_ROOT / "data" / "eval"
 # repository's own paths start, and Windows stops at 260. The obvious home for
 # this -- beside the repository, under `playground/` -- overruns that limit for
 # the deepest documents in `docs/`.
-_EVAL_ROOT = Path(Path.home().anchor) / "pag-eval"
+#
+# The drive anchor itself only works on Windows (C:\pag-eval). On macOS the
+# anchor is /, and the system volume is read-only, so creating /pag-eval fails
+# with EROFS before any run starts. The home directory has no 260-character
+# problem to dodge on POSIX, so it hosts the directory there.
+_EVAL_ROOT = (
+    Path(Path.home().anchor) if os.name == "nt" else Path.home()
+) / "pag-eval"
 EVAL_WORKSPACE_ROOT = _EVAL_ROOT / "workspace"
 EVAL_SOURCE_ROOT = _EVAL_ROOT / "source"
 

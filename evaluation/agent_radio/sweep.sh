@@ -72,15 +72,18 @@ echo "${#JOBS[@]} runs across $SLOTS slots, --workers $WORKERS"
 # Prints one status line; writes full runner output to its own log.
 run_one() {
   local fixture="$1" arm="$2" slot="$3"
-  local negotiate=()
-  [ "$arm" = negotiation ] && negotiate=(--negotiation)
+  # A plain string, not an array: macOS ships bash 3.2, where expanding an
+  # empty array under `set -u` is a fatal "unbound variable".
+  local negotiate=""
+  [ "$arm" = negotiation ] && negotiate="--negotiation"
   local log="$LOG_DIR/$fixture--$arm.log"
   local attempt
   for attempt in 1 2; do
+    # shellcheck disable=SC2086 -- $negotiate is one word or nothing
     "$PYTHON" -m agent_radio.runner \
       --fixture "$fixture" --mode legacy --workers "$WORKERS" \
       --timeout-seconds "$TIMEOUT" --slot "$slot" \
-      "${negotiate[@]}" >"$log" 2>&1
+      $negotiate >"$log" 2>&1
     local code=$?
     # The artefact path is the runner's last stdout line on success.
     local artefact=""
