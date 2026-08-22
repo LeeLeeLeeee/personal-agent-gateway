@@ -172,6 +172,38 @@ df8e2c4(macOS 이식), 9ea24c1(스윕 아티팩트), db0ab67(채점 repeat=4).
 - 스윕 실측: 슬롯 2개 병렬로 48런 약 5시간(순 실행합 8.9h), 런당 평균 14.8분,
   provider_protocol_error 1/48(재시도로 흡수).
 
+## 2026-08-22 추기 3 — 갈림길 B 실행, 그리고 동료 자문(consult_peer)
+
+갈림길 B와 그 다음 단계를 구현했다. 커밋: 94f6cfa(쪽지 수신자 유도 한 줄),
+ba6c7b3(consult_peer stage).
+
+- **B는 효과가 있었다.** 워커 계약에 "동료의 담당에 필요한 사실은 그 동료에게
+  보내라" 한 줄을 추가하고 radio_lite·워커 2로 5런을 돌린 결과, 관측된 쪽지
+  전부가 **워커 → 워커**였다(리드 수신 0건, 이전 스윕은 7/7 리드행).
+  agree-on-a-new-check-kind 에서는 W-01이 "이름은 file_size_at_most·
+  max_size_bytes, 위치는 team_verification_checks.py" 를 W-02에게 보냈고
+  배달됐다 — 픽스처가 노린 바로 그 조율이다. W-02→W-01 역방향(테스트 추가
+  보고)도 관측됐다.
+- **동료 자문 경로를 구현했다.** needs_info 가 선택 필드 "to"(로스터 라벨)를
+  얻었다. 라벨이 동료 워커를 가리키면 리드 mediation 대신 새 stage
+  `consult_peer` 가 그 동료의 모델을 불러 답하게 하고, 질문·답변 모두
+  peer_mention 원장에 남는다. 라우팅 판정은 worker_query 적용 시점에 원장에
+  한 번 기록되어 복구가 재판정하지 않는다. 동료는 ask_user 권한이 없고(답만
+  가능), 자문 라운드는 mediation 과 같은 rounds_budget 을 소모한다. 라벨이
+  아무도 가리키지 않으면 기존 리드 경로를 바이트 단위 그대로 탄다.
+  복구 경로: consult_peer 는 자체 open-op 복구 분기를 갖고, mediation_worker
+  복구는 같은 ordinal 의 consult_peer 적용본도 찾아본다. 전체 스위트
+  1938 통과(신규 2 포함).
+- **정직한 한계.** 라이브 프로브 2런에서 consult 는 자연 발동하지 않았다.
+  순차 실행에서는 뒤 워커가 앞 워커의 파일을 읽으면 되므로 물을 일이
+  드물다는 원래 진단(위 "미해결, 가장 근본적") 그대로다. 발동이 필요해지는
+  것은 동시 실행(갈림길 D)이거나, 파일로 답이 없는 과제다. 경로 자체는
+  테스트로 증명됐고 값이 생기는 순간 쓸 수 있다.
+- 비대칭 하나: consult 라우팅은 cycle 경로에만 있다. 비-cycle 경로
+  (_continue_worker_content)의 needs_info 는 여전히 리드가 답한다.
+- 프로브 산출물: data/eval/slots/*/runs (radio_lite, 수집하지 않음),
+  로그 data/eval/sweeps/probe*.log.
+
 ## 관련
 
 - 스윕 스크립트와 그것이 흡수한 함정: 스크래치패드 `sweep.sh`
