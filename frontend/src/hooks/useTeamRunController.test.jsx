@@ -9,6 +9,7 @@ vi.mock("../api/client.js", () => ({
     applyTeamRunDelivery: vi.fn(),
     cancelTeamRunDeliveryConflicts: vi.fn(),
     commitTeamRunDelivery: vi.fn(),
+    createTeamRun: vi.fn(),
     deleteTeamRun: vi.fn(),
     continueTeamRunDelivery: vi.fn(),
     resolveTeamRunDeliveryConflict: vi.fn(),
@@ -450,6 +451,42 @@ describe("useTeamRunController manual cycle request identity", () => {
       ["run-a", "request-3"],
       ["run-b", "request-4"]
     ]);
+  });
+});
+
+describe("useTeamRunController first request", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.createTeamRun.mockResolvedValue({ id: "run-new" });
+    api.triggerTeamCycle.mockResolvedValue({});
+    api.teamRuns.mockResolvedValue([{ id: "run-new" }]);
+  });
+
+  it("creates a TRIGGERED run and immediately queues its first request", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("first-request-id");
+    const { result, dependencies } = renderController();
+
+    await act(async () => {
+      await result.current.handleCreateTeamRun({
+        team_id: "team-1",
+        execution_policy: "triggered",
+        max_workers: 1,
+        initial_instruction: "Collect Reddit trends"
+      });
+    });
+
+    expect(api.createTeamRun).toHaveBeenCalledWith({
+      team_id: "team-1",
+      execution_policy: "triggered",
+      max_workers: 1
+    });
+    expect(api.triggerTeamCycle).toHaveBeenCalledWith("run-new", {
+      instruction: "Collect Reddit trends",
+      previous_cycle_id: null,
+      client_request_id: "first-request-id"
+    });
+    expect(result.current.selectedTeamRunId).toBe("run-new");
+    expect(dependencies.toast).toHaveBeenCalledWith("Team Run started", "success");
   });
 });
 

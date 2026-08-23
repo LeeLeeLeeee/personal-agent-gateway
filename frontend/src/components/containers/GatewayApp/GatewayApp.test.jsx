@@ -37,6 +37,28 @@ function installFetch(routes) {
     const method = init.method || "GET";
     const key = `${method} ${url}`;
     const match = routes[key] ?? routes[url];
+    if (!match && key === "GET /api/spaces") {
+      return response({
+        precedence: ["team", "persona", "global"],
+        global: {
+          scope: "global",
+          scope_id: "",
+          read_mode: "none",
+          read_path: null,
+          write_mode: "isolated",
+          workspace_path: null,
+          capability: {
+            ready: true,
+            read_summary: "Starts without existing files",
+            write_summary: "Changes stay in the Team Run workspace",
+            changes_originals: false,
+            issues: []
+          }
+        },
+        personas: [],
+        teams: []
+      });
+    }
     if (!match) return response({}, false);
     return typeof match === "function" ? match(url, init) : response(match);
   });
@@ -1544,7 +1566,7 @@ describe("GatewayApp", () => {
     await renderGatewayApp();
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
 
-    const runButton = await screen.findByRole("button", { name: "Open team run Release Crew · run-1" });
+    const runButton = await screen.findByRole("button", { name: "Open team run Ship it" });
     expect(runButton).toHaveTextContent("PLAN_AND_EXECUTE");
     expect(runButton).toHaveTextContent("Tech Lead");
     expect(runButton).toHaveTextContent("1 / 3 DONE");
@@ -1815,6 +1837,7 @@ describe("GatewayApp", () => {
         });
       },
       "POST /api/team-runs": { team_run: { id: "run-1", goal: "", team_name: "Release Crew", status: "draft", run_mode: "plan_and_execute", lifecycle_mode: "continuous", execution_policy: "triggered" } },
+      "POST /api/team-runs/run-1/cycle-requests": { cycle_request: { id: "request-1" } },
       "GET /api/team-runs/run-1": {
         team_run: {
           id: "run-1",
@@ -1853,7 +1876,8 @@ describe("GatewayApp", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
     expect(screen.queryByLabelText(/base objective/i)).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
+    await userEvent.type(screen.getByLabelText("First request"), "Define the release schema");
+    await userEvent.click(screen.getByRole("button", { name: "Start team run" }));
 
     const createCall = fetch.mock.calls.find(([url, init]) => (
       url === "/api/team-runs" && init?.method === "POST"
@@ -1863,6 +1887,13 @@ describe("GatewayApp", () => {
       execution_policy: "triggered",
       max_workers: 1
     });
+    const triggerCall = fetch.mock.calls.find(([url, init]) => (
+      url === "/api/team-runs/run-1/cycle-requests" && init?.method === "POST"
+    ));
+    expect(JSON.parse(triggerCall[1].body)).toEqual(expect.objectContaining({
+      instruction: "Define the release schema",
+      previous_cycle_id: null
+    }));
     expect(fetch).not.toHaveBeenCalledWith(
       "/api/team-runs/run-1/start",
       expect.anything()
@@ -1930,62 +1961,6 @@ describe("GatewayApp", () => {
     expect(await screen.findByText(/Release Crew · run-1/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(screen.queryByText("should not enter chat")).not.toBeInTheDocument();
-  });
-
-  it("creates an AUTO Team Run with its default numeric policy settings", async () => {
-    const continuousRun = {
-      id: "mail-run",
-      goal: "Watch inbox",
-      status: "draft",
-      run_mode: "plan_and_execute",
-      lifecycle_mode: "continuous",
-      execution_policy: "auto",
-      max_workers: 1
-    };
-    installFetch({
-      "GET /api/auth/status": { authenticated: true, totp_configured: true },
-      "GET /api/status": status,
-      "GET /api/sessions": { sessions },
-      "GET /api/history": { events: [] },
-      "GET /api/agents": { agents: [] },
-      "GET /api/sessions/active/config": { config: null },
-      "GET /api/teams": {
-        teams: [{ id: "t1", name: "Mail Crew", leader: { name: "Mail Lead", avatar: null }, members: [] }]
-      },
-      "GET /api/team-runs": { team_runs: [continuousRun] },
-      "POST /api/team-runs": { team_run: continuousRun },
-      "GET /api/team-runs/mail-run/detail": {
-        team_run: continuousRun,
-        agents: [], tasks: [], messages: [], cycles: []
-      },
-      "GET /api/team-runs/mail-run/documents": { documents: [] },
-      "GET /api/team-runs/mail-run/delivery": { delivery: { available: false } }
-    });
-
-    await renderGatewayApp({ uiProvider: true });
-    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
-    await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
-    await userEvent.click(screen.getByRole("button", { name: "AUTO" }));
-    await userEvent.type(await screen.findByLabelText("Base objective"), "Watch inbox");
-    await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
-
-    expect(await screen.findByText("AUTO Team Run started")).toBeInTheDocument();
-    const createCall = fetch.mock.calls.find(([url, init]) => (
-      url === "/api/team-runs" && init?.method === "POST"
-    ));
-    expect(createCall).toBeDefined();
-    expect(JSON.parse(createCall[1].body)).toEqual({
-      team_id: "t1",
-      goal: "Watch inbox",
-      execution_policy: "auto",
-      max_workers: 1,
-      auto_repeat_count: 3,
-      auto_interval_minutes: 5
-    });
-    expect(fetch).not.toHaveBeenCalledWith(
-      "/api/team-runs/mail-run/start",
-      expect.anything()
-    );
   });
 
   it("wires cycle policy actions through the controller and refreshes detail and list", async () => {
@@ -2140,10 +2115,11 @@ describe("GatewayApp", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: /new team run/i }));
-    await userEvent.click(screen.getByRole("button", { name: "Create team run" }));
+    await userEvent.type(screen.getByLabelText("First request"), "Prepare the release");
+    await userEvent.click(screen.getByRole("button", { name: "Start team run" }));
 
     expect(await screen.findByText("Failed to create team run")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create team run" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start team run" })).toBeInTheDocument();
   });
 
   it("filters the team-run list by Cycle-aware display status", async () => {

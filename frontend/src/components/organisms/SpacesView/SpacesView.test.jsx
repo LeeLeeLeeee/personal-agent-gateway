@@ -5,7 +5,14 @@ import { SpacesView } from "./index.jsx";
 
 const globalPolicy = {
   scope: "global", scope_id: "", read_mode: "home", read_path: "C:\\Users\\me",
-  write_mode: "isolated", workspace_path: null
+  write_mode: "isolated", workspace_path: null,
+  capability: {
+    ready: false,
+    read_summary: "Select a bounded source directory",
+    write_summary: "Original files are not changed",
+    changes_originals: false,
+    issues: ["Select a bounded source directory for isolated execution"]
+  }
 };
 
 const policies = {
@@ -29,7 +36,7 @@ function props(overrides = {}) {
 }
 
 describe("SpacesView", () => {
-  it("offers explicit no source access and hides its path input", async () => {
+  it("uses task-oriented presets and hides paths for an empty isolated workspace", async () => {
     const onSaveGlobal = vi.fn();
     const noSourcePolicies = {
       ...policies,
@@ -37,9 +44,11 @@ describe("SpacesView", () => {
     };
     render(<SpacesView {...props({ policies: noSourcePolicies, onSaveGlobal })} />);
 
-    expect(screen.getByRole("option", { name: "No source access" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Workspace access" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "New empty workspace" })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("C:\\Users\\you")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Save space" }));
+    expect(screen.getByText("Original files are not changed")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Save workspace access" }));
 
     expect(onSaveGlobal).toHaveBeenCalledWith(expect.objectContaining({
       read_mode: "none",
@@ -52,10 +61,10 @@ describe("SpacesView", () => {
     render(<SpacesView {...props({ onSaveGlobal })} />);
 
     expect(screen.getByLabelText("Space precedence")).toHaveTextContent("TEAM›PERSONA›GLOBAL");
-    await userEvent.click(screen.getByRole("button", { name: "Save space" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save workspace access" }));
 
     expect(onSaveGlobal).toHaveBeenCalledWith({
-      read_mode: "home",
+      read_mode: "selected",
       read_path: "C:\\Users\\me",
       write_mode: "isolated",
       workspace_path: null
@@ -71,15 +80,39 @@ describe("SpacesView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create persona space" }));
 
     expect(onSavePersona).toHaveBeenCalledWith("p1", expect.objectContaining({
-      read_mode: "home", write_mode: "isolated"
+      read_mode: "selected", write_mode: "isolated"
     }));
   });
 
   it("exposes git worktree only for teams", async () => {
     render(<SpacesView {...props()} />);
 
-    expect(screen.queryByRole("option", { name: "Git worktree" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Git branch workspace" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "TEAM" }));
-    expect(await screen.findByRole("option", { name: "Git worktree" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Git branch workspace" })).toBeInTheDocument();
+  });
+
+  it("shows the three workspace facts users need before saving", async () => {
+    render(<SpacesView {...props()} />);
+
+    expect(screen.getByText("CAN READ")).toBeInTheDocument();
+    expect(screen.getByText("CHANGES ORIGINALS")).toBeInTheDocument();
+    expect(screen.getByText("READY TO RUN")).toBeInTheDocument();
+    expect(screen.getByText("Save to verify")).toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("Source directory"));
+
+    expect(screen.getByText("Needs attention")).toBeInTheDocument();
+    expect(screen.getByText(/bounded source directory for isolated execution/i)).toBeInTheDocument();
+  });
+
+  it("does not call an edited path verified before it is saved", async () => {
+    render(<SpacesView {...props()} />);
+
+    await userEvent.clear(screen.getByLabelText("Source directory"));
+    await userEvent.type(screen.getByLabelText("Source directory"), "/tmp/reference");
+
+    expect(screen.getByText("Save to verify")).toBeInTheDocument();
+    expect(screen.getByText("No")).toBeInTheDocument();
   });
 });

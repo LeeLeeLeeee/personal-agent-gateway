@@ -197,22 +197,41 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
 
   async function handleCreateTeamRun(payload) {
     try {
-      const created = await api.createTeamRun(payload);
+      const { initial_instruction: initialInstruction, ...createPayload } = payload;
+      const created = await api.createTeamRun(createPayload);
       if (!created) {
         toast("Failed to create team run", "error");
-        return;
+        return false;
+      }
+      let firstRequestFailed = false;
+      if (payload.execution_policy === "triggered" && initialInstruction) {
+        try {
+          await api.triggerTeamCycle(created.id, {
+            instruction: initialInstruction,
+            previous_cycle_id: null,
+            client_request_id: crypto.randomUUID()
+          });
+        } catch (_error) {
+          firstRequestFailed = true;
+        }
       }
       setCreatingTeamRun(false);
       setTeamRuns(await api.teamRuns());
       setSelectedTeamRunId(created.id);
+      if (firstRequestFailed) {
+        toast("Team Run created, but the first request did not start", "error");
+        return false;
+      }
       toast(
         payload.execution_policy === "auto"
           ? "AUTO Team Run started"
-          : "TRIGGERED Team Run created",
+          : initialInstruction ? "Team Run started" : "TRIGGERED Team Run created",
         "success"
       );
+      return true;
     } catch (_error) {
       toast("Failed to create team run", "error");
+      return false;
     }
   }
 

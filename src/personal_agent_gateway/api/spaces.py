@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from personal_agent_gateway.api.dependencies import session_dependency
-from personal_agent_gateway.space_policies import SpacePolicy
+from personal_agent_gateway.space_policies import SpacePolicy, space_capability
 
 router = APIRouter(prefix="/api/spaces", tags=["spaces"])
 
@@ -98,4 +98,8 @@ def _save(
 
 
 def _payload(policy: SpacePolicy, effective_source: str) -> dict[str, object]:
-    return {**policy.snapshot(), "effective_source": effective_source}
+    return {
+        **policy.snapshot(),
+        "effective_source": effective_source,
+        "capability": space_capability(policy).snapshot(),
+    }

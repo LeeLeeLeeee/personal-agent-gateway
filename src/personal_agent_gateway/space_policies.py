@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass
@@ -32,6 +33,24 @@ class SpacePolicy:
 class EffectiveSpacePolicy:
     source: SpaceScope
     policy: SpacePolicy
+
+
+@dataclass(frozen=True)
+class SpaceCapability:
+    ready: bool
+    read_summary: str
+    write_summary: str
+    changes_originals: bool
+    issues: tuple[str, ...]
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "ready": self.ready,
+            "read_summary": self.read_summary,
+            "write_summary": self.write_summary,
+            "changes_originals": self.changes_originals,
+            "issues": list(self.issues),
+        }
 
 
 class CliReadPathError(ValueError):
@@ -146,6 +165,19 @@ class SpacePolicyService:
             write_mode,
             workspace_path,
         )
+        candidate = SpacePolicy(
+            scope=scope,
+            scope_id=normalized_scope_id,
+            read_mode=read_mode,
+            read_path=normalized_read_path,
+            write_mode=write_mode,
+            workspace_path=normalized_workspace,
+            created_at="",
+            updated_at="",
+        )
+        capability = space_capability(candidate)
+        if not capability.ready:
+            raise ValueError(capability.issues[0])
         now = _now()
         self._db.execute(
             """
@@ -299,6 +331,71 @@ def policy_from_snapshot(value: dict[str, object] | None) -> SpacePolicy | None:
 
 def policy_json(policy: SpacePolicy) -> str:
     return json.dumps(policy.snapshot(), ensure_ascii=False, sort_keys=True)
+
+
+def space_capability(policy: SpacePolicy) -> SpaceCapability:
+    issues: list[str] = []
+
+    if policy.write_mode == "isolated":
+        if policy.read_mode == "home":
+            issues.append("Select a bounded source directory for isolated execution")
+        if policy.read_mode == "selected":
+            _append_directory_issue(issues, policy.read_path, "Read path", os.R_OK)
+
+        read_summary = {
+            "none": "Starts without existing files",
+            "home": "Cannot safely copy an unbounded home directory",
+            "selected": "Copies the selected folder for reference",
+            "all": "Can reference the full filesystem",
+        }[policy.read_mode]
+        return SpaceCapability(
+            ready=not issues,
+            read_summary=read_summary,
+            write_summary="Changes stay in the Team Run workspace",
+            changes_originals=False,
+            issues=tuple(issues),
+        )
+
+    _append_directory_issue(issues, policy.workspace_path, "Workspace path", os.W_OK)
+    if policy.write_mode == "worktree" and policy.workspace_path:
+        repository = Path(policy.workspace_path)
+        if not _git_succeeds(repository, "rev-parse", "--is-inside-work-tree"):
+            issues.append("Workspace path must be a Git repository")
+        elif not _git_succeeds(repository, "rev-parse", "--verify", "HEAD"):
+            issues.append("Git repository must have at least one commit")
+        return SpaceCapability(
+            ready=not issues,
+            read_summary="Reads the selected Git repository",
+            write_summary="Changes stay on a new Team Run branch",
+            changes_originals=False,
+            issues=tuple(issues),
+        )
+
+    return SpaceCapability(
+        ready=not issues,
+        read_summary="Reads the selected workspace directly",
+        write_summary="Changes are written to the selected workspace",
+        changes_originals=True,
+        issues=tuple(issues),
+    )
+
+
+def _append_directory_issue(
+    issues: list[str],
+    value: str | None,
+    label: str,
+    permission: int,
+) -> None:
+    if not value:
+        issues.append(f"{label} is required")
+        return
+    path = Path(value)
+    if not path.is_dir():
+        issues.append(f"{label} must be an existing directory")
+        return
+    if not os.access(path, permission):
+        action = "readable" if permission == os.R_OK else "writable"
+        issues.append(f"{label} must be {action}")
 
 
 def _required_path(value: str | Path | None, label: str) -> Path:

@@ -27,11 +27,11 @@ const TERMINAL_STATUSES = [
 ];
 
 const DETAIL_TABS = [
-  ["overview", "OVERVIEW"],
+  ["overview", "SUMMARY"],
   ["tasks", "TASKS"],
-  ["history", "HISTORY"],
-  ["activity", "ACTIVITY"],
-  ["files", "FILES"]
+  ["history", "CYCLES"],
+  ["activity", "LOG"],
+  ["files", "OUTPUTS"]
 ];
 
 const RUN_PHASES = [
@@ -885,9 +885,20 @@ export function TeamRunDetail({
     )
   }));
   const messages = detail.messages || [];
+  const planRevisions = detail.planRevisions || [];
+  const contests = detail.contests || [];
+  const hasPlanReview = Boolean(planRevisions.length || contests.length);
   const cycles = [...(detail.cycles || [])].sort((left, right) => right.sequence - left.sequence);
   const currentCycle = cycles[0] || null;
-  const currentInstruction = currentCycle?.effective_instruction || "-";
+  const currentInstruction = run.current_objective
+    || currentCycle?.instruction
+    || currentCycle?.effective_instruction?.split("\n\nPREVIOUS CYCLE CONTEXT\n", 1)[0]
+    || run.goal
+    || "No request submitted yet";
+  const distinctBaseObjective = run.goal && run.goal !== currentInstruction ? run.goal : null;
+  const focusTask = tasks.find((task) => task.status === "in_progress")
+    || tasks.find((task) => OPEN_TASK_STATUSES.has(task.status))
+    || null;
   const previousCycle = cycles.find(
     (cycle) => [
       "completed",
@@ -996,18 +1007,27 @@ export function TeamRunDetail({
       <header className="team-run-hero">
         <div className="team-run-hero-main">
           <div className="team-run-detail-id-row">
-            <span className="mono team-run-detail-id">TEAM RUN · {run.id.slice(0, 8)}</span>
+            <span className="mono team-run-detail-id">
+              TEAM RUN · {run.team_name ? `${run.team_name} · ` : ""}{run.id.slice(0, 8)}
+            </span>
             <StatusBadge kind={run.status} />
           </div>
-          <h1 className="headline team-run-detail-goal">
-            {run.team_name ? `${run.team_name} · ${run.id.slice(0, 8)}` : (run.goal || run.id.slice(0, 8))}
+          <span className="mono team-run-request-label">CURRENT REQUEST</span>
+          <h1
+            className="headline team-run-detail-goal team-run-current-request"
+            title={currentInstruction}
+          >
+            {currentInstruction}
           </h1>
-          {run.goal ? <div className="team-run-base-objective">BASE OBJECTIVE · {run.goal}</div> : null}
+          {distinctBaseObjective ? (
+            <div className="team-run-base-objective">BASE OBJECTIVE · {distinctBaseObjective}</div>
+          ) : null}
           <div className="team-run-hero-summary mono">
             <span>{String(run.execution_policy || run.lifecycle_mode || "standard").toUpperCase()}</span>
             <span>LEAD · {leader?.name || "-"}</span>
             <span>{currentCycle ? `CYCLE #${currentCycle.sequence}` : "NO CYCLE"}</span>
             <span>{tasks.filter((task) => OPEN_TASK_STATUSES.has(task.status)).length} OPEN TASKS</span>
+            {focusTask ? <span className="team-run-focus-task">NOW · {focusTask.title}</span> : null}
           </div>
         </div>
         <div className="team-run-hero-actions">
@@ -1147,10 +1167,6 @@ export function TeamRunDetail({
           <div className="team-run-meta-cell">
             <div className="mono team-run-meta-k">STARTED</div>
             <div className="mono team-run-meta-v">{fmtDateTime(run.started_at) || "-"}</div>
-          </div>
-          <div className="team-run-meta-cell team-run-meta-wide">
-            <div className="mono team-run-meta-k">CURRENT CYCLE INSTRUCTION</div>
-            <div className="team-run-meta-v team-run-meta-copy">{currentInstruction}</div>
           </div>
           <div className="team-run-meta-cell team-run-meta-wide team-run-meta-workspace">
             <div className="mono team-run-meta-k">WORKSPACE</div>
@@ -1338,17 +1354,29 @@ export function TeamRunDetail({
         )
       ) : null}
 
-      {/* PlanNegotiation is the workers' objections to the leader's plan;
-          ContestPanel below is the user's objection to it. Kept apart so it is
-          always clear who objected. */}
-      <PlanNegotiation revisions={detail.planRevisions || []} agents={agents} />
-
-      <ContestPanel
-        runId={run.id}
-        runStatus={run.status}
-        contests={detail.contests}
-        onContestPlan={onContestPlan}
-      />
+      {hasPlanReview ? (
+        <details className="team-plan-review">
+          <summary className="team-plan-review-summary">
+            <span className="mono team-plan-review-label">PLAN REVIEW</span>
+            <span className="team-plan-review-title">계획 검토</span>
+            <span className="mono team-plan-review-count">
+              {planRevisions.length}개 계획 · {contests.length}개 이의
+            </span>
+          </summary>
+          <div className="team-plan-review-body">
+            {/* Worker reviews and operator objections are kept separate so the
+                source of each objection remains explicit. */}
+            <PlanNegotiation revisions={planRevisions} agents={agents} />
+            <ContestPanel
+              runId={run.id}
+              runStatus={run.status}
+              hasPlan={Boolean(planRevisions.length)}
+              contests={contests}
+              onContestPlan={onContestPlan}
+            />
+          </div>
+        </details>
+      ) : null}
 
       <div className="team-detail-tabs" role="tablist" aria-label="Run detail views">
         {DETAIL_TABS.map(([key, label]) => (

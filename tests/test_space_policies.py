@@ -5,7 +5,7 @@ import pytest
 
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.personas import PersonaService
-from personal_agent_gateway.space_policies import SpacePolicyService, TeamSpaceManager
+from personal_agent_gateway.space_policies import SpacePolicy, SpacePolicyService, TeamSpaceManager
 from personal_agent_gateway.team_directory import TeamService
 
 
@@ -60,7 +60,7 @@ def test_persona_override_can_be_removed_to_inherit_global(tmp_path: Path) -> No
     spaces.upsert(
         "persona",
         persona.id,
-        read_mode="home",
+        read_mode="none",
         read_path=None,
         write_mode="isolated",
         workspace_path=None,
@@ -205,7 +205,16 @@ def test_cleanup_raises_when_an_existing_branch_cannot_be_deleted(tmp_path: Path
 def test_cleanup_skips_git_when_the_workspace_path_is_not_a_repository(tmp_path: Path) -> None:
     plain_directory = tmp_path / "not-a-repository"
     plain_directory.mkdir()
-    policy = _worktree_policy(tmp_path, plain_directory)
+    policy = SpacePolicy(
+        scope="team",
+        scope_id="legacy-team",
+        read_mode="none",
+        read_path=None,
+        write_mode="worktree",
+        workspace_path=str(plain_directory),
+        created_at="",
+        updated_at="",
+    )
     run_root = tmp_path / "runs" / "run-1"
     (run_root / "artifacts").mkdir(parents=True)
 

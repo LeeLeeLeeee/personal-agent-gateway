@@ -5,6 +5,14 @@ import { vi } from "vitest";
 import { api } from "../../../api/client.js";
 import { TeamRunDetail } from "./index.jsx";
 
+const APPROVED_PLAN_REVISION = {
+  revision: 1,
+  status: "approved",
+  required_approver_agent_ids: [],
+  reviews: {},
+  objections: {}
+};
+
 describe("TeamRunDetail", () => {
   it("renders the overview first and moves tasks and activity into tabs", async () => {
     render(
@@ -26,7 +34,7 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
     expect(screen.getByText("Define schema")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: "ACTIVITY" }));
+    await userEvent.click(screen.getByRole("tab", { name: "LOG" }));
     expect(screen.getByText("Planning started")).toBeInTheDocument();
   });
 
@@ -154,7 +162,7 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("Planning").closest(".team-phase")).not.toHaveAttribute("aria-current");
   });
 
-  it("shows the full run identity, current instruction, and workspace in run details", () => {
+  it("promotes the current instruction while keeping technical identity in run details", () => {
     const runId = "1bceb1ef9d54459fb1174f5bec686dbc";
     const instruction = "Collect the current popular Reddit posts and summarize the top 10.";
     const workspace = "/Users/example/works/personal-agent-gateway/team-runs/reddit-popular";
@@ -168,6 +176,7 @@ describe("TeamRunDetail", () => {
             status: "running",
             run_mode: "plan_and_execute",
             lifecycle_mode: "continuous",
+            current_objective: instruction,
             workspace_root: workspace
           },
           agents: [],
@@ -177,15 +186,34 @@ describe("TeamRunDetail", () => {
             id: "cycle-1",
             sequence: 1,
             status: "running",
-            effective_instruction: instruction
+            effective_instruction: `${instruction}\n\nPREVIOUS CYCLE CONTEXT\nInternal context`
           }]
         }}
       />
     );
 
     expect(screen.getByText(runId)).toHaveClass("team-run-meta-copy");
-    expect(screen.getByText(instruction)).toBeInTheDocument();
+    expect(screen.getByText(instruction)).toHaveClass("team-run-current-request");
+    expect(screen.getByText(instruction)).toHaveAttribute("title", instruction);
+    expect(screen.getByText(/BASE OBJECTIVE · Track Reddit trends/)).toHaveClass("team-run-base-objective");
     expect(screen.getByText(workspace)).toHaveClass("team-run-meta-path");
+  });
+
+  it("uses the base objective as the visible request before the first Cycle exists", () => {
+    render(
+      <TeamRunDetail
+        detail={{
+          run: { id: "r1", goal: "Prepare release notes", status: "draft", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [],
+          messages: [],
+          cycles: []
+        }}
+      />
+    );
+
+    expect(screen.getByText("Prepare release notes")).toHaveClass("team-run-current-request");
+    expect(screen.queryByText(/BASE OBJECTIVE/)).not.toBeInTheDocument();
   });
 
   it("identifies task documents on the board and opens them from the task", async () => {
@@ -218,7 +246,7 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("FILES 1")).toBeInTheDocument();
     expect(screen.getByText("REPORTS 1")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: "OVERVIEW" }));
+    await userEvent.click(screen.getByRole("tab", { name: "SUMMARY" }));
     await userEvent.click(screen.getByText(/SHARED \/ HANDOFFS/));
     const handoffsSection = container.querySelector(".team-handoffs");
     expect(within(handoffsSection).getByText("which schema?")).toBeInTheDocument();
@@ -423,7 +451,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: "FILES" }));
+    await userEvent.click(screen.getByRole("tab", { name: "OUTPUTS" }));
     await userEvent.click(screen.getByRole("button", { name: "Outputs에서 모두 보기" }));
     expect(onViewOutputs).toHaveBeenCalledWith("run-1");
   });
@@ -442,7 +470,7 @@ describe("TeamRunDetail", () => {
         onLoadDocument={onLoadDocument}
       />
     );
-    await userEvent.click(screen.getByRole("tab", { name: /FILES/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /OUTPUTS/ }));
     await userEvent.click(screen.getByText("notes.md"));
     expect(screen.getByText("docs")).toBeInTheDocument();
     expect(onLoadDocument).toHaveBeenCalledWith("docs/notes.md");
@@ -468,7 +496,7 @@ describe("TeamRunDetail", () => {
     expect(screen.queryByText("Planning started")).not.toBeInTheDocument();
     expect(screen.getByText("Feature built")).toBeVisible();
 
-    await userEvent.click(screen.getByRole("tab", { name: "ACTIVITY" }));
+    await userEvent.click(screen.getByRole("tab", { name: "LOG" }));
     expect(screen.getByText("Planning started")).toBeInTheDocument();
   });
 
@@ -516,7 +544,7 @@ describe("TeamRunDetail", () => {
     expect(within(latestSummary).getByRole("heading", { name: "완료 내용" })).toBeInTheDocument();
     expect(within(latestSummary).getByRole("list")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /CYCLES/ }));
     const cycleSummary = container.querySelector(".team-cycle-summary");
     expect(within(cycleSummary).getByRole("heading", { name: "Cycle 결과" })).toBeInTheDocument();
     expect(within(cycleSummary).getByRole("list")).toBeInTheDocument();
@@ -556,7 +584,7 @@ describe("TeamRunDetail", () => {
       }} />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /CYCLES/ }));
     expect(screen.getByText("continuous")).toBeInTheDocument();
     expect(screen.getByText("hook · hook-run-2")).toBeInTheDocument();
     expect(screen.getByText("First mail done")).toBeInTheDocument();
@@ -574,7 +602,7 @@ describe("TeamRunDetail", () => {
         }}
       />
     );
-    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /CYCLES/ }));
     expect(screen.getByText(/누락 없다고 보고함/)).toBeInTheDocument();
 
     rerender(
@@ -798,12 +826,12 @@ describe("TeamRunDetail", () => {
       }} />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: "ACTIVITY" }));
+    await userEvent.click(screen.getByRole("tab", { name: "LOG" }));
     expect([...container.querySelectorAll(".tl-detail")].map((node) => node.textContent)).toEqual([
       "new report", "new answer", "new question", "old report", "old answer", "old question"
     ]);
 
-    await userEvent.click(screen.getByRole("tab", { name: "OVERVIEW" }));
+    await userEvent.click(screen.getByRole("tab", { name: "SUMMARY" }));
     await userEvent.click(screen.getByText(/AGENT REPORTS/));
     expect([...container.querySelectorAll(".team-agent-report-body")].map((node) => node.textContent)).toEqual([
       "new report", "old report"
@@ -1169,7 +1197,7 @@ describe("TeamRunDetail", () => {
     expect(within(dialog).queryByText("This must remain private to another task.")).not.toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Close task details" }));
-    await userEvent.click(screen.getByRole("tab", { name: "ACTIVITY" }));
+    await userEvent.click(screen.getByRole("tab", { name: "LOG" }));
     expect(screen.queryByText("Resubmit without the undeclared file.")).not.toBeInTheDocument();
     expect(screen.queryByText("undeclared_deliverable")).not.toBeInTheDocument();
   });
@@ -1721,6 +1749,7 @@ describe("TeamRunDetail", () => {
         detail={{
           run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
           agents: [], messages: [], tasks: [],
+          planRevisions: [APPROVED_PLAN_REVISION],
           contests: [{
             objection: "T-04 has no owner",
             kind: "reject",
@@ -1734,6 +1763,7 @@ describe("TeamRunDetail", () => {
 
     expect(screen.getByText(/task 7 covers it/)).toBeInTheDocument();
 
+    await userEvent.click(screen.getByText("계획 검토"));
     await userEvent.type(
       screen.getByRole("textbox", { name: /계획에 이의/ }),
       "T-15 also has no owner"
@@ -1753,11 +1783,13 @@ describe("TeamRunDetail", () => {
         onContestPlan={onContest}
         detail={{
           run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
-          agents: [], messages: [], tasks: [], contests: []
+          agents: [], messages: [], tasks: [],
+          planRevisions: [APPROVED_PLAN_REVISION], contests: []
         }}
       />
     );
 
+    await userEvent.click(screen.getByText("계획 검토"));
     await userEvent.type(screen.getByRole("textbox", { name: /계획에 이의/ }), "T-15 has no owner");
     await userEvent.click(screen.getByRole("button", { name: /이의 보내기/ }));
 
@@ -1772,11 +1804,13 @@ describe("TeamRunDetail", () => {
         onContestPlan={onContest}
         detail={{
           run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
-          agents: [], messages: [], tasks: [], contests: []
+          agents: [], messages: [], tasks: [],
+          planRevisions: [APPROVED_PLAN_REVISION], contests: []
         }}
       />
     );
 
+    await userEvent.click(screen.getByText("계획 검토"));
     await userEvent.type(screen.getByRole("textbox", { name: /계획에 이의/ }), "   ");
     expect(screen.getByRole("button", { name: /이의 보내기/ })).toBeDisabled();
 
@@ -2031,7 +2065,7 @@ describe("TeamRunDetail contest availability", () => {
     expect(screen.getByText(/T-3 has no owner/)).toBeInTheDocument();
   });
 
-  it("offers the contest form while the run is still working from a plan", () => {
+  it("hides the contest form when the run has no reviewable plan", () => {
     render(
       <TeamRunDetail
         onContestPlan={vi.fn()}
@@ -2042,6 +2076,26 @@ describe("TeamRunDetail contest availability", () => {
       />
     );
 
+    expect(screen.queryByText("계획 검토")).toBeNull();
+    expect(screen.queryByRole("textbox", { name: /계획에 이의/ })).toBeNull();
+  });
+
+  it("offers a collapsed contest form while the run has a reviewable plan", async () => {
+    render(
+      <TeamRunDetail
+        onContestPlan={vi.fn()}
+        detail={{
+          run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
+          agents: [], messages: [], tasks: [], contests: [],
+          planRevisions: [APPROVED_PLAN_REVISION]
+        }}
+      />
+    );
+
+    const reviewTitle = screen.getByText("계획 검토");
+    expect(reviewTitle.closest("details")).not.toHaveAttribute("open");
+
+    await userEvent.click(reviewTitle);
     expect(screen.getByRole("textbox", { name: /계획에 이의/ })).toBeInTheDocument();
   });
 });

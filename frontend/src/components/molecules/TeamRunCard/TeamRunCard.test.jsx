@@ -17,12 +17,11 @@ const run = {
 };
 
 describe("TeamRunCard", () => {
-  it("shows team identity, latest Cycle, roster and current-Cycle progress", () => {
+  it("leads with the current request and keeps system identity secondary", () => {
     const { container } = render(<TeamRunCard run={run} onOpen={vi.fn()} />);
-    expect(screen.getByText("TR-204")).toBeInTheDocument();
     expect(screen.getByText("Release Crew · TR-204")).toBeInTheDocument();
+    expect(screen.getByText("Ship export-to-PDF")).toHaveClass("trc-goal");
     expect(screen.getByText("CYCLE #3 · RUNNING")).toBeInTheDocument();
-    expect(screen.getByText("Ship export-to-PDF")).toBeInTheDocument();
     expect(screen.getByText("ACTIVE")).toBeInTheDocument();
     expect(screen.getByText("Tech Lead")).toBeInTheDocument();
     expect(container.querySelector('img[src="/static/avatars/a01.png"]')).toBeInTheDocument();
@@ -42,7 +41,7 @@ describe("TeamRunCard", () => {
   it("marks legacy runs without a team", () => {
     render(<TeamRunCard run={{ ...run, team_id: null, team_name: null }} onOpen={vi.fn()} />);
     expect(screen.getByText("LEGACY")).toBeInTheDocument();
-    expect(screen.getAllByText("TR-204")).toHaveLength(2);
+    expect(screen.getByText("TR-204")).toBeInTheDocument();
   });
 
   it("shows AUTO progress and the next scheduled Cycle", () => {

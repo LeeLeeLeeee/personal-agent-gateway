@@ -35,8 +35,8 @@ export function TeamRunCard({ run, onOpen }) {
     .filter((key) => counts[key] > 0)
     .map((key) => ({ key, flex: counts[key], color: SEG_COLORS[key] }));
   const shortId = run.id.slice(0, 8);
-  const title = run.team_name ? `${run.team_name} · ${shortId}` : shortId;
-  const accessibleTitle = run.team_name ? title : (run.current_objective || run.goal || title);
+  const identity = run.team_name ? `${run.team_name} · ${shortId}` : shortId;
+  const currentRequest = run.current_objective || run.goal || "No request submitted yet";
   const displayStatus = run.display_status || run.status;
   const cycle = run.pending_request || run.latest_cycle;
   const cycleNumber = run.pending_request?.slot_ordinal || run.latest_cycle?.sequence;
@@ -50,22 +50,21 @@ export function TeamRunCard({ run, onOpen }) {
     <button
       type="button"
       className="trc"
-      aria-label={`Open team run ${accessibleTitle}`}
+      aria-label={`Open team run ${currentRequest}`}
       onClick={() => onOpen(run.id)}
     >
       <div className="trc-main">
         <div className="trc-top">
-          <span className="mono trc-id">{run.id}</span>
+          <span className="mono trc-id" title={run.id}>{identity}</span>
           <StatusBadge kind={displayStatus} />
           <span className="mono trc-mode">{String(run.execution_policy || run.run_mode || "legacy").toUpperCase()}</span>
           {run.team_id ? null : <span className="mono trc-legacy">LEGACY</span>}
         </div>
-        <div className="headline trc-goal">{title}</div>
+        <div className="headline trc-goal">{currentRequest}</div>
         <div className="trc-cycle-row">
           <span className="mono trc-cycle">
             {cycleLabel}{cycle?.status ? ` · ${String(cycle.status).replaceAll("_", " ").toUpperCase()}` : ""}
           </span>
-          <span className="trc-objective">{run.current_objective || run.goal || "Ready for trigger"}</span>
         </div>
         <div className="trc-roster">
           <span className="mono trc-roster-k">LEADER</span>

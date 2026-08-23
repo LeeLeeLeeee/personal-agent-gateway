@@ -380,6 +380,7 @@ export function GatewayApp() {
       load(api.teamRuns(), setTeamRuns);
       load(api.teams(), setTeams);
       load(api.settings(), setSettings);
+      load(api.spacePolicies(), setSpacePolicies);
     } else if (screen === "team-admin") {
       load(api.teams(), setTeams);
       load(api.personas(), setPersonas);
@@ -1130,7 +1131,13 @@ export function GatewayApp() {
             </a>
             <h1 className="headline" style={{ fontSize: 34, marginTop: 10 }}>New Team Run</h1>
             <div className="team-run-new-sub">Personas are snapshotted when the run starts and stay locked for its lifetime.</div>
-            <TeamPicker teams={teams} teamRuns={teamRuns} runtime={settings} onStart={handleCreateTeamRun} />
+            <TeamPicker
+              teams={teams}
+              teamRuns={teamRuns}
+              runtime={settings}
+              workspacePolicies={spacePolicies}
+              onStart={handleCreateTeamRun}
+            />
           </div>
         ) : (
           <div className="screen team-runs-home">

@@ -5,23 +5,16 @@ import { Button } from "../../atoms/Button/index.jsx";
 // Offering more would store and display a number the executor will not honour.
 const WORKER_CHOICES = [1, 2, 3];
 
-const EXECUTION_POLICIES = [
-  { value: "triggered", label: "TRIGGERED", desc: "Runs a new cycle when a manual or Hook trigger is queued." },
-  { value: "auto", label: "AUTO", desc: "Runs a fixed number of cycles separated by an interval." }
-];
-
 function Avatar({ person }) {
   if (person?.avatar) return <img className="tp-avatar" src={`/static/avatars/${person.avatar}.png`} alt="" />;
   return <span className="tp-avatar tp-avatar-initials mono">{(person?.name || "?").slice(0, 2).toUpperCase()}</span>;
 }
 
-export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null }) {
+export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null, workspacePolicies }) {
   const [teamId, setTeamId] = useState("");
   const [baseObjective, setBaseObjective] = useState("");
-  const [executionPolicy, setExecutionPolicy] = useState("triggered");
-  const [repeatCount, setRepeatCount] = useState("3");
-  const [intervalMinutes, setIntervalMinutes] = useState("5");
   const [parentTeamRunId, setParentTeamRunId] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   // One, like every run created before this control existed. Raising it is
   // a choice the operator makes per run, not a default they inherit.
   const [maxWorkers, setMaxWorkers] = useState("1");
@@ -35,7 +28,14 @@ export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null 
   }
 
   const team = teams.find((item) => item.id === teamId) || teams[0];
-  const activePolicy = EXECUTION_POLICIES.find((policy) => policy.value === executionPolicy);
+  const workspacePolicy = workspacePolicies?.teams?.find((item) => item.scope_id === team.id)
+    || workspacePolicies?.global
+    || null;
+  const workspaceCapability = workspacePolicy?.capability || null;
+  const workspaceManaged = workspacePolicies !== undefined;
+  const workspaceLoading = workspacePolicies === null;
+  const workspaceReady = !workspaceManaged || (!workspaceLoading && workspaceCapability?.ready !== false);
+  const canInheritWorkspace = !workspacePolicy || workspacePolicy.write_mode === "isolated";
   const executionMode = (runtime?.team_execution_mode || "sequential").toUpperCase();
   const inheritableRuns = teamRuns.filter((run) => [
     "completed", "completed_with_failures", "blocked", "failed", "canceled"
@@ -43,20 +43,23 @@ export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null 
   const parentRun = inheritableRuns.find((run) => run.id === parentTeamRunId);
 
   return (
-    <form className="tp" aria-label="New team run" onSubmit={(event) => {
+    <form className="tp" aria-label="New team run" onSubmit={async (event) => {
       event.preventDefault();
+      if (submitting) return;
+      const instruction = baseObjective.trim();
       const payload = {
         team_id: team.id,
-        execution_policy: executionPolicy,
-        max_workers: Number(maxWorkers) || 1
+        execution_policy: "triggered",
+        max_workers: Number(maxWorkers) || 1,
+        initial_instruction: instruction
       };
-      if (executionPolicy === "auto") {
-        payload.goal = baseObjective.trim();
-        payload.auto_repeat_count = Number(repeatCount);
-        payload.auto_interval_minutes = Number(intervalMinutes);
+      if (canInheritWorkspace && parentTeamRunId) payload.parent_team_run_id = parentTeamRunId;
+      setSubmitting(true);
+      try {
+        await onStart(payload);
+      } finally {
+        setSubmitting(false);
       }
-      if (parentTeamRunId) payload.parent_team_run_id = parentTeamRunId;
-      onStart(payload);
     }}>
       <div className="tp-form">
         <div className="tp-field">
@@ -73,6 +76,23 @@ export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null 
                 {item.name}
               </button>
             ))}
+          </div>
+        </div>
+
+        <div className="tp-field">
+          <label className="tp-label" htmlFor="tp-base-objective">
+            First request
+          </label>
+          <textarea
+            id="tp-base-objective"
+            className="tp-goal"
+            value={baseObjective}
+            onChange={(event) => setBaseObjective(event.target.value)}
+            placeholder="What should the team do first?"
+            required
+          />
+          <div className="tp-mode-desc">
+            The run is created and this request starts immediately.
           </div>
         </div>
 
@@ -115,86 +135,48 @@ export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null 
           </div>
         </div>
 
-        <div className="tp-field">
-          <label className="tp-label" htmlFor="tp-parent-run">Inherit workspace</label>
-          <select
-            id="tp-parent-run"
-            className="tp-select"
-            value={parentTeamRunId}
-            onChange={(event) => setParentTeamRunId(event.target.value)}
-          >
-            <option value="">Start with an empty workspace</option>
-            {inheritableRuns.map((run) => (
-              <option key={run.id} value={run.id}>
-                {run.team_name || run.goal || "Unnamed Team Run"} · {run.id.slice(0, 8)}
-              </option>
-            ))}
-          </select>
-          <div className="tp-mode-desc">Copies safe files into a new writable, isolated workspace.</div>
-        </div>
-
-        {executionPolicy === "auto" ? (
+        {canInheritWorkspace ? (
           <div className="tp-field">
-            <label className="tp-label" htmlFor="tp-base-objective">Base objective</label>
-            <textarea
-              id="tp-base-objective"
-              className="tp-goal"
-              value={baseObjective}
-              onChange={(event) => setBaseObjective(event.target.value)}
-              placeholder="What should every AUTO cycle continue working toward?"
-              required
-            />
+            <label className="tp-label" htmlFor="tp-parent-run">Inherit workspace</label>
+            <select
+              id="tp-parent-run"
+              className="tp-select"
+              value={parentTeamRunId}
+              onChange={(event) => setParentTeamRunId(event.target.value)}
+            >
+              <option value="">Start with an empty workspace</option>
+              {inheritableRuns.map((run) => (
+                <option key={run.id} value={run.id}>
+                  {run.team_name || run.goal || "Unnamed Team Run"} · {run.id.slice(0, 8)}
+                </option>
+              ))}
+            </select>
+            <div className="tp-mode-desc">Copies safe files into a new writable, isolated workspace.</div>
           </div>
         ) : null}
+
+        <div className={`tp-workspace${workspaceReady ? "" : " attention"}`}>
+          <div className="tp-label">Workspace check</div>
+          <strong>{workspaceCapability?.read_summary || "Workspace access will be checked when the run starts"}</strong>
+          <span>{workspaceCapability?.write_summary || "The configured Team workspace policy will be used"}</span>
+          <b>{workspaceLoading ? "Checking workspace..." : workspaceReady ? "Workspace ready" : "Workspace needs attention"}</b>
+          {!workspaceLoading && !workspaceReady && workspaceCapability?.issues?.[0] ? (
+            <small>{workspaceCapability.issues[0]}</small>
+          ) : null}
+        </div>
 
         <div className="tp-settings">
           <div className="tp-form">
             <div className="tp-field">
-              <span className="tp-label">Lifecycle</span>
-              <div className="tp-workers-val">CONTINUOUS · FIXED</div>
+              <span className="tp-label">Run behavior</span>
+              <div className="tp-workers-val">TRIGGERED · CONTINUOUS</div>
+              <div className="tp-mode-desc">The first request starts now. Later requests create another cycle in this run.</div>
             </div>
-            <div className="tp-field">
-              <span className="tp-label">Execution policy</span>
-              <div className="tp-mode" role="group" aria-label="Execution policy">
-                {EXECUTION_POLICIES.map((policy) => (
-                  <button
-                    key={policy.value}
-                    type="button"
-                    aria-pressed={executionPolicy === policy.value}
-                    className={`tp-mode-btn${executionPolicy === policy.value ? " active" : ""}`}
-                    onClick={() => setExecutionPolicy(policy.value)}
-                  >
-                    {policy.label}
-                  </button>
-                ))}
-              </div>
-              <div className="tp-mode-desc">{activePolicy.desc}</div>
-            </div>
-            {executionPolicy === "auto" ? (
-              <div className="tp-field">
-                <label className="tp-label" htmlFor="tp-repeat-count">Repeat count</label>
-                <input
-                  id="tp-repeat-count"
-                  type="number"
-                  min="1"
-                  value={repeatCount}
-                  onChange={(event) => setRepeatCount(event.target.value)}
-                />
-                <label className="tp-label" htmlFor="tp-interval-minutes">Interval minutes</label>
-                <input
-                  id="tp-interval-minutes"
-                  type="number"
-                  min="1"
-                  value={intervalMinutes}
-                  onChange={(event) => setIntervalMinutes(event.target.value)}
-                />
-              </div>
-            ) : null}
           </div>
           <div className="tp-field">
             <span className="tp-label">Execution</span>
             <div className="tp-workers">
-              <div className="tp-workers-val">1 · {executionMode}</div>
+              <div className="tp-workers-val">{maxWorkers} · {executionMode}</div>
             </div>
           </div>
         </div>
@@ -206,25 +188,22 @@ export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null 
           <div className="tp-preview-kv">
             <div className="k">TEAM</div><div>{team.name}</div>
             <div className="k">MEMBERS</div><div>{(team.members || []).length} agents</div>
-            <div className="k">POLICY</div><div>{activePolicy.label}</div>
-            <div className="k">WORKSPACE</div><div>{parentRun ? `Inherit ${parentRun.id.slice(0, 8)}` : "Empty"}</div>
-            {executionPolicy === "auto" ? (
-              <>
-                <div className="k">OBJECTIVE</div><div>{baseObjective.trim() || "Required"}</div>
-                <div className="k">REPEAT</div><div>{repeatCount} cycles</div>
-                <div className="k">INTERVAL</div><div>{intervalMinutes} minutes</div>
-              </>
-            ) : null}
-            <div className="k">WORKERS</div><div>1 · {executionMode}</div>
+            <div className="k">POLICY</div><div>Triggered, continuous</div>
+            <div className="k">WORKSPACE</div><div>{parentRun && canInheritWorkspace
+              ? `Inherit ${parentRun.id.slice(0, 8)}`
+              : workspacePolicy ? "Configured Team workspace" : "Team workspace policy"}</div>
+            <div className="k">FIRST REQUEST</div>
+            <div>{baseObjective.trim() || "Required"}</div>
+            <div className="k">WORKERS</div><div>{maxWorkers} · {executionMode}</div>
           </div>
           <div className="tp-preview-action">
             <Button
               type="submit"
               variant="primary"
               size="btn-lg"
-              disabled={executionPolicy === "auto" && !baseObjective.trim()}
+              disabled={submitting || !baseObjective.trim() || !workspaceReady}
             >
-              Create team run
+              {submitting ? "Starting..." : "Start team run"}
             </Button>
           </div>
         </div>

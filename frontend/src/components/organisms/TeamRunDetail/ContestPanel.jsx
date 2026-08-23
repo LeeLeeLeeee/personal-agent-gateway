@@ -36,11 +36,11 @@ const CONTESTABLE_STATUSES = new Set([
   "waiting_for_provider"
 ]);
 
-export function ContestPanel({ runId, runStatus, contests = [], onContestPlan }) {
+export function ContestPanel({ runId, runStatus, hasPlan, contests = [], onContestPlan }) {
   const [objection, setObjection] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
-  const canContest = Boolean(onContestPlan) && CONTESTABLE_STATUSES.has(runStatus);
+  const canContest = Boolean(hasPlan && onContestPlan) && CONTESTABLE_STATUSES.has(runStatus);
 
   if (!canContest && !contests.length) return null;
 
@@ -62,49 +62,57 @@ export function ContestPanel({ runId, runStatus, contests = [], onContestPlan })
   }
 
   return (
-    <div className="team-contest-panel">
-      <div className="mono team-task-dialog-label">계획 이의</div>
+    <section className="team-contest-panel" aria-label="사용자 계획 이의">
       {contests.length ? (
-        <div className="team-contest-list">
-          {contests.map((contest, index) => (
-            <div className="team-contest-item" key={contest.created_at ? `${contest.created_at}-${index}` : index}>
-              <div>{contest.objection}</div>
-              <div className="mono team-task-diagnostic">{contestStatusText(contest)}</div>
-              {(contest.supersedes || []).map((entry, supersedeIndex) => (
-                <div className="mono team-task-diagnostic" key={supersedeIndex}>
-                  {`${entry.document_path} · ${entry.decision}`}
-                </div>
-              ))}
-              {contest.created_at ? (
-                <div className="mono team-contest-time">{fmtDateTime(contest.created_at)}</div>
-              ) : null}
-            </div>
-          ))}
+        <div>
+          <div className="mono team-task-dialog-label">제기한 이의 · {contests.length}</div>
+          <div className="team-contest-list">
+            {contests.map((contest, index) => (
+              <div className="team-contest-item" key={contest.created_at ? `${contest.created_at}-${index}` : index}>
+                <div>{contest.objection}</div>
+                <div className="mono team-task-diagnostic">{contestStatusText(contest)}</div>
+                {(contest.supersedes || []).map((entry, supersedeIndex) => (
+                  <div className="mono team-task-diagnostic" key={supersedeIndex}>
+                    {`${entry.document_path} · ${entry.decision}`}
+                  </div>
+                ))}
+                {contest.created_at ? (
+                  <div className="mono team-contest-time">{fmtDateTime(contest.created_at)}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
         </div>
-      ) : (
-        <div className="team-task-empty mono">No contests yet.</div>
-      )}
+      ) : null}
       {error ? <div className="mono team-contest-error">{error}</div> : null}
       {canContest ? (
-        <>
+        <div className="team-contest-form">
           <label className="mono team-task-dialog-label" htmlFor="team-contest-input">계획에 이의 제기</label>
+          <p className="team-contest-help">
+            누락된 작업, 잘못된 순서, 충돌하는 요구사항을 구체적으로 적어주세요.
+          </p>
           <textarea
             id="team-contest-input"
             className="team-contest-input"
             value={objection}
             onChange={(event) => setObjection(event.target.value)}
             disabled={submitting}
+            rows={4}
+            placeholder="예: 배포 전에 접근성 검증 작업이 필요합니다."
           />
-          <Button
-            size="btn-sm"
-            variant="primary"
-            disabled={submitting || !objection.trim()}
-            onClick={handleSubmit}
-          >
-            이의 보내기
-          </Button>
-        </>
+          <div className="team-contest-actions">
+            <span className="mono">제출하면 리더가 현재 계획 기준으로 판정합니다.</span>
+            <Button
+              size="btn-sm"
+              variant="primary"
+              disabled={submitting || !objection.trim()}
+              onClick={handleSubmit}
+            >
+              {submitting ? "보내는 중..." : "이의 보내기"}
+            </Button>
+          </div>
+        </div>
       ) : null}
-    </div>
+    </section>
   );
 }

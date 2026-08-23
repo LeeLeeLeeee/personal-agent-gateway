@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 from fastapi.testclient import TestClient
 
@@ -103,3 +104,78 @@ def test_space_api_rejects_relative_paths_and_persona_worktrees(tmp_path: Path) 
         },
     )
     assert worktree.status_code == 400
+
+
+def test_space_api_rejects_workspace_combinations_that_cannot_run(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    persona_id = _persona(client, "Lead")
+    team = client.post(
+        "/api/teams",
+        json={
+            "name": "Crew",
+            "leader_persona_id": persona_id,
+            "member_persona_ids": [],
+        },
+    ).json()["team"]
+
+    unbounded_isolated = client.put(
+        f"/api/spaces/teams/{team['id']}",
+        json={
+            "read_mode": "home",
+            "write_mode": "isolated",
+        },
+    )
+    assert unbounded_isolated.status_code == 400
+    assert "bounded source directory" in unbounded_isolated.json()["detail"]
+
+    plain_directory = tmp_path / "plain"
+    plain_directory.mkdir()
+    non_git_worktree = client.put(
+        f"/api/spaces/teams/{team['id']}",
+        json={
+            "read_mode": "none",
+            "write_mode": "worktree",
+            "workspace_path": str(plain_directory),
+        },
+    )
+    assert non_git_worktree.status_code == 400
+    assert "Git repository" in non_git_worktree.json()["detail"]
+
+
+def test_space_api_reports_user_facing_workspace_capabilities(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    persona_id = _persona(client, "Lead")
+    team = client.post(
+        "/api/teams",
+        json={
+            "name": "Crew",
+            "leader_persona_id": persona_id,
+            "member_persona_ids": [],
+        },
+    ).json()["team"]
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "README.md").write_text("fixture", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-m", "init"], check=True, capture_output=True)
+
+    saved = client.put(
+        f"/api/spaces/teams/{team['id']}",
+        json={
+            "read_mode": "none",
+            "write_mode": "worktree",
+            "workspace_path": str(repository),
+        },
+    )
+
+    capability = saved.json()["space_policy"]["capability"]
+    assert capability == {
+        "ready": True,
+        "read_summary": "Reads the selected Git repository",
+        "write_summary": "Changes stay on a new Team Run branch",
+        "changes_originals": False,
+        "issues": [],
+    }
