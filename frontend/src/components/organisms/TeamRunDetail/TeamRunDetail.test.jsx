@@ -1590,13 +1590,16 @@ describe("TeamRunDetail", () => {
     expect(onContest).toHaveBeenCalledWith("r1", "T-15 also has no owner");
   });
 
+  // "running" rather than "canceled": a canceled run no longer shows the form,
+  // so the rejection this covers has to be one the client cannot rule out on
+  // its own -- intake being closed, for instance.
   it("shows the server's rejection detail when a contest submission is rejected", async () => {
-    const onContest = vi.fn().mockResolvedValue({ ok: false, status: 409, detail: "run is canceled" });
+    const onContest = vi.fn().mockResolvedValue({ ok: false, status: 409, detail: "intake is closed" });
     render(
       <TeamRunDetail
         onContestPlan={onContest}
         detail={{
-          run: { id: "r1", goal: "G", status: "canceled", run_mode: "plan_and_execute" },
+          run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
           agents: [], messages: [], tasks: [], contests: []
         }}
       />
@@ -1606,7 +1609,7 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("button", { name: /이의 보내기/ }));
 
     expect(onContest).toHaveBeenCalledWith("r1", "T-15 has no owner");
-    expect(screen.getByText(/run is canceled/)).toBeInTheDocument();
+    expect(screen.getByText(/intake is closed/)).toBeInTheDocument();
   });
 
   it("disables submit and does not call onContestPlan for a whitespace-only objection", async () => {
@@ -1853,3 +1856,40 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText(/마이그레이션 담당 없음/)).toBeInTheDocument();
   });
 });
+
+describe("TeamRunDetail contest availability", () => {
+  it("hides the contest form on an interrupted run but keeps past contests", () => {
+    render(
+      <TeamRunDetail
+        onContestPlan={vi.fn()}
+        detail={{
+          run: { id: "r1", goal: "G", status: "interrupted", run_mode: "plan_and_execute" },
+          agents: [],
+          messages: [],
+          tasks: [],
+          contests: [{ objection: "T-3 has no owner", status: "settled", created_at: null }]
+        }}
+      />
+    );
+
+    // Resume is the action that applies here; offering an objection next to it
+    // reads as if objecting were the way forward.
+    expect(screen.queryByRole("textbox", { name: /계획에 이의/ })).toBeNull();
+    expect(screen.getByText(/T-3 has no owner/)).toBeInTheDocument();
+  });
+
+  it("offers the contest form while the run is still working from a plan", () => {
+    render(
+      <TeamRunDetail
+        onContestPlan={vi.fn()}
+        detail={{
+          run: { id: "r1", goal: "G", status: "running", run_mode: "plan_and_execute" },
+          agents: [], messages: [], tasks: [], contests: []
+        }}
+      />
+    );
+
+    expect(screen.getByRole("textbox", { name: /계획에 이의/ })).toBeInTheDocument();
+  });
+});
+

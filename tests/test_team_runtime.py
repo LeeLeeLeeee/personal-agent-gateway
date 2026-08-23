@@ -1458,8 +1458,13 @@ async def test_acceptance_worker_repairs_invalid_structured_output_once(tmp_path
     corrected = _outcome_json("draft-fixed")
     setup.worker_client.responses = [
         setup.worker_client.responses[0],
+        # No JSON anywhere. It used to be prose wrapping a fenced object, which
+        # parse_task_outcome now reads rather than refuses -- a worker that
+        # answers correctly and talks around it should not lose its turn to
+        # punctuation. The repair path this test exists for is still real, so
+        # the input is now something genuinely unparseable instead.
         ModelResponse(
-            f"Verification passed.\n```json\n{corrected}\n```",
+            "Verification passed, but I could not produce the result object.",
             [],
             upstream_session_id="worker-session",
         ),

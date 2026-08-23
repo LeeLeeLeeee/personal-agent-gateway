@@ -1237,7 +1237,12 @@ export function TeamRunDetail({
           always clear who objected. */}
       <PlanNegotiation revisions={detail.planRevisions || []} agents={agents} />
 
-      <ContestPanel runId={run.id} contests={detail.contests} onContestPlan={onContestPlan} />
+      <ContestPanel
+        runId={run.id}
+        runStatus={run.status}
+        contests={detail.contests}
+        onContestPlan={onContestPlan}
+      />
 
       <div className="team-detail-tabs" role="tablist" aria-label="Run detail views">
         {DETAIL_TABS.map(([key, label]) => (

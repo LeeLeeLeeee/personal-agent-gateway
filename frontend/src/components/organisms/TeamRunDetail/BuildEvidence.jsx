@@ -54,7 +54,7 @@ export function BuildEvidenceSummary({ summary }) {
   if (!summary) return null;
   const inspected = summary.task_count - summary.worker_asserted_only_count;
   return (
-    <span className="mono">
+    <span className="mono team-section-evidence">
       {`태스크 ${summary.task_count}개 중 게이트가 파일 확인 ${inspected}`}
       {` · 게이트 미검사 ${summary.worker_asserted_only_count}`}
       {` (검사는 모두 파일 읽기 — 빌드·테스트 실행 없음)`}

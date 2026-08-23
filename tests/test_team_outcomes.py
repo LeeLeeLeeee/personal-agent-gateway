@@ -372,3 +372,65 @@ def test_a_refusal_survives_the_ledger_round_trip():
     again = parse_task_outcome(json.dumps(asdict(outcome), ensure_ascii=False))
 
     assert again.mention_refusals == ("line_break",)
+
+
+def test_an_outcome_wrapped_in_prose_is_still_read():
+    """What a real run failed on three times in a row.
+
+    Every failure recorded `parsed_json: false, fenced: false` over 800-2700
+    characters -- text around the answer, not a malformed answer. Failing the
+    task for that spends a whole worker turn on punctuation, and the repair
+    round that restates the contract had already not helped.
+    """
+    payload = json.dumps(
+        {
+            "status": "completed",
+            "summary": "done",
+            "reason_code": None,
+            "deliverables": [],
+            "verifications": [],
+        },
+        ensure_ascii=False,
+    )
+
+    outcome = parse_task_outcome(
+        f"조사를 마쳤습니다. 결과는 아래와 같습니다.\n\n{payload}\n\n필요하면 더 파보겠습니다."
+    )
+
+    assert outcome.status == "completed"
+    assert outcome.summary == "done"
+
+
+def test_prose_quoting_an_unrelated_object_is_still_refused():
+    """The fallback reaches past prose, so the key check is the only thing
+    keeping an example in the prose from being read as the verdict."""
+    with pytest.raises(TaskOutcomeError):
+        parse_task_outcome(
+            'The schema I was given looks like {"status": "completed"} '
+            "but I could not finish."
+        )
+
+
+def test_a_response_with_no_json_at_all_is_refused():
+    with pytest.raises(TaskOutcomeError):
+        parse_task_outcome("작업을 진행했지만 형식을 지키지 못했습니다.")
+
+
+def test_a_fenced_object_after_prose_is_read():
+    """The exact shape a real worker produced. It used to cost a repair round,
+    which is what tests/test_team_runtime.py's acceptance-repair test was
+    pinning until this parser learned to read it."""
+    payload = json.dumps(
+        {
+            "status": "completed",
+            "summary": "draft-fixed",
+            "reason_code": None,
+            "deliverables": [],
+            "verifications": [],
+        },
+        ensure_ascii=False,
+    )
+
+    outcome = parse_task_outcome(f"Verification passed.\n```json\n{payload}\n```")
+
+    assert outcome.summary == "draft-fixed"

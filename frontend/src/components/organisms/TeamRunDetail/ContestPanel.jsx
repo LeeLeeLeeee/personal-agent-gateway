@@ -18,12 +18,31 @@ function contestStatusText(contest) {
   return "판정 대기";
 }
 
-export function ContestPanel({ runId, contests = [], onContestPlan }) {
+// A contest objects to the plan the team is working from, so the form only
+// belongs on a run that is still working from one. The server accepts a
+// contest on anything but a canceled run, which is why this has to be decided
+// here: on an interrupted or finished run the request would queue against a
+// plan nobody is executing, and offering it next to the action that actually
+// applies -- Resume, or a new request -- reads as if objecting were the way
+// forward.
+//
+// Past contests still show. They are what happened, and hiding the history
+// with the form would make a settled objection vanish the moment its run
+// stopped.
+const CONTESTABLE_STATUSES = new Set([
+  "planning",
+  "running",
+  "summarizing",
+  "waiting_for_provider"
+]);
+
+export function ContestPanel({ runId, runStatus, contests = [], onContestPlan }) {
   const [objection, setObjection] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const canContest = Boolean(onContestPlan) && CONTESTABLE_STATUSES.has(runStatus);
 
-  if (!onContestPlan && !contests.length) return null;
+  if (!canContest && !contests.length) return null;
 
   async function handleSubmit() {
     const text = objection.trim();
@@ -66,7 +85,7 @@ export function ContestPanel({ runId, contests = [], onContestPlan }) {
         <div className="team-task-empty mono">No contests yet.</div>
       )}
       {error ? <div className="mono team-contest-error">{error}</div> : null}
-      {onContestPlan ? (
+      {canContest ? (
         <>
           <label className="mono team-task-dialog-label" htmlFor="team-contest-input">계획에 이의 제기</label>
           <textarea

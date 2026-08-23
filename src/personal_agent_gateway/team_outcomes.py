@@ -85,14 +85,55 @@ MENTION_REFUSED_MALFORMED = "malformed"
 _MENTION_REFUSALS = frozenset({MENTION_REFUSED_LINE_BREAK, MENTION_REFUSED_MALFORMED})
 
 
-def parse_task_outcome(content: str) -> TaskOutcome:
+def _outcome_candidates(content: str):
+    """The whole response first, then the last JSON object inside it.
+
+    The whole response is what the contract asks for and stays the first
+    candidate, so a compliant worker is parsed exactly as before. The fallback
+    exists because a worker that wraps the object in prose was failing the
+    task outright: three consecutive `invalid_structured_output` failures on a
+    real run, every one of them `parsed_json: false, fenced: false` -- text
+    around the answer, not a malformed answer.
+
+    Reaching past prose is safe here only because of what follows it. The key
+    set is checked against exactly the TaskOutcome shape, so an unrelated JSON
+    object quoted in the prose is rejected rather than mistaken for the
+    result. Without that check this would be a way to smuggle an example into
+    a verdict.
+
+    `needs_info` has scanned the same way from the start (`_last_json_block`),
+    so this makes the two halves of one contract agree instead of leaving the
+    final answer stricter than the request to be interrupted.
+    """
     stripped = normalize_json_envelope(content)
-    if not stripped or stripped.startswith("```"):
+    if stripped and not stripped.startswith("```"):
+        yield stripped
+    fence = "```json"
+    index = content.rfind(fence)
+    if index != -1:
+        rest = content[index + len(fence):]
+        end = rest.find("```")
+        if end != -1:
+            yield rest[:end].strip()
+            return
+    start = content.rfind("{")
+    end = content.rfind("}")
+    if start != -1 and end > start:
+        yield content[start:end + 1].strip()
+
+
+def parse_task_outcome(content: str) -> TaskOutcome:
+    raw = None
+    for candidate in _outcome_candidates(content):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            raw = parsed
+            break
+    if raw is None:
         raise TaskOutcomeError()
-    try:
-        raw = json.loads(stripped)
-    except json.JSONDecodeError as exc:
-        raise TaskOutcomeError() from exc
     if not isinstance(raw, dict) or set(raw) not in (
         _OUTCOME_KEYS,
         _OUTCOME_KEYS | {"mentions"},

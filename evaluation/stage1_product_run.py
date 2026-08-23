@@ -43,13 +43,21 @@ TERMINAL = {
 async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--goal", required=True)
+    parser.add_argument(
+        "--read-path",
+        default=str(SOURCE_EXPORT),
+        help="what the run may read. A repository working tree is fine here "
+        "and a pinned export is not required: this drives real work, not a "
+        "measurement that has to be reproducible later.",
+    )
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--negotiation", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=1800.0)
     args = parser.parse_args(argv)
 
-    if not SOURCE_EXPORT.is_dir():
-        print(f"error: source export missing: {SOURCE_EXPORT}", file=sys.stderr)
+    read_path = Path(args.read_path).resolve()
+    if not read_path.is_dir():
+        print(f"error: read path is not a directory: {read_path}", file=sys.stderr)
         return 1
 
     # Set before load_config: every one of these is read from the environment.
@@ -68,6 +76,7 @@ async def main(argv: list[str] | None = None) -> int:
     state = app.state
     print(f"database:  {config.app_db_path}")
     print(f"workspace: {config.workspace_root}")
+    print(f"reads:     {read_path}")
     print(
         "flags:     "
         f"peer_messages={config.team_peer_messages_enabled} "
@@ -123,7 +132,7 @@ async def main(argv: list[str] | None = None) -> int:
             "team",
             team.id,
             read_mode="selected",
-            read_path=str(SOURCE_EXPORT),
+            read_path=str(read_path),
             write_mode="isolated",
             workspace_path=None,
         )

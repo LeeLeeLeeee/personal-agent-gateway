@@ -2973,6 +2973,16 @@ p {
     letter-spacing: 1px;
     text-transform: uppercase;
 }
+/* The build-evidence rollup shares this toolbar with the label (11px) and the
+   count (9px), and had no size of its own -- so the longest string in the row
+   was also the biggest, and it read as a heading rather than as the footnote
+   it is. No uppercase or letter-spacing here: it is a Korean sentence with
+   numbers in it, and both make that harder to read, not more consistent. */
+.team-section-evidence {
+    color: var(--c-grey);
+    font-size: 10px;
+    line-height: 1.5;
+}
 .team-lanes {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -4694,6 +4704,10 @@ p {
 .team-cycle-compact-meta { min-width: 0; overflow: hidden; color: var(--c-grey); font-size: 9px; letter-spacing: .8px; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .team-cycle-lineage, .team-cycle-budget { margin-top: 5px; font-size: 10px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team-cycle-summary { margin-top: 8px; white-space: pre-wrap; }
+/* Sized like its neighbours. It had no rule at all, so it fell back to the
+   body size and a one-line diagnostic ended up larger than the cycle number
+   it belongs to. */
+.team-cycle-coverage { margin-top: 5px; color: var(--c-grey); font-size: 10px; }
 
 /* ---- archive library + knowledge map ---- */
 .archive-view {
