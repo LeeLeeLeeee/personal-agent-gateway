@@ -1,0 +1,36 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "agree-without-the-lead-deciding",
+  "type": "bounded_implementation",
+  "title": "리더가 정해 주는 것이 금지된 이름 하나에 동시에 일하는 두 사람이 합의한다",
+  "goal": "서로를 참조하지 않는 두 파일을 만들어라. 둘은 **같은 검사 종류 이름 하나**를 써야 하는데, 그 이름은 정해져 있지 않다. **리더는 그 이름을 고르지 마라 — 계획이나 태스크 설명에 이름 후보를 적는 것도 금지한다.** 이름은 `src/size_check.py` 를 맡은 사람이 자기 작업 중에 고르고, 다른 파일을 맡은 사람은 그 사람에게 물어서 알아내라. (1) `src/size_check.py`: 함수 `run_size_check(path: str, limit: int) -> bool` — 파일 크기가 limit 이하면 True, 넘으면 False. 같은 파일에 상수 `CHECK_KIND` 를 두어 고른 이름 문자열을 담아라. (2) `src/size_check_registry.py`: 딕셔너리 `REGISTRY` 를 정의하고 키는 그 이름 문자열, 값은 문자열 \"size\". 두 파일은 서로를 import 하지 말고 상대 파일을 열어 읽지도 마라 — 이름은 문자열로 직접 적어야 한다. 두 작업은 서로 의존하지 않으며 어느 쪽도 상대의 파일이 생기기를 기다려서는 안 된다. 마지막으로 `tests/test_registry_name_matches.py` 를 만들어 두 모듈을 각각 import 해 `CHECK_KIND` 가 `REGISTRY` 의 키임을 단언하라.",
+  "repo_ref": "b125268f8713752304e12bdc7ddd05677afded5b",
+  "execution_profile": "bounded_write",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "두 파일이 같은 이름 문자열을 쓴다",
+      "check": "`CHECK_KIND` 값과 `REGISTRY` 키가 같은 철자의 문자열임을 확인한다. 다르면 실패"
+    },
+    {
+      "id": "R2",
+      "criterion": "리더가 이름을 정하지 않았다",
+      "check": "계획의 태스크 설명 어디에도 최종적으로 쓰인 이름 문자열이나 그 후보가 적혀 있지 않음을 확인한다. 리더가 이름을 지정했다면 실패 — 그 경우 두 워커는 조율할 것이 없었고 이 픽스처는 아무것도 재지 못했다"
+    },
+    {
+      "id": "R3",
+      "criterion": "이름이 워커 사이에서 전달됐다",
+      "check": "이름을 고르지 않은 쪽이 그것을 알게 된 경로가 상대 워커에게 물어본 것(쪽지 또는 needs_info)임을 확인한다. 상대 파일을 열어 읽었거나 우연히 같은 문자열을 찍은 것이면 실패"
+    },
+    {
+      "id": "R4",
+      "criterion": "판정 로직이 명세대로다",
+      "check": "`run_size_check` 가 limit 이하에서 True, 초과에서 False 를 돌려주며 경계(limit 과 같은 크기)가 True 임을 확인한다"
+    },
+    {
+      "id": "R5",
+      "criterion": "제출된 테스트가 실제로 통과한다",
+      "check": "채점자가 제출된 테스트를 직접 실행했을 때 전부 통과한다(하니스 실행 로그가 아니라 그 자리에서 실행해 얻은 결과로 확인한다)"
+    }
+  ]
+}
