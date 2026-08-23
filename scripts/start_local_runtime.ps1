@@ -181,7 +181,49 @@ if ($existing) {
         })
         exit 0
     }
-    throw "runtime_state_mismatch: remove no processes automatically"
+    # Mirrors start_local_runtime.sh. The state file records processes, so it
+    # is only worth protecting while some of them still exist. Every recorded
+    # pid being gone -- a reboot, a kill, a crash -- leaves nothing to remove
+    # but the note itself, and refusing to start over stale bookkeeping
+    # strands the operator with a message that names neither the cause nor
+    # the cure. Clearing it does not weaken "remove no processes
+    # automatically": there is no process.
+    $recorded = @($existing.lmg, $existing.pag) | Where-Object { $null -ne $_ }
+    $livePids = @()
+    $stalePids = @()
+    foreach ($entry in $recorded) {
+        $processId = [int]$entry.pid
+        if ($null -eq (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
+            $stalePids += $processId
+        } else {
+            $livePids += $processId
+        }
+    }
+
+    if ($livePids.Count -eq 0) {
+        Remove-Item -Path $statePath -Force -ErrorAction SilentlyContinue
+        Write-Error -Message (
+            "runtime_state_stale: cleared $statePath (recorded pids gone: " +
+            "$($stalePids -join ', '))"
+        ) -ErrorAction Continue
+    } else {
+        # Something recorded here is still alive but no longer matches what
+        # this script expects. That is the case the original refusal is for,
+        # and it stays a refusal -- with what to look at and what to run.
+        foreach ($processId in $livePids) {
+            $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+            if ($null -ne $process) {
+                Write-Error -Message "  pid ${processId}: $($process.ProcessName)" `
+                    -ErrorAction Continue
+            }
+        }
+        throw (
+            "runtime_state_mismatch: recorded pids still alive: " +
+            "$($livePids -join ', '); remove no processes automatically. " +
+            "Run 'npm run stop' to settle them, or stop them yourself and " +
+            "delete $statePath"
+        )
+    }
 }
 
 foreach ($port in 8787, 8788) {

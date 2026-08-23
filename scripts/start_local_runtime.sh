@@ -104,8 +104,42 @@ if [[ -f "$state_path" ]]; then
     exit 0
   fi
 
-  echo "runtime_state_mismatch: remove no processes automatically" >&2
-  exit 1
+  # The state file records processes, so it is only worth protecting while
+  # some of them still exist. Every recorded pid being gone -- a reboot, a
+  # kill, a crash -- leaves nothing to remove but the note itself, and
+  # refusing to start over stale bookkeeping strands the operator with a
+  # message that names neither the cause nor the cure. Clearing it here does
+  # not weaken "remove no processes automatically": there is no process.
+  stale_pids=()
+  live_pids=()
+  for recorded in "$lmg_pid" "$pag_pid"; do
+    [[ "$recorded" =~ ^[0-9]+$ ]] || continue
+    if ps -p "$recorded" -o pid= >/dev/null 2>&1; then
+      live_pids+=("$recorded")
+    else
+      stale_pids+=("$recorded")
+    fi
+  done
+
+  if [[ ${#live_pids[@]} -eq 0 ]]; then
+    rm -f "$state_path"
+    echo "runtime_state_stale: cleared ${state_path} (recorded pids gone:" \
+      "${stale_pids[*]:-none})" >&2
+  else
+    # Something recorded here is still alive but no longer matches what this
+    # script expects -- a different binary on the port, a half-dead pair, a
+    # process started by hand. That is the case the original refusal is for,
+    # and it stays a refusal; the operator gets what to look at and what to
+    # run.
+    echo "runtime_state_mismatch: recorded pids still alive:" \
+      "${live_pids[*]}; remove no processes automatically" >&2
+    for pid in "${live_pids[@]}"; do
+      echo "  pid $pid: $(ps -p "$pid" -o command= 2>/dev/null | cut -c1-100)" >&2
+    done
+    echo "  run 'npm run stop' to settle them, or stop them yourself and" \
+      "delete $state_path" >&2
+    exit 1
+  fi
 fi
 
 for port in 8787 8788; do
