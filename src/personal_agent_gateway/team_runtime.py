@@ -2788,6 +2788,40 @@ class TeamRuntime:
             for started in batch:
                 started.call.cancel()
 
+    def _changes_this_task_can_own(
+        self,
+        changes: dict[str, list[str]],
+        team_run_id: str,
+        task: TeamTask,
+    ) -> dict[str, list[str]]:
+        """The workspace diff with concurrent siblings' promised files removed.
+
+        A diff brackets wall-clock time, so under concurrency it contains
+        whatever a sibling wrote in the same window. Nothing rejects a task
+        for that -- acceptance reads declared deliverables, not this diff --
+        but the diff is persisted as the record of what this assignment did,
+        and a record that credits one worker with another's file is simply
+        false. Only paths a sibling's contract *promises* are removed: an
+        unexpected file is left in, because "somebody wrote something nobody
+        declared" is exactly the signal that must not be filtered away.
+
+        Sequential runs subtract nothing, because there is no in-flight
+        sibling to subtract.
+        """
+        if not self._concurrent_workers or task.cycle_id is None:
+            return changes
+        promised: set[str] = set()
+        for sibling in self._teams.list_tasks(team_run_id, task.cycle_id):
+            if sibling.id == task.id or sibling.status != "in_progress":
+                continue
+            promised.update(sibling.acceptance.required_outputs)
+        if not promised:
+            return changes
+        return {
+            key: [path for path in paths if path not in promised]
+            for key, paths in changes.items()
+        }
+
     async def _start_batch(
         self,
         run: TeamRun,
@@ -2804,12 +2838,13 @@ class TeamRuntime:
         this function can see what the candidates promise. Three conditions,
         each for its own reason:
 
-        - **No promised files.** Acceptance attributes workspace changes with
-          a whole-tree before/after diff. Two writers at once appear in each
-          other's diff and both get rejected for files they did not create.
-          A task whose contract lists no required_outputs is not supposed to
-          write at all, so there is nothing to misattribute. This is the
-          condition that keeps concurrent *writing* out of this version.
+        - **Disjoint promised files.** Acceptance judges a task by the
+          deliverables it declares against the ones its contract requires,
+          not by a workspace diff, so two writers do not reject each other
+          merely by both writing. What they cannot survive is writing the
+          *same* path: last-write-wins, and one of them ships a file it did
+          not produce. Overlapping required_outputs is that case, visible up
+          front in the contract.
         - **Distinct owners.** An agent row carries one status and one
           current_task_id, so the same worker cannot hold two assignments
           without one erasing the other's state.
@@ -2827,13 +2862,16 @@ class TeamRuntime:
             and len(workers) > 1
         ):
             seen_owners: set[str] = set()
+            claimed_paths: set[str] = set()
             for candidate in ready_tasks:
-                if candidate.acceptance.required_outputs:
-                    continue
                 owner = candidate.owner_agent_id
                 if owner is None or owner in seen_owners:
                     continue
+                promised = set(candidate.acceptance.required_outputs)
+                if promised & claimed_paths:
+                    continue
                 seen_owners.add(owner)
+                claimed_paths |= promised
                 eligible.append(candidate)
             if len(eligible) < 2:
                 eligible = []
@@ -3429,9 +3467,11 @@ class TeamRuntime:
         except KeyError:
             if before is None:
                 before = workspace_snapshot(working_root)
-        changes = (
-            _operation_workspace_changes(
-                workspace_changes(before, workspace_snapshot(working_root))
+        changes = _operation_workspace_changes(
+            self._changes_this_task_can_own(
+                workspace_changes(before, workspace_snapshot(working_root)),
+                run.id,
+                task,
             )
         )
         staged_inputs = (

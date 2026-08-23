@@ -9562,11 +9562,10 @@ async def test_two_no_output_assignments_run_their_model_calls_at_once(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_assignments_that_promise_files_still_run_one_at_a_time(tmp_path):
-    """Acceptance attributes workspace changes with a whole-tree diff, so two
-    writers at once appear in each other's diff and both are rejected for
-    files they did not create. A task that lists required_outputs is therefore
-    never a concurrency candidate, even with the flag on."""
+async def test_assignments_with_disjoint_promised_files_may_overlap(tmp_path):
+    """Promising files is not by itself a reason to serialize: acceptance
+    judges declared deliverables against the contract, not a workspace diff.
+    Two assignments whose promised paths do not overlap may write at once."""
     db = Database(tmp_path / "app.db")
     db.initialize()
     personas = PersonaService(db)
@@ -9654,4 +9653,210 @@ async def test_assignments_that_promise_files_still_run_one_at_a_time(tmp_path):
 
     await runtime.resume(run.id, cycle.id)
 
-    assert peak == 1, "assignments that promise files must not overlap"
+    assert peak == 2, "disjoint promised files are safe to write at once"
+
+
+@pytest.mark.asyncio
+async def test_assignments_promising_the_same_file_still_run_one_at_a_time(
+    tmp_path,
+):
+    """Two writers do not reject each other merely by both writing --
+    acceptance reads declared deliverables, not a diff. What they cannot
+    survive is the same path: last-write-wins, and one of them would ship a
+    file it did not produce. The contract shows that collision up front."""
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    first = personas.create_persona("W1", "worker", "d", [], [])
+    second = personas.create_persona("W2", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [first.id, second.id],
+        "plan_and_execute",
+        2,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    teams.set_cycle_status(cycle.id, "running")
+    members = [
+        agent for agent in teams.list_agents(run.id) if agent.role == "member"
+    ]
+    current = teams.get_team_run(run.id)
+    working_root = Path(current.working_root or current.workspace_root)
+    working_root.mkdir(parents=True, exist_ok=True)
+    (working_root / "shared.txt").write_text("x", encoding="utf-8")
+    for index, owner in enumerate(members, start=1):
+        teams.create_task(
+            run.id,
+            f"Write {index}",
+            "Write the shared file.",
+            owner_agent_id=owner.id,
+            cycle_id=cycle.id,
+            acceptance=TaskAcceptance(("shared.txt",), ()),
+        )
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+        concurrent_tasks=True,
+    )
+
+    open_calls = 0
+    peak = 0
+
+    class Counting:
+        def __init__(self, responses):
+            self.responses = list(responses)
+
+        async def complete_operation(self, messages, *, consumer_run_id):
+            nonlocal open_calls, peak
+            open_calls += 1
+            peak = max(peak, open_calls)
+            try:
+                await asyncio.sleep(0)
+                return self.responses.pop(0)
+            finally:
+                open_calls -= 1
+
+    lead_client = Counting([ModelResponse("summary", [])])
+    worker_clients = {
+        member.id: Counting(
+            [
+                ModelResponse(
+                    _outcome_json(
+                        "done",
+                        deliverables=[{"path": "shared.txt", "kind": "file"}],
+                    ),
+                    [],
+                )
+            ]
+        )
+        for member in members
+    }
+    runtime = TeamRuntime(
+        teams,
+        lambda agent, _cycle_id=None: (
+            lead_client if agent.role == "leader" else worker_clients[agent.id]
+        ),
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(db, teams, operations),
+        concurrent_workers=True,
+    )
+
+    await runtime.resume(run.id, cycle.id)
+
+    assert peak == 1, "assignments promising the same path must not overlap"
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_sibling_is_not_credited_with_the_others_file(
+    tmp_path,
+):
+    """A diff brackets wall-clock time, so under concurrency it contains what
+    a sibling wrote in the same window. Nothing rejects a task for that, but
+    the diff is persisted as the record of what this assignment did, and a
+    record crediting one worker with another's file is false."""
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    first = personas.create_persona("W1", "worker", "d", [], [])
+    second = personas.create_persona("W2", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [first.id, second.id],
+        "plan_and_execute",
+        2,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    teams.set_cycle_status(cycle.id, "running")
+    members = [
+        agent for agent in teams.list_agents(run.id) if agent.role == "member"
+    ]
+    current = teams.get_team_run(run.id)
+    working_root = Path(current.working_root or current.workspace_root)
+    working_root.mkdir(parents=True, exist_ok=True)
+    for index, owner in enumerate(members, start=1):
+        teams.create_task(
+            run.id,
+            f"Write {index}",
+            "Write your own file.",
+            owner_agent_id=owner.id,
+            cycle_id=cycle.id,
+            acceptance=TaskAcceptance((f"out{index}.txt",), ()),
+        )
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+        concurrent_tasks=True,
+    )
+
+    class Writing:
+        def __init__(self, responses, path):
+            self.responses = list(responses)
+            self.path = path
+
+        async def complete_operation(self, messages, *, consumer_run_id):
+            # Both files exist before either settles, which is what a real
+            # pair of concurrent workers produces.
+            (working_root / self.path).write_text("x", encoding="utf-8")
+            await asyncio.sleep(0)
+            return self.responses.pop(0)
+
+    lead_client = Writing([ModelResponse("summary", [])], "lead.txt")
+    worker_clients = {
+        member.id: Writing(
+            [
+                ModelResponse(
+                    _outcome_json(
+                        "done",
+                        deliverables=[
+                            {"path": f"out{index}.txt", "kind": "file"}
+                        ],
+                    ),
+                    [],
+                )
+            ],
+            f"out{index}.txt",
+        )
+        for index, member in enumerate(members, start=1)
+    }
+    runtime = TeamRuntime(
+        teams,
+        lambda agent, _cycle_id=None: (
+            lead_client if agent.role == "leader" else worker_clients[agent.id]
+        ),
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(db, teams, operations),
+        concurrent_workers=True,
+    )
+
+    await runtime.resume(run.id, cycle.id)
+
+    recorded = {
+        message.metadata["task_id"]: message.metadata.get("created", [])
+        for message in teams.list_messages(run.id, cycle.id)
+        if message.kind == "agent_output"
+    }
+    assert recorded, "no agent_output records were written"
+    for task in teams.list_tasks(run.id, cycle.id):
+        mine = task.acceptance.required_outputs[0]
+        theirs = {
+            other.acceptance.required_outputs[0]
+            for other in teams.list_tasks(run.id, cycle.id)
+            if other.id != task.id
+        }
+        created = set(recorded.get(task.id, []))
+        assert not (created & theirs), (
+            f"{task.title} was credited with a sibling's file: {created}"
+        )
+        assert mine in created or not created

@@ -917,7 +917,11 @@ def _git_bytes(repo_root: Path, *args: str) -> bytes:
 
 
 def _evaluation_config(
-    config: AppConfig, *, mode: str, data_root: Path = EVAL_DATA_ROOT
+    config: AppConfig,
+    *,
+    mode: str,
+    data_root: Path = EVAL_DATA_ROOT,
+    concurrent_workers: bool = False,
 ) -> AppConfig:
     """Point storage at an evaluation-only database and workspace root.
 
@@ -941,6 +945,9 @@ def _evaluation_config(
             "app_db_path": data_root / "app.sqlite",
             "workspace_root": EVAL_WORKSPACE_ROOT,
             "team_peer_messages_enabled": mode == "radio_lite",
+            # Its own axis, like negotiation: a sweep that varied it together
+            # with the mode could not say which of the two moved the numbers.
+            "team_concurrent_workers_enabled": concurrent_workers,
         }
     )
 
@@ -977,6 +984,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=int,
         default=1,
         help="how many workers to run the team with (default: 1)",
+    )
+    parser.add_argument(
+        "--concurrent",
+        action="store_true",
+        help="let assignments that promise no files hold a provider call at "
+        "the same time (its own axis, not a mode)",
     )
     parser.add_argument(
         "--timeout-seconds",
@@ -1019,7 +1032,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         data_root = EVAL_DATA_ROOT / "slots" / args.slot
         runs_dir = data_root / "runs"
-    config = _evaluation_config(load_config(), mode=args.mode, data_root=data_root)
+    config = _evaluation_config(
+        load_config(),
+        mode=args.mode,
+        data_root=data_root,
+        concurrent_workers=args.concurrent,
+    )
     print(f"database: {config.app_db_path}")
     print(f"workspace: {config.workspace_root}")
 
