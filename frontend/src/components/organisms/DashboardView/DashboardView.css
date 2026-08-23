@@ -28,7 +28,33 @@
 }
 
 .dashboard-operations-section {
-  margin-top: 34px;
+  margin-top: 24px;
+}
+
+.dashboard-start-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 24px;
+  padding: 18px;
+  border: var(--bd);
+  background: var(--c-white);
+}
+
+.dashboard-start-section h2 {
+  font-size: 20px;
+}
+
+.dashboard-start-section p {
+  margin-top: 6px;
+  color: var(--c-grey);
+  font-size: 12px;
+}
+
+.dashboard-start-actions {
+  display: flex;
+  gap: 10px;
 }
 
 .dashboard-sessions-table {
@@ -221,6 +247,11 @@
 .dashboard-summary-card-danger,
 .dashboard-attention-panel {
   border-color: var(--c-danger);
+}
+
+.dashboard-attention-panel,
+.dashboard-system-panel {
+  margin-top: 18px;
 }
 
 .dashboard-operations-grid {

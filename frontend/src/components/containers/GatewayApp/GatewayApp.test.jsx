@@ -118,6 +118,9 @@ describe("GatewayApp", () => {
       "GET /api/sessions/active/config": { config: null },
       "GET /api/jobs": { jobs: [] },
       "GET /api/schedules": { schedules: [] },
+      "GET /api/settings": { automation_ready: true },
+      "GET /api/teams": { teams: [] },
+      "GET /api/personas": { personas: [] },
       "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
       "GET /api/operations": { items: [], counts: {} }
     });
@@ -125,17 +128,50 @@ describe("GatewayApp", () => {
     await renderGatewayApp({ openChat: false });
 
     expect(await screen.findByLabelText("Agent Gateway")).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "대시보드" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Home" })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Message the agent, or describe a local action...")).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Jobs" }));
+    await userEvent.click(screen.getByRole("button", { name: "Configuration" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Automations" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Run history" }));
     expect(await screen.findByRole("heading", { name: "Jobs" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Schedules" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Schedules" }));
     expect(await screen.findByRole("heading", { name: "Schedules" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(await screen.findByText("AGENT IDLE")).toBeInTheDocument();
+  });
+
+  it("starts a fresh Chat session from Home", async () => {
+    let activeSessionId = "session-1";
+    let resetCalls = 0;
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": () => response({ ...status, session_id: activeSessionId }),
+      "GET /api/sessions": () => response({
+        sessions: activeSessionId === "session-2"
+          ? [{ ...sessions[0], id: "session-2", title: "Fresh session", is_active: true }]
+          : sessions
+      }),
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/dashboard/usage": { weekly: { used: 0, limit: 0 } },
+      "GET /api/operations": { items: [], counts: {} },
+      "POST /api/reset": () => {
+        resetCalls += 1;
+        activeSessionId = "session-2";
+        return response({ session_id: "session-2" });
+      }
+    });
+
+    await renderGatewayApp({ openChat: false });
+    await userEvent.click(await screen.findByRole("button", { name: "Chat 시작" }));
+
+    await waitFor(() => expect(resetCalls).toBe(1));
+    expect(await screen.findByPlaceholderText("Message the agent, or describe a local action...")).toBeInTheDocument();
+    expect(screen.getAllByText("Fresh session").length).toBeGreaterThan(0);
   });
 
   it("opens Library without loading Outputs data", async () => {
@@ -490,9 +526,10 @@ describe("GatewayApp", () => {
 
     await renderGatewayApp({ openChat: false });
 
-    await userEvent.click(await screen.findByRole("button", { name: "Dashboard" }));
     await userEvent.click(await screen.findByRole("button", { name: "Retry export 상세 열기" }));
 
+    expect(await screen.findByRole("heading", { name: "Configuration" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Run history" })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("heading", { name: "Jobs" })).toBeInTheDocument();
   });
 
@@ -609,7 +646,7 @@ describe("GatewayApp", () => {
       await login.promise;
     });
 
-    expect(await screen.findByRole("heading", { name: "대시보드" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Home" })).toBeInTheDocument();
   });
 
   it("keeps the sign-in screen when login is rejected", async () => {
@@ -626,7 +663,7 @@ describe("GatewayApp", () => {
     expect(screen.getByText("Sign in")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("000000")).toBeEnabled();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
-    expect(screen.queryByRole("heading", { name: "대시보드" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Home" })).not.toBeInTheDocument();
   });
 
   it("keeps the sign-in screen when bootstrap after login fails", async () => {
@@ -1464,7 +1501,8 @@ describe("GatewayApp", () => {
 
     await renderGatewayApp();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Personas" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Configuration" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Personas" }));
     expect(await screen.findByRole("heading", { name: "Personas" })).toBeInTheDocument();
 
     // the first persona is auto-selected and its detail is shown
@@ -1822,7 +1860,8 @@ describe("GatewayApp", () => {
     ));
     expect(JSON.parse(createCall[1].body)).toEqual({
       team_id: "t1",
-      execution_policy: "triggered"
+      execution_policy: "triggered",
+      max_workers: 1
     });
     expect(fetch).not.toHaveBeenCalledWith(
       "/api/team-runs/run-1/start",
@@ -1939,6 +1978,7 @@ describe("GatewayApp", () => {
       team_id: "t1",
       goal: "Watch inbox",
       execution_policy: "auto",
+      max_workers: 1,
       auto_repeat_count: 3,
       auto_interval_minutes: 5
     });
@@ -2181,8 +2221,10 @@ describe("GatewayApp", () => {
 
     await renderGatewayApp();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Hooks" }));
-    expect(await screen.findByRole("heading", { name: "Hooks" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Configuration" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Automations" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Email triggers" }));
+    expect(await screen.findByRole("heading", { name: "Email triggers" })).toBeInTheDocument();
     expect(await screen.findByText("Invoice Watcher")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "CREATE NEW" }));
     await userEvent.click(screen.getByRole("button", { name: "TEAM RUN" }));
@@ -2222,8 +2264,8 @@ describe("GatewayApp", () => {
     const toastEl = await screen.findByRole("status");
     expect(toastEl).toHaveClass("toast-success");
 
-    const hooksButton = screen.getByRole("button", { name: "Hooks" });
-    expect(within(hooksButton).getByText("1")).toBeInTheDocument();
+    const configurationButton = screen.getByRole("button", { name: "Configuration" });
+    expect(within(configurationButton).getByText("1")).toBeInTheDocument();
   });
 
   it("does not notify for replayed hook events after login", async () => {
@@ -2261,8 +2303,8 @@ describe("GatewayApp", () => {
 
     await waitFor(() => expect(hooksCalls).toBe(1));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    const hooksButton = screen.getByRole("button", { name: "Hooks" });
-    expect(within(hooksButton).queryByText("1")).not.toBeInTheDocument();
+    const configurationButton = screen.getByRole("button", { name: "Configuration" });
+    expect(within(configurationButton).queryByText("1")).not.toBeInTheDocument();
   });
 
   it("refreshes the Hook collection after a background hook event", async () => {
@@ -2293,7 +2335,9 @@ describe("GatewayApp", () => {
 
     await renderGatewayApp({ uiProvider: true });
 
-    await userEvent.click(await screen.findByRole("button", { name: "Hooks" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Configuration" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Automations" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Email triggers" }));
     expect(await screen.findByText("Invoice Watcher")).toBeInTheDocument();
     const source = MockEventSource.instances[0];
 

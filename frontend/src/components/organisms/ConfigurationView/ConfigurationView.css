@@ -1,0 +1,58 @@
+.configuration-view {
+  max-width: 1180px;
+}
+
+.configuration-head p {
+  margin-top: 6px;
+  color: var(--c-grey);
+  font-size: 12px;
+}
+
+.configuration-tabs {
+  display: flex;
+  gap: 8px;
+  margin-top: 24px;
+  border-bottom: var(--bd);
+}
+
+.configuration-tabs-secondary {
+  margin-top: 14px;
+  border-bottom: var(--bd-in);
+}
+
+.configuration-tab {
+  margin-bottom: -1px;
+  padding: 10px 14px;
+  border: var(--bd);
+  background: var(--c-panel);
+  font: 700 11px var(--font-mono);
+  cursor: pointer;
+}
+
+.configuration-tabs-secondary .configuration-tab {
+  padding: 8px 12px;
+  border-width: 1px;
+}
+
+.configuration-tab.active {
+  border-bottom-color: var(--c-white);
+  background: var(--c-white);
+}
+
+.configuration-content {
+  margin-top: 22px;
+}
+
+.configuration-content > .screen {
+  padding: 0;
+}
+
+@media (max-width: 680px) {
+  .configuration-tabs {
+    overflow-x: auto;
+  }
+
+  .configuration-tab {
+    white-space: nowrap;
+  }
+}

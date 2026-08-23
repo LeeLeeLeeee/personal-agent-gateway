@@ -154,6 +154,40 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("Planning").closest(".team-phase")).not.toHaveAttribute("aria-current");
   });
 
+  it("shows the full run identity, current instruction, and workspace in run details", () => {
+    const runId = "1bceb1ef9d54459fb1174f5bec686dbc";
+    const instruction = "Collect the current popular Reddit posts and summarize the top 10.";
+    const workspace = "/Users/example/works/personal-agent-gateway/team-runs/reddit-popular";
+
+    render(
+      <TeamRunDetail
+        detail={{
+          run: {
+            id: runId,
+            goal: "Track Reddit trends",
+            status: "running",
+            run_mode: "plan_and_execute",
+            lifecycle_mode: "continuous",
+            workspace_root: workspace
+          },
+          agents: [],
+          tasks: [],
+          messages: [],
+          cycles: [{
+            id: "cycle-1",
+            sequence: 1,
+            status: "running",
+            effective_instruction: instruction
+          }]
+        }}
+      />
+    );
+
+    expect(screen.getByText(runId)).toHaveClass("team-run-meta-copy");
+    expect(screen.getByText(instruction)).toBeInTheDocument();
+    expect(screen.getByText(workspace)).toHaveClass("team-run-meta-path");
+  });
+
   it("identifies task documents on the board and opens them from the task", async () => {
     const { container } = render(
       <TeamRunDetail
@@ -273,6 +307,125 @@ describe("TeamRunDetail", () => {
       />
     );
     expect(screen.queryByRole("button", { name: "Retry failed task" })).not.toBeInTheDocument();
+  });
+
+  it("surfaces a failed run cause and recovery actions above the detail tabs", async () => {
+    const onRetryTask = vi.fn();
+    const onOpenSettings = vi.fn();
+    render(
+      <TeamRunDetail
+        onRetryTask={onRetryTask}
+        onOpenSettings={onOpenSettings}
+        detail={{
+          run: { id: "r1", goal: "Design", status: "failed", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [{ id: "t1", title: "Run QA", status: "failed", error_message: "capabilities_unavailable" }],
+          messages: []
+        }}
+      />
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Run QA: capabilities_unavailable");
+    expect(screen.queryByRole("button", { name: "Retry Run QA" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Change runtime" }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(onRetryTask).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Open diagnostics" }));
+    expect(screen.getByRole("tab", { name: /TASKS/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("resumes an interrupted cycle instead of retrying the same failed task twice", async () => {
+    const onResume = vi.fn(() => new Promise(() => {}));
+    const onRetryTask = vi.fn();
+    render(
+      <TeamRunDetail
+        onResume={onResume}
+        onRetryTask={onRetryTask}
+        documents={[{ path: "report.md" }]}
+        detail={{
+          run: { id: "r1", goal: "Design", status: "interrupted", run_mode: "plan_and_execute" },
+          agents: [{ id: "a1", name: "QA Agent", status: "idle" }],
+          cycles: [{ id: "c1", sequence: 2, status: "interrupted" }],
+          tasks: [
+            { id: "t1", cycle_id: "c1", title: "Run QA", status: "failed", owner_agent_id: "a1", error_message: "timed out" },
+            { id: "t2", cycle_id: "c1", title: "Run QA (retry)", status: "pending", retry_of_task_id: "t1" },
+            { id: "t3", cycle_id: "c1", title: "Build", status: "completed" }
+          ],
+          messages: []
+        }}
+      />
+    );
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("CYCLE #2");
+    expect(alert).toHaveTextContent("AGENT · QA Agent");
+    expect(alert).toHaveTextContent("완료된 Task 1개와 Files 1개는 유지됩니다.");
+    expect(screen.queryByRole("button", { name: "Retry Run QA" })).not.toBeInTheDocument();
+
+    const resume = screen.getByRole("button", { name: "Resume cycle" });
+    await userEvent.click(screen.getByRole("button", { name: "Review retry task" }));
+    expect(screen.getByRole("tab", { name: /TASKS/ })).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(resume);
+    expect(onResume).toHaveBeenCalledTimes(1);
+    expect(onRetryTask).not.toHaveBeenCalled();
+    expect(resume).toBeDisabled();
+  });
+
+  it("retries the latest failed retry task instead of diagnosing its original failure", async () => {
+    const onRetryTask = vi.fn();
+    const onOpenSettings = vi.fn();
+    render(
+      <TeamRunDetail
+        onRetryTask={onRetryTask}
+        onOpenSettings={onOpenSettings}
+        detail={{
+          run: { id: "r1", goal: "Design", status: "failed", run_mode: "plan_and_execute" },
+          agents: [],
+          tasks: [
+            {
+              id: "t1",
+              title: "Run QA",
+              status: "failed",
+              error_message: "capabilities_unavailable",
+              created_at: "2026-08-23T01:00:00Z"
+            },
+            {
+              id: "t2",
+              title: "Run QA",
+              status: "failed",
+              retry_of_task_id: "t1",
+              error_message: "invalid_structured_output",
+              created_at: "2026-08-23T02:00:00Z"
+            }
+          ],
+          messages: []
+        }}
+      />
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Run QA: invalid_structured_output");
+    expect(screen.queryByText(/재시도 Task가 준비되었습니다/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change runtime" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry Run QA" }));
+    expect(onRetryTask).toHaveBeenCalledWith("t2");
+    expect(onOpenSettings).not.toHaveBeenCalled();
+  });
+
+  it("links Team Run files to their grouped Outputs", async () => {
+    const onViewOutputs = vi.fn();
+    render(
+      <TeamRunDetail
+        onViewOutputs={onViewOutputs}
+        detail={{
+          run: { id: "run-1", goal: "Design", status: "completed", run_mode: "plan_and_execute" },
+          agents: [], tasks: [], messages: []
+        }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "FILES" }));
+    await userEvent.click(screen.getByRole("button", { name: "Outputs에서 모두 보기" }));
+    expect(onViewOutputs).toHaveBeenCalledWith("run-1");
   });
 
   it("lists workspace documents and opens a preview", async () => {
@@ -1892,4 +2045,3 @@ describe("TeamRunDetail contest availability", () => {
     expect(screen.getByRole("textbox", { name: /계획에 이의/ })).toBeInTheDocument();
   });
 });
-

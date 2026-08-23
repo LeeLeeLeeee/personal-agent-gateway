@@ -215,6 +215,32 @@ describe("DashboardView", () => {
     expect(onOpenTarget).toHaveBeenCalledWith({ screen: "jobs", job_id: "job-1" });
   });
 
+  it("orders attention, current work, start actions, and system status by work priority", async () => {
+    const onStartChat = vi.fn();
+    const onStartTeamRun = vi.fn();
+    fetch
+      .mockResolvedValueOnce(await jsonResponse(completeReport))
+      .mockResolvedValueOnce(await jsonResponse(operationsPayload));
+
+    render(<DashboardView onStartChat={onStartChat} onStartTeamRun={onStartTeamRun} />);
+
+    const attention = await screen.findByRole("heading", { name: "조치 필요" });
+    const running = screen.getByRole("heading", { name: "진행 중" });
+    const results = screen.getByRole("heading", { name: "최근 결과" });
+    const start = screen.getByRole("heading", { name: "작업 시작" });
+    const system = screen.getByRole("heading", { name: "시스템 요약" });
+
+    expect(attention.compareDocumentPosition(running) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(running.compareDocumentPosition(results) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(results.compareDocumentPosition(start) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(start.compareDocumentPosition(system) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "Chat 시작" }));
+    await userEvent.click(screen.getByRole("button", { name: "Team Run 시작" }));
+    expect(onStartChat).toHaveBeenCalledTimes(1);
+    expect(onStartTeamRun).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps usage visible when operations fails and retries only operations", async () => {
     fetch
       .mockResolvedValueOnce(await jsonResponse(completeReport))
@@ -227,6 +253,7 @@ describe("DashboardView", () => {
     expect(await screen.findByRole("heading", { name: "Codex" })).toBeInTheDocument();
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("운영 현황을 불러오지 못했습니다.");
+    expect(screen.getByRole("button", { name: "Chat 시작" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));

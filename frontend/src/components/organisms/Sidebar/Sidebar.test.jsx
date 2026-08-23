@@ -3,22 +3,22 @@ import { describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./index.jsx";
 
 describe("Sidebar", () => {
-  it("renders Team Runs, Teams, Personas, Rules nav items", () => {
+  it("keeps the top-level navigation focused on work, knowledge, and system", () => {
     render(<Sidebar screen="chat" onScreenChange={vi.fn()} />);
     expect(screen.getByText("Team Runs")).toBeInTheDocument();
-    expect(screen.getByText("Teams")).toBeInTheDocument();
-    expect(screen.getByText("Personas")).toBeInTheDocument();
-    expect(screen.getByText("Rules")).toBeInTheDocument();
+    expect(screen.getByText("Configuration")).toBeInTheDocument();
     expect(screen.getByText("Operations")).toBeInTheDocument();
+    expect(screen.queryByText("Jobs")).not.toBeInTheDocument();
+    expect(screen.queryByText("Schedules")).not.toBeInTheDocument();
+    expect(screen.queryByText("Hooks")).not.toBeInTheDocument();
   });
 
-  it("renders a Dashboard nav item before Chat and marks it active", () => {
+  it("renders Home before Chat and marks it active", () => {
     render(<Sidebar screen="dashboard" onScreenChange={vi.fn()} />);
-    const dashboardButton = screen.getByRole("button", { name: "Dashboard" });
-    expect(dashboardButton).toBeInTheDocument();
-    expect(dashboardButton).toHaveAttribute("aria-current", "page");
+    const homeButton = screen.getByRole("button", { name: "Home" });
+    expect(homeButton).toHaveAttribute("aria-current", "page");
     const navButtons = screen.getAllByRole("button").map((button) => button.textContent);
-    expect(navButtons.indexOf("Dashboard")).toBeLessThan(navButtons.findIndex((text) => text.startsWith("Chat")));
+    expect(navButtons.indexOf("Home")).toBeLessThan(navButtons.findIndex((text) => text.startsWith("Chat")));
   });
 
   it("renders independent Library and Outputs navigation items", () => {
@@ -28,9 +28,9 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "Outputs" })).toBeInTheDocument();
   });
 
-  it("renders a Hooks nav item with a badge when hooksBadge > 0", () => {
+  it("moves hook notifications to the Configuration badge", () => {
     render(<Sidebar screen="chat" hooksBadge={3} onScreenChange={vi.fn()} />);
-    expect(screen.getByText("Hooks")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Configuration" })).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
   });
 });

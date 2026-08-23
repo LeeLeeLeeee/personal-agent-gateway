@@ -97,9 +97,20 @@ function Preview({ artifact }) {
   );
 }
 
-export function ArtifactModal({ artifact, breadcrumbs = [], role = null, presentation = "modal", onClose, onDeleted }) {
+export function ArtifactModal({
+  artifact,
+  breadcrumbs = [],
+  role = null,
+  sourceTarget = null,
+  presentation = "modal",
+  onOpenSource,
+  onClose,
+  onDeleted
+}) {
   const toast = useToast();
   const confirm = useConfirm();
+  const [unavailableSourceArtifactId, setUnavailableSourceArtifactId] = useState(null);
+  const sourceUnavailable = unavailableSourceArtifactId === artifact.id;
   const contentUrl = api.artifactContentUrl(artifact.id);
 
   useEffect(() => {
@@ -131,6 +142,15 @@ export function ArtifactModal({ artifact, breadcrumbs = [], role = null, present
     }
   }
 
+  async function handleOpenSource() {
+    const opened = await onOpenSource(sourceTarget);
+    if (opened === false) {
+      setUnavailableSourceArtifactId(artifact.id);
+      return;
+    }
+    onClose();
+  }
+
   return (
     <div className={`modal-backdrop${presentation === "inspector" ? " modal-inspector" : ""}`} onClick={onClose}>
       <div className={`modal-card${presentation === "inspector" ? " modal-card-inspector" : ""}`} role="dialog" aria-modal="true" aria-label={artifact.title} onClick={(e) => e.stopPropagation()}>
@@ -148,6 +168,17 @@ export function ArtifactModal({ artifact, breadcrumbs = [], role = null, present
           <div className="settings-row"><span className="settings-k mono">SESSION</span><span className="settings-v mono modal-v">{artifact.source_session_id || "-"}</span></div>
         </details>
         <div className="modal-actions">
+          {sourceUnavailable ? (
+            <span className="mono modal-source-unavailable" role="status">원본을 사용할 수 없음</span>
+          ) : sourceTarget && onOpenSource ? (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={handleOpenSource}
+            >
+              {sourceTarget.label}
+            </button>
+          ) : null}
           <a className="btn btn-primary btn-sm" href={contentUrl} download>Download</a>
           <button type="button" className="btn btn-sm" onClick={handleCopyPath}>Copy path</button>
           <button type="button" className="btn btn-sm btn-danger" onClick={handleDelete}>Delete</button>

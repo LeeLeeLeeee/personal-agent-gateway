@@ -803,7 +803,7 @@ export function TeamRunDetail({
   onRetryTask, onCancel, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto,
   onRefreshDelivery, onCommitDelivery, onApplyDelivery,
   onResolveDeliveryConflict, onContinueDelivery, onCancelDeliveryConflicts,
-  onContestPlan
+  onContestPlan, onOpenSettings, onViewOutputs
 }) {
   const [workInput, setWorkInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -887,6 +887,7 @@ export function TeamRunDetail({
   const messages = detail.messages || [];
   const cycles = [...(detail.cycles || [])].sort((left, right) => right.sequence - left.sequence);
   const currentCycle = cycles[0] || null;
+  const currentInstruction = currentCycle?.effective_instruction || "-";
   const previousCycle = cycles.find(
     (cycle) => [
       "completed",
@@ -927,9 +928,13 @@ export function TeamRunDetail({
   const selectedTaskReviews = selectedTask
     ? newestFirst(acceptanceReviewsByTask.get(selectedTask.id) || [])
     : [];
+  const selectedTaskRetry = selectedTask
+    ? tasks.find((task) => task.retry_of_task_id === selectedTask.id)
+    : null;
   const canRetrySelectedTask = Boolean(
     onRetryTask
       && selectedTask?.status === "failed"
+      && !selectedTaskRetry
       && ["completed_with_failures", "failed"].includes(run.status)
   );
   const canAddWork = Boolean(
@@ -944,6 +949,47 @@ export function TeamRunDetail({
   const canCancel = Boolean(
     onCancel && ["planning", "running", "summarizing", "waiting_for_user"].includes(run.status)
   );
+  const retriedTaskIds = new Set(
+    tasks.map((task) => task.retry_of_task_id).filter(Boolean)
+  );
+  const failedTasks = newestFirst(tasks.filter((task) => task.status === "failed"));
+  const failureTask = failedTasks.find((task) => !retriedTaskIds.has(task.id))
+    || failedTasks[0]
+    || null;
+  const failureRetryTask = failureTask
+    ? tasks.find((task) => task.retry_of_task_id === failureTask.id)
+    : null;
+  const showFailurePanel = ["failed", "completed_with_failures"].includes(run.status)
+    || Boolean(run.status === "interrupted" && failureRetryTask);
+  const failureCause = failureTask?.error_message
+    ? `${failureTask.title}: ${failureTask.error_message}`
+    : run.error_message || "실패 원인이 기록되지 않았습니다. Tasks와 Activity에서 진단 정보를 확인하세요.";
+  const runtimeFailure = /(?:capabilit|provider|model).*unavailable/i.test(failureCause);
+  const failureAgent = failureTask ? findAgent(agents, failureTask.owner_agent_id) : null;
+  const completedTaskCount = tasks.filter((task) => task.status === "completed").length;
+  const canRetryFailure = Boolean(
+    onRetryTask
+      && failureTask
+      && !failureRetryTask
+      && !runtimeFailure
+      && ["failed", "completed_with_failures"].includes(run.status)
+  );
+  const canResumeFailure = Boolean(onResume && run.status === "interrupted" && failureRetryTask);
+
+  async function resumeRun() {
+    setResuming(true);
+    try {
+      await onResume();
+    } finally {
+      setResuming(false);
+    }
+  }
+
+  function reviewFailureTask(task) {
+    if (!task) return;
+    setSelectedTaskId(task.id);
+    setActiveTab("tasks");
+  }
 
   return (
     <section className="team-run-detail" aria-label="Team run detail">
@@ -965,19 +1011,12 @@ export function TeamRunDetail({
           </div>
         </div>
         <div className="team-run-hero-actions">
-          {canResume ? (
+          {canResume && !showFailurePanel ? (
             <Button
               size="btn-sm"
               variant="primary"
               disabled={resuming}
-              onClick={async () => {
-                setResuming(true);
-                try {
-                  await onResume();
-                } finally {
-                  setResuming(false);
-                }
-              }}
+              onClick={resumeRun}
             >
               {resuming ? "Resuming..." : "Resume"}
             </Button>
@@ -1005,6 +1044,69 @@ export function TeamRunDetail({
         </div>
       </header>
 
+      {showFailurePanel ? (
+        <section className="team-failure-panel" role="alert" aria-labelledby="team-failure-title">
+          <div className="team-failure-copy">
+            <span className="mono team-failure-kicker">RECOVERY REQUIRED</span>
+            <h2 id="team-failure-title" className="headline">Team Run을 완료하지 못했습니다</h2>
+            <p>{failureCause}</p>
+            <div className="team-failure-meta mono">
+              <span>{currentCycle ? `CYCLE #${currentCycle.sequence}` : "CYCLE 미확인"}</span>
+              <span>TASK · {failureTask?.title || "미확인"}</span>
+              <span>AGENT · {failureAgent?.name || "미확인"}</span>
+            </div>
+            <p className="team-failure-preserved">
+              완료된 Task {completedTaskCount}개와 Files {documents.length}개는 유지됩니다.
+            </p>
+            {failureRetryTask ? (
+              <p>재시도 Task가 준비되었습니다. 저장된 결과를 유지한 채 Cycle을 이어가세요.</p>
+            ) : runtimeFailure ? (
+              <p>현재 runtime에서 필요한 provider 또는 capability를 사용할 수 없습니다.</p>
+            ) : null}
+          </div>
+          <div className="team-failure-actions">
+            {canResumeFailure ? (
+              <Button
+                size="btn-sm"
+                variant="primary"
+                disabled={resuming}
+                onClick={resumeRun}
+              >
+                {resuming ? "Resuming..." : "Resume cycle"}
+              </Button>
+            ) : runtimeFailure && onOpenSettings ? (
+              <Button size="btn-sm" variant="primary" onClick={onOpenSettings}>Change runtime</Button>
+            ) : canRetryFailure ? (
+              <Button
+                size="btn-sm"
+                variant="primary"
+                disabled={retryingTaskId === failureTask.id}
+                onClick={async () => {
+                  setRetryingTaskId(failureTask.id);
+                  try {
+                    await onRetryTask(failureTask.id);
+                  } finally {
+                    setRetryingTaskId(null);
+                  }
+                }}
+              >
+                {retryingTaskId === failureTask.id ? "Retrying..." : `Retry ${failureTask.title}`}
+              </Button>
+            ) : null}
+            {canResumeFailure ? (
+              <Button size="btn-sm" onClick={() => reviewFailureTask(failureRetryTask)}>Review retry task</Button>
+            ) : canRetryFailure ? (
+              <Button size="btn-sm" onClick={() => reviewFailureTask(failureTask)}>Open task</Button>
+            ) : (
+              <Button size="btn-sm" onClick={() => setActiveTab("tasks")}>Open diagnostics</Button>
+            )}
+            {!failureTask ? (
+              <Button size="btn-sm" onClick={() => setActiveTab("activity")}>View activity</Button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       <div className="team-phase-stepper" aria-label="Run phase">
         {RUN_PHASES.map((phase, index) => {
           const activeIndex = phaseIndex(run.status);
@@ -1028,7 +1130,7 @@ export function TeamRunDetail({
         <div className="team-run-meta">
           <div className="team-run-meta-cell">
             <div className="mono team-run-meta-k">ID</div>
-            <div className="mono team-run-meta-v" title={run.id}>{run.id}</div>
+            <div className="mono team-run-meta-v team-run-meta-copy">{run.id}</div>
           </div>
           <div className="team-run-meta-cell">
             <div className="mono team-run-meta-k">MODE</div>
@@ -1046,7 +1148,11 @@ export function TeamRunDetail({
             <div className="mono team-run-meta-k">STARTED</div>
             <div className="mono team-run-meta-v">{fmtDateTime(run.started_at) || "-"}</div>
           </div>
-          <div className="team-run-meta-cell team-run-meta-workspace">
+          <div className="team-run-meta-cell team-run-meta-wide">
+            <div className="mono team-run-meta-k">CURRENT CYCLE INSTRUCTION</div>
+            <div className="team-run-meta-v team-run-meta-copy">{currentInstruction}</div>
+          </div>
+          <div className="team-run-meta-cell team-run-meta-wide team-run-meta-workspace">
             <div className="mono team-run-meta-k">WORKSPACE</div>
             <div className="mono team-run-meta-v team-run-meta-path" title={run.workspace_root || ""}>
               {run.workspace_root || "-"}
@@ -1539,6 +1645,11 @@ export function TeamRunDetail({
 
       {activeTab === "files" ? (
         <div className="team-tab-panel" role="tabpanel" aria-label="Files">
+          {onViewOutputs ? (
+            <div className="team-files-actions">
+              <Button size="btn-sm" onClick={() => onViewOutputs(run.id)}>Outputs에서 모두 보기</Button>
+            </div>
+          ) : null}
           <div className="team-docs-list">
             {documents.length ? documents.map((doc) => {
               const label = documentLabel(doc.path);

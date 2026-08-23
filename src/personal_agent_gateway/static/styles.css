@@ -2787,17 +2787,16 @@ p {
 }
 .team-run-meta {
     display: grid;
-    grid-template-columns: repeat(4, minmax(110px, 1fr)) minmax(260px, 2fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 1px;
     border: var(--bd-in);
     margin-top: 14px;
+    background: var(--c-black);
 }
 .team-run-meta-cell {
     min-width: 0;
     padding: 9px 12px;
-    border-right: var(--bd-in);
-}
-.team-run-meta-cell:last-child {
-    border-right: none;
+    background: var(--c-white);
 }
 .team-run-meta-k {
     font-size: 9px;
@@ -2810,6 +2809,15 @@ p {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+.team-run-meta-wide {
+    grid-column: 1 / -1;
+}
+.team-run-meta-copy {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
 }
 .team-run-meta-path {
     overflow-wrap: anywhere;
@@ -2831,6 +2839,54 @@ p {
 }
 .team-interrupted-copy {
     font-size: 12px;
+}
+.team-failure-panel {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    margin-top: 18px;
+    padding: 16px;
+    border: 2px solid var(--c-danger);
+    background: #fff2f0;
+}
+.team-failure-copy {
+    min-width: 0;
+}
+.team-failure-kicker {
+    color: var(--c-danger);
+    font-size: 9px;
+    letter-spacing: 1.2px;
+}
+.team-failure-copy h2 {
+    margin-top: 5px;
+    font-size: 19px;
+}
+.team-failure-copy p {
+    margin-top: 8px;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+}
+.team-failure-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-top: 10px;
+    font-size: 10px;
+}
+.team-failure-preserved {
+    color: var(--c-grey);
+}
+.team-failure-actions,
+.team-files-actions {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.team-files-actions {
+    justify-content: flex-end;
+    margin-bottom: 10px;
 }
 .team-decision-panel {
     margin-top: 16px;
@@ -3531,9 +3587,8 @@ p {
     .team-run-meta {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .team-run-meta-workspace {
+    .team-run-meta-wide {
         grid-column: 1 / -1;
-        border-top: var(--bd-in);
     }
     .team-task-board {
         grid-template-columns: repeat(2, 1fr);
@@ -3835,6 +3890,7 @@ p {
 .modal-breadcrumbs{padding:10px 14px 0;font-size:10px;line-height:1.5;color:var(--c-grey);overflow-wrap:anywhere}
 .modal-v{word-break:break-all;white-space:normal;text-align:right}
 .modal-actions{display:flex;gap:8px;padding:0 14px 16px;flex-wrap:wrap}
+.modal-source-unavailable{align-self:center;color:var(--c-danger);font-size:10px}
 .btn-danger{border-color:var(--c-danger);color:var(--c-danger)}
 .btn-danger:hover{background:var(--c-danger);color:var(--c-white)}
 .modal-media{max-width:100%;display:block;margin:0 auto}

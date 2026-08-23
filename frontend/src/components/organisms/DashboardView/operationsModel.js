@@ -13,6 +13,12 @@ const ATTENTION_STATUSES = new Set([
   "canceled"
 ]);
 
+const RESULT_STATUSES = new Set([
+  "completed",
+  "completed_with_failures",
+  "succeeded"
+]);
+
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -49,6 +55,7 @@ export function operationsDashboardModel(data) {
   const activeItems = sortedRecent(
     items.filter((item) => ACTIVE_STATUSES.has(item.status) && !needsAttention(item))
   );
+  const recentItems = sortedRecent(items.filter((item) => RESULT_STATUSES.has(item.status)));
   const systemAttention = [];
   const health = data.health.filter(isRecord);
 
@@ -83,6 +90,7 @@ export function operationsDashboardModel(data) {
 
   return {
     activeItems,
+    recentItems,
     attentionItems,
     systemAttention,
     health,

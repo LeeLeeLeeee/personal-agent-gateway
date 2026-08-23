@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../atoms/Button/index.jsx";
 
+// Capped at the executor's own ceiling (team_lifecycle.MAX_CONCURRENT_WORKERS).
+// Offering more would store and display a number the executor will not honour.
+const WORKER_CHOICES = [1, 2, 3];
+
 const EXECUTION_POLICIES = [
   { value: "triggered", label: "TRIGGERED", desc: "Runs a new cycle when a manual or Hook trigger is queued." },
   { value: "auto", label: "AUTO", desc: "Runs a fixed number of cycles separated by an interval." }
@@ -18,6 +22,9 @@ export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null 
   const [repeatCount, setRepeatCount] = useState("3");
   const [intervalMinutes, setIntervalMinutes] = useState("5");
   const [parentTeamRunId, setParentTeamRunId] = useState("");
+  // One, like every run created before this control existed. Raising it is
+  // a choice the operator makes per run, not a default they inherit.
+  const [maxWorkers, setMaxWorkers] = useState("1");
 
   useEffect(() => {
     if (!teamId && teams.length) setTeamId(teams[0].id);
@@ -40,7 +47,8 @@ export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null 
       event.preventDefault();
       const payload = {
         team_id: team.id,
-        execution_policy: executionPolicy
+        execution_policy: executionPolicy,
+        max_workers: Number(maxWorkers) || 1
       };
       if (executionPolicy === "auto") {
         payload.goal = baseObjective.trim();
@@ -83,6 +91,27 @@ export function TeamPicker({ teams = [], teamRuns = [], onStart, runtime = null 
                 <span className="mono tp-roster-role">MEMBER</span>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="tp-field">
+          <label className="tp-label" htmlFor="tp-max-workers">Parallel assignments</label>
+          <select
+            id="tp-max-workers"
+            className="tp-select"
+            value={maxWorkers}
+            onChange={(event) => setMaxWorkers(event.target.value)}
+          >
+            {WORKER_CHOICES.map((count) => (
+              <option key={count} value={String(count)}>
+                {count === 1 ? "1 (sequential)" : `${count} at a time`}
+              </option>
+            ))}
+          </select>
+          <div className="tp-mode-desc">
+            {executionMode === "SEQUENTIAL"
+              ? "Overlap is off on this gateway, so assignments run one at a time whatever is chosen here."
+              : "Only assignments whose promised files do not collide overlap; the rest still run in order."}
           </div>
         </div>
 

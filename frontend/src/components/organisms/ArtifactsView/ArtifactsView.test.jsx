@@ -70,6 +70,18 @@ describe("ArtifactsView", () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("captures/snap.png");
   });
 
+  it("opens the Team Run that produced an output", async () => {
+    const onOpenSource = vi.fn();
+    render(<UiProvider><ArtifactsView artifacts={artifacts} initialQuery="run-1" onOpenSource={onOpenSource} /></UiProvider>);
+
+    await userEvent.click(screen.getByRole("button", { name: /open run.log/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Team Run 열기" }));
+    expect(onOpenSource).toHaveBeenCalledWith(expect.objectContaining({
+      screen: "teams",
+      team_run_id: "run-1"
+    }));
+  });
+
   it("shows documents under the Documents filter", () => {
     render(<ArtifactsView artifacts={[
       { id: "d1", type: "document", title: "spec.pdf", relative_path: "files/x/spec.pdf", mime_type: "application/pdf", size_bytes: 2048, created_at: "2026-07-09T00:00:00Z" }

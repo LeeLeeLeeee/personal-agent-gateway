@@ -458,9 +458,9 @@ export function useSessionController({
       data = await api.activate(id);
     } catch (error) {
       setScreenError(error);
-      return;
+      return false;
     }
-    if (!data) return;
+    if (!data) return false;
     const sessionId = data.session_id || id;
     setActiveSessionId(sessionId);
     activeSessionIdRef.current = sessionId;
@@ -489,6 +489,7 @@ export function useSessionController({
       : null;
     busyRef.current = nextSessionStatus?.status === "running";
     await refreshStatusAndSessions();
+    return true;
   }
 
   async function handleReset() {

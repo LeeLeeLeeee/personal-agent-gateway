@@ -297,6 +297,7 @@ function HookRunsDrawer({ hook, runs, onClose, onOpenTeamRun }) {
 }
 
 export function HooksView({
+  title = "Hooks",
   hooks = [],
   hookRuns = [],
   agents = [],
@@ -318,7 +319,7 @@ export function HooksView({
     <div className={`schedules-view${showCreateForm ? "" : " hooks-view-list-only"}`}>
       <div className="schedules-main">
         <div className="hooks-view-head">
-          <h1 className="headline">Hooks</h1>
+          <h1 className="headline">{title}</h1>
           <button
             type="button"
             className={`btn btn-sm${showCreateForm ? " btn-primary" : ""}`}

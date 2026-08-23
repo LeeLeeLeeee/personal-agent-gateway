@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ArtifactModal } from "./index.jsx";
 import { api } from "../../../api/client.js";
@@ -62,5 +63,26 @@ describe("ArtifactModal delete flow", () => {
     expect(await screen.findByRole("heading", { name: "Review" })).toBeInTheDocument();
     expect(screen.getByText("기술 정보")).toBeInTheDocument();
     expect(screen.getByText("files/x/doc.zip")).not.toBeVisible();
+  });
+});
+
+describe("ArtifactModal provenance", () => {
+  it("keeps the preview open and marks an unavailable source", async () => {
+    const onClose = vi.fn();
+    const onOpenSource = vi.fn().mockResolvedValue(false);
+    render(
+      <ArtifactModal
+        artifact={artifact}
+        sourceTarget={{ screen: "chat", session_id: "missing", label: "Chat 열기" }}
+        onOpenSource={onOpenSource}
+        onClose={onClose}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Chat 열기" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("원본을 사용할 수 없음");
+    expect(screen.getByRole("dialog", { name: artifact.title })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

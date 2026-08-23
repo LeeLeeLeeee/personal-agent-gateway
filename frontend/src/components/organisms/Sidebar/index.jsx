@@ -1,24 +1,32 @@
 import { Logo } from "../../atoms/Logo/index.jsx";
 
-export const NAV = [
-  { key: "dashboard", label: "Dashboard" },
-  { key: "chat", label: "Chat" },
-  { key: "jobs", label: "Jobs" },
-  { key: "schedules", label: "Schedules" },
-  { key: "hooks", label: "Hooks" },
-  { key: "library", label: "Library" },
-  { key: "outputs", label: "Outputs" },
-  { key: "operations", label: "Operations" },
-  { key: "settings", label: "Settings" }
+export const NAV_GROUPS = [
+  {
+    label: "WORK",
+    items: [
+      { key: "dashboard", label: "Home" },
+      { key: "chat", label: "Chat" },
+      { key: "teams", label: "Team Runs" }
+    ]
+  },
+  {
+    label: "KNOWLEDGE",
+    items: [
+      { key: "library", label: "Library" },
+      { key: "outputs", label: "Outputs" }
+    ]
+  },
+  {
+    label: "SYSTEM",
+    items: [
+      { key: "configuration", label: "Configuration" },
+      { key: "operations", label: "Operations" },
+      { key: "settings", label: "Settings" }
+    ]
+  }
 ];
 
-export const TEAM_NAV = [
-  { key: "teams", label: "Team Runs" },
-  { key: "team-admin", label: "Teams" },
-  { key: "personas", label: "Personas" },
-  { key: "spaces", label: "Spaces" },
-  { key: "rules", label: "Rules" }
-];
+export const NAV = NAV_GROUPS.flatMap((group) => group.items);
 
 function formatEnvironmentLabel(value) {
   const trimmed = String(value || "").trim();
@@ -41,38 +49,29 @@ export function Sidebar({ screen, teamRunBadge = 0, hooksBadge = 0, environmentT
         <div className="sidebar-brand-sub">LOCAL CONSOLE</div>
       </div>
       <nav className="sidebar-nav">
-        {NAV.map((item) => {
-          const showBadge = item.key === "hooks" && hooksBadge > 0;
-          return (
-            <button
-              key={item.key}
-              className={`nav-item${screen === item.key ? " nav-item-active" : ""}`}
-              type="button"
-              aria-current={screen === item.key ? "page" : undefined}
-              onClick={() => onScreenChange(item.key)}
-            >
-              <span>{item.label}</span>
-              {showBadge ? <span className="nav-badge" aria-hidden="true">{hooksBadge}</span> : null}
-            </button>
-          );
-        })}
-        <div className="sidebar-nav-section">TEAMS</div>
-        {TEAM_NAV.map((item) => {
-          const active = screen === item.key;
-          const showBadge = item.key === "teams" && teamRunBadge > 0;
-          return (
-            <button
-              key={item.key}
-              className={`nav-item${active ? " nav-item-active" : ""}`}
-              type="button"
-              aria-current={active ? "page" : undefined}
-              onClick={() => onScreenChange(item.key)}
-            >
-              <span>{item.label}</span>
-              {showBadge ? <span className="nav-badge" aria-hidden="true">{teamRunBadge}</span> : null}
-            </button>
-          );
-        })}
+        {NAV_GROUPS.map((group) => (
+          <div className="sidebar-nav-group" key={group.label}>
+            <div className="sidebar-nav-section">{group.label}</div>
+            {group.items.map((item) => {
+              const active = screen === item.key;
+              const badge = item.key === "teams"
+                ? teamRunBadge
+                : item.key === "configuration" ? hooksBadge : 0;
+              return (
+                <button
+                  key={item.key}
+                  className={`nav-item${active ? " nav-item-active" : ""}`}
+                  type="button"
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => onScreenChange(item.key)}
+                >
+                  <span>{item.label}</span>
+                  {badge > 0 ? <span className="nav-badge" aria-hidden="true">{badge}</span> : null}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </nav>
       <div className="sidebar-foot">
         <span className="sidebar-status-dot" />

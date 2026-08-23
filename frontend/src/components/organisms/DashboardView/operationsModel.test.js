@@ -23,6 +23,7 @@ describe("operationsDashboardModel", () => {
 
     expect(model.activeItems.map((item) => item.id)).toEqual(["team-run", "job-queued"]);
     expect(model.attentionItems.map((item) => item.id)).toEqual(["schedule-paused", "job-failed"]);
+    expect(model.recentItems.map((item) => item.id)).toEqual(["done"]);
     expect(model.healthyCount).toBe(1);
     expect(model.systemAttention).toEqual([
       expect.objectContaining({ id: "health:scheduler", kind: "failed" })

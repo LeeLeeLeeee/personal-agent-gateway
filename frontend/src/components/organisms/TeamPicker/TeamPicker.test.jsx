@@ -28,7 +28,8 @@ describe("TeamPicker", () => {
 
     expect(onStart).toHaveBeenCalledWith({
       team_id: "t1",
-      execution_policy: "triggered"
+      execution_policy: "triggered",
+      max_workers: 1
     });
   });
 
@@ -51,6 +52,7 @@ describe("TeamPicker", () => {
       team_id: "t1",
       goal: "keep gateway healthy",
       execution_policy: "auto",
+      max_workers: 1,
       auto_repeat_count: 5,
       auto_interval_minutes: 30
     });
@@ -85,17 +87,34 @@ describe("TeamPicker", () => {
     expect(onStart).toHaveBeenCalledWith({
       team_id: "t1",
       execution_policy: "triggered",
+      max_workers: 1,
       parent_team_run_id: "source-run"
     });
   });
 
-  it("keeps the runtime execution summary without exposing worker controls", () => {
+  // This used to assert that no worker control existed at all, which was right
+  // while execution was sequential whatever the run asked for. Now that
+  // assignments can overlap, withholding the control is what would be wrong --
+  // so what is pinned instead is that the choice is bounded by the executor's
+  // ceiling, and that a gateway with overlap off says so rather than offering
+  // a number it will not honour.
+  it("offers a bounded parallel choice and keeps the runtime execution summary", () => {
     render(<TeamPicker teams={teams} onStart={vi.fn()} runtime={{
       team_execution_mode: "sequential"
     }} />);
 
-    expect(screen.queryByRole("button", { name: /increase workers/i })).not.toBeInTheDocument();
+    const choices = screen.getByLabelText("Parallel assignments");
+    expect([...choices.options].map((option) => option.value)).toEqual(["1", "2", "3"]);
+    expect(screen.getByText(/Overlap is off on this gateway/i)).toBeInTheDocument();
     expect(screen.getAllByText(/1 · sequential/i).length).toBeGreaterThan(0);
+  });
+
+  it("says overlap applies only to assignments that do not collide", () => {
+    render(<TeamPicker teams={teams} onStart={vi.fn()} runtime={{
+      team_execution_mode: "parallel"
+    }} />);
+
+    expect(screen.getByText(/do not collide/i)).toBeInTheDocument();
   });
 
   it("prompts to create a team when none exist", () => {

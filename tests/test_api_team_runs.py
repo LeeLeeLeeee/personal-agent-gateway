@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from personal_agent_gateway.app import create_app
 from personal_agent_gateway.config import AppConfig
+from personal_agent_gateway.team_lifecycle import MAX_CONCURRENT_WORKERS
 from personal_agent_gateway.model_client import ModelResponse
 from personal_agent_gateway.remote_model_client import RemoteRunAbortedError
 from personal_agent_gateway.team_model_operations import (
@@ -1777,6 +1778,10 @@ def test_cycle_space_policy_is_included_in_cycle_detail(tmp_path: Path) -> None:
     ).json()["team_run"]
     service = client.app.state.team_run_service
     created = service.create_cycle(run["id"], "hook", "hook-run-1", rounds_budget=3)
+    service.set_cycle_effective_instruction(
+        created.id,
+        "Read the inbox and summarize actionable messages.",
+    )
     service.set_cycle_status(created.id, "running")
     service.increment_cycle_rounds_used(created.id)
     cycle = service.set_cycle_status(created.id, "completed", summary="Mail handled")
@@ -1797,6 +1802,7 @@ def test_cycle_space_policy_is_included_in_cycle_detail(tmp_path: Path) -> None:
             "rounds_used": 1,
             "rules_snapshot": cycle.rules_snapshot,
             "space_policy": cycle.space_policy,
+            "effective_instruction": "Read the inbox and summarize actionable messages.",
             "summary": "Mail handled",
             "coverage_gaps": None,
             "error_message": None,
@@ -2073,6 +2079,12 @@ def test_create_team_run_rejects_unimplemented_review_mode(tmp_path: Path) -> No
     assert response.status_code == 422
 
 
+# The effective limit used to be one -- max_workers was not an accepted field
+# at all and the endpoint passed the constant -- so this refused 2. It now
+# refuses above the executor's ceiling instead. The old version also sent
+# run_mode, which is not an accepted field either, so it went on passing for
+# that reason after max_workers became legal: it asserted 422 while testing
+# nothing its name claims. Dropped, so the assertion is about max_workers.
 def test_create_team_run_rejects_concurrency_above_effective_limit(
     tmp_path: Path,
 ) -> None:
@@ -2086,12 +2098,39 @@ def test_create_team_run_rejects_concurrency_above_effective_limit(
             "team_id": team_id,
             "goal": "Ship sequentially",
             "execution_policy": "triggered",
-            "run_mode": "plan_and_execute",
-            "max_workers": 2,
+            "max_workers": MAX_CONCURRENT_WORKERS + 1,
         },
     )
 
     assert response.status_code == 422
+
+
+def test_create_team_run_accepts_parallel_assignments_up_to_the_ceiling(
+    tmp_path: Path,
+) -> None:
+    """A run created through the product could not overlap anything before
+    this: the field was forbidden and the endpoint passed 1."""
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    team_id = create_team(client, leader_id)
+
+    response = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Ship it",
+            "execution_policy": "triggered",
+            "max_workers": MAX_CONCURRENT_WORKERS,
+        },
+    )
+
+    assert response.status_code == 200
+    run = response.json()["team_run"]
+    assert run["configured_max_workers"] == MAX_CONCURRENT_WORKERS
+    # Reported as 1 because this gateway has overlap off; the run still records
+    # what it was asked for.
+    assert run["max_workers"] == 1
+    assert run["execution_mode"] == "sequential"
 
 
 def test_delete_team_run_removes_it(tmp_path: Path) -> None:

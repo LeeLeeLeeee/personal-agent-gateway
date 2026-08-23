@@ -20,6 +20,7 @@ from personal_agent_gateway.team_build_evidence import (
     run_build_evidence,
     task_build_evidence,
 )
+from personal_agent_gateway.team_lifecycle import MAX_CONCURRENT_WORKERS
 from personal_agent_gateway.team_cycles import TeamAutoSeries, TeamCycleRequest
 from personal_agent_gateway.team_delivery import TeamRunDeliveryError
 from personal_agent_gateway.team_provider_recovery import (
@@ -58,6 +59,12 @@ class CreateTeamRunRequest(BaseModel):
     auto_interval_minutes: Annotated[int | None, Field(ge=1)] = None
     parent_team_run_id: str | None = None
     plan_negotiation: bool = False
+    # Was not accepted at all, and the endpoint passed the constant 1 -- so a
+    # run created through the product could never overlap anything, whatever
+    # the executor allowed. Bounded by the executor's own ceiling rather than
+    # left open: a larger number would be stored, reported, and then not
+    # delivered.
+    max_workers: Annotated[int, Field(ge=1, le=MAX_CONCURRENT_WORKERS)] = 1
 
     @model_validator(mode="after")
     def validate_policy_settings(self) -> Self:
@@ -173,7 +180,7 @@ async def create_team_run(
             team_id=payload.team_id,
             goal=payload.goal,
             run_mode="plan_and_execute",
-            max_workers=1,
+            max_workers=payload.max_workers,
             lifecycle_mode="continuous",
             execution_policy=payload.execution_policy,
             auto_repeat_count=payload.auto_repeat_count,
@@ -215,7 +222,7 @@ async def create_team_run(
             "parent_team_run_id": run.parent_team_run_id,
         },
     )
-    return {"team_run": _team_run_payload(run)}
+    return {"team_run": _team_run_payload(run, request.app.state.team_run_service)}
 
 
 @router.post("/{team_run_id}/cycle-requests")
@@ -427,7 +434,7 @@ def get_team_run(request: Request, team_run_id: str, _session: None = session_de
         run = request.app.state.team_run_service.get_team_run(team_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team run not found") from exc
-    return {"team_run": _team_run_payload(run)}
+    return {"team_run": _team_run_payload(run, request.app.state.team_run_service)}
 
 
 @router.get("/{team_run_id}/detail")
@@ -496,7 +503,7 @@ def get_team_run_detail(
         task.id: task_build_evidence(task, workspace) for task in selected_tasks
     }
     return {
-        "team_run": _team_run_payload(run),
+        "team_run": _team_run_payload(run, request.app.state.team_run_service),
         "agents": [_agent_payload(agent) for agent in agents],
         "tasks": [
             _task_payload(
@@ -760,7 +767,7 @@ async def start_team_run(
         resource_id=team_run_id,
         team_run_id=team_run_id,
     )
-    return {"team_run": _team_run_payload(run)}
+    return {"team_run": _team_run_payload(run, request.app.state.team_run_service)}
 
 
 @router.post("/{team_run_id}/resume")
@@ -821,7 +828,7 @@ async def resume_team_run(
         resource_id=team_run_id,
         team_run_id=team_run_id,
     )
-    return {"team_run": _team_run_payload(run)}
+    return {"team_run": _team_run_payload(run, request.app.state.team_run_service)}
 
 
 @router.get("/{team_run_id}/decision-request")
@@ -868,7 +875,7 @@ async def answer_decision_request(
             "type": "team.run.input_resolved",
             "team_run_id": team_run_id,
             "decision_request_id": decision_request.id,
-            "run": _team_run_payload(run),
+            "run": _team_run_payload(run, request.app.state.team_run_service),
         }
     )
 
@@ -889,7 +896,7 @@ async def answer_decision_request(
         },
     )
     return {
-        "team_run": _team_run_payload(run),
+        "team_run": _team_run_payload(run, request.app.state.team_run_service),
         "decision_request": _decision_request_payload(decision_request),
     }
 
@@ -973,7 +980,7 @@ async def retry_team_task(
         },
     )
     return {
-        "team_run": _team_run_payload(run),
+        "team_run": _team_run_payload(run, request.app.state.team_run_service),
         "task": task_payload,
         "cycle": _cycle_payload(cycle) if cycle else None,
     }
@@ -1033,7 +1040,7 @@ async def add_work(
         team_run_id=team_run_id,
         metadata={"instruction_length": len(payload.instruction)},
     )
-    return {"team_run": _team_run_payload(service.get_team_run(team_run_id))}
+    return {"team_run": _team_run_payload(service.get_team_run(team_run_id), service)}
 
 
 @router.post("/{team_run_id}/cancel")
@@ -1069,7 +1076,7 @@ async def cancel_team_run(
         resource_id=team_run_id,
         team_run_id=team_run_id,
     )
-    return {"team_run": _team_run_payload(run)}
+    return {"team_run": _team_run_payload(run, request.app.state.team_run_service)}
 
 
 @router.delete("/{team_run_id}")
@@ -1411,7 +1418,13 @@ def _page_entities(items: list, limit: int, cursor: str | None) -> tuple[list, s
     return selected, next_cursor
 
 
-def _team_run_payload(run: TeamRun) -> dict[str, object]:
+def _team_run_payload(run: TeamRun, service=None) -> dict[str, object]:
+    # The service owns the calculation because only it knows whether
+    # concurrency is enabled; omitting it reports the pre-concurrency
+    # answer, which is the safe default for any caller that has no service.
+    effective_workers = (
+        service.effective_workers(run.max_workers) if service is not None else 1
+    )
     return {
         "id": run.id,
         "goal": run.goal,
@@ -1421,9 +1434,11 @@ def _team_run_payload(run: TeamRun) -> dict[str, object]:
         "lifecycle_mode": run.lifecycle_mode,
         "execution_policy": run.execution_policy,
         "leader_agent_id": run.leader_agent_id,
-        "max_workers": 1,
+        # See TeamRunService._effective_workers: reported as what execution
+        # will actually overlap, not as the constant this used to be.
+        "max_workers": effective_workers,
         "configured_max_workers": run.max_workers,
-        "execution_mode": "sequential",
+        "execution_mode": "concurrent" if effective_workers > 1 else "sequential",
         "workspace_root": run.workspace_root,
         "working_root": run.working_root,
         "artifact_root": run.artifact_root,
@@ -1524,6 +1539,13 @@ def _cycle_payload(
     cycle: TeamRunCycle,
     coverage_gaps: list[dict[str, str]] | None = None,
 ) -> dict[str, object]:
+    execution_metadata = cycle.execution_metadata or {}
+    semantic_source = execution_metadata.get("semantic_source")
+    effective_instruction = (
+        semantic_source.get("effective_instruction")
+        if isinstance(semantic_source, dict)
+        else None
+    )
     return {
         "id": cycle.id,
         "team_run_id": cycle.team_run_id,
@@ -1535,6 +1557,7 @@ def _cycle_payload(
         "rounds_used": cycle.rounds_used,
         "rules_snapshot": cycle.rules_snapshot,
         "space_policy": cycle.space_policy,
+        "effective_instruction": effective_instruction,
         "summary": cycle.summary,
         "coverage_gaps": coverage_gaps,
         "error_message": cycle.error_message,

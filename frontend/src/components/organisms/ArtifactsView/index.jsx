@@ -42,10 +42,22 @@ function grouped(items) {
   }, new Map());
 }
 
-export function ArtifactsView({ artifacts = [], onChange }) {
-  const [segment, setSegment] = useState("saved");
+function sourceTarget(item) {
+  const run = item.breadcrumbs?.find((crumb) => crumb.kind === "team_run");
+  const teamRunId = run?.id || item.artifact.metadata?.team_run_id;
+  if (teamRunId) {
+    return { screen: "teams", team_run_id: teamRunId, label: "Team Run 열기" };
+  }
+  if (item.artifact.source_session_id) {
+    return { screen: "chat", session_id: item.artifact.source_session_id, label: "원본 Chat 열기" };
+  }
+  return null;
+}
+
+export function ArtifactsView({ artifacts = [], initialQuery = "", onOpenSource, onChange }) {
+  const [segment, setSegment] = useState(initialQuery ? "recent" : "saved");
   const [type, setType] = useState("all");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [browser, setBrowser] = useState(null);
   const [cleanupPreview, setCleanupPreview] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -79,7 +91,13 @@ export function ArtifactsView({ artifacts = [], onChange }) {
   const visibleItems = items.filter((item) => {
     if (segment === "cleanup") return true;
     const title = item.artifact.title || "";
-    return !query.trim() || title.toLowerCase().includes(query.trim().toLowerCase()) || Boolean(browser);
+    const normalizedQuery = query.trim().toLowerCase();
+    const metadata = item.artifact.metadata || {};
+    const legacyMatch = title.toLowerCase().includes(normalizedQuery)
+      || String(metadata.team_run_id || "").toLowerCase().includes(normalizedQuery)
+      || String(metadata.task_id || "").toLowerCase().includes(normalizedQuery)
+      || String(item.artifact.source_session_id || "").toLowerCase().includes(normalizedQuery);
+    return !normalizedQuery || legacyMatch || Boolean(browser);
   });
   const groups = grouped(visibleItems);
   const counts = browser?.counts || { saved: legacyItems(artifacts, "saved").length, recent: legacyItems(artifacts, "recent").length, cleanup: cleanupPreview?.artifacts?.length || 0 };
@@ -167,7 +185,18 @@ export function ArtifactsView({ artifacts = [], onChange }) {
           </section>)}
         </div> : <div className="planned">NO ARTIFACTS</div>}
       </div>
-      {selected ? <ArtifactModal artifact={selected.artifact} breadcrumbs={selected.breadcrumbs} role={selected.role} presentation="inspector" onClose={() => setSelected(null)} onDeleted={() => { setSelected(null); refreshBrowser(); onChange?.(); }} /> : null}
+      {selected ? (
+        <ArtifactModal
+          artifact={selected.artifact}
+          breadcrumbs={selected.breadcrumbs}
+          role={selected.role}
+          sourceTarget={sourceTarget(selected)}
+          presentation="inspector"
+          onOpenSource={onOpenSource}
+          onClose={() => setSelected(null)}
+          onDeleted={() => { setSelected(null); refreshBrowser(); onChange?.(); }}
+        />
+      ) : null}
     </div>
   );
 }

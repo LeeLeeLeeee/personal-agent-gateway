@@ -30,6 +30,7 @@ import { JobsView } from "../../organisms/JobsView/index.jsx";
 import { SchedulesView } from "../../organisms/SchedulesView/index.jsx";
 import { OperationsView } from "../../organisms/OperationsView/index.jsx";
 import { HooksView } from "../../organisms/HooksView/index.jsx";
+import { ConfigurationView } from "../../organisms/ConfigurationView/index.jsx";
 import { useConfirm, useToast } from "../../providers/UiProvider/index.jsx";
 
 function useForceTick(active) {
@@ -45,6 +46,10 @@ export function GatewayApp() {
   const confirm = useConfirm();
   const toast = useToast();
   const [screen, setScreen] = useState("dashboard");
+  const [configurationSection, setConfigurationSection] = useState("teams");
+  const [policySection, setPolicySection] = useState("rules");
+  const [automationSection, setAutomationSection] = useState("schedules");
+  const [outputQuery, setOutputQuery] = useState("");
   const [sessionStateById, setSessionStateById] = useState({});
   const [navOpen, setNavOpen] = useState(false);
   const [personas, setPersonas] = useState([]);
@@ -66,6 +71,8 @@ export function GatewayApp() {
   const notificationStateRef = useRef(notificationState);
   const notifiedTeamRunsRef = useRef(new Set());
   const screenRef = useRef("dashboard");
+  const configurationSectionRef = useRef("teams");
+  const automationSectionRef = useRef("schedules");
   const screenGenerationRef = useRef(0);
   const artifactRequestGenerationRef = useRef(0);
   const operationsRequestGenerationRef = useRef(0);
@@ -195,6 +202,8 @@ export function GatewayApp() {
 
   useEffect(() => { hooksRef.current = hooks; }, [hooks]);
   useEffect(() => { screenRef.current = screen; }, [screen]);
+  useEffect(() => { configurationSectionRef.current = configurationSection; }, [configurationSection]);
+  useEffect(() => { automationSectionRef.current = automationSection; }, [automationSection]);
   useEffect(() => { openHookRunsIdRef.current = openHookRunsId; }, [openHookRunsId]);
 
   const handleHookEvent = useCallback(async (event) => {
@@ -205,7 +214,10 @@ export function GatewayApp() {
         `Hook "${name}": ${event.status === "succeeded" ? "완료" : "실패"}`,
         event.status === "succeeded" ? "success" : "error"
       );
-      if (screenRef.current !== "hooks") setHooksBadge((count) => count + 1);
+      const viewingHooks = screenRef.current === "configuration"
+        && configurationSectionRef.current === "automations"
+        && automationSectionRef.current === "hooks";
+      if (!viewingHooks) setHooksBadge((count) => count + 1);
     }
     const refreshes = [
       api.listHooks().then(setHooks)
@@ -336,7 +348,32 @@ export function GatewayApp() {
       .catch((error) => {
         if (active && reportError) setScreenError(error);
       });
-    if (screen === "personas") {
+    if (screen === "configuration") {
+      if (configurationSection === "teams") {
+        load(api.teams(), setTeams);
+        load(api.personas(), setPersonas);
+      } else if (configurationSection === "personas") {
+        load(api.personas(), setPersonas);
+        load(api.avatarManifest(), setAvatarChoices);
+      } else if (configurationSection === "policies" && policySection === "rules") {
+        load(api.teams(), setTeams);
+        load(api.rules(), setRules);
+      } else if (configurationSection === "policies" && policySection === "spaces") {
+        load(api.spacePolicies(), setSpacePolicies);
+        load(api.teams(), setTeams);
+        load(api.personas(), setPersonas);
+      } else if (configurationSection === "automations" && automationSection === "schedules") {
+        load(api.schedules(), setSchedules);
+        load(api.settings(), setSettings);
+      } else if (configurationSection === "automations" && automationSection === "hooks") {
+        load(api.listHooks(), setHooks);
+        load(api.teamRuns(), setTeamRuns);
+        load(api.personas(), setPersonas, false);
+        setHooksBadge(0);
+      } else if (configurationSection === "automations" && automationSection === "jobs") {
+        load(api.jobs(), setJobs);
+      }
+    } else if (screen === "personas") {
       load(api.personas(), setPersonas);
       load(api.avatarManifest(), setAvatarChoices);
     } else if (screen === "teams") {
@@ -377,7 +414,16 @@ export function GatewayApp() {
     return () => {
       active = false;
     };
-  }, [screen, authenticated, loadOperations, requestArtifacts, screenReloadKey]);
+  }, [
+    screen,
+    configurationSection,
+    policySection,
+    automationSection,
+    authenticated,
+    loadOperations,
+    requestArtifacts,
+    screenReloadKey
+  ]);
 
   // Logout moved off the sidebar to match the design; to be surfaced from the Settings screen.
   async function handleLogout() {
@@ -578,7 +624,9 @@ export function GatewayApp() {
       setJobs(nextJobs);
       setSchedules(nextSchedules);
       setFocusedJobId(result.job.id);
-      transitionScreen("jobs");
+      setConfigurationSection("automations");
+      setAutomationSection("jobs");
+      transitionScreen("configuration");
       toast("실행을 시작했습니다", "success");
     } catch (_error) {
       toast("Failed to run schedule", "error");
@@ -707,15 +755,43 @@ export function GatewayApp() {
 
   async function handleOpenOperationTarget(target) {
     if (target.screen === "chat" && target.session_id) {
-      await handleActivate(target.session_id);
+      const activated = await handleActivate(target.session_id);
+      if (!activated) return;
     } else if (target.screen === "teams" && target.team_run_id) {
       setSelectedTeamRunId(target.team_run_id);
     } else if (target.screen === "jobs" && target.job_id) {
       setFocusedJobId(target.job_id);
+      setConfigurationSection("automations");
+      setAutomationSection("jobs");
     } else if (target.screen === "schedules" && target.schedule_id) {
       setFocusedScheduleId(target.schedule_id);
+      setConfigurationSection("automations");
+      setAutomationSection("schedules");
+    } else if (target.screen === "hooks") {
+      setConfigurationSection("automations");
+      setAutomationSection("hooks");
     }
-    transitionScreen(target.screen);
+    transitionScreen(["jobs", "schedules", "hooks"].includes(target.screen) ? "configuration" : target.screen);
+  }
+
+  function handleViewTeamRunOutputs(teamRunId) {
+    setOutputQuery(teamRunId);
+    transitionScreen("outputs");
+  }
+
+  async function handleOpenArtifactSource(target) {
+    if (target.screen === "teams" && target.team_run_id) {
+      setSelectedTeamRunId(target.team_run_id);
+      transitionScreen("teams");
+      return true;
+    }
+    if (target.screen === "chat" && target.session_id) {
+      const activated = await handleActivate(target.session_id);
+      if (!activated) return false;
+      transitionScreen("chat");
+      return true;
+    }
+    return false;
   }
 
   async function handleResumeOperationItem(ownerGeneration, item) {
@@ -822,6 +898,7 @@ export function GatewayApp() {
         if (screen === "teams" && nextScreen !== "teams") {
           clearTeamRunView();
         }
+        if (nextScreen === "outputs") setOutputQuery("");
         transitionScreen(nextScreen);
         setNavOpen(false);
       }}
@@ -862,6 +939,14 @@ export function GatewayApp() {
         <DashboardView
           onOpenTarget={handleOpenOperationTarget}
           onRelogin={handleOperationsRelogin}
+          onStartChat={async () => {
+            transitionScreen("chat");
+            await handleReset();
+          }}
+          onStartTeamRun={() => {
+            setCreatingTeamRun(true);
+            transitionScreen("teams");
+          }}
         />
       ) : screen === "chat" ? (
         <ChatView
@@ -889,6 +974,96 @@ export function GatewayApp() {
           registeredByPath={registeredByPath}
           onArtifactChange={refreshArtifacts}
         />
+      ) : screen === "configuration" ? (
+        <ConfigurationView
+          section={configurationSection}
+          policySection={policySection}
+          automationSection={automationSection}
+          onSectionChange={setConfigurationSection}
+          onPolicySectionChange={setPolicySection}
+          onAutomationSectionChange={setAutomationSection}
+        >
+          {configurationSection === "teams" ? (
+            <TeamsView
+              teams={teams}
+              personas={personas}
+              onCreate={handleCreateTeam}
+              onUpdate={handleUpdateTeam}
+              onDelete={handleDeleteTeam}
+            />
+          ) : configurationSection === "personas" ? (
+            <PersonaLibrary
+              personas={personas}
+              avatars={avatarChoices}
+              agents={agents}
+              onCreate={handleCreatePersona}
+              onSave={handleUpdatePersona}
+              onDelete={handleDeletePersona}
+            />
+          ) : configurationSection === "policies" && policySection === "rules" ? (
+            rules ? (
+              <RulesView
+                rules={rules}
+                teams={teams}
+                onSaveGlobal={handleSaveGlobalRules}
+                onSavePersonaBaseline={handleSavePersonaBaselineRules}
+                onSaveTeam={handleSaveTeamRules}
+              />
+            ) : null
+          ) : configurationSection === "policies" && policySection === "spaces" ? (
+            spacePolicies ? (
+              <SpacesView
+                policies={spacePolicies}
+                teams={teams}
+                personas={personas}
+                onSaveGlobal={handleSaveGlobalSpace}
+                onSavePersona={handleSavePersonaSpace}
+                onDeletePersona={handleDeletePersonaSpace}
+                onSaveTeam={handleSaveTeamSpace}
+              />
+            ) : null
+          ) : configurationSection === "automations" && automationSection === "schedules" ? (
+            <SchedulesView
+              schedules={schedules}
+              automationReady={settings?.automation_ready === true}
+              automationUnavailableReason={settings?.automation_unavailable_reason || "Automation status is unavailable"}
+              onCreate={handleCreateSchedule}
+              onPause={handlePauseSchedule}
+              onResume={handleResumeSchedule}
+              onDelete={handleDeleteSchedule}
+              onRunNow={handleRunScheduleNow}
+              onLoadDetail={api.scheduleDetail}
+              focusScheduleId={focusedScheduleId}
+              onFocusHandled={() => setFocusedScheduleId(null)}
+            />
+          ) : configurationSection === "automations" && automationSection === "hooks" ? (
+            <HooksView
+              title="Email triggers"
+              hooks={hooks}
+              hookRuns={hookRuns}
+              agents={agents}
+              personas={personas}
+              teamRuns={teamRuns}
+              openHookRunsId={openHookRunsId}
+              onCreate={handleCreateHook}
+              onToggle={handleToggleHook}
+              onRunNow={handleRunHookNow}
+              onDelete={handleDeleteHook}
+              onOpenRuns={handleOpenHookRuns}
+              onCloseRuns={handleCloseHookRuns}
+              onTestConnection={handleTestHookConnection}
+              onOpenTeamRun={handleOpenHookTeamRun}
+            />
+          ) : configurationSection === "automations" && automationSection === "jobs" ? (
+            <JobsView
+              jobs={jobs}
+              onLoadEvents={api.jobEvents}
+              onRetry={handleRetryJob}
+              focusJobId={focusedJobId}
+              onFocusHandled={() => setFocusedJobId(null)}
+            />
+          ) : null}
+        </ConfigurationView>
       ) : screen === "personas" ? (
         <div className="screen">
           <PersonaLibrary
@@ -937,6 +1112,8 @@ export function GatewayApp() {
               onResolveDeliveryConflict={handleResolveTeamRunDeliveryConflict}
               onContinueDelivery={handleContinueTeamRunDelivery}
               onCancelDeliveryConflicts={handleCancelTeamRunDeliveryConflicts}
+              onOpenSettings={() => transitionScreen("settings")}
+              onViewOutputs={handleViewTeamRunOutputs}
             />
           </div>
         ) : creatingTeamRun ? (
@@ -1065,6 +1242,8 @@ export function GatewayApp() {
         <div className="screen">
           <ArtifactsView
             artifacts={artifacts}
+            initialQuery={outputQuery}
+            onOpenSource={handleOpenArtifactSource}
             onChange={refreshArtifacts}
           />
         </div>

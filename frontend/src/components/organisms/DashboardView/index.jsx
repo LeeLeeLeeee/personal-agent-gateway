@@ -189,7 +189,9 @@ function SystemStatus({ model, operations }) {
   );
 }
 
-function OperationsDashboard({ data, error, loading, onReload, onOpenTarget, onRelogin }) {
+function OperationsDashboard({
+  data, error, loading, onReload, onOpenTarget, onRelogin, onStartChat, onStartTeamRun
+}) {
   const model = data ? operationsDashboardModel(data) : null;
   const attentionCount = model ? model.attentionItems.length + model.systemAttention.length : 0;
   const errorAction = apiErrorAction(error);
@@ -224,37 +226,6 @@ function OperationsDashboard({ data, error, loading, onReload, onOpenTarget, onR
 
       {model ? (
         <>
-          <div className="dashboard-operations-summary" aria-label="운영 요약">
-            <div className="dashboard-summary-card">
-              <span>진행 중</span>
-              <strong className="mono">{model.activeItems.length}</strong>
-            </div>
-            <div className={`dashboard-summary-card${attentionCount ? " dashboard-summary-card-danger" : ""}`}>
-              <span>조치 필요</span>
-              <strong className="mono">{attentionCount}</strong>
-            </div>
-            <div className="dashboard-summary-card">
-              <span>정상 시스템</span>
-              <strong className="mono">{model.healthyCount} / {model.health.length}</strong>
-            </div>
-          </div>
-
-          <div className="dashboard-operations-grid">
-            <section className="dashboard-operation-panel" aria-labelledby="dashboard-active-title">
-              <h3 id="dashboard-active-title" className="headline">진행 중 작업</h3>
-              <OperationRows
-                items={model.activeItems.slice(0, 5)}
-                emptyMessage="현재 진행 중인 작업이 없습니다."
-                onOpenTarget={onOpenTarget}
-              />
-            </section>
-
-            <section className="dashboard-operation-panel" aria-labelledby="dashboard-system-title">
-              <h3 id="dashboard-system-title" className="headline">시스템 상태</h3>
-              <SystemStatus model={model} operations={data} />
-            </section>
-          </div>
-
           <section className="dashboard-operation-panel dashboard-attention-panel" aria-labelledby="dashboard-attention-title">
             <h3 id="dashboard-attention-title" className="headline">조치 필요</h3>
             {model.systemAttention.map((item) => (
@@ -273,13 +244,66 @@ function OperationsDashboard({ data, error, loading, onReload, onOpenTarget, onR
               attention
             />
           </section>
+
+          <div className="dashboard-operations-summary" aria-label="운영 요약">
+            <div className="dashboard-summary-card">
+              <span>진행 중</span>
+              <strong className="mono">{model.activeItems.length}</strong>
+            </div>
+            <div className={`dashboard-summary-card${attentionCount ? " dashboard-summary-card-danger" : ""}`}>
+              <span>조치 필요</span>
+              <strong className="mono">{attentionCount}</strong>
+            </div>
+            <div className="dashboard-summary-card">
+              <span>정상 시스템</span>
+              <strong className="mono">{model.healthyCount} / {model.health.length}</strong>
+            </div>
+          </div>
+
+          <div className="dashboard-operations-grid">
+            <section className="dashboard-operation-panel" aria-labelledby="dashboard-active-title">
+              <h3 id="dashboard-active-title" className="headline">진행 중</h3>
+              <OperationRows
+                items={model.activeItems.slice(0, 5)}
+                emptyMessage="현재 진행 중인 작업이 없습니다."
+                onOpenTarget={onOpenTarget}
+              />
+            </section>
+
+            <section className="dashboard-operation-panel" aria-labelledby="dashboard-results-title">
+              <h3 id="dashboard-results-title" className="headline">최근 결과</h3>
+              <OperationRows
+                items={model.recentItems.slice(0, 5)}
+                emptyMessage="최근 완료된 결과가 없습니다."
+                onOpenTarget={onOpenTarget}
+              />
+            </section>
+          </div>
         </>
+      ) : null}
+
+      <section className="dashboard-start-section" aria-labelledby="dashboard-start-title">
+        <div>
+          <h2 id="dashboard-start-title" className="headline">작업 시작</h2>
+          <p>목표에 맞는 실행 방식을 선택하세요.</p>
+        </div>
+        <div className="dashboard-start-actions">
+          <button type="button" className="btn btn-primary" onClick={onStartChat}>Chat 시작</button>
+          <button type="button" className="btn" onClick={onStartTeamRun}>Team Run 시작</button>
+        </div>
+      </section>
+
+      {model ? (
+        <section className="dashboard-operation-panel dashboard-system-panel" aria-labelledby="dashboard-system-title">
+          <h3 id="dashboard-system-title" className="headline">시스템 요약</h3>
+          <SystemStatus model={model} operations={data} />
+        </section>
       ) : null}
     </section>
   );
 }
 
-export function DashboardView({ onOpenTarget, onRelogin }) {
+export function DashboardView({ onOpenTarget, onRelogin, onStartChat, onStartTeamRun }) {
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -379,8 +403,8 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
     <section className="screen dashboard-view">
       <div className="dashboard-head">
         <div>
-          <h1 className="headline">대시보드</h1>
-          <p>Codex와 Claude 계정의 현재 한도를 한눈에 확인합니다.</p>
+          <h1 className="headline">Home</h1>
+          <p>시작할 작업과 조치가 필요한 실행을 한곳에서 확인합니다.</p>
         </div>
         {report?.detected_at ? (
           <div className="dashboard-detected-at mono">
@@ -388,6 +412,17 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
           </div>
         ) : null}
       </div>
+
+      <OperationsDashboard
+        data={operations}
+        error={operationsError}
+        loading={operationsLoading}
+        onReload={() => setOperationsReloadKey((value) => value + 1)}
+        onOpenTarget={onOpenTarget}
+        onRelogin={onRelogin}
+        onStartChat={onStartChat}
+        onStartTeamRun={onStartTeamRun}
+      />
 
       <section className="dashboard-usage-section" aria-labelledby="dashboard-usage-title">
         <div className="dashboard-section-head">
@@ -491,14 +526,6 @@ export function DashboardView({ onOpenTarget, onRelogin }) {
         ) : null}
       </section>
 
-      <OperationsDashboard
-        data={operations}
-        error={operationsError}
-        loading={operationsLoading}
-        onReload={() => setOperationsReloadKey((value) => value + 1)}
-        onOpenTarget={onOpenTarget}
-        onRelogin={onRelogin}
-      />
     </section>
   );
 }

@@ -254,7 +254,7 @@ class TeamRunService:
         self._space_policies.seed_defaults()
         self._space_manager = space_manager or TeamSpaceManager()
 
-    def _effective_workers(self, configured: int) -> int:
+    def effective_workers(self, configured: int) -> int:
         """How many assignments this run will actually overlap.
 
         One when concurrency is off, whatever the roster size -- that was the
@@ -1510,11 +1510,11 @@ class TeamRunService:
                     # a roster of eight still overlaps at most
                     # MAX_CONCURRENT_WORKERS, and reporting eight would promise
                     # parallelism the executor will not deliver.
-                    "max_workers": self._effective_workers(run.max_workers),
+                    "max_workers": self.effective_workers(run.max_workers),
                     "configured_max_workers": run.max_workers,
                     "execution_mode": (
                         "concurrent"
-                        if self._effective_workers(run.max_workers) > 1
+                        if self.effective_workers(run.max_workers) > 1
                         else "sequential"
                     ),
                     "team_id": run.team_id,
