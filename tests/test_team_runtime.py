@@ -9860,3 +9860,67 @@ async def test_a_concurrent_sibling_is_not_credited_with_the_others_file(
             f"{task.title} was credited with a sibling's file: {created}"
         )
         assert mine in created or not created
+
+
+def test_every_worker_continuation_prompt_restates_the_result_contract():
+    """The note prefix is why this matters.
+
+    _with_radio deliberately does not gate on stage, so any worker prompt can
+    arrive behind up to ten peer notes of two thousand characters each. A
+    continuation prompt is often two lines, and two lines of "carry on" behind
+    twenty thousand characters of someone else's writing read as commentary
+    while the notes read as the task. Restating the contract at the end keeps
+    the last word with the system.
+
+    A list would go stale silently, so this walks the builders that produce a
+    worker prompt and checks each one. Adding a worker stage without the
+    reminder fails here rather than in production.
+    """
+    from personal_agent_gateway.team_runtime import (
+        _TASK_OUTCOME_CONTRACT_REMINDER,
+        _acceptance_user_answer_messages,
+        _acceptance_worker_messages,
+        _mediation_budget_messages,
+        _mediation_worker_messages,
+        _worker_repair_messages,
+    )
+
+    task = SimpleNamespace(
+        acceptance=TaskAcceptance(("out.txt",), (RequiredVerification("v"),))
+    )
+    built = {
+        "mediation_worker": _mediation_worker_messages(
+            {"kind": "answer", "answer": "use scope A"}
+        ),
+        "mediation_budget": _mediation_budget_messages(),
+        "acceptance_worker": _acceptance_worker_messages(
+            task,
+            AcceptanceReviewResolution(
+                kind="retry_worker",
+                reason="fix it",
+                instruction="Correct the output.",
+            ),
+        ),
+        "acceptance_user_answer": _acceptance_user_answer_messages(
+            task, "staging"
+        ),
+    }
+    for stage, messages in built.items():
+        content = messages[0]["content"]
+        assert _TASK_OUTCOME_CONTRACT_REMINDER in content, (
+            f"{stage} does not restate the result contract, so peer notes "
+            "prefixed to it would be the most specific instruction present"
+        )
+
+    # The repair prompt is the one exception, and for a reason that has to stay
+    # true: it rebuilds the whole original worker prompt, which carries the
+    # SPACE policy and the contract already, and only appends its own
+    # instruction. If that ever became a short standalone message it would need
+    # the reminder like the rest.
+    repair = _worker_repair_messages(
+        [{"role": "user", "content": "ORIGINAL PROMPT BODY"}]
+    )
+    assert "ORIGINAL PROMPT BODY" in repair[0]["content"]
+    assert repair[0]["content"].rstrip().endswith(
+        "the exact needs_info JSON block."
+    )

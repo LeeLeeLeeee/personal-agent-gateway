@@ -399,6 +399,21 @@ _WORKER_REPAIR_INSTRUCTION = (
     "Return ONLY the required TaskOutcome JSON object or "
     "the exact needs_info JSON block."
 )
+# Every prompt a worker can receive has to end by saying what shape the answer
+# must take, and it has to say it in these words so one test can check that
+# none of them forgot.
+#
+# The reason is the note prefix. _with_radio deliberately does not gate on
+# stage, so any of these prompts can arrive behind up to ten peer notes of two
+# thousand characters each. A continuation prompt is often two lines; behind
+# twenty thousand characters of someone else's writing, two lines of "carry on"
+# are easy to read as commentary and the notes as the task. Restating the
+# contract at the end is what keeps the last word with the system rather than
+# with a teammate -- appending the notes instead would hand it to the teammate,
+# which is the one arrangement that must not happen.
+_TASK_OUTCOME_CONTRACT_REMINDER = (
+    "Return only the required TaskOutcome JSON object."
+)
 _PLAN_REVIEW_REPAIR_INSTRUCTION = (
     "The previous response was invalid. Return ONLY the JSON object with the "
     'keys "decision" and "objections". Every objection needs exactly "kind", '
@@ -5535,7 +5550,8 @@ def _mediation_worker_messages(
             "content": (
                 f"Answer to your question: {answer}\n\n"
                 "Continue and produce your final result, or ask again only "
-                "if essential."
+                "if essential.\n"
+                f"{_TASK_OUTCOME_CONTRACT_REMINDER}"
             ),
         }
     ]
@@ -5547,7 +5563,8 @@ def _mediation_budget_messages() -> list[dict[str, object]]:
             "role": "user",
             "content": (
                 "No more consultation is available. Produce your best-effort "
-                "final result now, without a needs_info block."
+                "final result now, without a needs_info block.\n"
+                f"{_TASK_OUTCOME_CONTRACT_REMINDER}"
             ),
         }
     ]
