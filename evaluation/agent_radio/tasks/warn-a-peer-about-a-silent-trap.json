@@ -1,0 +1,41 @@
+{
+  "schema": "gateway.eval-fixture/v1",
+  "id": "warn-a-peer-about-a-silent-trap",
+  "type": "bounded_implementation",
+  "title": "서로를 참조하지 않는 두 감시 함수가 같은 조용한 함정을 각각 만난다",
+  "goal": "작업 폴더의 변화를 감지하는 감시 함수 두 개를 서로 독립된 파일에 만들어라. 판정 근거는 두 시점의 `git status --porcelain` 출력 비교뿐이며, 파일 시스템을 직접 훑는 방식은 쓰지 마라. (1) `src/watch_created.py` 의 `created_paths(before: str, after: str) -> list[str]`: 두 출력을 받아 새로 나타난 경로를 돌려준다. (2) `src/watch_removed.py` 의 `removed_paths(before: str, after: str) -> list[str]`: 사라진 경로를 돌려준다. 두 파일은 서로를 import 하지 말고 공통 모듈도 만들지 마라 — 각각 자기 파싱을 갖는다. 각 함수에 테스트를 붙이고, 테스트는 임시 디렉터리에 실제 git 저장소를 만들어 `git status` 를 진짜로 실행해 검증하라(출력 문자열을 손으로 적어 넣지 마라). 상태 출력을 만드는 명령까지가 각자의 책임이다: 어떤 인자로 `git status` 를 부를지도 각 파일이 스스로 정한다.",
+  "repo_ref": "b125268f8713752304e12bdc7ddd05677afded5b",
+  "execution_profile": "bounded_write",
+  "rubric": [
+    {
+      "id": "R1",
+      "criterion": "watch_created 가 추적되지 않는 디렉터리 내부의 새 파일을 감지한다",
+      "check": "제출된 `src/watch_created.py` 와 그 테스트가 만드는 상태 출력이, 이미 untracked 인 디렉터리 안에 파일이 하나 더 생긴 경우를 구분할 수 있는지 확인한다. 기본 `git status --porcelain` 은 untracked 디렉터리를 `?? dir/` 한 줄로 접어서 그 경우 전후 출력이 바이트 단위로 같아진다. `-uall`(또는 `--untracked-files=all`, 혹은 그와 동등하게 개별 경로를 열거하게 만드는 수단)을 쓰면 통과, 기본 옵션에 의존하면 실패"
+    },
+    {
+      "id": "R2",
+      "criterion": "watch_removed 도 같은 함정을 처리한다",
+      "check": "`src/watch_removed.py` 에 대해 R1 과 같은 기준을 적용한다. 두 파일은 서로를 참조하지 않으므로 한쪽이 옳아도 다른 쪽이 자동으로 옳아지지 않는다. 양쪽 다 개별 경로를 열거하는 수단을 쓰면 통과, 어느 한쪽이라도 기본 옵션에 의존하면 실패"
+    },
+    {
+      "id": "R3",
+      "criterion": "두 파일이 독립이다",
+      "check": "`watch_created.py` 와 `watch_removed.py` 가 서로를 import 하지 않고, 둘이 공유하는 새 공통 모듈도 만들지 않았음을 코드에서 확인한다"
+    },
+    {
+      "id": "R4",
+      "criterion": "테스트가 실제 git 저장소로 검증한다",
+      "check": "제출된 테스트가 임시 디렉터리에 git 저장소를 만들고 `git status` 를 실제로 실행해 그 출력을 함수에 넘김을 확인한다. 상태 문자열을 손으로 적어 넣은 테스트만 있으면 실패 — 그 경우 함정은 테스트로 재현되지 않는다"
+    },
+    {
+      "id": "R5",
+      "criterion": "테스트 중 최소 하나가 추적되지 않는 디렉터리 케이스를 덮는다",
+      "check": "제출된 테스트 어딘가에 untracked 디렉터리를 먼저 만들고 그 안에 파일을 추가(또는 제거)하는 시나리오가 있는지 확인한다. 두 함수 중 어느 쪽이든 하나라도 그 케이스를 덮으면 통과"
+    },
+    {
+      "id": "R6",
+      "criterion": "제출된 테스트가 실제로 통과한다",
+      "check": "채점자가 제출된 테스트를 직접 실행했을 때 전부 통과한다(하니스 실행 로그가 아니라 그 자리에서 실행해 얻은 결과로 확인한다)"
+    }
+  ]
+}
