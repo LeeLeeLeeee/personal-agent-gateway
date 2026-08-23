@@ -7,7 +7,12 @@ from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.execution_contract import ExecutionContractError
 from personal_agent_gateway.lmg_client import ProviderExecutionCapabilities
 from personal_agent_gateway.remote_model_client import HttpModelClient
-from personal_agent_gateway.runtime_factory import AgentRuntimeFactory, ExecutionContextFactory
+from personal_agent_gateway.runtime_factory import (
+    AgentRuntimeFactory,
+    CompiledExecution,
+    ExecutionContextFactory,
+)
+from personal_agent_gateway.team_outcomes import task_outcome_schema
 from personal_agent_gateway.session_config import SessionAgentConfigService
 from personal_agent_gateway.space_policies import EffectiveSpacePolicy, SpacePolicy
 from personal_agent_gateway.transcript import TranscriptStore
@@ -423,3 +428,47 @@ async def test_app_config_openai_runtime_wires_on_event_publishing_model_event(
     published = event_bus.recent()[-1]
     assert published["type"] == "model.event"
     assert published["kind"] == "message.delta"
+
+
+def test_wire_execution_omits_the_schema_by_default():
+    """Every call before this sent no schema, and a caller that has not checked
+    the provider's capability must keep doing that: the gateway refuses a
+    schema it cannot enforce, so sending one blindly turns a working call into
+    a rejected one."""
+    compiled = CompiledExecution(
+        workspace_root=Path("/tmp/ws"),
+        read_roots=(),
+        sandbox="workspace-write",
+        approval_policy="never",
+        permission_mode="",
+        network="unspecified",
+        input_manifest_path=None,
+        input_manifest_sha256=None,
+    )
+
+    execution = ExecutionContextFactory.wire_execution(compiled, "codex", {})
+
+    assert "output_schema" not in execution
+
+
+def test_wire_execution_carries_the_schema_when_given_one():
+    compiled = CompiledExecution(
+        workspace_root=Path("/tmp/ws"),
+        read_roots=(),
+        sandbox="workspace-write",
+        approval_policy="never",
+        permission_mode="",
+        network="unspecified",
+        input_manifest_path=None,
+        input_manifest_sha256=None,
+    )
+
+    execution = ExecutionContextFactory.wire_execution(
+        compiled, "codex", {}, output_schema=task_outcome_schema()
+    )
+
+    assert execution["output_schema"]["properties"]["status"]["enum"] == [
+        "completed",
+        "blocked",
+        "failed",
+    ]

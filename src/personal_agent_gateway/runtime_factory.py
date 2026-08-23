@@ -120,7 +120,14 @@ class ExecutionContextFactory:
         compiled: CompiledExecution,
         provider: str,
         options: dict[str, object],
+        *,
+        output_schema: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        """`output_schema` is sent only when the caller has checked that the
+        provider advertises support: the gateway refuses a schema it cannot
+        enforce rather than running unconstrained, so passing one blindly would
+        turn a working call into a rejected one. Absent means the answer is
+        asked for in the prompt, which is what every call did before."""
         execution: dict[str, object] = {
             "workspace_root": str(compiled.workspace_root),
             "read_roots": [str(path) for path in compiled.read_roots],
@@ -134,6 +141,8 @@ class ExecutionContextFactory:
             execution["profile"] = str(options.get("profile") or "")
         elif provider == "claude":
             execution["agent"] = str(options.get("agent") or "")
+        if output_schema is not None:
+            execution["output_schema"] = output_schema
         return execution
 
 

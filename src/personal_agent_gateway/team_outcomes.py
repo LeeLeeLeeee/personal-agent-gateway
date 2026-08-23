@@ -78,6 +78,89 @@ _OUTCOME_KEYS = frozenset(
     {"status", "summary", "reason_code", "deliverables", "verifications"}
 )
 
+
+def task_outcome_schema() -> dict[str, object]:
+    """The shape a provider can be asked to enforce, as a JSON Schema.
+
+    Deliberately close to the minimum. Only the two fields parse_task_outcome
+    closes to a fixed set are enumerated -- the task status and a
+    verification's status -- because those are the ones a model gets wrong in
+    a way no amount of prose can recover: a probe run answered "성공" for a
+    verification status, which is a reasonable word and not a value this
+    parser accepts. Everything else stays a free string. Constraining a
+    summary or a path would buy nothing and would have to be edited every time
+    the vocabulary grows.
+
+    The structural rules are not a choice. Providers enforce this through the
+    API's structured-output mode, which requires every object to close itself
+    with additionalProperties false and to list every property as required;
+    a schema that omits either comes back as a 400 rather than being ignored.
+    Optionality is therefore expressed as a nullable type, never by leaving a
+    key out.
+
+    One asymmetry that follows: the parser accepts a verification with or
+    without `checked`, but "every property is required" means the schema can
+    only describe the four-key form. A model under this schema always sends
+    `checked`, which the parser already accepts -- the three-key form simply
+    stops occurring on the schema path, while the prompt-only fallback keeps
+    taking it.
+
+    `mentions` is left out on purpose. It is optional in the contract, and
+    under structured output an optional key would have to be required-and-
+    nullable, which would make every worker answer carry a mentions field it
+    has no reason to think about.
+    """
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "status",
+            "summary",
+            "reason_code",
+            "deliverables",
+            "verifications",
+        ],
+        "properties": {
+            "status": {"type": "string", "enum": ["completed", "blocked", "failed"]},
+            "summary": {"type": "string"},
+            "reason_code": {"type": ["string", "null"]},
+            "deliverables": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["path", "kind"],
+                    "properties": {
+                        "path": {"type": "string"},
+                        "kind": {"type": "string"},
+                    },
+                },
+            },
+            "verifications": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["name", "checked", "status", "evidence"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "checked": {"type": "boolean"},
+                        # Null is the honest answer when checked is false, and
+                        # the parser refuses a status alongside checked false --
+                        # so the pairing stays the prompt's job. A schema cannot
+                        # express "null exactly when checked is false" in
+                        # structured-output mode.
+                        "status": {
+                            "type": ["string", "null"],
+                            "enum": ["passed", "failed", None],
+                        },
+                        "evidence": {"type": "string"},
+                    },
+                },
+            },
+        },
+    }
+
 # Why a note was refused. Our own words, never the model's: the note itself is
 # not repeated into the ledger, only the fact that one was turned away.
 MENTION_REFUSED_LINE_BREAK = "line_break"

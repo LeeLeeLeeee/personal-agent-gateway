@@ -5,6 +5,7 @@ import pytest
 
 from personal_agent_gateway.team_collaboration import MENTION_BATCH_LIMIT
 from personal_agent_gateway.team_outcomes import (
+    task_outcome_schema,
     Deliverable,
     Mention,
     TaskOutcome,
@@ -434,3 +435,101 @@ def test_a_fenced_object_after_prose_is_read():
     outcome = parse_task_outcome(f"Verification passed.\n```json\n{payload}\n```")
 
     assert outcome.summary == "draft-fixed"
+
+
+def test_the_schema_describes_what_the_parser_accepts():
+    """A schema that drifts from the parser is worse than none: the provider
+    would enforce a shape this code then refuses, and the failure would look
+    like the model's fault."""
+    schema = task_outcome_schema()
+
+    assert set(schema["required"]) == {
+        "status",
+        "summary",
+        "reason_code",
+        "deliverables",
+        "verifications",
+    }
+    # The two closed sets, and only those two. Everything else is a free
+    # string on purpose -- constraining a summary or a path buys nothing and
+    # would need editing whenever the vocabulary grows.
+    assert schema["properties"]["status"]["enum"] == ["completed", "blocked", "failed"]
+    verification = schema["properties"]["verifications"]["items"]
+    assert verification["properties"]["status"]["enum"] == ["passed", "failed", None]
+    for free in ("summary", "reason_code"):
+        assert "enum" not in schema["properties"][free]
+
+
+def test_every_object_in_the_schema_closes_itself():
+    """Structured-output mode requires additionalProperties false and every
+    property listed as required, on every object. Omitting either is a 400 from
+    the provider, so it would break every worker call rather than one."""
+    schema = task_outcome_schema()
+
+    def walk(node, path="root"):
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "object":
+            assert node.get("additionalProperties") is False, f"{path} is open"
+            assert set(node.get("required", [])) == set(node["properties"]), (
+                f"{path} does not require every property"
+            )
+        for key, child in (node.get("properties") or {}).items():
+            walk(child, f"{path}.{key}")
+        if isinstance(node.get("items"), dict):
+            walk(node["items"], f"{path}[]")
+
+    walk(schema)
+
+
+def test_an_outcome_shaped_by_the_schema_parses():
+    """The round trip. A provider constrained by this schema always sends
+    `checked`, which is the four-key verification form."""
+    payload = json.dumps(
+        {
+            "status": "completed",
+            "summary": "done",
+            "reason_code": None,
+            "deliverables": [{"path": "reports/a.md", "kind": "file"}],
+            "verifications": [
+                {
+                    "name": "covers-the-case",
+                    "checked": True,
+                    "status": "passed",
+                    "evidence": "reports/a.md names it",
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    outcome = parse_task_outcome(payload)
+
+    assert outcome.status == "completed"
+    assert outcome.verifications[0].status == "passed"
+    assert outcome.verifications[0].checked is True
+
+
+def test_a_verification_that_did_not_run_round_trips_as_null():
+    payload = json.dumps(
+        {
+            "status": "blocked",
+            "summary": "could not check",
+            "reason_code": "tool_missing",
+            "deliverables": [],
+            "verifications": [
+                {
+                    "name": "runs-the-suite",
+                    "checked": False,
+                    "status": None,
+                    "evidence": "pytest is not installed here",
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    outcome = parse_task_outcome(payload)
+
+    assert outcome.verifications[0].checked is False
+    assert outcome.verifications[0].status is None

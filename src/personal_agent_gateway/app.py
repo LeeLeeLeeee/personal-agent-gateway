@@ -725,7 +725,26 @@ def _team_model_factory(
             network=str(options.get("network") or "unspecified"),
             permission_mode=str(options.get("permission_mode") or ""),
         )
-        execution = contexts.wire_execution(compiled, agent.backend, options)
+        # Asked for only where the provider says it can hold the answer to a
+        # shape -- the gateway refuses a schema it cannot enforce, so sending
+        # one blindly would turn a working call into a rejected one, and an
+        # older gateway reports False and keeps the prompt path.
+        #
+        # Every agent in a Team Run answers with a TaskOutcome, including the
+        # leader's own stages, but only a worker's reply is parsed as one. The
+        # schema goes on all of them anyway: a leader constrained to a shape it
+        # was not going to use would be wrong, so this is scoped to the calls
+        # that carry a task.
+        execution = contexts.wire_execution(
+            compiled,
+            agent.backend,
+            options,
+            output_schema=(
+                task_outcome_schema()
+                if capabilities.output_schema and agent.role != "leader"
+                else None
+            ),
+        )
         if (
             team_runs is not None
             and cycle is not None

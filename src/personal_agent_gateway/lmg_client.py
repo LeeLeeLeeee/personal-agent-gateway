@@ -59,6 +59,11 @@ class ProviderExecutionCapabilities:
     network_modes: tuple[str, ...]
     sandbox_modes: tuple[str, ...]
     permission_modes: tuple[str, ...]
+    # Whether the provider can hold the final message to a JSON Schema.
+    # Defaulted rather than required: an older gateway does not send the key,
+    # and False is the reading that keeps such a gateway working -- the caller
+    # asks in the prompt instead of sending a schema the gateway would refuse.
+    output_schema: bool = False
 
 
 @dataclass(frozen=True)
@@ -258,6 +263,11 @@ def parse_provider_execution_capabilities(
         network_modes=collections["network_modes"],
         sandbox_modes=collections["sandbox_modes"],
         permission_modes=collections["permission_modes"],
+        # Read leniently on purpose: a non-boolean or absent value reads as
+        # False, which keeps an older or malformed gateway usable through the
+        # prompt path instead of refusing the whole snapshot over a field that
+        # only turns an optimisation on.
+        output_schema=execution.get("output_schema") is True,
     )
 
 
