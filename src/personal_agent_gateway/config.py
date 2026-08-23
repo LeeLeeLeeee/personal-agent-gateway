@@ -294,6 +294,16 @@ def load_config() -> AppConfig:
             "AGENT_ACCESS_MODE": os.getenv("AGENT_ACCESS_MODE"),
             "AGENT_AUDIT_ENABLED": os.getenv("AGENT_AUDIT_ENABLED"),
             "AGENT_OBSERVABILITY_ENABLED": os.getenv("AGENT_OBSERVABILITY_ENABLED"),
+            # from_env reads these two, but neither was listed here, so both
+            # switches were unreachable from the environment: the lookup always
+            # saw None and fell through to the default. Peer messages had been
+            # in that state since the flag was introduced -- only the
+            # evaluation harness, which overrides the built config directly,
+            # could move it.
+            "AGENT_TEAM_PEER_MESSAGES": os.getenv("AGENT_TEAM_PEER_MESSAGES"),
+            "AGENT_TEAM_CONCURRENT_WORKERS": os.getenv(
+                "AGENT_TEAM_CONCURRENT_WORKERS"
+            ),
             "AGENT_AUDIT_RETENTION_DAYS": os.getenv("AGENT_AUDIT_RETENTION_DAYS"),
             "AGENT_ENVIRONMENT_TITLE": os.getenv("AGENT_ENVIRONMENT_TITLE"),
             "PAG_ENV_TITLE": os.getenv("PAG_ENV_TITLE"),

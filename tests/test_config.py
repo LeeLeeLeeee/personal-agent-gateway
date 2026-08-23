@@ -121,3 +121,43 @@ def test_peer_messages_read_the_environment(tmp_path, value, expected):
 
     assert config.team_peer_messages_enabled is expected
 
+
+
+@pytest.mark.parametrize(
+    ("variable", "attribute", "value", "expected"),
+    [
+        ("AGENT_TEAM_PEER_MESSAGES", "team_peer_messages_enabled", "off", False),
+        ("AGENT_TEAM_PEER_MESSAGES", "team_peer_messages_enabled", "on", True),
+        (
+            "AGENT_TEAM_CONCURRENT_WORKERS",
+            "team_concurrent_workers_enabled",
+            "true",
+            True,
+        ),
+        (
+            "AGENT_TEAM_CONCURRENT_WORKERS",
+            "team_concurrent_workers_enabled",
+            "0",
+            False,
+        ),
+    ],
+)
+def test_team_switches_survive_load_config(
+    tmp_path, monkeypatch, variable, attribute, value, expected
+):
+    """from_env reading a key is not the same as load_config passing it.
+
+    load_config hands from_env an explicit dict, so a key missing from that
+    dict is unreachable from the environment no matter what from_env does with
+    it -- and both team switches were missing. The existing tests called
+    from_env directly, which is exactly the layer that cannot catch this, so
+    this one goes through load_config.
+    """
+    from personal_agent_gateway.config import load_config
+
+    monkeypatch.setenv("AGENT_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("AGENT_SESSION_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("LMG_LOCAL_TOKEN", "local-secret")
+    monkeypatch.setenv(variable, value)
+
+    assert getattr(load_config(), attribute) is expected
