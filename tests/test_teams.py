@@ -14,6 +14,7 @@ from personal_agent_gateway.space_policies import SpacePolicyService
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.team_verification_checks import VerificationCheck
+from personal_agent_gateway.team_lifecycle import MAX_CONCURRENT_WORKERS
 from personal_agent_gateway.teams import (
     RequiredVerification,
     TaskAcceptance,
@@ -2310,3 +2311,47 @@ def test_decided_at_is_set_once_and_survives_a_later_transition(tmp_path):
 
     assert objected.decided_at is not None
     assert superseded.decided_at == objected.decided_at
+
+
+def test_the_run_list_reports_the_concurrency_a_run_will_actually_get(tmp_path):
+    """max_workers and execution_mode used to be the constants 1 and
+    "sequential", which was true while tasks always ran one at a time. With
+    concurrency on, the field the UI shows as a run's parallelism would have
+    kept reading 1 while three assignments held provider calls at once."""
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    sequential = TeamRunService(db, personas, tmp_path / "ws")
+    concurrent = TeamRunService(
+        db, personas, tmp_path / "ws", concurrent_workers=True
+    )
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "worker", "d", [], [])
+    sequential.create_team_run(
+        "goal", leader.id, [member.id], "plan_and_execute", 8
+    )
+
+    off = sequential.list_team_runs_enriched()[0]
+    on = concurrent.list_team_runs_enriched()[0]
+
+    assert (off["max_workers"], off["execution_mode"]) == (1, "sequential")
+    # Effective, not configured: a roster of eight overlaps at most the
+    # executor's ceiling, and reporting eight would promise parallelism the
+    # executor will not deliver.
+    assert on["max_workers"] == MAX_CONCURRENT_WORKERS
+    assert on["execution_mode"] == "concurrent"
+    assert off["configured_max_workers"] == on["configured_max_workers"] == 8
+
+
+def test_a_single_worker_run_still_reports_sequential_with_concurrency_on(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    service = TeamRunService(db, personas, tmp_path / "ws", concurrent_workers=True)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "worker", "d", [], [])
+    service.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+
+    run = service.list_team_runs_enriched()[0]
+
+    assert (run["max_workers"], run["execution_mode"]) == (1, "sequential")

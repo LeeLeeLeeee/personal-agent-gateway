@@ -521,6 +521,7 @@ def _attach_local_services(
         config.workspace_root,
         cycle_service=team_cycle_service,
         space_policies=space_policy_service,
+        concurrent_workers=config.team_concurrent_workers_enabled,
     )
     team_directory_service = TeamService(db, persona_service, space_policy_service)
     rule_set_service = RuleSetService(db)

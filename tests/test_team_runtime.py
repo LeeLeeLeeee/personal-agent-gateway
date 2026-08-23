@@ -24,7 +24,10 @@ from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_collaboration_service import (
     TeamCollaborationService,
 )
-from personal_agent_gateway.team_lifecycle import TERMINAL_RUN_STATUSES
+from personal_agent_gateway.team_lifecycle import (
+    MAX_CONCURRENT_WORKERS,
+    TERMINAL_RUN_STATUSES,
+)
 from personal_agent_gateway.team_model_effects import (
     TeamModelEffectService,
     team_model_effect_result_validators,
@@ -9559,6 +9562,7 @@ async def test_two_no_output_assignments_run_their_model_calls_at_once(tmp_path)
 
     assert result.status == "completed"
     assert peak == 2, "the two model calls never overlapped"
+    assert peak <= MAX_CONCURRENT_WORKERS
     assert all(client.calls == 1 for client in worker_clients.values())
     assert [task.status for task in teams.list_tasks(run.id, cycle.id)] == [
         "completed",
@@ -9929,3 +9933,100 @@ def test_every_worker_continuation_prompt_restates_the_result_contract():
     assert repair[0]["content"].rstrip().endswith(
         "the exact needs_info JSON block."
     )
+
+
+@pytest.mark.asyncio
+async def test_concurrency_never_exceeds_the_ceiling_however_big_the_roster(
+    tmp_path,
+):
+    """A roster of five must not open five provider calls.
+
+    The limit that binds is downstream: LMG admits a bounded number of
+    concurrent runs per provider and queues the rest, so starting more calls
+    than it will run converts run time into queue time -- which wall_ms cannot
+    tell apart, and a call that waits long enough comes back ambiguous.
+    """
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    members = [
+        personas.create_persona(f"W{index}", "worker", "d", [], [])
+        for index in range(5)
+    ]
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [member.id for member in members],
+        "plan_and_execute",
+        5,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    teams.set_cycle_status(cycle.id, "running")
+    agents = [
+        agent for agent in teams.list_agents(run.id) if agent.role == "member"
+    ]
+    for index, owner in enumerate(agents, start=1):
+        teams.create_task(
+            run.id,
+            f"Look at {index}",
+            "Read and report.",
+            owner_agent_id=owner.id,
+            cycle_id=cycle.id,
+            acceptance=TaskAcceptance(
+                (), (RequiredVerification("worker-result"),)
+            ),
+        )
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+        concurrent_tasks=True,
+    )
+
+    open_calls = 0
+    peak = 0
+
+    class Counting:
+        def __init__(self, responses):
+            self.responses = list(responses)
+
+        async def complete_operation(self, messages, *, consumer_run_id):
+            nonlocal open_calls, peak
+            open_calls += 1
+            peak = max(peak, open_calls)
+            try:
+                # Yield twice so every already-scheduled sibling gets a chance
+                # to enter before this one returns; a missing ceiling shows up
+                # as a peak above the limit rather than as a deadlock.
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                return self.responses.pop(0)
+            finally:
+                open_calls -= 1
+
+    lead_client = Counting([ModelResponse("summary", [])])
+    worker_clients = {
+        agent.id: Counting([ModelResponse(_outcome_json("done"), [])])
+        for agent in agents
+    }
+    runtime = TeamRuntime(
+        teams,
+        lambda agent, _cycle_id=None: (
+            lead_client if agent.role == "leader" else worker_clients[agent.id]
+        ),
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(db, teams, operations),
+        concurrent_workers=True,
+    )
+
+    result = await runtime.resume(run.id, cycle.id)
+
+    assert result.status == "completed"
+    assert peak == MAX_CONCURRENT_WORKERS, f"peak was {peak}"
+    assert [task.status for task in teams.list_tasks(run.id, cycle.id)] == [
+        "completed"
+    ] * 5

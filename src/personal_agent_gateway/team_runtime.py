@@ -51,6 +51,7 @@ from personal_agent_gateway.team_model_invoker import (
     TeamModelInvoker,
 )
 from personal_agent_gateway.team_lifecycle import (
+    MAX_CONCURRENT_WORKERS,
     TERMINAL_RUN_STATUSES,
     LifecycleIntegrityError,
     cycle_execution_disposition,
@@ -2890,7 +2891,7 @@ class TeamRuntime:
                 eligible.append(candidate)
             if len(eligible) < 2:
                 eligible = []
-        selected = eligible[: len(workers)] or ready_tasks[:1]
+        selected = eligible[:MAX_CONCURRENT_WORKERS] or ready_tasks[:1]
 
         working_root = Path(run.working_root or run.workspace_root)
         for task in selected:

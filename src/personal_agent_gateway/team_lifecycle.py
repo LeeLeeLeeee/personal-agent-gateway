@@ -2,6 +2,22 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+# How many assignments may hold a provider call at once, whatever the roster
+# size. A ceiling and not just the worker count, because the limit that
+# actually binds is downstream: LMG admits a bounded number of concurrent runs
+# per provider (LMG_CODEX_CONCURRENT_RUNS and its siblings, two by default) and
+# queues the rest. Starting more calls than the gateway will run does not
+# finish the cycle sooner -- it converts run time into queue time, which
+# wall_ms cannot tell apart, and a call that waits long enough comes back
+# ambiguous.
+#
+# Three rather than two: a team big enough to want concurrency usually has one
+# assignment that outlasts the others, and the third slot is what keeps the
+# roster busy while it finishes. Raising this past what LMG admits is the one
+# change here that makes things worse rather than better.
+MAX_CONCURRENT_WORKERS = 3
+
+
 TeamRunStatus = Literal[
     "draft",
     "planning",

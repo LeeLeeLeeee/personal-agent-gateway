@@ -920,6 +920,27 @@ async def retry_team_task(
         raise HTTPException(status_code=404, detail="Team run or task not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # retry_failed_task snapshots the rules and the space policy onto its new
+    # cycle but not the provider capabilities, and the model factory reads
+    # those back off the cycle rather than off the registry. An unfrozen retry
+    # cycle therefore accepted the retry, reported success, and then failed the
+    # resume it told the operator to perform -- with "capabilities_unavailable"
+    # naming a provider that was live and ready.
+    #
+    # Frozen here rather than inside retry_failed_task because the freeze needs
+    # the registry, and create-then-freeze is what the dispatcher already does
+    # for every other cycle. A failure is reported now, while the operator is
+    # standing here, instead of at resume: the cycle is settled as failed so
+    # the run does not keep a cycle nobody can execute.
+    if cycle is not None:
+        try:
+            request.app.state.team_provider_recovery.freeze_cycle(cycle.id)
+        except Exception as exc:  # noqa: BLE001 - any freeze failure is the same
+            service.set_cycle_status(cycle.id, "failed", error_message=str(exc))
+            raise HTTPException(
+                status_code=409,
+                detail=f"provider capabilities could not be frozen: {exc}",
+            ) from exc
     task_payload = _task_payload(
         task,
         [

@@ -18,6 +18,7 @@ from personal_agent_gateway.space_policies import (
     policy_json,
 )
 from personal_agent_gateway.team_lifecycle import (
+    MAX_CONCURRENT_WORKERS,
     TERMINAL_CYCLE_STATUSES,
     TERMINAL_RUN_STATUSES,
     CycleStatus,
@@ -238,7 +239,13 @@ class TeamRunService:
         cycle_service: "TeamCycleService | None" = None,
         space_policies: SpacePolicyService | None = None,
         space_manager: TeamSpaceManager | None = None,
+        concurrent_workers: bool = False,
     ) -> None:
+        # Whether execution may overlap assignments. The run list reports the
+        # concurrency a run will actually get, and that is not a property of
+        # the run row: the same row executes sequentially or overlapped
+        # depending on how the gateway is configured now.
+        self._concurrent_workers = concurrent_workers
         self._db = db
         self._personas = personas
         self._workspace_root = workspace_root
@@ -246,6 +253,19 @@ class TeamRunService:
         self._space_policies = space_policies or SpacePolicyService(db)
         self._space_policies.seed_defaults()
         self._space_manager = space_manager or TeamSpaceManager()
+
+    def _effective_workers(self, configured: int) -> int:
+        """How many assignments this run will actually overlap.
+
+        One when concurrency is off, whatever the roster size -- that was the
+        only answer before and is still the answer for an operator who has not
+        turned it on. Otherwise the roster bounded by the executor's ceiling,
+        because a bigger roster does not buy more overlap and saying it does
+        would be a promise the executor breaks.
+        """
+        if not self._concurrent_workers:
+            return 1
+        return max(1, min(int(configured or 1), MAX_CONCURRENT_WORKERS))
 
     def create_team_run(
         self,
@@ -1481,9 +1501,22 @@ class TeamRunService:
                     "status": run.status,
                     "run_mode": run.run_mode,
                     "lifecycle_mode": run.lifecycle_mode,
-                    "max_workers": 1,
+                    # Both of these used to be hardcoded to 1 / "sequential",
+                    # and they were true then: tasks ran one at a time however
+                    # many workers the run was configured with. Concurrency
+                    # makes the constant a lie, and the field the UI shows as
+                    # the run's parallelism would have kept reading 1 while
+                    # three assignments ran at once. Effective, not configured:
+                    # a roster of eight still overlaps at most
+                    # MAX_CONCURRENT_WORKERS, and reporting eight would promise
+                    # parallelism the executor will not deliver.
+                    "max_workers": self._effective_workers(run.max_workers),
                     "configured_max_workers": run.max_workers,
-                    "execution_mode": "sequential",
+                    "execution_mode": (
+                        "concurrent"
+                        if self._effective_workers(run.max_workers) > 1
+                        else "sequential"
+                    ),
                     "team_id": run.team_id,
                     "parent_team_run_id": run.parent_team_run_id,
                     "team_name": team_name,

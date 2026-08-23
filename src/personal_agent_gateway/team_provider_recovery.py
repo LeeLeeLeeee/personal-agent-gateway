@@ -535,7 +535,13 @@ def _recovery_reason(snapshot: object) -> str:
         reason = snapshot.get("readiness_error")
         if isinstance(reason, str) and reason:
             return reason
-    return "capabilities_unavailable"
+        return "capabilities_unavailable"
+    # No snapshot at all for this provider, which is a different fault and used
+    # to be reported as the provider being unavailable. It sent an operator
+    # looking at a provider that was live and ready, because the cycle -- not
+    # the provider -- is what is missing something. Callers iterate providers
+    # in sorted order, so an unfrozen cycle blamed whichever name sorted first.
+    return "capabilities_not_frozen"
 
 
 @dataclass(frozen=True)
