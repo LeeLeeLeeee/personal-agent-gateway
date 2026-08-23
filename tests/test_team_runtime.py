@@ -9461,3 +9461,197 @@ async def test_a_query_with_an_unresolvable_label_falls_back_to_the_lead(
     )
     assert query.recipient_agent_id == run.leader_agent_id
     assert "to_label" not in query.metadata
+
+
+@pytest.mark.asyncio
+async def test_two_no_output_assignments_run_their_model_calls_at_once(tmp_path):
+    """Concurrency exists so a peer can be asked something no file holds yet.
+
+    The proof is overlap, not order: the second worker's call has to have
+    started while the first one is still unfinished. Each stub records how
+    many calls were open when it was entered, so a sequential run cannot
+    fake this -- it would never see a depth above one.
+    """
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    first = personas.create_persona("W1", "worker", "d", [], [])
+    second = personas.create_persona("W2", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [first.id, second.id],
+        "plan_and_execute",
+        2,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    teams.set_cycle_status(cycle.id, "running")
+    members = [
+        agent for agent in teams.list_agents(run.id) if agent.role == "member"
+    ]
+    for index, owner in enumerate(members, start=1):
+        teams.create_task(
+            run.id,
+            f"Investigate {index}",
+            "Read and report.",
+            owner_agent_id=owner.id,
+            cycle_id=cycle.id,
+            acceptance=TaskAcceptance(
+                (), (RequiredVerification("worker-result"),)
+            ),
+        )
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+        concurrent_tasks=True,
+    )
+
+    open_calls = 0
+    peak = 0
+    both_started = asyncio.Event()
+
+    class Overlapping:
+        def __init__(self, responses):
+            self.responses = list(responses)
+            self.calls = 0
+
+        async def complete_operation(self, messages, *, consumer_run_id):
+            nonlocal open_calls, peak
+            self.calls += 1
+            open_calls += 1
+            peak = max(peak, open_calls)
+            try:
+                if open_calls > 1:
+                    both_started.set()
+                # Neither worker may finish before the other has started, so a
+                # sequential implementation deadlocks here instead of passing.
+                await asyncio.wait_for(both_started.wait(), timeout=5)
+                return self.responses.pop(0)
+            finally:
+                open_calls -= 1
+
+    lead_client = Overlapping([ModelResponse("summary", [])])
+    worker_clients = {
+        member.id: Overlapping([ModelResponse(_outcome_json("done"), [])])
+        for member in members
+    }
+    runtime = TeamRuntime(
+        teams,
+        lambda agent, _cycle_id=None: (
+            lead_client if agent.role == "leader" else worker_clients[agent.id]
+        ),
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(db, teams, operations),
+        concurrent_workers=True,
+    )
+
+    result = await runtime.resume(run.id, cycle.id)
+
+    assert result.status == "completed"
+    assert peak == 2, "the two model calls never overlapped"
+    assert all(client.calls == 1 for client in worker_clients.values())
+    assert [task.status for task in teams.list_tasks(run.id, cycle.id)] == [
+        "completed",
+        "completed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_assignments_that_promise_files_still_run_one_at_a_time(tmp_path):
+    """Acceptance attributes workspace changes with a whole-tree diff, so two
+    writers at once appear in each other's diff and both are rejected for
+    files they did not create. A task that lists required_outputs is therefore
+    never a concurrency candidate, even with the flag on."""
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    leader = personas.create_persona("Lead", "lead", "d", [], [])
+    first = personas.create_persona("W1", "worker", "d", [], [])
+    second = personas.create_persona("W2", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [first.id, second.id],
+        "plan_and_execute",
+        2,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = teams.create_cycle(run.id, "manual", "manual-1")
+    teams.set_cycle_status(cycle.id, "running")
+    members = [
+        agent for agent in teams.list_agents(run.id) if agent.role == "member"
+    ]
+    working_root = Path(teams.get_team_run(run.id).working_root
+                        or teams.get_team_run(run.id).workspace_root)
+    working_root.mkdir(parents=True, exist_ok=True)
+    for index, owner in enumerate(members, start=1):
+        (working_root / f"out{index}.txt").write_text("x", encoding="utf-8")
+        teams.create_task(
+            run.id,
+            f"Write {index}",
+            "Write a file.",
+            owner_agent_id=owner.id,
+            cycle_id=cycle.id,
+            acceptance=TaskAcceptance((f"out{index}.txt",), ()),
+        )
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+        concurrent_tasks=True,
+    )
+
+    open_calls = 0
+    peak = 0
+
+    class Counting:
+        def __init__(self, responses):
+            self.responses = list(responses)
+
+        async def complete_operation(self, messages, *, consumer_run_id):
+            nonlocal open_calls, peak
+            open_calls += 1
+            peak = max(peak, open_calls)
+            try:
+                await asyncio.sleep(0)
+                return self.responses.pop(0)
+            finally:
+                open_calls -= 1
+
+    lead_client = Counting([ModelResponse("summary", [])])
+    worker_clients = {
+        member.id: Counting(
+            [
+                ModelResponse(
+                    _outcome_json(
+                        "done",
+                        deliverables=[
+                            {"path": f"out{index}.txt", "kind": "file"}
+                        ],
+                    ),
+                    [],
+                )
+            ]
+        )
+        for index, member in enumerate(members, start=1)
+    }
+    runtime = TeamRuntime(
+        teams,
+        lambda agent, _cycle_id=None: (
+            lead_client if agent.role == "leader" else worker_clients[agent.id]
+        ),
+        operations=operations,
+        model_invoker=TeamModelInvoker(operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(db, teams, operations),
+        concurrent_workers=True,
+    )
+
+    await runtime.resume(run.id, cycle.id)
+
+    assert peak == 1, "assignments that promise files must not overlap"

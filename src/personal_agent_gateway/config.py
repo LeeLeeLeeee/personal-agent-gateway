@@ -63,6 +63,13 @@ class AppConfig(BaseModel):
     # arm without it -- "notes helped" cannot be measured against a run that
     # also had notes.
     team_peer_messages_enabled: bool = True
+    # Off by default, and it must stay off by default: concurrency is only
+    # safe for tasks that promise no files. Acceptance attributes workspace
+    # changes with a whole-tree before/after diff, so two workers writing at
+    # once blame each other for the files they each created. The execution
+    # path enforces that narrowing; this flag only says the operator wants
+    # concurrency where it is safe.
+    team_concurrent_workers_enabled: bool = False
     audit_retention_days: int = 90
     environment_title: str | None = None
     openai_api_key: str | None = None
@@ -146,6 +153,7 @@ class AppConfig(BaseModel):
         "audit_enabled",
         "observability_enabled",
         "team_peer_messages_enabled",
+        "team_concurrent_workers_enabled",
         mode="before",
     )
     @classmethod
@@ -224,6 +232,9 @@ class AppConfig(BaseModel):
                 observability_enabled=env.get("AGENT_OBSERVABILITY_ENABLED") or True,
                 team_peer_messages_enabled=(
                     env.get("AGENT_TEAM_PEER_MESSAGES") or True
+                ),
+                team_concurrent_workers_enabled=(
+                    env.get("AGENT_TEAM_CONCURRENT_WORKERS") or False
                 ),
                 audit_retention_days=int(env.get("AGENT_AUDIT_RETENTION_DAYS") or "90"),
                 environment_title=env.get("AGENT_ENVIRONMENT_TITLE") or env.get("PAG_ENV_TITLE") or None,

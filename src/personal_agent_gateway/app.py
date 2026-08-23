@@ -224,6 +224,7 @@ def create_app(
     operation_service = TeamModelOperationService(
         app.state.database,
         result_validators=team_model_effect_result_validators(),
+        concurrent_tasks=app_config.team_concurrent_workers_enabled,
     )
     # One instance: the delivery side reads the same rows this write side
     # creates. None when peer messages are off, which both the effect service
@@ -272,6 +273,7 @@ def create_app(
         model_effects=effect_service,
         provider_recovery=provider_recovery,
         collaboration=collaboration_service,
+        concurrent_workers=app_config.team_concurrent_workers_enabled,
     )
     app.state.team_run_orchestrator = TeamRunOrchestrator(
         team_run_registry,

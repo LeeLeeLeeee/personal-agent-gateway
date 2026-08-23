@@ -16,6 +16,7 @@ from personal_agent_gateway.migrations import (
     _migration_21_knowledge_request_draft_failure,
     _migration_29_team_run_workspace_inheritance,
     _migration_31_team_plan_negotiation,
+    _migration_33_open_operation_per_task,
 )
 
 
@@ -93,7 +94,7 @@ def test_migration_21_adds_knowledge_request_draft_failure_columns_idempotently(
         "last_draft_failed_at",
         "last_draft_cycle_id",
     } <= columns
-    assert LATEST_SCHEMA_VERSION == 32
+    assert LATEST_SCHEMA_VERSION == 33
 
 
 def test_migration_18_adds_nullable_cycle_space_snapshot() -> None:
@@ -557,3 +558,65 @@ def test_migration_32_creates_delivery_tables(tmp_path):
                 "insert into team_collaboration_deliveries values"
                 " ('d2','r1','a2','k1','prepared','t',null)"
             )
+
+
+def test_migration_33_scopes_the_open_operation_index_to_the_task() -> None:
+    """Concurrent workers were impossible at the storage layer: the old index
+    was unique on cycle_id alone. Scoping it to the assignment keeps the
+    invariant recovery needs -- never two open operations for one task -- and
+    keeps cycle-level stages, which own no task, exclusive among themselves."""
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        create table team_model_operations (
+            id text primary key,
+            cycle_id text not null,
+            task_id text,
+            status text not null
+        );
+        create unique index idx_team_model_operations_one_open_cycle
+        on team_model_operations(cycle_id)
+        where status in (
+            'prepared', 'invoking', 'completed',
+            'waiting_for_provider', 'ambiguous'
+        );
+        """
+    )
+
+    _migration_33_open_operation_per_task(connection)
+    _migration_33_open_operation_per_task(connection)
+
+    indexes = {
+        row["name"]
+        for row in connection.execute(
+            "select name from sqlite_master where type = 'index'"
+        )
+    }
+    assert "idx_team_model_operations_one_open_cycle" not in indexes
+    assert "idx_team_model_operations_one_open_task" in indexes
+
+    # Two assignments, both open: the case the old index refused.
+    connection.execute(
+        "insert into team_model_operations values ('o1', 'c1', 't1', 'invoking')"
+    )
+    connection.execute(
+        "insert into team_model_operations values ('o2', 'c1', 't2', 'invoking')"
+    )
+    # The same assignment twice is still refused.
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "insert into team_model_operations values ('o3', 'c1', 't1', 'prepared')"
+        )
+    # Cycle-level stages own no task and still exclude each other.
+    connection.execute(
+        "insert into team_model_operations values ('o4', 'c1', null, 'prepared')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "insert into team_model_operations values ('o5', 'c1', null, 'prepared')"
+        )
+    # A settled row is not open and never collides.
+    connection.execute(
+        "insert into team_model_operations values ('o6', 'c1', 't1', 'applied')"
+    )

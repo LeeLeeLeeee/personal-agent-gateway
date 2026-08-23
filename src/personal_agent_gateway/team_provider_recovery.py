@@ -148,7 +148,11 @@ class TeamProviderRecovery:
                 raise OperationConflict(
                     "Provider wait requires an invoking operation"
                 )
-            _validate_single_open_operation(connection, operation)
+            _validate_single_open_operation(
+                connection,
+                operation,
+                concurrent_tasks=self._operations._concurrent_tasks,
+            )
             source = _validate_operation_source(
                 connection,
                 operation,
@@ -246,7 +250,11 @@ class TeamProviderRecovery:
             if row is None:
                 return None
             operation = self._operations._get(connection, row["id"])
-            _validate_single_open_operation(connection, operation)
+            _validate_single_open_operation(
+                connection,
+                operation,
+                concurrent_tasks=self._operations._concurrent_tasks,
+            )
             source = _validate_operation_source(
                 connection,
                 operation,
@@ -337,7 +345,11 @@ class TeamProviderRecovery:
             if row is None:
                 return
             operation = self._operations._get(connection, row["id"])
-            _validate_single_open_operation(connection, operation)
+            _validate_single_open_operation(
+                connection,
+                operation,
+                concurrent_tasks=self._operations._concurrent_tasks,
+            )
             source = _validate_operation_source(
                 connection,
                 operation,
@@ -557,7 +569,44 @@ _CONSULT_STAGES = {
 }
 
 
-def _validate_single_open_operation(connection, operation) -> None:
+def _validate_single_open_operation(
+    connection,
+    operation,
+    *,
+    concurrent_tasks: bool = False,
+) -> None:
+    """Exactly one open operation for whatever this one speaks for.
+
+    Sequentially that is the cycle. Under concurrency it is the assignment:
+    siblings are legitimately open at the same time, and counting them would
+    refuse every provider wait the moment a second worker exists.
+
+    A known narrowing of concurrency, deliberately not papered over here:
+    parking for a provider moves the run and the cycle to
+    waiting_for_provider, which is cycle-wide state. A sibling that is still
+    running then fails its own active-source validation and its task fails.
+    That is a loud failure rather than a wrong answer, and it is why
+    concurrency stays opt-in.
+    """
+    if concurrent_tasks:
+        row = connection.execute(
+            """
+            select count(*) as total from team_model_operations
+            where cycle_id = ?
+              and coalesce(task_id, '~cycle~') = ?
+              and status in (
+                  'prepared', 'invoking', 'completed',
+                  'waiting_for_provider', 'ambiguous'
+              )
+            """,
+            (
+                operation.cycle_id,
+                operation.task_id if operation.task_id is not None else "~cycle~",
+            ),
+        ).fetchone()
+        if row is None or row["total"] != 1:
+            raise OperationConflict("Task does not have one open operation")
+        return
     row = connection.execute(
         """
         select count(*) as total from team_model_operations

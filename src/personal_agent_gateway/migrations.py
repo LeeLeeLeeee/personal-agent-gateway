@@ -1037,6 +1037,41 @@ def _migration_32_team_collaboration_deliveries(
     )
 
 
+def _migration_33_open_operation_per_task(
+    connection: sqlite3.Connection,
+) -> None:
+    """Scope the one-open-operation index from the cycle to the task.
+
+    The old index -- unique on cycle_id alone -- is what made concurrent
+    workers impossible at the storage layer. Scoping it to the task keeps
+    every invariant the old one actually protected (no two open operations
+    for the same assignment, so a recovery can never find two candidates for
+    one task) while letting two assignments be in flight at once.
+
+    Cycle-level stages own no task, and two of those must still never
+    overlap: planning and synthesis speak for the whole cycle. A null
+    task_id is not comparable in SQL, so those rows would escape a plain
+    (cycle_id, task_id) index entirely -- coalesce gives them one shared key
+    instead, which restores exactly the old exclusivity among themselves.
+
+    Whether concurrency is allowed at all remains a policy decision in
+    reserve(); this migration only stops the storage layer from refusing it.
+    """
+    connection.executescript(
+        """
+        drop index if exists idx_team_model_operations_one_open_cycle;
+
+        create unique index if not exists
+        idx_team_model_operations_one_open_task
+        on team_model_operations(cycle_id, coalesce(task_id, '~cycle~'))
+        where status in (
+            'prepared', 'invoking', 'completed',
+            'waiting_for_provider', 'ambiguous'
+        );
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -1070,6 +1105,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (30, "operation-failure-shape", _migration_30_operation_failure_shape),
     (31, "team-plan-negotiation", _migration_31_team_plan_negotiation),
     (32, "team-collaboration-deliveries", _migration_32_team_collaboration_deliveries),
+    (33, "open-operation-per-task", _migration_33_open_operation_per_task),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

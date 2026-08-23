@@ -146,8 +146,15 @@ class TeamModelOperationService:
         db: Database,
         *,
         result_validators: OperationResultValidatorRegistry | None = None,
+        concurrent_tasks: bool = False,
     ) -> None:
         self._db = db
+        # False keeps the pre-concurrency rule exactly: one open operation per
+        # cycle, whatever it belongs to. True narrows the refusal to the same
+        # assignment, which is the invariant recovery actually needs (never two
+        # candidates for one task) -- cycle-level stages still exclude each
+        # other, because they speak for the whole cycle.
+        self._concurrent_tasks = concurrent_tasks
         self._result_validators = _built_in_result_validators()
         for stage, validators in (result_validators or {}).items():
             stage_validators = self._result_validators.setdefault(stage, {})
@@ -170,15 +177,36 @@ class TeamModelOperationService:
                 self._validate_existing_spec(existing, spec)
                 return existing
 
-            open_operation = connection.execute(
-                """
-                select id from team_model_operations
-                where cycle_id = ? and status in (?, ?, ?, ?, ?)
-                """,
-                (spec.cycle_id, *_OPEN_STATUSES),
-            ).fetchone()
-            if open_operation is not None:
-                raise OperationConflict("Cycle already has an open model operation")
+            if self._concurrent_tasks:
+                open_operation = connection.execute(
+                    """
+                    select id from team_model_operations
+                    where cycle_id = ?
+                      and coalesce(task_id, '~cycle~') = ?
+                      and status in (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        spec.cycle_id,
+                        spec.task_id if spec.task_id is not None else "~cycle~",
+                        *_OPEN_STATUSES,
+                    ),
+                ).fetchone()
+                if open_operation is not None:
+                    raise OperationConflict(
+                        "Task already has an open model operation"
+                    )
+            else:
+                open_operation = connection.execute(
+                    """
+                    select id from team_model_operations
+                    where cycle_id = ? and status in (?, ?, ?, ?, ?)
+                    """,
+                    (spec.cycle_id, *_OPEN_STATUSES),
+                ).fetchone()
+                if open_operation is not None:
+                    raise OperationConflict(
+                        "Cycle already has an open model operation"
+                    )
 
             operation_id = uuid4().hex
             connection.execute(
@@ -394,17 +422,47 @@ class TeamModelOperationService:
         with self._db.connection() as connection:
             return self._get_by_key(connection, operation_key)
 
-    def get_open_for_cycle(self, cycle_id: str) -> TeamModelOperation | None:
+    def get_open_for_cycle(
+        self,
+        cycle_id: str,
+        *,
+        task_id: str | None = None,
+        scoped_to_task: bool = False,
+    ) -> TeamModelOperation | None:
+        """The oldest open operation in this cycle, or in one assignment.
+
+        `scoped_to_task` is explicit rather than inferred from `task_id`,
+        because a cycle-level stage legitimately has no task and "look for
+        cycle-level work only" and "look at everything" are different
+        questions. Callers that must see the whole cycle -- recovery walking
+        what a crash left behind -- keep the default.
+        """
         placeholders = ", ".join("?" for _ in _OPEN_STATUSES)
         with self._db.connection() as connection:
-            row = connection.execute(
-                f"""
-                select * from team_model_operations
-                where cycle_id = ? and status in ({placeholders})
-                order by created_at asc, id asc
-                """,
-                (cycle_id, *_OPEN_STATUSES),
-            ).fetchone()
+            if scoped_to_task:
+                row = connection.execute(
+                    f"""
+                    select * from team_model_operations
+                    where cycle_id = ?
+                      and coalesce(task_id, '~cycle~') = ?
+                      and status in ({placeholders})
+                    order by created_at asc, id asc
+                    """,
+                    (
+                        cycle_id,
+                        task_id if task_id is not None else "~cycle~",
+                        *_OPEN_STATUSES,
+                    ),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    f"""
+                    select * from team_model_operations
+                    where cycle_id = ? and status in ({placeholders})
+                    order by created_at asc, id asc
+                    """,
+                    (cycle_id, *_OPEN_STATUSES),
+                ).fetchone()
             return _operation_from_row(row) if row is not None else None
 
     def latest_failure_shapes(self, team_run_id: str) -> dict[str, dict[str, object]]:

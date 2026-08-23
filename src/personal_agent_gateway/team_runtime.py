@@ -452,6 +452,21 @@ class OpenOperationRecovery:
 
 
 @dataclass(frozen=True)
+class _StartedTask:
+    """An assignment whose model call is already running.
+
+    `before` is captured before the call starts, because the caller settles
+    these one at a time and a snapshot taken at settle time would already
+    contain whatever the siblings did.
+    """
+
+    task: TeamTask
+    worker: TeamAgent
+    before: WorkspaceSnapshot
+    call: asyncio.Task
+
+
+@dataclass(frozen=True)
 class AcceptanceReviewResolution:
     kind: Literal["retry_worker", "revise_acceptance", "ask_user", "fail"]
     reason: str
@@ -803,8 +818,13 @@ class TeamRuntime:
         model_effects: TeamModelEffectService | None = None,
         provider_recovery: TeamProviderRecovery | None = None,
         collaboration: TeamCollaborationService | None = None,
+        concurrent_workers: bool = False,
     ) -> None:
         self._teams = teams
+        # Whether several assignments may have a model call in flight at once.
+        # _start_batch narrows this further to the cases where it is safe;
+        # False keeps execution exactly as sequential as it always was.
+        self._concurrent_workers = concurrent_workers
         self._model_factory = model_factory
         self._event_bus = event_bus
         self._archive_service = archive_service
@@ -1034,7 +1054,11 @@ class TeamRuntime:
         messages: list[dict[str, object]],
         parser: Callable[[ModelResponse], ValidatedOperationResult],
     ) -> TeamModelOperation:
-        open_operation = self._operations.get_open_for_cycle(spec.cycle_id)
+        open_operation = self._operations.get_open_for_cycle(
+            spec.cycle_id,
+            task_id=spec.task_id if self._concurrent_workers else None,
+            scoped_to_task=self._concurrent_workers,
+        )
         if (
             open_operation is not None
             and open_operation.operation_key != spec.operation_key
@@ -2748,8 +2772,117 @@ class TeamRuntime:
         cycle_id: str | None = None,
     ) -> None:
         counter = 0
+        # Assignments whose model call is already in flight, oldest first.
+        # Empty means "nothing started", which is the only state in which the
+        # recovery prologue below may run: it reasons about the whole cycle,
+        # and a sibling this loop is still holding is not something on disk it
+        # could recover.
+        batch: list[_StartedTask] = []
+        try:
+            await self._execute_batches(run, leader, workers, cycle_id, batch, counter)
+        finally:
+            # A run that stops early -- a run-scope decision, a provider park,
+            # a failure -- must not leave a provider call running with nobody
+            # to read it. The operation row stays where it is and the normal
+            # recovery path picks it up on resume.
+            for started in batch:
+                started.call.cancel()
+
+    async def _start_batch(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        workers: list[TeamAgent],
+        cycle_id: str | None,
+        ready_tasks: list[TeamTask],
+        batch: list[_StartedTask],
+        counter: int,
+    ) -> int:
+        """Start one assignment, or several at once when that is safe.
+
+        Concurrency is narrowed here rather than at the flag, because only
+        this function can see what the candidates promise. Three conditions,
+        each for its own reason:
+
+        - **No promised files.** Acceptance attributes workspace changes with
+          a whole-tree before/after diff. Two writers at once appear in each
+          other's diff and both get rejected for files they did not create.
+          A task whose contract lists no required_outputs is not supposed to
+          write at all, so there is nothing to misattribute. This is the
+          condition that keeps concurrent *writing* out of this version.
+        - **Distinct owners.** An agent row carries one status and one
+          current_task_id, so the same worker cannot hold two assignments
+          without one erasing the other's state.
+        - **A cycle.** The ledger that makes a concurrent call recoverable is
+          per-cycle; the legacy non-cycle path has no operation rows.
+
+        Anything that fails a condition falls back to exactly the old
+        behaviour: the single oldest ready task, started alone.
+        """
+        eligible: list[TeamTask] = []
+        if (
+            self._concurrent_workers
+            and cycle_id is not None
+            and len(ready_tasks) > 1
+            and len(workers) > 1
+        ):
+            seen_owners: set[str] = set()
+            for candidate in ready_tasks:
+                if candidate.acceptance.required_outputs:
+                    continue
+                owner = candidate.owner_agent_id
+                if owner is None or owner in seen_owners:
+                    continue
+                seen_owners.add(owner)
+                eligible.append(candidate)
+            if len(eligible) < 2:
+                eligible = []
+        selected = eligible[: len(workers)] or ready_tasks[:1]
+
+        working_root = Path(run.working_root or run.workspace_root)
+        for task in selected:
+            assigned = next(
+                (worker for worker in workers if worker.id == task.owner_agent_id),
+                None,
+            )
+            worker = assigned or workers[counter % len(workers)]
+            counter += 1
+            task, worker = self._teams.start_task(task.id, worker.id)
+            await self._publish(
+                {
+                    "type": "team.task.updated",
+                    "team_run_id": run.id,
+                    "task_id": task.id,
+                    "agent_id": worker.id,
+                }
+            )
+            batch.append(
+                _StartedTask(
+                    task=task,
+                    worker=worker,
+                    before=workspace_snapshot(working_root),
+                    call=asyncio.ensure_future(
+                        self._run_task(run, leader, worker, task)
+                    ),
+                )
+            )
+        return counter
+
+    async def _execute_batches(
+        self,
+        run: TeamRun,
+        leader: TeamAgent,
+        workers: list[TeamAgent],
+        cycle_id: str | None,
+        batch: list[_StartedTask],
+        counter: int,
+    ) -> None:
         while True:
-            if cycle_id is not None:
+            if batch:
+                # Fall through to the settle path below with what is already
+                # running; the prologue must not re-enter mid-batch.
+                pass
+            elif cycle_id is not None:
                 recovery = await self._recover_open_operation(
                     run,
                     leader,
@@ -2851,29 +2984,20 @@ class TeamRuntime:
                         ):
                             return
                     continue
-            ready_tasks = self._teams.list_dependency_ready_tasks(run.id, cycle_id)
-            if not ready_tasks:
-                return
-            task = ready_tasks[0]
-            assigned = next(
-                (worker for worker in workers if worker.id == task.owner_agent_id),
-                None,
-            )
-            worker = assigned or workers[counter % len(workers)]
-            counter += 1
-            task, worker = self._teams.start_task(task.id, worker.id)
-            await self._publish(
-                {
-                    "type": "team.task.updated",
-                    "team_run_id": run.id,
-                    "task_id": task.id,
-                    "agent_id": worker.id,
-                }
-            )
+            if not batch:
+                ready_tasks = self._teams.list_dependency_ready_tasks(
+                    run.id, cycle_id
+                )
+                if not ready_tasks:
+                    return
+                counter = await self._start_batch(
+                    run, leader, workers, cycle_id, ready_tasks, batch, counter
+                )
+            started = batch.pop(0)
+            task, worker, before = started.task, started.worker, started.before
             try:
                 working_root = Path(run.working_root or run.workspace_root)
-                before = workspace_snapshot(working_root)
-                outcome = await self._run_task(run, leader, worker, task)
+                outcome = await started.call
                 if isinstance(outcome, TeamModelOperation):
                     decision = await self._apply_cycle_worker_operation(
                         run,
