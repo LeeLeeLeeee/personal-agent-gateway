@@ -37,6 +37,7 @@
 - 리드가 알아서 "이건 질문이네"라고 판단하는 것. 사용자가 명시적으로 고른다
 - 정지 중 일감 추가·이의 제기. 정지 중에는 **질문과 재개만** 한다
 - 질문을 위한 사이클이나 일감 생성
+- **계획 단계의 정지 지점.** 계획 중 정지를 요청하면 계획이 끝난 뒤에 멈춘다
 
 ## 정지
 
@@ -70,9 +71,57 @@ while True:
 
 즉 자동 재개가 아니라 **프로바이더 복구(운영자 개입) 대상**이 된다. 궁금해서 물어본 대가로 복구 작업이 생기면 안 된다.
 
+### 어떻게 빠져나오는가: 예외로 올린다
+
+검사 지점에서 그냥 `return`하면 **런이 터진다.**
+
+`_execute`가 반환되면 `_execute_and_synthesize`(`team_runtime.py:4489`)가 곧바로 완료 상태를 계산한다.
+
+```python
+while True:
+    await self._execute(run, leader, workers, cycle_id)
+    request = self._teams.get_active_decision_request(run.id, cycle_id)
+    if request is not None and request.status == "collecting":
+        return await self._publish_user_decision_request(run, cycle_id)   # 결정 요청만 받아준다
+    ...
+    status = _terminal_status(tasks, dependencies)
+    if status is None:
+        raise LifecycleIntegrityError(...)                                # 미완료 일감이 남아 있으면 여기
+```
+
+조기 반환을 받아주는 가드는 **결정 요청 하나뿐**이다. 정지는 미완료 일감을 남긴 채 반환하므로 `_terminal_status`가 `None`을 내고 `LifecycleIntegrityError`로 끝난다.
+
+**그래서 정지는 예외로 올린다.** 이미 같은 자리에 정지 신호 셋이 산다 — `ProviderOperationWaiting`·`AmbiguousModelOperation`·`UnparsableLeadOutput`. `team_runtime.py:3213`의 주석이 이들을 이렇게 부른다: "Pause signals, not task failures". 새 배관이 아니라 **기존 어휘에 하나 더 넣는 것**이다.
+
+`ProviderOperationWaiting`은 dispatcher까지 올라가 조용히 `return`한다(`team_cycle_dispatcher.py:227`). 정지도 같은 경로를 탄다.
+
+### 예외를 재-raise 목록에 반드시 등록해야 한다
+
+`start()`(`team_runtime.py:2184`)와 `resume()`에는 넓은 `except Exception`이 있고, 거기 걸리면 `_settle_failed`가 런을 **실패로 표시한다.**
+
+```python
+except (ProviderOperationWaiting, AmbiguousModelOperation):
+    raise                                    # <- 여기 없으면
+except Exception as exc:
+    run = self._settle_failed(run, error, cycle_id)   # <- 정지가 실패가 된다
+```
+
+정지 예외를 이 재-raise 절에 넣지 않으면 **정지를 누를 때마다 팀런이 실패 처리된다.** `start()`와 `resume()` 양쪽 다 고쳐야 한다.
+
 ### 대가
 
-정지를 눌러도 즉시 멈추지 않는다. 지금 떠 있는 배치(최대 3개)가 다 끝나야 한다. 화면은 이 지연을 숨기지 않고 `정지 요청됨` → `정지됨` 두 단계로 보여준다.
+정지를 눌러도 즉시 멈추지 않는다. 화면은 이 지연을 숨기지 않고 `정지 요청됨` → `정지됨` 두 단계로 보여준다.
+
+기다리는 길이는 팀이 지금 무엇을 하고 있느냐에 달렸다.
+
+| 팀의 단계 | 기다리는 길이 |
+| --- | --- |
+| 일감 실행 중 | 지금 떠 있는 배치(최대 3개)가 끝날 때까지 |
+| **계획 중 / 계획 검토 중** | **계획과 검토가 다 끝날 때까지** |
+
+`start()`는 계획(`_plan`) → 계획 검토(`_negotiate_plan`) → 그 다음에야 실행(`_execute_and_synthesize`)이다(`team_runtime.py:2134`, `2168`, `2176`). 검사 지점은 실행 단계에만 있으므로 **계획 중에는 멈출 자리가 없다.** 계획 개정은 최대 3회(`PLAN_NEGOTIATION_MAX_REVISIONS`)이고 매 개정마다 검토자 수만큼 호출이 돈다.
+
+계획 단계에도 검사 지점을 두지 않는 이유는 이번 조각을 키우지 않기 위해서다. 계획 중 정지가 실제로 답답하면 그때 붙인다. 화면은 정지를 기다리는 동안 팀이 어느 단계인지 보여줘서, 오래 걸리는 이유가 드러나게 한다.
 
 ## 상태
 
@@ -83,6 +132,10 @@ while True:
 ### 기존 상태를 재사용하지 않는 이유
 
 **`waiting_for_user`는 방향이 반대다.** 그것은 팀이 사용자에게 물어서 멈춘 상태이고(`team_runtime.py:5130` `_publish_user_decision_request`), 화면에 결정 요청 대화상자가 뜨며, 사용자가 답을 제출해야 풀린다. 우리가 만드는 것은 사용자가 팀에게 묻는 상태다. 보여줄 것도, 푸는 방법도 다르다. 하나로 묶으면 둘 다 망가진다.
+
+**`interrupted`는 뜻이 다르다.** 구조는 가장 가깝다 — `_interrupt_cycle`(`team_cycle_dispatcher.py:325`)이 사이클을 `interrupted`로 두고 `/resume`가 그것을 찾아 이어서 돌린다. "멈추고 나중에 이어서"라는 뼈대가 같다.
+
+그래도 재사용하지 않는다. `interrupted`는 **사고로 끊긴 상태**이고 화면이 그렇게 말한다 — "Running work was returned to Pending"(`TeamRunDetail/index.jsx:1339`). 사용자가 의도적으로 멈춘 것과 한 글자로 묶이면, 화면은 둘을 구분해 말할 수 없고 "왜 끊겼지"와 "내가 멈췄지"가 같은 배너를 쓴다. 뼈대는 빌리되 이름은 나눈다.
 
 **자동 사이클 시리즈의 `paused_*`는 층이 다르다.** `paused_failure`·`paused_user`·`paused_interrupted`(`team_cycles.py:20`)는 사이클 하나가 **끝난 뒤** `settle_cycle`에서만 걸리는 시리즈 상태다(`team_cycle_dispatcher.py:277`). 사이클이 도는 도중을 표현하지 못한다.
 
@@ -133,6 +186,18 @@ while True:
 - 팀이 안 돌고 있으면: 바로 질문 → 답변
 - 멈춘 동안 몇 번이든 더 묻는다. 끝나면 **재개**
 
+### `paused`를 알아야 하는 화면 코드
+
+상태 문자열이 여러 곳에 직접 나열돼 있다. 새 상태를 추가하면 전부 손봐야 한다. `TeamRunDetail/index.jsx` 기준:
+
+| 위치 | 지금 | 해야 할 일 |
+| --- | --- | --- |
+| `:959` `canResume` | `status === "interrupted"` | `paused`도 재개 가능 |
+| `:961` 취소 가능 조건 | `["planning","running","summarizing","waiting_for_user"]` | `paused`·정지 요청 중에도 취소 가능 |
+| `:50` 정렬 우선순위 | `["interrupted","waiting_for_user"]` | `paused`도 같은 취급 |
+| `:1336` 중단 배너 | `status === "interrupted"` | `paused`는 **다른** 배너 (질문·답변과 재개 버튼) |
+| `:956` 일감 추가 가능 조건 | `interrupted`·`waiting_for_user` 제외 | `paused`도 제외 (정지 중엔 질문과 재개만) |
+
 **새 팀런에서도** 목표를 주고 시작하는 대신 물어보기로 시작할 수 있다. 리드가 답만 하고 팀런은 시작되지 않은 채 남는다. 답을 듣고 일을 시키고 싶으면 그때 시작한다.
 
 ## 서버 경로
@@ -163,6 +228,14 @@ if run.status != "interrupted":
 ```
 
 `paused`도 재개할 수 있어야 한다. 이 가드와, 그 아래 재개할 사이클을 고르는 부분(`status == "interrupted"`로 찾는다)이 함께 `paused`를 받아야 한다.
+
+### 정지 중 사이클 요청은 `dispatching`에 묶인 채로 둔다
+
+정지가 예외로 dispatcher까지 올라가면 그 사이클 요청은 `dispatching` 상태로 남는다(`ProviderOperationWaiting`과 같은 경로). 그동안 `claim_next`는 그 런의 다른 요청을 잡지 않는다 — 런당 `dispatching` 요청이 하나뿐이어야 하기 때문이다(`team_cycles.py:456`).
+
+**정지 중에는 이것이 맞는 동작이다.** 멈춰서 묻고 있는 사이에 다른 사이클이 끼어들면 안 된다.
+
+재개할 때 이 요청을 되살려야 한다. `/resume`는 런과 사이클을 다시 `running`으로 올리지만 요청 상태는 건드리지 않으므로, 재개 경로가 묶여 있던 요청을 이어받도록 명시해야 한다. 새 요청을 만들면 안 된다 — 새 요청은 새 사이클을 만들고, 그러면 정지 전에 하던 일감들이 다른 사이클에 남는다.
 
 ### 시작하지 않은 팀런에도 리드는 있다
 
@@ -196,6 +269,10 @@ if run.status != "interrupted":
 5. 팀이 돌고 있지 않을 때 물으면 정지 단계 없이 바로 답이 온다
 6. 사이클이 먼저 끝난 경우에도 답은 온다
 7. 답변 호출이 실패해도 팀런 상태가 망가지지 않는다
+8. **정지해도 팀런이 실패로 표시되지 않는다** — 재-raise 목록 누락을 잡는 검사
+9. **정지해도 `LifecycleIntegrityError`가 나지 않는다** — 미완료 일감이 남은 채로 멈추는 것이 정상임을 고정하는 검사
+10. 재개 후 정지 전과 **같은 사이클**에서 이어진다 (새 사이클이 생기지 않는다)
+11. 계획 중에 정지를 요청하면 계획이 끝난 뒤에 멈춘다
 
 ## 결정 기록
 
@@ -209,4 +286,6 @@ if run.status != "interrupted":
 | 진행 중이면 **정지하고** 묻는다 | 답하는 동안 워크스페이스가 계속 바뀌면 답이 도착할 때 이미 낡는다 |
 | 정지는 **배치 경계**에서 (즉시 아님) | 즉시 정지는 재개 불가능한 operation을 남긴다 |
 | 답변 후 **멈춘 채로 더 물을 수 있다** | 한 번의 답으로 끝나는 질문이 드물다 |
+| 정지 신호를 **예외**로 올린다 | 그냥 반환하면 `_terminal_status`가 미완료 일감을 보고 `LifecycleIntegrityError`를 낸다. 예외는 기존 정지 신호 셋과 같은 어휘다 |
+| `interrupted`를 **재사용하지 않는다** | 뼈대는 같지만 뜻이 다르다. 사고로 끊긴 것과 사용자가 멈춘 것이 같은 배너를 쓰면 안 된다 |
 | 정지 중에는 **질문과 재개만** | 일감 추가·이의 제기까지 정지 중에 열면 이번 조각이 두 배가 된다. 써보고 불편하면 그때 붙인다 |
