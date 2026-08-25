@@ -3581,3 +3581,47 @@ def test_detail_reads_the_real_synthesis_not_the_question_it_asked_first(
         entry for entry in detail["cycles"] if entry["id"] == cycle.id
     )
     assert reported["coverage_gaps"] == gaps
+
+
+def test_the_detail_reports_whether_splitting_bought_any_parallelism(
+    tmp_path: Path,
+) -> None:
+    """일감 수만 보면 넷으로 나눈 계획이 넷이 동시에 도는 것처럼 읽힌다.
+
+    실측에서 네 명에게 나눠놓고 넷이 줄줄이 기다리는 계획이 있었다. 그
+    사실이 화면 어디에도 없어서 아무도 몰랐다.
+    """
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    member = app.state.persona_service.create_persona("Worker", "worker", "d", [], [])
+    created = create_standard_run(app, leader.id, [member.id])
+    run_id = created["id"]
+    teams = app.state.team_run_service
+    worker = next(
+        agent for agent in teams.list_agents(run_id) if agent.role == "member"
+    )
+    acceptance = TaskAcceptance(
+        required_outputs=(),
+        required_verifications=(RequiredVerification("done", None),),
+    )
+    first = teams.create_task(
+        run_id, "First", "d", owner_agent_id=worker.id, acceptance=acceptance
+    )
+    second = teams.create_task(
+        run_id, "Second", "d", owner_agent_id=worker.id, acceptance=acceptance
+    )
+    third = teams.create_task(
+        run_id, "Third", "d", owner_agent_id=worker.id, acceptance=acceptance
+    )
+    teams.add_task_dependencies(second.id, [first.id])
+    teams.add_task_dependencies(third.id, [second.id])
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        shape = client.get(f"/api/team-runs/{run_id}/detail").json()["plan_shape"]
+
+    assert shape["task_count"] == 3
+    # 셋으로 나눴는데 셋을 차례로 지나야 한다 -- 나눈 이득이 0이다.
+    assert shape["longest_chain"] == 3
+    assert shape["ready_at_start"] == 1
+    assert shape["max_concurrent_workers"] == MAX_CONCURRENT_WORKERS

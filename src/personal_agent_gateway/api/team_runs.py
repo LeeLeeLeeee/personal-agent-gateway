@@ -26,6 +26,7 @@ from personal_agent_gateway.team_lifecycle import (
 )
 from personal_agent_gateway.team_cycles import TeamAutoSeries, TeamCycleRequest
 from personal_agent_gateway.team_delivery import TeamRunDeliveryError
+from personal_agent_gateway.team_plan_shape import plan_shape
 from personal_agent_gateway.team_provider_recovery import (
     AmbiguousOperationNotReconcilable,
 )
@@ -517,6 +518,16 @@ def get_team_run_detail(
     task_evidence = {
         task.id: task_build_evidence(task, workspace) for task in selected_tasks
     }
+    # selected_tasks 가 아니라 tasks 로 센다. 잘린 목록으로 세면 큰 런에서
+    # 숫자가 조용히 작아지는데, 이 숫자는 "나눈 것이 동시 실행을 만들었나"를
+    # 판정하는 자리라 틀리면 정반대로 읽힌다.
+    newest_cycle = cycles[-1] if cycles else None
+    shape_tasks = (
+        [task for task in tasks if task.cycle_id == newest_cycle.id]
+        if newest_cycle is not None and any(task.cycle_id for task in tasks)
+        else tasks
+    )
+    shape = plan_shape([task.id for task in shape_tasks], task_dependencies)
     return {
         "team_run": _team_run_payload(run, request.app.state.team_run_service),
         "agents": [_agent_payload(agent) for agent in agents],
@@ -529,6 +540,12 @@ def get_team_run_detail(
             )
             for task in selected_tasks
         ],
+        "plan_shape": {
+            "task_count": shape.task_count,
+            "longest_chain": shape.longest_chain,
+            "ready_at_start": shape.ready_at_start,
+            "max_concurrent_workers": MAX_CONCURRENT_WORKERS,
+        },
         "messages": [_message_payload(message) for message in selected_messages],
         "cycles": [
             _cycle_payload(cycle, coverage_by_cycle.get(cycle.id))

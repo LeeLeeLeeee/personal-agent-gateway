@@ -2376,3 +2376,50 @@ describe("TeamRunDetail question dialog layout", () => {
     expect(screen.queryByRole("button", { name: /이전 대화/ })).not.toBeInTheDocument();
   });
 });
+
+describe("TeamRunDetail plan shape", () => {
+  function renderShape(plan_shape) {
+    return render(
+      <TeamRunDetail
+        detail={{
+          run: baseRun,
+          agents: [],
+          tasks: [],
+          messages: [],
+          plan_shape
+        }}
+      />
+    );
+  }
+
+  it("나눈 것이 동시 실행을 만들면 숫자만 보여준다", () => {
+    renderShape({
+      task_count: 6, longest_chain: 2, ready_at_start: 4, max_concurrent_workers: 3
+    });
+    expect(screen.getByText(/6개 · 최대 2단계 대기 · 4개 즉시 시작/)).toBeInTheDocument();
+    expect(screen.queryByText(/나눈 이득이 없습니다/)).not.toBeInTheDocument();
+  });
+
+  it("줄줄이 기다리는 계획이면 이득이 없다고 말한다", () => {
+    // 넷으로 나눴는데 넷을 차례로 지나야 하면 한 명이 하는 것과 같다.
+    // 숫자만 보여주면 "일감 4개"가 "넷이 동시에 한다"로 읽힌다.
+    renderShape({
+      task_count: 4, longest_chain: 4, ready_at_start: 1, max_concurrent_workers: 3
+    });
+    expect(screen.getByText(/나눈 이득이 없습니다/)).toBeInTheDocument();
+  });
+
+  it("일감이 하나면 아무것도 말하지 않는다", () => {
+    // 하나짜리는 나눈 것이 아니므로 판정할 것이 없다.
+    renderShape({
+      task_count: 1, longest_chain: 1, ready_at_start: 1, max_concurrent_workers: 3
+    });
+    expect(screen.queryByText(/즉시 시작/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/나눈 이득이 없습니다/)).not.toBeInTheDocument();
+  });
+
+  it("계획 모양이 없으면 아무것도 그리지 않는다", () => {
+    renderShape(undefined);
+    expect(screen.queryByText(/즉시 시작/)).not.toBeInTheDocument();
+  });
+});

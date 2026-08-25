@@ -1056,6 +1056,16 @@ export function TeamRunDetail({
   const contests = detail.contests || [];
   const hasPlanReview = Boolean(planRevisions.length || contests.length);
   const cycles = [...(detail.cycles || [])].sort((left, right) => right.sequence - left.sequence);
+  // 서버가 잘리지 않은 전체 일감으로 계산해 보낸다. 화면에서 세면 목록이
+  // 잘린 큰 런에서 숫자가 조용히 작아진다.
+  const planShape = detail.plan_shape || null;
+  // 하나짜리는 나눈 것이 아니므로 판정할 것이 없다.
+  const showPlanShape = Boolean(planShape && planShape.task_count > 1);
+  // 일감 수와 최장 사슬이 같으면 전부 차례로 지나야 한다는 뜻이다 -- 나눈
+  // 만큼 인수인계 비용은 치르는데 끝나는 시각은 한 명이 하는 것과 같다.
+  const splitBoughtNothing = Boolean(
+    showPlanShape && planShape.longest_chain >= planShape.task_count
+  );
   const currentCycle = cycles[0] || null;
   const currentInstruction = run.current_objective
     || currentCycle?.instruction
@@ -1222,6 +1232,12 @@ export function TeamRunDetail({
             <span>LEAD · {leader?.name || "-"}</span>
             <span>{currentCycle ? `CYCLE #${currentCycle.sequence}` : "NO CYCLE"}</span>
             <span>{tasks.filter((task) => OPEN_TASK_STATUSES.has(task.status)).length} OPEN TASKS</span>
+            {showPlanShape ? (
+              <span className={splitBoughtNothing ? "team-plan-shape team-plan-shape-flat" : "team-plan-shape"}>
+                {`일감 ${planShape.task_count}개 · 최대 ${planShape.longest_chain}단계 대기 · ${planShape.ready_at_start}개 즉시 시작`}
+                {splitBoughtNothing ? " · 나눈 이득이 없습니다" : ""}
+              </span>
+            ) : null}
             {focusTask ? <span className="team-run-focus-task">NOW · {focusTask.title}</span> : null}
           </div>
         </div>

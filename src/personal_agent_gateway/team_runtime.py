@@ -300,7 +300,9 @@ Return ONLY one JSON object in this form:
 {{"resolution":{{"kind":"answer","answer":"concise factual answer for the teammate"}}}}"""
 
 ADD_WORK_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
-The user is adding work to an in-flight run. Break the request into concrete tasks.
+The user is adding work to an in-flight run. Turn the request into concrete tasks.
+Split by what the work needs, not by how many members exist. One task is the right
+answer for a request that is one piece of work.
 Return ONLY a JSON array of task objects using the same exact schema:
 {{"plan_task_id":"stable-key", "title":"...", "description":"...", "owner_agent_id":"member-id or null",
 "required":true, "depends_on_task_ids":["stable-key"], "input_artifact_ids":[],
@@ -329,7 +331,12 @@ Available team members: {team_roster_json}
 
 Assign every task to the member whose persona role and responsibilities best match it.
 Return "owner_agent_id" using the exact ID from the available team members list.
-Do not assign by list order or previous completion status."""
+Do not assign by list order or previous completion status.
+
+The member list is not a checklist to fill. Leaving a member without a task in this
+cycle is normal -- a nine-member team does not make a small request into nine tasks.
+Ask what this request actually requires, then name only the members it requires. If
+two members cover it, there are two tasks; if one does, there is one."""
 
 CONTEST_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
 The user is contesting the plan, not adding work to it. Judge the objection.

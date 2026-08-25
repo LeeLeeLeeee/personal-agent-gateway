@@ -10360,3 +10360,20 @@ async def test_other_team_model_calls_do_not_stream_progress(tmp_path):
     assert seen, "모델 호출이 없었다"
     assert not any(streams for _role, streams in seen)
 
+
+
+def test_the_add_work_prompt_splits_by_work_not_by_roster():
+    """일감 수가 팀원 수를 따라가면 안 된다.
+
+    실측: 팀원 4명 런은 정확히 4개, 9명 런은 9~10개를 만들었다. 요청 내용과
+    무관하게 비율이 1.00 이었다 -- 리드가 명단을 짝짓기 문제로 읽고 있었다.
+    프롬프트가 명단을 마지막에 보여주고 "모든 일감을 가장 맞는 팀원에게"로
+    끝나는데, 그 반대 방향("모든 팀원에게 일감을 줄 필요는 없다")이 없었다.
+    """
+    # 공백을 접고 비교한다. 줄바꿈 위치까지 고정하면 프롬프트를 재포맷하는
+    # 것만으로 테스트가 깨지는데, 그것은 이 테스트가 지키려는 성질이 아니다.
+    prompt = " ".join(ADD_WORK_PROMPT.split())
+    assert "Split by what the work needs, not by how many members exist" in prompt
+    assert "Leaving a member without a task in this cycle is normal" in prompt
+    assert "One task is the right answer for a request that is one piece of work" in prompt
+    assert "The member list is not a checklist to fill" in prompt

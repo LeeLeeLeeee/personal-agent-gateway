@@ -5604,3 +5604,9 @@ p {
 /* 마크다운이 만든 블록에 바깥 여백까지 주면 말풍선 안이 헐거워진다. */
 .team-question-history-answer > .md > :first-child { margin-top: 0; }
 .team-question-history-answer > .md > :last-child { margin-bottom: 0; }
+
+/* 계획을 나눈 것이 동시 실행을 만들었는지. hero 의 다른 요약과 같은 크기로
+   두되, 이득이 없는 계획은 눈에 걸리게 한다 -- 이 줄이 없으면 "일감 4개"가
+   "넷이 동시에 한다"로 읽힌다. */
+.team-plan-shape { color: var(--c-grey); }
+.team-plan-shape-flat { color: #8a3b12; font-weight: 600; }
