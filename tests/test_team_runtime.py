@@ -55,6 +55,7 @@ from personal_agent_gateway.team_runtime import (
     ACCEPTANCE_REVIEW_PROMPT,
     ADD_WORK_PROMPT,
     PLANNING_PROMPT,
+    QUESTION_PROMPT,
     WORKER_PROMPT,
     AcceptanceReviewResolution,
     TeamRuntime,
@@ -10105,3 +10106,57 @@ async def test_a_pause_does_not_mark_the_run_failed(tmp_path):
     run = setup.teams.get_team_run(setup.run.id)
     assert run.status == "paused"
     assert run.error_message is None
+
+
+@pytest.mark.asyncio
+async def test_a_question_produces_an_answer_and_no_tasks(tmp_path):
+    """이 조각의 본론: 물어도 일감이 생기지 않는다."""
+    setup = make_operation_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse("src/foo.py:12 에서 그렇게 하고 있습니다.", [])
+    ]
+
+    before = len(setup.teams.list_tasks(setup.run.id, setup.cycle.id))
+    answer = await setup.runtime.answer_question(
+        setup.run.id,
+        "이 값은 어디서 정해지나요?",
+        setup.cycle.id,
+    )
+
+    assert "src/foo.py:12" in answer
+    assert len(setup.teams.list_tasks(setup.run.id, setup.cycle.id)) == before
+
+    kinds = [message.kind for message in setup.teams.list_messages(setup.run.id)]
+    assert "user_question" in kinds
+    assert "lead_answer" in kinds
+
+
+@pytest.mark.asyncio
+async def test_a_question_can_be_asked_more_than_once_while_paused(tmp_path):
+    setup = make_operation_runtime(tmp_path)
+    setup.teams.set_run_status(setup.run.id, "paused")
+    setup.lead_client.responses = [
+        ModelResponse("첫 번째 답.", []),
+        ModelResponse("두 번째 답.", []),
+    ]
+
+    first = await setup.runtime.answer_question(setup.run.id, "첫 질문", setup.cycle.id)
+    second = await setup.runtime.answer_question(setup.run.id, "둘째 질문", setup.cycle.id)
+
+    assert first == "첫 번째 답."
+    assert second == "두 번째 답."
+    assert setup.teams.get_team_run(setup.run.id).status == "paused"
+
+
+def test_the_question_prompt_forbids_planning_and_demands_grounding():
+    """프롬프트가 지켜야 하는 네 가지를 고정한다.
+
+    WORKER_PROMPT 가 같은 근거 규칙을 갖는 이유와 같다: 확인하지 않은 주장을
+    사실처럼 쓰면 답변과 구분되지 않는다. 질문 답변에는 acceptance 검수가
+    없으므로 워커보다 오히려 더 필요하다.
+    """
+    assert "Do not break this into tasks" in QUESTION_PROMPT
+    assert "do not return JSON" in QUESTION_PROMPT
+    assert "read the workspace" in QUESTION_PROMPT
+    assert "name the file that shows it" in QUESTION_PROMPT
+    assert "say so plainly instead of" in QUESTION_PROMPT

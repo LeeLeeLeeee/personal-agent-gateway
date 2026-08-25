@@ -354,6 +354,28 @@ If the objection is that a finished task's acceptance criteria were too narrow,
 do not try to rewrite that task: create a follow-up task carrying the criteria
 that should have been there. A settled task's contract cannot be revised."""
 
+QUESTION_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
+The user is asking you a question. They are not adding work and not contesting the plan.
+
+Goal: {goal}
+Current tasks:
+{tasks}
+The question:
+{question}
+
+Answer it. Do not break this into tasks, do not assign anything to anyone, and
+do not return JSON. Reply in plain prose, in the language the question was asked in.
+
+Before you answer, read the workspace. Open the files the question is about rather
+than answering from what you remember of this run.
+
+When you state something as fact about this repository, name the file that shows it,
+with the line when you can. If you could not confirm something -- a file you cannot
+reach, a place outside what this run is allowed to read -- say so plainly instead of
+asserting it. A claim nobody checked, written as fact, is worse than a stated gap: it
+reads as an answer and cannot be told apart from one. Nothing reviews this answer
+before the user reads it, so that distinction is yours to keep."""
+
 PLAN_REVIEW_PROMPT = """You are {agent_label} in a personal-agent-gateway Team Run.
 
 The leader proposed the task plan below. Review it before any work starts.
@@ -4878,6 +4900,52 @@ class TeamRuntime:
             # relabel "interrupted" instead of "canceled".
             self._settle_canceled(run, cycle_id)
             raise
+
+    async def answer_question(
+        self,
+        team_run_id: str,
+        question: str,
+        cycle_id: str | None = None,
+    ) -> str:
+        """리드에게 묻고 답을 받는다. 일감도 사이클도 만들지 않는다.
+
+        런 상태를 건드리지 않는 것이 요점이다. 정지 중이면 정지인 채로,
+        끝난 런이면 끝난 채로 답만 돌려준다. 답변이 실패해도 팀런의
+        일감·사이클·수용 상태는 그대로다 -- 질문은 팀런 바깥의 일이다.
+
+        operation 원장을 쓰지 않는 이유: 원장은 사이클의 일감 실행을
+        복구하기 위한 것이고, 질문은 사이클에 속하지 않는다. 실패하면
+        사용자가 다시 물으면 되므로 복구할 상태 자체가 없다.
+        """
+        run = self._teams.get_team_run(team_run_id)
+        leader = _find_leader(self._teams.list_agents(run.id))
+        leader_agent = self._teams.get_agent(leader.id)
+        tasks = self._teams.list_tasks(run.id, cycle_id)
+        prompt = _space_block(
+            run,
+            self._space_policy(run, cycle_id),
+            cycle_id,
+        ) + _rules_block(
+            self._rules_snapshot(run, cycle_id), include_persona_baseline=False
+        ) + QUESTION_PROMPT.format(
+            goal=self._goal_context(run, cycle_id),
+            tasks="\n".join(
+                f"- {task.title} ({task.status})" for task in tasks
+            ) or "(no tasks yet)",
+            question=question,
+        )
+        self._teams.append_message(
+            run.id, None, leader.id, "user_question", question, {}, cycle_id=cycle_id
+        )
+        model = self._model(leader_agent, cycle_id)
+        response = await model.complete([{"role": "user", "content": prompt}])
+        if response.upstream_session_id:
+            self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
+        answer = response.content.strip()
+        self._teams.append_message(
+            run.id, leader.id, None, "lead_answer", answer, {}, cycle_id=cycle_id
+        )
+        return answer
 
     async def settle_contest(self, team_run_id: str, cycle_id: str) -> TeamRun:
         """Close a contest cycle that produced no work.
