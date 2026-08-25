@@ -3069,7 +3069,7 @@ class TeamRuntime:
                 # 으로 남는데, 그 상태는 _recover_open_operation 이
                 # OperationConflict 로 거절한다(:1320) -- 자동 재개가 아니라
                 # 운영자 복구 대상이 된다.
-                raise self._enter_pause(run, cycle_id)
+                raise await self._enter_pause(run, cycle_id)
             if not batch:
                 ready_tasks = self._teams.list_dependency_ready_tasks(
                     run.id, cycle_id
@@ -5295,16 +5295,24 @@ class TeamRuntime:
     def _pause_requested(self, team_run_id: str) -> bool:
         return self._teams.get_team_run(team_run_id).pause_requested_at is not None
 
-    def _enter_pause(self, run: TeamRun, cycle_id: str | None) -> RunPaused:
+    async def _enter_pause(self, run: TeamRun, cycle_id: str | None) -> RunPaused:
         """정지를 확정하고 올릴 예외를 만든다.
 
         요청 칸을 여기서 지우는 이유: 정지가 성립한 순간 그 요청은 소진됐다.
         남겨두면 재개하자마자 다음 배치 경계에서 또 멈춘다.
+
+        여기서 이벤트를 내는 이유: 상세 화면은 이벤트로만 갱신된다
+        (useTeamRunController 의 handleTeamEvent). 정지가 예외로 올라가는
+        경로에는 다른 발행 지점이 없으므로, 여기서 내지 않으면 화면은
+        `정지 요청됨` 에 머문 채 사용자가 나갔다 들어오기 전까지 정지가
+        걸린 사실을 모른다 -- 설계가 즉시 정지를 포기한 대가로 약속한 것이
+        바로 그 두 단계 표시다.
         """
         self._teams.set_run_status(run.id, "paused")
         if cycle_id is not None:
             self._teams.set_cycle_status(cycle_id, "paused")
         self._teams.clear_pause_request(run.id)
+        await self._publish({"type": "team.run.paused", "team_run_id": run.id})
         return RunPaused(run.id, cycle_id)
 
     async def _publish(self, event: dict[str, object]) -> None:
@@ -5512,6 +5520,10 @@ def _run_delta(run: TeamRun) -> dict[str, object]:
         "status": run.status,
         "summary": run.summary,
         "error_message": run.error_message,
+        # 화면의 `정지 요청됨` 배너가 읽는 칸이다. 델타에 없으면 프런트의
+        # 병합(applyTeamRunDelta)이 이전 값을 그대로 남기므로, 요청이 걸린
+        # 것도 소진된 것도 이벤트로는 전달되지 않는다.
+        "pause_requested_at": run.pause_requested_at,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
         "updated_at": run.updated_at,

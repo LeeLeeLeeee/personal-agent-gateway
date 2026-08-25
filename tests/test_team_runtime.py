@@ -10094,6 +10094,37 @@ async def test_a_pause_request_stops_the_run_between_batches(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_pause_publishes_the_event_the_screen_listens_for(tmp_path):
+    """정지가 걸린 사실이 이벤트로 나가야 화면이 안다.
+
+    상세 화면은 이벤트로만 갱신된다. 여기서 내지 않으면 사용자는 `정지
+    요청됨` 배너를 보며 계속 기다리다가, 나갔다 들어와야 정지된 것을 안다 --
+    즉시 정지를 포기한 대가로 약속한 두 단계 표시가 무너진다.
+    """
+    setup = make_operation_runtime(tmp_path)
+    bus = EventBus()
+    setup.runtime._event_bus = bus
+    _pause_test_task(setup, "Only")
+    setup.teams.request_pause(setup.run.id)
+
+    with pytest.raises(RunPaused):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    events = bus.recent()
+    paused = [event for event in events if event["type"] == "team.run.paused"]
+    assert len(paused) == 1
+    assert paused[0]["team_run_id"] == setup.run.id
+    assert paused[0]["run"]["status"] == "paused"
+    # 요청 칸도 델타에 실린다. 없으면 프런트의 병합이 이전 값을 남겨 `정지
+    # 요청됨` 배너가 소진된 뒤에도 그대로 걸려 있다.
+    assert paused[0]["run"]["pause_requested_at"] is None
+    reopened = next(
+        event for event in events if event["type"] == "team.run.reopened"
+    )
+    assert reopened["run"]["pause_requested_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_a_pause_does_not_mark_the_run_failed(tmp_path):
     """재-raise 목록 등록을 잊으면 넓은 except 가 정지를 실패로 만든다."""
     setup = make_operation_runtime(tmp_path)
