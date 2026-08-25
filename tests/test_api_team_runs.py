@@ -1113,6 +1113,52 @@ def test_a_paused_run_can_be_resumed(tmp_path: Path) -> None:
     assert response.status_code != 409
 
 
+def test_a_paused_cycle_on_a_continuous_run_is_the_one_resumed(tmp_path: Path) -> None:
+    """The status-check half of the /resume guard is the legacy path.
+
+    Every API-created run is lifecycle_mode="continuous" (create_team_run
+    hard-codes it), so every real /resume call also runs the cycle-selection
+    filter a few lines below the status check. test_a_paused_run_can_be_resumed
+    only exercises a lifecycle_mode="standard" run, where that filter is never
+    reached -- so it cannot catch a regression in the filter itself. This test
+    builds a continuous run with an actually-paused cycle and checks that
+    /resume both accepts it and targets that exact cycle, via the same
+    RecordingOrchestrator substitution the ambiguous-resume tests above use.
+    """
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Lead")
+    worker_id = create_persona(client, "Worker")
+    team_id = create_team(client, leader_id, [worker_id])
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Ship it",
+            "execution_policy": "triggered",
+        },
+    ).json()["team_run"]
+    service = client.app.state.team_run_service
+    cycle = service.create_cycle(run["id"], "manual", "paused-cycle")
+    service.set_cycle_status(cycle.id, "paused")
+    service.set_run_status(run["id"], "paused")
+
+    class RecordingOrchestrator:
+        def __init__(self):
+            self.resume_calls = []
+
+        def resume(self, team_run_id, cycle_id=None):
+            self.resume_calls.append((team_run_id, cycle_id))
+
+    orchestrator = RecordingOrchestrator()
+    client.app.state.team_run_orchestrator = orchestrator
+    client.app.state.team_cycle_dispatcher._orchestrator = orchestrator
+
+    response = client.post(f"/api/team-runs/{run['id']}/resume")
+
+    assert response.status_code != 409
+    assert orchestrator.resume_calls == [(run["id"], cycle.id)]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("execution_policy", ["auto", "triggered"])
 async def test_cancel_during_add_work_cannot_resurrect_continuous_lineage(
