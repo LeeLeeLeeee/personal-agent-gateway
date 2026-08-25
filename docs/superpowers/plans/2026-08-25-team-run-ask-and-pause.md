@@ -29,6 +29,7 @@
 - Modify: `src/personal_agent_gateway/migrations.py` (마이그레이션 34, 파일 끝 `MIGRATIONS` 튜플)
 - Modify: `src/personal_agent_gateway/team_lifecycle.py:21` `TeamRunStatus`, `:35` `CycleStatus`
 - Modify: `src/personal_agent_gateway/teams.py` — `TeamRun` 데이터클래스(`:76` 부근), `_team_run_from_row`(`:4054` 부근), `set_run_status` 아래
+- Modify: `src/personal_agent_gateway/api/team_runs.py:1428` `_team_run_payload`
 - Test: `tests/test_teams.py`
 
 **Interfaces:**
@@ -38,6 +39,7 @@
   - `TeamRunService.request_pause(team_run_id: str) -> TeamRun`
   - `TeamRunService.clear_pause_request(team_run_id: str) -> TeamRun`
   - 상태 문자열 `"paused"` (런과 사이클 양쪽)
+  - 팀런 payload의 `pause_requested_at` 필드 (Task 3의 API 테스트와 Task 6의 화면이 여기서 읽는다)
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
@@ -212,27 +214,37 @@ CycleStatus = Literal[
         return self.get_team_run(team_run_id)
 ```
 
-- [ ] **Step 7: 테스트 통과를 확인한다**
+- [ ] **Step 7: payload에 노출한다**
+
+`src/personal_agent_gateway/api/team_runs.py:1428` `_team_run_payload`의 반환 딕셔너리, `"finished_at"` 아래:
+
+```python
+        "pause_requested_at": run.pause_requested_at,
+```
+
+**여기서 하는 이유:** Task 3의 API 테스트와 Task 6의 화면이 이 값을 payload에서 읽는다. 필드를 만드는 작업이 노출까지 책임지지 않으면 두 작업이 각각 막힌다.
+
+- [ ] **Step 8: 테스트 통과를 확인한다**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_teams.py -q -p no:randomly`
 Expected: PASS (신규 3개 포함, 기존 실패 없음)
 
-- [ ] **Step 8: 스키마 회귀를 확인한다**
+- [ ] **Step 9: 스키마 회귀를 확인한다**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_db_agent_teams_schema.py -q -p no:randomly`
 Expected: PASS
 
 `LATEST_SCHEMA_VERSION`을 값으로 단언하는 테스트가 있으면 34로 갱신한다.
 
-- [ ] **Step 9: 린트**
+- [ ] **Step 10: 린트**
 
 Run: `python -m ruff check src/ tests/`
 Expected: 통과
 
-- [ ] **Step 10: 커밋**
+- [ ] **Step 11: 커밋**
 
 ```bash
-git add src/personal_agent_gateway/migrations.py src/personal_agent_gateway/team_lifecycle.py src/personal_agent_gateway/teams.py tests/test_teams.py
+git add src/personal_agent_gateway/migrations.py src/personal_agent_gateway/team_lifecycle.py src/personal_agent_gateway/teams.py src/personal_agent_gateway/api/team_runs.py tests/test_teams.py
 git commit -m "feat: 팀런 정지 요청 상태를 저장한다"
 ```
 
@@ -485,7 +497,10 @@ git commit -m "feat: 배치 경계에서 팀런을 정지한다"
 ```python
 def test_canceling_a_run_drops_a_pending_pause_request(tmp_path):
     # 기존 관행대로 client 와 돌고 있는 run 을 세운다.
-    client.post(f"/api/team-runs/{run_id}/pause")
+    #
+    # 정지 요청은 서비스로 직접 건다. /pause 엔드포인트는 Task 5 에서 생기고,
+    # 이 작업은 엔드포인트가 아니라 요청의 수명을 다룬다.
+    client.app.state.team_run_service.request_pause(run_id)
     assert client.get(f"/api/team-runs/{run_id}").json()["team_run"]["pause_requested_at"]
 
     client.post(f"/api/team-runs/{run_id}/cancel")
