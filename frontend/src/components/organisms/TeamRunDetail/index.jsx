@@ -47,7 +47,7 @@ const RUN_PHASES = [
 
 function phaseIndex(status) {
   const index = RUN_PHASES.findIndex((phase) => phase.statuses.includes(status));
-  if (["interrupted", "waiting_for_user"].includes(status)) return -1;
+  if (["interrupted", "waiting_for_user", "paused"].includes(status)) return -1;
   return index < 0 ? 0 : index;
 }
 
@@ -413,6 +413,59 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
           <Button size="btn-sm" disabled={submitting} onClick={onClose}>Cancel</Button>
           <Button size="btn-sm" variant="primary" disabled={submitting || !value.trim()} onClick={onSubmit}>
             {TERMINAL_STATUSES.includes(runStatus) ? "Reopen & request" : "Request work"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AskQuestionDialog({ open, history, value, submitting, failed, onChange, onClose, onSubmit }) {
+  if (!open) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={submitting ? undefined : onClose}>
+      <div
+        className="modal-card team-question-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="물어보기"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-head">
+          <span className="mono">QUESTION</span>
+          <button type="button" className="modal-close" aria-label="질문 닫기" disabled={submitting} onClick={onClose}>×</button>
+        </div>
+        <div className="team-question-dialog-body">
+          {history.length ? (
+            <div className="team-question-history">
+              {history.map((message) => (
+                <div
+                  key={message.id}
+                  className={message.kind === "lead_answer"
+                    ? "team-question-history-answer"
+                    : "team-question-history-question"}
+                >
+                  {message.content}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {failed ? <div className="team-question-error mono">답을 받지 못했습니다</div> : null}
+          <label className="mono team-task-dialog-label" htmlFor="team-question-input">QUESTION</label>
+          <textarea
+            id="team-question-input"
+            className="team-question-input"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="리드에게 물어볼 질문을 적어주세요."
+            autoFocus
+          />
+        </div>
+        <div className="team-question-dialog-actions">
+          <Button size="btn-sm" disabled={submitting} onClick={onClose}>닫기</Button>
+          <Button size="btn-sm" variant="primary" disabled={submitting || !value.trim()} onClick={onSubmit}>
+            {submitting ? "보내는 중..." : "보내기"}
           </Button>
         </div>
       </div>
@@ -801,6 +854,7 @@ export function TeamRunDetail({
   loading = false, loadError = false,
   onLoadDocument, onAddWork, onResume, onAnswerDecision,
   onRetryTask, onCancel, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto,
+  onPause, onAskQuestion,
   onRefreshDelivery, onCommitDelivery, onApplyDelivery,
   onResolveDeliveryConflict, onContinueDelivery, onCancelDeliveryConflicts,
   onContestPlan, onOpenSettings, onViewOutputs
@@ -813,6 +867,12 @@ export function TeamRunDetail({
   const [resuming, setResuming] = useState(false);
   const [retryingTaskId, setRetryingTaskId] = useState(null);
   const [workDialogOpen, setWorkDialogOpen] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [questionDialogOpen, setQuestionDialogOpen] = useState(false);
+  const [questionInput, setQuestionInput] = useState("");
+  const [askingQuestion, setAskingQuestion] = useState(false);
+  const [askQuestionFailed, setAskQuestionFailed] = useState(false);
+  const [askedMessages, setAskedMessages] = useState([]);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
@@ -955,11 +1015,19 @@ export function TeamRunDetail({
       && run.status !== "draft"
       && run.status !== "interrupted"
       && run.status !== "waiting_for_user"
+      && run.status !== "paused"
   );
-  const canResume = Boolean(onResume && run.status === "interrupted");
+  const canResume = Boolean(onResume && ["interrupted", "paused"].includes(run.status));
   const canCancel = Boolean(
-    onCancel && ["planning", "running", "summarizing", "waiting_for_user"].includes(run.status)
+    onCancel && ["planning", "running", "summarizing", "waiting_for_user", "paused"].includes(run.status)
   );
+  const isExecuting = ["planning", "running", "summarizing"].includes(run.status);
+  const canRequestPause = Boolean(onPause && isExecuting && !run.pause_requested_at);
+  const canAskQuestion = Boolean(onAskQuestion && (run.status === "paused" || !isExecuting));
+  const questionHistory = [
+    ...messages.filter((message) => message.kind === "user_question" || message.kind === "lead_answer"),
+    ...askedMessages
+  ];
   const retriedTaskIds = new Set(
     tasks.map((task) => task.retry_of_task_id).filter(Boolean)
   );
@@ -1038,11 +1106,32 @@ export function TeamRunDetail({
               disabled={resuming}
               onClick={resumeRun}
             >
-              {resuming ? "Resuming..." : "Resume"}
+              {run.status === "paused"
+                ? (resuming ? "재개하는 중..." : "재개")
+                : (resuming ? "Resuming..." : "Resume")}
             </Button>
           ) : null}
           {canAddWork ? (
             <Button size="btn-sm" variant="primary" onClick={() => setWorkDialogOpen(true)}>Add work</Button>
+          ) : null}
+          {canRequestPause ? (
+            <Button
+              size="btn-sm"
+              disabled={pausing}
+              onClick={async () => {
+                setPausing(true);
+                try {
+                  await onPause(run.id);
+                } finally {
+                  setPausing(false);
+                }
+              }}
+            >
+              {pausing ? "정지 요청 중..." : "정지"}
+            </Button>
+          ) : null}
+          {canAskQuestion ? (
+            <Button size="btn-sm" variant="primary" onClick={() => setQuestionDialogOpen(true)}>물어보기</Button>
           ) : null}
           {canCancel ? (
             <Button
@@ -1337,6 +1426,27 @@ export function TeamRunDetail({
         <div className="team-interrupted-banner" role="status">
           <span className="headline team-interrupted-title">Run interrupted</span>
           <span className="team-interrupted-copy">Running work was returned to Pending. Resume when you are ready.</span>
+        </div>
+      ) : null}
+
+      {run.status === "paused" ? (
+        <div className="team-paused-banner" role="status">
+          <span className="headline team-paused-title">정지됨</span>
+          <span className="team-paused-copy">
+            물어보기로 리드에게 질문할 수 있습니다. 재개하면 하던 일을 이어서 합니다.
+          </span>
+        </div>
+      ) : null}
+
+      {run.status !== "paused" && run.pause_requested_at ? (
+        <div className="team-paused-banner" role="status">
+          <span className="headline team-paused-title">정지 요청됨</span>
+          <span className="team-paused-copy">
+            돌고 있는 작업이 끝나면 멈춥니다.
+            {run.status === "planning"
+              ? " 계획 단계라 계획이 끝날 때까지 걸립니다."
+              : ""}
+          </span>
         </div>
       ) : null}
 
@@ -1746,6 +1856,33 @@ export function TeamRunDetail({
             setWorkDialogOpen(false);
           } finally {
             setSubmitting(false);
+          }
+        }}
+      />
+      <AskQuestionDialog
+        open={questionDialogOpen}
+        history={questionHistory}
+        value={questionInput}
+        submitting={askingQuestion}
+        failed={askQuestionFailed}
+        onChange={setQuestionInput}
+        onClose={() => setQuestionDialogOpen(false)}
+        onSubmit={async () => {
+          const text = questionInput.trim();
+          setAskingQuestion(true);
+          setAskQuestionFailed(false);
+          try {
+            const result = await onAskQuestion(run.id, text);
+            setAskedMessages((previous) => [
+              ...previous,
+              { id: `local-question-${previous.length}`, kind: "user_question", content: text },
+              { id: `local-answer-${previous.length}`, kind: "lead_answer", content: result.answer }
+            ]);
+            setQuestionInput("");
+          } catch {
+            setAskQuestionFailed(true);
+          } finally {
+            setAskingQuestion(false);
           }
         }}
       />

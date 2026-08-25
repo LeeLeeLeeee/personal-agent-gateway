@@ -516,6 +516,21 @@ export const api = {
       body: JSON.stringify({ instruction })
     }));
   },
+  async pauseRun(id) {
+    return jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/pause`, {
+      method: "POST"
+    }));
+  },
+  async askQuestion(id, question) {
+    return jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/questions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question })
+    }));
+  },
+  async listQuestions(id) {
+    return jsonOrNull(await fetch(`/api/team-runs/${encodeURIComponent(id)}/questions`));
+  },
   async contestPlan(id, objection) {
     const response = await fetch(`/api/team-runs/${encodeURIComponent(id)}/contests`, {
       method: "POST",

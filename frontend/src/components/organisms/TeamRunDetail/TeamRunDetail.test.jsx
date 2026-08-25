@@ -2099,3 +2099,104 @@ describe("TeamRunDetail contest availability", () => {
     expect(screen.getByRole("textbox", { name: /계획에 이의/ })).toBeInTheDocument();
   });
 });
+
+const baseRun = { id: "r1", goal: "Design", status: "running", run_mode: "plan_and_execute" };
+
+function renderDetail({ run, ...props } = {}) {
+  return render(
+    <TeamRunDetail
+      {...props}
+      detail={{
+        run: run || baseRun,
+        agents: [],
+        tasks: [],
+        messages: []
+      }}
+    />
+  );
+}
+
+describe("TeamRunDetail pause and ask a question", () => {
+  it("정지된 런에서는 재개 버튼이 보인다", () => {
+    renderDetail({ run: { ...baseRun, status: "paused" }, onResume: vi.fn() });
+    expect(screen.getByRole("button", { name: /재개/ })).toBeInTheDocument();
+  });
+
+  it("정지된 런에서는 일감 추가를 막는다", () => {
+    renderDetail({ run: { ...baseRun, status: "paused" }, onAddWork: vi.fn() });
+    expect(screen.queryByRole("button", { name: /일감 추가/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+  });
+
+  it("물어보기를 누르면 질문이 전달된다", async () => {
+    const onAskQuestion = vi.fn().mockResolvedValue({ answer: "답입니다" });
+    renderDetail({ run: { ...baseRun, status: "paused" }, onAskQuestion });
+
+    await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
+    await userEvent.type(screen.getByLabelText(/QUESTION/i), "이건 왜 이렇죠");
+    await userEvent.click(screen.getByRole("button", { name: /보내기/ }));
+
+    expect(onAskQuestion).toHaveBeenCalledWith(baseRun.id, "이건 왜 이렇죠");
+  });
+
+  it("답을 받아도 대화상자가 닫히지 않는다", async () => {
+    const onAskQuestion = vi.fn().mockResolvedValue({ answer: "답입니다" });
+    renderDetail({ run: { ...baseRun, status: "paused" }, onAskQuestion });
+
+    await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
+    await userEvent.type(screen.getByLabelText(/QUESTION/i), "질문");
+    await userEvent.click(screen.getByRole("button", { name: /보내기/ }));
+
+    expect(await screen.findByText("답입니다")).toBeInTheDocument();
+    expect(screen.getByLabelText(/QUESTION/i)).toBeInTheDocument();
+  });
+
+  it("보내는 중에는 보내기 버튼을 비활성화한다", async () => {
+    const onAskQuestion = vi.fn(() => new Promise(() => {}));
+    renderDetail({ run: { ...baseRun, status: "paused" }, onAskQuestion });
+
+    await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
+    await userEvent.type(screen.getByLabelText(/QUESTION/i), "질문");
+    const sendButton = screen.getByRole("button", { name: /보내기/ });
+    await userEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(sendButton).toBeDisabled();
+    });
+  });
+
+  it("답을 받지 못하면 대화상자 안에 실패를 보여주고 열어둔다", async () => {
+    const onAskQuestion = vi.fn().mockRejectedValue(new Error("network"));
+    renderDetail({ run: { ...baseRun, status: "paused" }, onAskQuestion });
+
+    await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
+    await userEvent.type(screen.getByLabelText(/QUESTION/i), "질문");
+    await userEvent.click(screen.getByRole("button", { name: /보내기/ }));
+
+    expect(await screen.findByText("답을 받지 못했습니다")).toBeInTheDocument();
+    expect(screen.getByLabelText(/QUESTION/i)).toBeInTheDocument();
+  });
+
+  it("정지를 기다리는 동안 요청 중임을 보여준다", () => {
+    renderDetail({
+      run: { ...baseRun, status: "running", pause_requested_at: "2026-08-25T00:00:00Z" }
+    });
+    expect(screen.getByText(/정지 요청됨/)).toBeInTheDocument();
+  });
+
+  it("계획 중 정지 요청이면 오래 걸리는 이유를 말한다", () => {
+    renderDetail({
+      run: { ...baseRun, status: "planning", pause_requested_at: "2026-08-25T00:00:00Z" }
+    });
+    expect(screen.getByText(/계획이 끝날 때까지/)).toBeInTheDocument();
+  });
+
+  it("정지 요청 버튼을 누르면 정지가 전달된다", async () => {
+    const onPause = vi.fn().mockResolvedValue();
+    renderDetail({ run: { ...baseRun, status: "running" }, onPause });
+
+    await userEvent.click(screen.getByRole("button", { name: "정지" }));
+
+    expect(onPause).toHaveBeenCalledWith(baseRun.id);
+  });
+});

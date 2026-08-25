@@ -2856,6 +2856,25 @@ p {
 .team-interrupted-copy {
     font-size: 12px;
 }
+/* Same shape as .team-interrupted-banner but a different color on purpose --
+   interrupted means "something cut this off"; paused means "the user asked
+   for this". Sharing a color would read as the same kind of event. */
+.team-paused-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: #e6f0ff;
+    color: #1c3f66;
+}
+.team-paused-title {
+    flex: none;
+    font-size: 13px;
+}
+.team-paused-copy {
+    font-size: 12px;
+}
 .team-failure-panel {
     display: flex;
     align-items: flex-start;
@@ -3578,6 +3597,52 @@ p {
     margin: 0;
 }
 .team-add-work-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 0 18px 18px;
+}
+.team-question-dialog {
+    width: min(720px, 96vw);
+}
+.team-question-dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px;
+}
+.team-question-history {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.team-question-history-question,
+.team-question-history-answer {
+    padding: 8px 10px;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+.team-question-history-question {
+    background: var(--c-panel);
+}
+.team-question-history-answer {
+    background: #e6f0ff;
+}
+.team-question-error {
+    color: var(--c-danger);
+    font-size: 11px;
+}
+.team-question-input {
+    width: 100%;
+    min-height: 90px;
+    border: var(--bd-sm);
+    padding: 8px 10px;
+    font: inherit;
+    resize: vertical;
+    margin-bottom: 8px;
+}
+.team-question-dialog-actions {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
