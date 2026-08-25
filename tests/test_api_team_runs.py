@@ -981,6 +981,32 @@ def test_cancel_continuous_run_cancels_queued_hook_lineage(tmp_path: Path) -> No
     assert client.app.state.hook_run_service.get_run(hook_run.id).status == "canceled"
 
 
+def test_canceling_a_run_drops_a_pending_pause_request(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Leader")
+    worker_id = create_persona(client, "Worker")
+    team_id = create_team(client, leader_id, [worker_id])
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "Process hook",
+            "execution_policy": "triggered",
+        },
+    ).json()["team_run"]
+    run_id = run["id"]
+
+    # 정지 요청은 서비스로 직접 건다. /pause 엔드포인트는 Task 5 에서 생기고,
+    # 이 작업은 엔드포인트가 아니라 요청의 수명을 다룬다.
+    client.app.state.team_run_service.request_pause(run_id)
+    assert client.get(f"/api/team-runs/{run_id}").json()["team_run"]["pause_requested_at"]
+
+    client.post(f"/api/team-runs/{run_id}/cancel")
+
+    run = client.get(f"/api/team-runs/{run_id}").json()["team_run"]
+    assert run["pause_requested_at"] is None
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("execution_policy", ["auto", "triggered"])
 async def test_cancel_during_add_work_cannot_resurrect_continuous_lineage(

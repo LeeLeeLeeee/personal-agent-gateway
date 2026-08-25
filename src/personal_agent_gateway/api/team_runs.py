@@ -1067,6 +1067,8 @@ async def cancel_team_run(
         run = service.cancel_waiting_decision(team_run_id)
     elif run.status not in _TERMINAL:
         run = service.set_run_status(team_run_id, "canceled")
+    if run.pause_requested_at is not None:
+        run = service.clear_pause_request(team_run_id)
     record_domain_audit(
         request,
         principal,

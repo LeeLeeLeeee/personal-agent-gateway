@@ -265,6 +265,11 @@ class TeamCycleDispatcher:
         cycle = self._teams.get_cycle(cycle_id)
         if cycle.status == "waiting_for_provider":
             return
+        if cycle.status in TERMINAL_CYCLE_STATUSES:
+            # 정지를 눌렀는데 그 사이 팀이 끝났다. 멈출 것이 없으므로 요청은
+            # 소진된다. 남겨두면 다음 사이클이 시작하자마자 아무도 누르지
+            # 않은 정지가 걸린다.
+            self._teams.clear_pause_request(run.id)
         result = self._cycles.settle_cycle(cycle_id)
         if not result.transitioned:
             return

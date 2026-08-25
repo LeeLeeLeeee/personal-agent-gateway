@@ -891,6 +891,55 @@ async def test_a_paused_run_leaves_the_cycle_and_request_alone(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_a_settled_cycle_drops_a_pause_request_nobody_could_honor(
+    tmp_path: Path,
+) -> None:
+    """정지를 눌렀는데 그 사이 팀이 끝나면, 요청은 소진된다.
+
+    남겨두면 다음 사이클이 시작하자마자 아무도 누르지 않은 정지가 걸린다.
+    """
+    services = make_dispatcher_services(tmp_path)
+    request = services.cycles.enqueue_request(
+        services.run.id,
+        "manual",
+        "client-1",
+        "work",
+        previous_cycle_id=None,
+    )
+    await services.dispatcher.run_one(services.run.id)
+    cycle = services.teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    services.teams.set_cycle_status(cycle.id, "completed", summary="done")
+    services.teams.request_pause(services.run.id)
+
+    await services.dispatcher.on_team_run_settled(services.run, cycle.id)
+
+    assert services.teams.get_team_run(services.run.id).pause_requested_at is None
+
+
+@pytest.mark.asyncio
+async def test_a_pause_request_survives_an_interrupt(tmp_path: Path) -> None:
+    """재시작을 건너도 사용자가 누른 정지는 살아남는다."""
+    services = make_dispatcher_services(tmp_path)
+    request = services.cycles.enqueue_request(
+        services.run.id,
+        "manual",
+        "client-1",
+        "work",
+        previous_cycle_id=None,
+    )
+    await services.dispatcher.run_one(services.run.id)
+    cycle = services.teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    services.teams.request_pause(services.run.id)
+    services.teams.set_cycle_status(cycle.id, "interrupted")
+
+    await services.dispatcher.on_team_run_settled(services.run, cycle.id)
+
+    assert services.teams.get_team_run(services.run.id).pause_requested_at is not None
+
+
+@pytest.mark.asyncio
 async def test_production_dispatcher_add_work_provider_wait_keeps_lineage_open(
     tmp_path: Path,
 ) -> None:
