@@ -54,6 +54,7 @@ from personal_agent_gateway.team_lifecycle import (
     MAX_CONCURRENT_WORKERS,
     TERMINAL_RUN_STATUSES,
     LifecycleIntegrityError,
+    RunPaused,
     cycle_execution_disposition,
 )
 from personal_agent_gateway.team_model_operations import (
@@ -2181,7 +2182,7 @@ class TeamRuntime:
             raise
         except UnparsableLeadOutput:
             return self._close_collaboration(self._teams.get_team_run(run.id))
-        except (ProviderOperationWaiting, AmbiguousModelOperation):
+        except (ProviderOperationWaiting, AmbiguousModelOperation, RunPaused):
             raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__
@@ -3038,6 +3039,15 @@ class TeamRuntime:
                         ):
                             return
                     continue
+            if not batch and self._pause_requested(run.id):
+                # 여기가 유일하게 안전한 자리다. batch 는 비었을 때만 다시
+                # 채워지므로(바로 아래) not batch 인 순간은 떠 있는 프로바이더
+                # 호출이 하나도 없는 시점이다. 호출이 떠 있는 채로 빠져나가면
+                # _execute 의 finally 가 그것을 취소하고 operation 이 invoking
+                # 으로 남는데, 그 상태는 _recover_open_operation 이
+                # OperationConflict 로 거절한다(:1320) -- 자동 재개가 아니라
+                # 운영자 복구 대상이 된다.
+                raise self._enter_pause(run, cycle_id)
             if not batch:
                 ready_tasks = self._teams.list_dependency_ready_tasks(
                     run.id, cycle_id
@@ -4720,7 +4730,7 @@ class TeamRuntime:
             # The escalation already published the decision request and moved the
             # run to waiting_for_user. Return that state rather than failing.
             return self._close_collaboration(self._teams.get_team_run(run.id))
-        except (ProviderOperationWaiting, AmbiguousModelOperation):
+        except (ProviderOperationWaiting, AmbiguousModelOperation, RunPaused):
             raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__
@@ -4934,7 +4944,7 @@ class TeamRuntime:
         except asyncio.CancelledError:
             self._settle_canceled(run, cycle_id)
             raise
-        except (ProviderOperationWaiting, AmbiguousModelOperation):
+        except (ProviderOperationWaiting, AmbiguousModelOperation, RunPaused):
             raise
         except Exception as exc:  # noqa: BLE001
             error = redact_text(exc) or type(exc).__name__
@@ -5213,6 +5223,21 @@ class TeamRuntime:
             self._teams.reset_agent_reinvocations(cycle.team_run_id)
             self._teams.reset_agents_for_new_cycle(cycle.team_run_id)
         self._teams.set_cycle_status(cycle_id, "running")
+
+    def _pause_requested(self, team_run_id: str) -> bool:
+        return self._teams.get_team_run(team_run_id).pause_requested_at is not None
+
+    def _enter_pause(self, run: TeamRun, cycle_id: str | None) -> RunPaused:
+        """정지를 확정하고 올릴 예외를 만든다.
+
+        요청 칸을 여기서 지우는 이유: 정지가 성립한 순간 그 요청은 소진됐다.
+        남겨두면 재개하자마자 다음 배치 경계에서 또 멈춘다.
+        """
+        self._teams.set_run_status(run.id, "paused")
+        if cycle_id is not None:
+            self._teams.set_cycle_status(cycle_id, "paused")
+        self._teams.clear_pause_request(run.id)
+        return RunPaused(run.id, cycle_id)
 
     async def _publish(self, event: dict[str, object]) -> None:
         if self._event_bus is not None:

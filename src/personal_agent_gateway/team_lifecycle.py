@@ -66,6 +66,21 @@ TerminalCycleStatus = Literal[
 ]
 DependencyDisposition = Literal["ready", "waiting", "skip"]
 
+
+class RunPaused(RuntimeError):
+    """사용자 요청으로 런이 안전한 자리에서 멈췄다.
+
+    ProviderOperationWaiting 과 나란한 정지 신호다. 실패가 아니므로
+    start()/resume() 의 넓은 except 절보다 앞에서 재-raise 되어야 하고,
+    그러지 않으면 정지할 때마다 런이 실패로 표시된다.
+    """
+
+    def __init__(self, team_run_id: str, cycle_id: str | None) -> None:
+        super().__init__("run_paused")
+        self.team_run_id = team_run_id
+        self.cycle_id = cycle_id
+
+
 TERMINAL_RUN_STATUSES = frozenset(
     {"completed", "completed_with_failures", "blocked", "failed", "canceled"}
 )

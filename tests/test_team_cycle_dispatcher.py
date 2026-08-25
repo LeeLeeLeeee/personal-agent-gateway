@@ -16,6 +16,7 @@ from personal_agent_gateway.team_cycle_dispatcher import (
     TeamCycleDispatcher,
 )
 from personal_agent_gateway.team_cycles import TeamCycleService
+from personal_agent_gateway.team_lifecycle import RunPaused
 from personal_agent_gateway.team_model_effects import (
     TeamModelEffectService,
     team_model_effect_result_validators,
@@ -858,6 +859,34 @@ async def test_operation_markers_preserve_persisted_cycle_state(
     assert cycle.status == (
         "waiting_for_provider" if marker == "waiting" else "interrupted"
     )
+    assert services.cycles.get_request(request.id).status == "dispatching"
+
+
+@pytest.mark.asyncio
+async def test_a_paused_run_leaves_the_cycle_and_request_alone(tmp_path: Path) -> None:
+    """정지는 사이클을 실패로 만들지 않고, 요청을 dispatching 에 남긴다."""
+    services = make_dispatcher_services(tmp_path)
+    request = services.cycles.enqueue_request(
+        services.run.id,
+        "manual",
+        "pause-1",
+        "work",
+        previous_cycle_id=None,
+    )
+
+    async def raise_run_paused(team_run_id, cycle_id, _instruction):
+        raise RunPaused(team_run_id, cycle_id)
+
+    services.orchestrator.run_cycle = raise_run_paused
+
+    # 1. dispatcher 호출이 예외를 밖으로 내보내지 않는다.
+    await services.dispatcher.run_one(services.run.id)
+
+    cycle = services.teams.get_cycle_for_request(request.id)
+    assert cycle is not None
+    # 2. 사이클 상태가 "failed" 가 아니다.
+    assert cycle.status != "failed"
+    # 3. 사이클 요청이 여전히 "dispatching" 이다.
     assert services.cycles.get_request(request.id).status == "dispatching"
 
 

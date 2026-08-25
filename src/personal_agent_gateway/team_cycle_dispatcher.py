@@ -9,7 +9,7 @@ from personal_agent_gateway.team_cycles import (
     TeamCycleRequest,
     TeamCycleService,
 )
-from personal_agent_gateway.team_lifecycle import TERMINAL_CYCLE_STATUSES
+from personal_agent_gateway.team_lifecycle import RunPaused, TERMINAL_CYCLE_STATUSES
 from personal_agent_gateway.team_model_invoker import AmbiguousModelOperation
 from personal_agent_gateway.team_provider_recovery import (
     ProviderOperationWaiting,
@@ -226,6 +226,13 @@ class TeamCycleDispatcher:
                 raise
         except ProviderOperationWaiting:
             return
+        except RunPaused:
+            # 정지는 사이클을 그대로 둔다. 사이클 요청도 dispatching 에
+            # 남는데 그것이 맞다 -- 멈춰서 묻는 사이에 다른 사이클이
+            # 끼어들면 안 된다(claim_next 는 런당 dispatching 요청이 하나
+            # 있으면 새 요청을 잡지 않는다, team_cycles.py:456).
+            # 재개가 이 요청을 이어받는다.
+            return
         except AmbiguousModelOperation:
             await self._interrupt_cycle(team_run_id, cycle.id)
             return
@@ -406,6 +413,13 @@ class TeamCycleDispatcher:
         except asyncio.CancelledError:
             return
         except ProviderOperationWaiting:
+            return
+        except RunPaused:
+            # 정지는 사이클을 그대로 둔다. 사이클 요청도 dispatching 에
+            # 남는데 그것이 맞다 -- 멈춰서 묻는 사이에 다른 사이클이
+            # 끼어들면 안 된다(claim_next 는 런당 dispatching 요청이 하나
+            # 있으면 새 요청을 잡지 않는다, team_cycles.py:456).
+            # 재개가 이 요청을 이어받는다.
             return
         except AmbiguousModelOperation:
             if cycle_id is None:

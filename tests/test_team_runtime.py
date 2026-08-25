@@ -27,6 +27,7 @@ from personal_agent_gateway.team_collaboration_service import (
 from personal_agent_gateway.team_lifecycle import (
     MAX_CONCURRENT_WORKERS,
     TERMINAL_RUN_STATUSES,
+    RunPaused,
 )
 from personal_agent_gateway.team_model_effects import (
     TeamModelEffectService,
@@ -10030,3 +10031,77 @@ async def test_concurrency_never_exceeds_the_ceiling_however_big_the_roster(
     assert [task.status for task in teams.list_tasks(run.id, cycle.id)] == [
         "completed"
     ] * 5
+
+
+def _pause_test_task(setup, title):
+    return setup.teams.create_task(
+        setup.run.id,
+        title,
+        f"{title} assignment.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        required=True,
+        acceptance=TaskAcceptance(
+            required_outputs=(),
+            # make_operation_runtime's worker_client answers with the
+            # "worker-result" verification name (team_runtime.py:418's
+            # _outcome_json default), so the required verification here has
+            # to match that name or acceptance rejects the outcome.
+            required_verifications=(RequiredVerification("worker-result", None),),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_pause_request_stops_the_run_between_batches(tmp_path):
+    """정지는 떠 있는 호출을 끊지 않고, 배치가 빈 자리에서 걸린다."""
+    setup = make_operation_runtime(tmp_path)
+    teams = setup.teams
+    first = _pause_test_task(setup, "First")
+    second = _pause_test_task(setup, "Second")
+
+    # 워커 한 명뿐이라 배치는 한 번에 하나. 첫 일감이 끝난 직후 정지를 요청한다.
+    #
+    # teams.finish_task 가 아니라 model_effects.apply_worker_outcome 을 감싸는
+    # 이유: 이 fixture 는 cycle_id 가 있는 일감을 operation 원장 경로로 돌리고,
+    # 그 경로의 성공 완료는 TeamModelEffectService 가 raw SQL 트랜잭션으로
+    # 처리한다(team_model_effects.py:353 의 _apply_task_outcome). finish_task
+    # 는 이 경로의 실패 폴백(team_runtime.py:3233)에서만 불리므로, 성공한
+    # 첫 일감 뒤에 걸어야 할 지점이 아니다.
+    model_effects = setup.runtime._model_effects
+    original_apply = model_effects.apply_worker_outcome
+
+    def apply_and_request_pause(operation_id, acceptance, *, workspace_changes):
+        result = original_apply(
+            operation_id, acceptance, workspace_changes=workspace_changes
+        )
+        if result.task.id == first.id:
+            teams.request_pause(setup.run.id)
+        return result
+
+    model_effects.apply_worker_outcome = apply_and_request_pause
+
+    with pytest.raises(RunPaused):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert teams.get_task(first.id).status == "completed"
+    assert teams.get_task(second.id).status == "pending"
+    assert teams.get_team_run(setup.run.id).status == "paused"
+    assert teams.get_cycle(setup.cycle.id).status == "paused"
+    # 요청은 정지로 바뀌면서 소진된다. 남겨두면 재개하자마자 또 멈춘다.
+    assert teams.get_team_run(setup.run.id).pause_requested_at is None
+
+
+@pytest.mark.asyncio
+async def test_a_pause_does_not_mark_the_run_failed(tmp_path):
+    """재-raise 목록 등록을 잊으면 넓은 except 가 정지를 실패로 만든다."""
+    setup = make_operation_runtime(tmp_path)
+    _pause_test_task(setup, "Only")
+    setup.teams.request_pause(setup.run.id)
+
+    with pytest.raises(RunPaused):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    run = setup.teams.get_team_run(setup.run.id)
+    assert run.status == "paused"
+    assert run.error_message is None
