@@ -1007,6 +1007,112 @@ def test_canceling_a_run_drops_a_pending_pause_request(tmp_path: Path) -> None:
     assert run["pause_requested_at"] is None
 
 
+@dataclass
+class AnsweringModel:
+    """고정된 답을 돌려주는 테스트 전용 모델.
+
+    answer_question 은 operation 원장을 쓰지 않고 model.complete() 를 바로
+    부르므로, 다른 팀런 테스트가 쓰는 OperationModel(complete_operation)이
+    아니라 이 모델이 필요하다.
+    """
+
+    answer: str
+
+    async def complete(self, messages: list[dict[str, object]]) -> ModelResponse:
+        return ModelResponse(self.answer, [])
+
+
+def test_pausing_an_idle_run_marks_it_paused_immediately(tmp_path: Path) -> None:
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    created = create_standard_run(app, leader.id)
+    run_id = created["id"]
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        response = client.post(f"/api/team-runs/{run_id}/pause")
+
+    assert response.status_code == 200
+    assert response.json()["team_run"]["status"] == "paused"
+
+
+def test_a_question_returns_an_answer_and_creates_no_tasks(tmp_path: Path) -> None:
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    created = create_standard_run(app, leader.id)
+    run_id = created["id"]
+    app.state.team_runtime = TeamRuntime(
+        app.state.team_run_service,
+        lambda _agent: AnsweringModel("설정 파일에서 정해집니다."),
+        app.state.event_bus,
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        before = client.get(f"/api/team-runs/{run_id}/tasks").json()["tasks"]
+
+        response = client.post(
+            f"/api/team-runs/{run_id}/questions",
+            json={"question": "이 값은 어디서 정해지나요?"},
+        )
+        assert response.status_code == 200
+        assert response.json()["answer"]
+
+        after = client.get(f"/api/team-runs/{run_id}/tasks").json()["tasks"]
+
+    assert len(after) == len(before)
+
+
+def test_the_question_log_holds_both_sides(tmp_path: Path) -> None:
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    created = create_standard_run(app, leader.id)
+    run_id = created["id"]
+    app.state.team_runtime = TeamRuntime(
+        app.state.team_run_service,
+        lambda _agent: AnsweringModel("왜냐하면요."),
+        app.state.event_bus,
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        client.post(f"/api/team-runs/{run_id}/questions", json={"question": "왜죠"})
+
+        messages = client.get(f"/api/team-runs/{run_id}/questions").json()["messages"]
+
+    kinds = [message["kind"] for message in messages]
+    assert kinds == ["user_question", "lead_answer"]
+
+
+def test_a_blank_question_is_refused(tmp_path: Path) -> None:
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    created = create_standard_run(app, leader.id)
+    run_id = created["id"]
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        response = client.post(
+            f"/api/team-runs/{run_id}/questions", json={"question": "   "}
+        )
+
+    assert response.status_code == 422
+
+
+def test_a_paused_run_can_be_resumed(tmp_path: Path) -> None:
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    created = create_standard_run(app, leader.id)
+    run_id = created["id"]
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        client.post(f"/api/team-runs/{run_id}/pause")
+        response = client.post(f"/api/team-runs/{run_id}/resume")
+
+    assert response.status_code != 409
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("execution_policy", ["auto", "triggered"])
 async def test_cancel_during_add_work_cannot_resurrect_continuous_lineage(

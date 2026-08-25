@@ -114,6 +114,18 @@ class AddWorkRequest(BaseModel):
     instruction: str
 
 
+class AskQuestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question: str
+
+    @field_validator("question")
+    @classmethod
+    def reject_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("question is required")
+        return value
+
+
 class AnswerDecisionRequest(BaseModel):
     request_id: str
     revision: int
@@ -785,20 +797,25 @@ async def resume_team_run(
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     if registry.is_running(team_run_id):
         raise HTTPException(status_code=409, detail="Team run already running")
-    if run.status != "interrupted":
-        raise HTTPException(status_code=409, detail="Only interrupted team runs can be resumed")
+    if run.status not in {"interrupted", "paused"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Only interrupted or paused team runs can be resumed",
+        )
     cycle_id = None
     if run.lifecycle_mode == "continuous":
         cycle = next(
             (
                 candidate
                 for candidate in service.list_cycles(team_run_id)
-                if candidate.status == "interrupted"
+                if candidate.status in {"interrupted", "paused"}
             ),
             None,
         )
         if cycle is None:
-            raise HTTPException(status_code=409, detail="No interrupted cycle to resume")
+            raise HTTPException(
+                status_code=409, detail="No interrupted or paused cycle to resume"
+            )
         cycle_id = cycle.id
 
     provider_recovery = request.app.state.team_provider_recovery
@@ -829,6 +846,106 @@ async def resume_team_run(
         team_run_id=team_run_id,
     )
     return {"team_run": _team_run_payload(run, request.app.state.team_run_service)}
+
+
+@router.post("/{team_run_id}/pause")
+async def pause_team_run(
+    request: Request,
+    team_run_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    service = request.app.state.team_run_service
+    registry = request.app.state.team_run_registry
+    try:
+        run = service.get_team_run(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    if run.status == "paused":
+        return {"team_run": _team_run_payload(run, service)}
+    if run.status in _TERMINAL:
+        raise HTTPException(
+            status_code=409, detail="Settled team runs cannot be paused"
+        )
+    if registry.is_running(team_run_id):
+        # 돌고 있으면 요청만 건다. 런타임이 배치 경계에서 집는다.
+        run = service.request_pause(team_run_id)
+    else:
+        # 돌고 있지 않으면 기다릴 것이 없다.
+        run = service.set_run_status(team_run_id, "paused")
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_paused",
+        action="team_runs.pause",
+        resource_type="team_run",
+        resource_id=team_run_id,
+        team_run_id=team_run_id,
+    )
+    return {"team_run": _team_run_payload(run, service)}
+
+
+@router.post("/{team_run_id}/questions")
+async def ask_team_run(
+    request: Request,
+    team_run_id: str,
+    payload: AskQuestionRequest,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    require_intake_open(request)
+    service = request.app.state.team_run_service
+    registry = request.app.state.team_run_registry
+    try:
+        service.get_team_run(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    if registry.is_running(team_run_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Pause the run before asking; it is still working",
+        )
+    answer = await request.app.state.team_runtime.answer_question(
+        team_run_id,
+        payload.question,
+    )
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.question_asked",
+        action="team_runs.ask",
+        resource_type="team_run",
+        resource_id=team_run_id,
+        team_run_id=team_run_id,
+        metadata={"question_length": len(payload.question)},
+    )
+    return {
+        "answer": answer,
+        "team_run": _team_run_payload(service.get_team_run(team_run_id), service),
+    }
+
+
+@router.get("/{team_run_id}/questions")
+def list_team_run_questions(
+    request: Request,
+    team_run_id: str,
+    _session: None = session_dependency,
+) -> dict[str, object]:
+    service = request.app.state.team_run_service
+    try:
+        messages = service.list_messages(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    return {
+        "messages": [
+            {
+                "id": message.id,
+                "kind": message.kind,
+                "content": message.content,
+                "created_at": message.created_at,
+            }
+            for message in messages
+            if message.kind in {"user_question", "lead_answer"}
+        ]
+    }
 
 
 @router.get("/{team_run_id}/decision-request")
