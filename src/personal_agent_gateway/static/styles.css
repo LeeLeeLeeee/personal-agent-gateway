@@ -2521,7 +2521,7 @@ p {
     justify-content: space-between;
     gap: 24px;
     border: var(--bd-hero);
-    padding: 18px 20px;
+    padding: 12px 16px;
     background: var(--c-white);
     box-shadow: 6px 6px 0 var(--c-black);
 }
@@ -2559,9 +2559,9 @@ p {
     color: var(--c-grey);
 }
 .team-run-detail-goal {
-    font-size: 30px;
+    font-size: 17px;
     margin: 0;
-    line-height: 1.15;
+    line-height: 1.35;
 }
 .team-run-request-label {
     display: block;
@@ -4768,7 +4768,7 @@ p {
 .team-detail-tab.active { background: #000; color: #fff; }
 .team-detail-tab:hover:not(.active) { background: #F0F0F0; }
 .team-detail-tab-badge { min-width: 18px; height: 17px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid currentColor; font-size: 9px; }
-.team-tab-panel { margin-top: 18px; }
+.team-tab-panel { margin-top: 12px; }
 .team-reports { display: flex; flex-direction: column; gap: 8px; }
 .team-agent-report { border: 3px solid #000; background: #fff; }
 .team-agent-report-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #000; }
@@ -5613,12 +5613,12 @@ p {
 
 /* 대시보드. 열자마자 보여야 하는 것만 모은 자리라, 탭 패널보다 위에서
    시각적으로 한 덩어리로 읽혀야 한다. */
-.team-dashboard { display: flex; flex-direction: column; gap: 16px; border: 2px solid #000; background: #fff; padding: 16px; margin-bottom: 16px; }
-.team-dashboard-request { display: flex; flex-direction: column; gap: 6px; }
-.team-dashboard-now { display: flex; flex-direction: column; gap: 8px; }
+.team-dashboard { display: flex; flex-direction: column; gap: 10px; border: 2px solid #000; background: #fff; padding: 12px 16px; margin-bottom: 12px; }
+.team-dashboard-request { display: flex; flex-direction: column; gap: 4px; }
+.team-dashboard-now { display: flex; flex-direction: column; gap: 6px; }
 .team-dashboard-now-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 /* 제목이 길어도 담당자와 경과 시간은 오른쪽에 붙어 있어야 한 줄로 읽힌다. */
-.team-dashboard-now-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; gap: 10px; padding: 6px 8px; background: var(--c-panel); }
+.team-dashboard-now-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; gap: 10px; padding: 4px 8px; background: var(--c-panel); }
 .team-dashboard-now-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team-dashboard-now-owner { font-size: 10px; color: var(--c-grey); }
 .team-dashboard-now-since { font-size: 10px; }
@@ -5626,3 +5626,9 @@ p {
 /* Run 탭의 물어보기·일감 추가. 헤더에서 내려온 것들이다. */
 .team-run-actions { display: flex; gap: 8px; margin-bottom: 12px; }
 .team-config-outputs { display: flex; flex-direction: column; gap: 12px; }
+
+/* 대시보드 안에서는 각 구획의 위 여백을 없앤다. 바깥 gap 이 이미 간격을
+   만들고 있어서, 구획마다 제 여백을 또 얹으면 다섯 항목이 첫 화면을 넘긴다. */
+.team-dashboard .team-section-head { margin-top: 0; }
+.team-dashboard .team-final-summary { margin-top: 0; }
+.team-dashboard .team-lanes { gap: 6px; }
