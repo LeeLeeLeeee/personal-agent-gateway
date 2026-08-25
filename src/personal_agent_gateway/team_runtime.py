@@ -4934,14 +4934,19 @@ class TeamRuntime:
             ) or "(no tasks yet)",
             question=question,
         )
-        self._teams.append_message(
-            run.id, None, leader.id, "user_question", question, {}, cycle_id=cycle_id
-        )
         model = self._model(leader_agent, cycle_id)
         response = await model.complete([{"role": "user", "content": prompt}])
         if response.upstream_session_id:
             self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
         answer = response.content.strip()
+        # 질문을 호출 뒤에 적는 이유: 기록은 성립한 한 번의 문답이지 시도가
+        # 아니다. 호출 전에 적으면 실패한 질문이 답 없는 채로 영구히 남고,
+        # 대화상자는 그것을 매번 다시 그린다 -- 사용자에게는 답이 안 온
+        # 질문과 아직 답하는 중인 질문이 구분되지 않는다. 실패는 위의
+        # 설계대로 화면의 "답을 받지 못했습니다" 가 받고, 다시 물으면 된다.
+        self._teams.append_message(
+            run.id, None, leader.id, "user_question", question, {}, cycle_id=cycle_id
+        )
         self._teams.append_message(
             run.id, leader.id, None, "lead_answer", answer, {}, cycle_id=cycle_id
         )

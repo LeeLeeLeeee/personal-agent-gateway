@@ -10267,6 +10267,11 @@ async def test_a_failed_answer_leaves_the_run_alone(tmp_path):
     run = setup.teams.get_team_run(setup.run.id)
     assert run.status == "paused"
     assert run.error_message is None
+    # 답 없는 질문이 기록에 남으면 대화상자가 그것을 영구히 다시 그린다 --
+    # 사용자에게는 실패한 질문과 답하는 중인 질문이 구분되지 않는다.
+    kinds = [message.kind for message in setup.teams.list_messages(setup.run.id)]
+    assert "user_question" not in kinds
+    assert "lead_answer" not in kinds
 
 
 def test_the_question_prompt_forbids_planning_and_demands_grounding():
