@@ -206,6 +206,19 @@ Decide only from the goal, Cycle instruction, frozen rules, SPACE, Task contract
 outcome, failure reason, changed paths, history, and remaining attempts. The recovery
 attempt cap is {ACCEPTANCE_RECOVERY_CAP}.
 
+Before you choose, diagnose. In your reason, name what is actually blocking this
+task -- the specific thing that is missing or wrong, not a restatement of the
+rejection. Then answer one question: can the worker close it within the attempts
+that remain? An attempt spent on a gap the worker cannot close is an attempt the
+next real problem will not have.
+
+When the answer is no -- the gap needs a decision nobody has made, a capability
+this run does not have, or more work than the remaining attempts hold -- choose
+fail now rather than spending them to arrive at the same place. A task that fails
+early with a named cause is worth more than one that fails late with the same
+cause and a longer history. Say the cause in the summary so the next cycle can
+plan around it.
+
 Prefer Worker correction when the contract is valid. Revise acceptance only when the
 contract itself is wrong. Ask the user only for a consequential choice the Team cannot
 infer. Never approve the current rejected outcome retroactively.

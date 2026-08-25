@@ -41,7 +41,15 @@ RunMode = Literal["planning_only", "plan_and_execute", "review_only"]
 LifecycleMode = Literal["standard", "continuous"]
 AgentStatus = Literal["pending", "running", "waiting", "completed", "failed", "canceled"]
 DecisionRequestStatus = Literal["collecting", "awaiting_user", "resolved", "canceled"]
-ACCEPTANCE_RECOVERY_CAP = 2
+# 두 번은 이 저장소가 실제로 내는 크기의 일감에 짧았다. 실측에서 리드가 두
+# 번째 심사에 "거의 다 왔다, 마지막 시도에서 이것만 닫아라" 라고 쓴 채로
+# 한도가 끝났다 -- 남은 한 칸이 무엇인지 알고 있는데 시도할 자리가 없었다.
+#
+# 시도를 늘리는 것만으로는 닫히지 않을 구멍에 네 번을 쓰게 될 뿐이다. 그래서
+# ACCEPTANCE_REVIEW_PROMPT 가 매 회차에 무엇이 막고 있는지와 남은 시도로
+# 닫히는지를 먼저 답하게 하고, 아니면 지금 fail 하도록 요구한다. 둘은 같이
+# 움직여야 한다.
+ACCEPTANCE_RECOVERY_CAP = 4
 
 _ACTIVE_RUN_STATUSES = {"planning", "running", "summarizing", "waiting_for_provider"}
 _PROVIDER_WAIT_SOURCE_RUN_STATUSES = {"planning", "running", "summarizing"}

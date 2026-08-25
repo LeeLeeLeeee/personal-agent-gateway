@@ -3925,7 +3925,7 @@ async def test_worker_prose_cannot_complete_team_run(tmp_path) -> None:
     assert result.status == "failed"
     task = teams.list_tasks(run.id)[0]
     assert task.status == "failed"
-    assert task.acceptance_recovery_attempts == 2
+    assert task.acceptance_recovery_attempts == ACCEPTANCE_RECOVERY_CAP
     assert task.outcome is not None
     assert task.outcome["reason_code"] == "invalid_task_outcome"
     assert task.acceptance_result is not None
@@ -4495,7 +4495,7 @@ async def test_legacy_worker_declared_block_at_cap_matches_ledger_terminal_state
     worker_agent = next(
         agent for agent in teams.list_agents(run.id) if agent.role != "leader"
     )
-    assert task.acceptance_recovery_attempts == 2
+    assert task.acceptance_recovery_attempts == ACCEPTANCE_RECOVERY_CAP
     # Same triple the ledger path records for this input, proven by
     # test_worker_blocked_with_novel_reason_routes_to_leader_review plus the
     # apply/replay matrix in the task report: task "blocked", agent "waiting".
@@ -10377,3 +10377,26 @@ def test_the_add_work_prompt_splits_by_work_not_by_roster():
     assert "Leaving a member without a task in this cycle is normal" in prompt
     assert "One task is the right answer for a request that is one piece of work" in prompt
     assert "The member list is not a checklist to fill" in prompt
+
+
+def test_the_recovery_cap_allows_four_attempts():
+    """두 번은 이 저장소가 실제로 내는 크기의 일감에 짧았다.
+
+    실측: 리드가 두 번째 심사에서 "거의 다 왔다, 마지막 시도에서 이것만
+    닫아라" 라고 쓴 채 한도가 끝났다. 남은 한 칸이 무엇인지 알고 있는데도
+    시도할 자리가 없었다.
+    """
+    assert ACCEPTANCE_RECOVERY_CAP == 4
+
+
+def test_the_acceptance_review_demands_a_diagnosis_before_it_spends_an_attempt():
+    """한도를 늘렸으니 낭비하지 않는 것이 같이 와야 한다.
+
+    시도를 더 주면서 판단을 그대로 두면, 리드는 닫히지 않을 구멍에 네 번을
+    쓰고 같은 자리에서 끝난다. 매번 "무엇이 막고 있나" 와 "남은 시도로
+    닫히나" 를 먼저 답하게 하고, 아니면 지금 fail 하게 한다.
+    """
+    prompt = " ".join(ACCEPTANCE_REVIEW_PROMPT.split())
+    assert "name what is actually blocking" in prompt
+    assert "can the worker close it within the attempts that remain" in prompt
+    assert "choose fail now rather than spending" in prompt
