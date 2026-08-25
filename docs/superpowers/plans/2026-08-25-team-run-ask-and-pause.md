@@ -557,7 +557,7 @@ Expected: FAIL — `pause_requested_at` 이 여전히 남아 있다
 
 - [ ] **Step 5: 서버 재시작을 확인한다**
 
-재시작은 새 코드가 필요 없다. 재시작 시 돌던 런은 `interrupted`로 정리되고 `_interrupt_cycle`이 `on_team_run_settled`를 부르는데, 그 사이클은 종료 상태가 아니므로 Step 3의 정리는 걸리지 않는다. 요청은 남고, 재개하면 첫 배치 경계에서 정지가 성립한다 — **사용자가 눌렀던 정지가 재시작을 건너 살아남는 것이므로 맞는 동작이다.**
+재시작은 새 코드가 필요 없다. 재시작 시 돌던 런은 `app.py`의 시작 훅이 부르는 `TeamRunService.interrupt_active_runs()`가 직접 SQL로 `interrupted`로 바꾼다 — `on_team_run_settled`를 타지 않으므로 Step 3의 정리는 애초에 걸리지 않는다. 요청은 남고, 재개하면 첫 배치 경계에서 정지가 성립한다 — **사용자가 눌렀던 정지가 재시작을 건너 살아남는 것이므로 맞는 동작이다.**
 
 이것을 문장으로만 두지 말고 테스트로 고정한다:
 
@@ -1223,7 +1223,26 @@ async def test_a_failed_answer_leaves_the_run_alone(tmp_path):
 
 - [ ] **Step 3: 10번과 11번을 쓴다**
 
-Task 2의 `test_a_pause_request_stops_the_run_between_batches` 세팅(`_pause_test_task`와 `finish_task` 감싸기)을 그대로 가져와 채운다.
+Task 2의 `test_a_pause_request_stops_the_run_between_batches` 세팅을 그대로 가져와 채운다.
+
+**정지 훅은 `finish_task`가 아니다.** Task 2 구현 중에 확인된 사실: `make_operation_runtime`은 `cycle_id`가 있는 일감을 operation 원장 경로로 돌리고, 그 경로의 성공 완료는 `TeamModelEffectService._apply_task_outcome`이 raw SQL로 처리한다. `finish_task`는 실패 폴백(`team_runtime.py:3233`)에서만 불리므로 성공한 일감 뒤에 걸 수 없다. `model_effects.apply_worker_outcome`을 감싼다:
+
+```python
+    model_effects = setup.runtime._model_effects
+    original_apply = model_effects.apply_worker_outcome
+
+    def apply_and_request_pause(operation_id, acceptance, *, workspace_changes):
+        result = original_apply(
+            operation_id, acceptance, workspace_changes=workspace_changes
+        )
+        if result.task.id == first.id:
+            teams.request_pause(setup.run.id)
+        return result
+
+    model_effects.apply_worker_outcome = apply_and_request_pause
+```
+
+`_pause_test_task`의 required verification 이름도 `"done"`이 아니라 `"worker-result"`다 — fixture 의 워커 응답이 그 이름을 쓴다.
 
 ```python
 @pytest.mark.asyncio
@@ -1234,19 +1253,22 @@ async def test_resuming_a_paused_cycle_keeps_the_same_cycle(tmp_path):
     first = _pause_test_task(setup, "First")
     second = _pause_test_task(setup, "Second")
 
-    original_finish = teams.finish_task
+    model_effects = setup.runtime._model_effects
+    original_apply = model_effects.apply_worker_outcome
 
-    def finish_and_request_pause(task_id, agent_id, status, **kwargs):
-        result = original_finish(task_id, agent_id, status, **kwargs)
-        if task_id == first.id:
+    def apply_and_request_pause(operation_id, acceptance, *, workspace_changes):
+        result = original_apply(
+            operation_id, acceptance, workspace_changes=workspace_changes
+        )
+        if result.task.id == first.id:
             teams.request_pause(setup.run.id)
         return result
 
-    teams.finish_task = finish_and_request_pause
+    model_effects.apply_worker_outcome = apply_and_request_pause
     with pytest.raises(RunPaused):
         await setup.runtime.resume(setup.run.id, setup.cycle.id)
 
-    teams.finish_task = original_finish
+    model_effects.apply_worker_outcome = original_apply
     await setup.runtime.resume(setup.run.id, setup.cycle.id)
 
     assert len(teams.list_cycles(setup.run.id)) == 1
