@@ -1451,6 +1451,7 @@ def _team_run_payload(run: TeamRun, service=None) -> dict[str, object]:
         "created_at": run.created_at,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
+        "pause_requested_at": run.pause_requested_at,
         "updated_at": run.updated_at,
     }
 

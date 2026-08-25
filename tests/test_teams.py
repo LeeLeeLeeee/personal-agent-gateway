@@ -2355,3 +2355,52 @@ def test_a_single_worker_run_still_reports_sequential_with_concurrency_on(tmp_pa
     run = service.list_team_runs_enriched()[0]
 
     assert (run["max_workers"], run["execution_mode"]) == (1, "sequential")
+
+
+def test_pause_request_is_recorded_and_cleared(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    lead = personas.create_persona("Lead", "lead", "d", [], [])
+    member = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run("goal", lead.id, [member.id], "plan_and_execute", 1)
+
+    assert teams.get_team_run(run.id).pause_requested_at is None
+
+    paused = teams.request_pause(run.id)
+    assert paused.pause_requested_at is not None
+    assert teams.get_team_run(run.id).pause_requested_at == paused.pause_requested_at
+
+    cleared = teams.clear_pause_request(run.id)
+    assert cleared.pause_requested_at is None
+
+
+def test_a_second_pause_request_keeps_the_first_time(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    lead = personas.create_persona("Lead", "lead", "d", [], [])
+    member = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run("goal", lead.id, [member.id], "plan_and_execute", 1)
+
+    first = teams.request_pause(run.id).pause_requested_at
+    second = teams.request_pause(run.id).pause_requested_at
+
+    assert first == second
+
+
+def test_a_run_can_hold_the_paused_status(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    lead = personas.create_persona("Lead", "lead", "d", [], [])
+    member = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run("goal", lead.id, [member.id], "plan_and_execute", 1)
+
+    # paused 는 활성도 종료도 아니다: finished_at 이 찍히면 안 된다.
+    paused = teams.set_run_status(run.id, "paused")
+    assert paused.status == "paused"
+    assert paused.finished_at is None

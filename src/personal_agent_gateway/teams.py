@@ -74,6 +74,7 @@ class TeamRun:
     space_policy: dict | None = None
     parent_team_run_id: str | None = None
     plan_negotiation_enabled: bool = False
+    pause_requested_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -3784,6 +3785,35 @@ class TeamRunService:
         )
         return self.get_team_run(team_run_id)
 
+    def request_pause(self, team_run_id: str) -> TeamRun:
+        """사용자가 정지를 요청했음을 기록한다.
+
+        런타임은 안전한 자리에 닿았을 때 이 칸을 보고 멈춘다. 요청과 정지를
+        따로 두는 이유는 둘 사이에 지연이 있기 때문이다 -- 진행 중인 워커
+        호출을 끊지 않고 끝나기를 기다린다.
+
+        where 절의 is null 은 두 번 눌러도 첫 요청 시각이 유지되게 한다.
+        """
+        self.get_team_run(team_run_id)
+        now = _now()
+        self._db.execute(
+            """
+            update team_runs
+            set pause_requested_at = ?, updated_at = ?
+            where id = ? and pause_requested_at is null
+            """,
+            (now, now, team_run_id),
+        )
+        return self.get_team_run(team_run_id)
+
+    def clear_pause_request(self, team_run_id: str) -> TeamRun:
+        self.get_team_run(team_run_id)
+        self._db.execute(
+            "update team_runs set pause_requested_at = null, updated_at = ? where id = ?",
+            (_now(), team_run_id),
+        )
+        return self.get_team_run(team_run_id)
+
     def backfill_agent_avatars(self) -> int:
         updated = 0
         for row in self._db.fetchall(
@@ -4055,6 +4085,11 @@ def _team_run_from_row(row: object) -> TeamRun:
             bool(row["plan_negotiation_enabled"])
             if "plan_negotiation_enabled" in row.keys()
             else False
+        ),
+        pause_requested_at=(
+            row["pause_requested_at"]
+            if "pause_requested_at" in row.keys()
+            else None
         ),
     )
 

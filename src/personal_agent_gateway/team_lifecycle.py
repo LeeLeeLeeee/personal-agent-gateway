@@ -29,6 +29,7 @@ TeamRunStatus = Literal[
     "failed",
     "canceled",
     "interrupted",
+    "paused",
     "waiting_for_user",
     "waiting_for_provider",
 ]
@@ -38,6 +39,7 @@ CycleStatus = Literal[
     "waiting_for_provider",
     "waiting_for_user",
     "interrupted",
+    "paused",
     "completed",
     "completed_with_failures",
     "blocked",

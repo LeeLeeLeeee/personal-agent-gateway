@@ -1072,6 +1072,15 @@ def _migration_33_open_operation_per_task(
     )
 
 
+def _migration_34_team_run_pause_request(
+    connection: sqlite3.Connection,
+) -> None:
+    if "pause_requested_at" not in _columns(connection, "team_runs"):
+        connection.execute(
+            "alter table team_runs add column pause_requested_at text"
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -1106,6 +1115,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (31, "team-plan-negotiation", _migration_31_team_plan_negotiation),
     (32, "team-collaboration-deliveries", _migration_32_team_collaboration_deliveries),
     (33, "open-operation-per-task", _migration_33_open_operation_per_task),
+    (34, "team-run-pause-request", _migration_34_team_run_pause_request),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
