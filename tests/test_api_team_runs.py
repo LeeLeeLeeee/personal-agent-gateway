@@ -1393,6 +1393,170 @@ def test_a_paused_cycle_on_a_continuous_run_is_the_one_resumed(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_pause_ask_and_resume_settle_the_parked_cycle_request(
+    tmp_path: Path,
+) -> None:
+    """정지 → 질문 → 재개 한 바퀴가 원래 요청 위에서 끝난다.
+
+    정지가 예외로 dispatcher 까지 올라가면 그 사이클 요청은 dispatching 에
+    묶인 채로 남는다. 재개가 그 요청을 이어받지 못하면 두 가지 중 하나가
+    난다 -- 요청이 영영 dispatching 에 남아 그 런의 다음 요청이 전부 막히거나
+    (claim_next 는 런당 dispatching 요청이 하나면 새 요청을 잡지 않는다),
+    새 요청이 새 사이클을 만들어 정지 전 일감이 다른 사이클에 남는다.
+
+    조각별 테스트는 각 끝만 고정한다. 이 한 바퀴가 그 사이를 잇는다.
+    """
+    config = make_config(tmp_path)
+    app = create_app(config, agent_registry=ready_agent_registry(config))
+    teams = app.state.team_run_service
+    cycles = app.state.team_cycle_service
+    registry = app.state.team_run_registry
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    worker = app.state.persona_service.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run(
+        "goal",
+        leader.id,
+        [worker.id],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    worker_agent = next(
+        agent for agent in teams.list_agents(run.id)
+        if agent.id != run.leader_agent_id
+    )
+    request = cycles.enqueue_request(
+        run.id,
+        "manual",
+        "pause-round-trip",
+        "work",
+        previous_cycle_id=None,
+    )
+
+    def planned(plan_task_id: str, title: str) -> dict[str, object]:
+        return {
+            "plan_task_id": plan_task_id,
+            "title": title,
+            "description": f"{title} assignment.",
+            "owner_agent_id": worker_agent.id,
+            "required": True,
+            "acceptance": {
+                "required_outputs": [],
+                "required_verifications": ["worker-result"],
+            },
+        }
+
+    worker_outcome = json.dumps(
+        {
+            "status": "completed",
+            "summary": "done",
+            "reason_code": None,
+            "deliverables": [],
+            "verifications": [
+                {
+                    "name": "worker-result",
+                    "status": "passed",
+                    "evidence": "checked",
+                }
+            ],
+        }
+    )
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        client.cookies.set(
+            "agent_session",
+            app.state.auth_session_service.issue().token,
+        )
+
+        class LeadModel:
+            def __init__(self):
+                self.responses = [
+                    ModelResponse(
+                        json.dumps([planned("first", "First"), planned("second", "Second")]),
+                        [],
+                    ),
+                    ModelResponse("summary", []),
+                ]
+
+            async def complete_operation(self, _messages, *, consumer_run_id):
+                return self.responses.pop(0)
+
+            async def complete(self, _messages):
+                # 질문 답변은 원장을 쓰지 않고 이 쪽으로 온다.
+                return ModelResponse("워크스페이스를 읽어보니 그렇습니다.", [])
+
+        class WorkerModel:
+            def __init__(self):
+                self.calls = 0
+
+            async def complete_operation(self, _messages, *, consumer_run_id):
+                self.calls += 1
+                if self.calls == 1:
+                    # 첫 일감이 아직 떠 있는 동안 정지를 건다. 요청만 걸리고,
+                    # 런타임은 이 호출이 정산된 뒤 빈 배치 경계에서 집는다.
+                    paused = await client.post(f"/api/team-runs/{run.id}/pause")
+                    assert paused.status_code == 200
+                    assert paused.json()["team_run"]["pause_requested_at"]
+                return ModelResponse(worker_outcome, [], upstream_session_id="w")
+
+        lead_model = LeadModel()
+        worker_model = WorkerModel()
+        app.state.team_runtime = TeamRuntime(
+            teams,
+            lambda agent, _cycle_id=None: (
+                lead_model if agent.id == run.leader_agent_id else worker_model
+            ),
+            app.state.event_bus,
+            operations=app.state.team_model_operation_service,
+            model_invoker=app.state.team_model_invoker,
+            model_effects=app.state.team_model_effect_service,
+            provider_recovery=app.state.team_provider_recovery,
+        )
+
+        await app.state.team_cycle_dispatcher.run_one(run.id)
+
+        cycle = teams.get_cycle_for_request(request.id)
+        assert cycle is not None
+        assert teams.get_team_run(run.id).status == "paused"
+        assert teams.get_cycle(cycle.id).status == "paused"
+        # 요청은 dispatching 에 묶인 채로 남는다 -- 멈춰서 묻는 사이에 다른
+        # 사이클이 끼어들면 안 된다.
+        assert cycles.get_request(request.id).status == "dispatching"
+        statuses = sorted(task.status for task in teams.list_tasks(run.id, cycle.id))
+        assert statuses == ["completed", "pending"]
+
+        answered = await client.post(
+            f"/api/team-runs/{run.id}/questions",
+            json={"question": "지금 뭘 하고 있었나요?"},
+        )
+
+        assert answered.status_code == 200
+        assert answered.json()["answer"] == "워크스페이스를 읽어보니 그렇습니다."
+        # 질문은 일감도 사이클도 만들지 않는다.
+        assert len(teams.list_tasks(run.id, cycle.id)) == 2
+        assert len(teams.list_cycles(run.id)) == 1
+
+        resumed = await client.post(f"/api/team-runs/{run.id}/resume")
+        assert resumed.status_code == 200
+
+        await _poll_until(lambda: not registry.is_running(run.id))
+
+    # 새 사이클이 생기지 않았고, 묶여 있던 요청이 그 자리에서 끝났다.
+    assert len(teams.list_cycles(run.id)) == 1
+    assert cycles.get_request(request.id).status == "settled"
+    assert teams.get_cycle(cycle.id).status == "completed"
+    settled = teams.get_team_run(run.id)
+    assert settled.status == "completed"
+    assert settled.pause_requested_at is None
+    assert [task.status for task in teams.list_tasks(run.id, cycle.id)] == [
+        "completed",
+        "completed",
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("execution_policy", ["auto", "triggered"])
 async def test_cancel_during_add_work_cannot_resurrect_continuous_lineage(
     tmp_path: Path,
