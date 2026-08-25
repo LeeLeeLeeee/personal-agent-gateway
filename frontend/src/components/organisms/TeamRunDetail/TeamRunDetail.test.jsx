@@ -2191,12 +2191,31 @@ describe("TeamRunDetail pause and ask a question", () => {
     expect(screen.getByText(/계획이 끝날 때까지/)).toBeInTheDocument();
   });
 
-  it("정지 요청 버튼을 누르면 정지가 전달된다", async () => {
+  it("실행 중인 런에서 물어보기를 누르면 정지를 요청하고 보내기를 막는다", async () => {
     const onPause = vi.fn().mockResolvedValue();
-    renderDetail({ run: { ...baseRun, status: "running" }, onPause });
+    renderDetail({
+      run: { ...baseRun, status: "running" },
+      onPause,
+      onAskQuestion: vi.fn()
+    });
 
-    await userEvent.click(screen.getByRole("button", { name: "정지" }));
+    await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
 
     expect(onPause).toHaveBeenCalledWith(baseRun.id);
+    expect(screen.getByRole("button", { name: /보내기/ })).toBeDisabled();
+  });
+
+  it("정지된 런에서 물어보기를 누르면 정지를 요청하지 않고 바로 입력할 수 있다", async () => {
+    const onPause = vi.fn();
+    renderDetail({
+      run: { ...baseRun, status: "paused" },
+      onPause,
+      onAskQuestion: vi.fn()
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
+
+    expect(onPause).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/QUESTION/i)).toBeEnabled();
   });
 });

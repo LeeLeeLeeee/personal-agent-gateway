@@ -3629,6 +3629,12 @@ p {
 .team-question-history-answer {
     background: #e6f0ff;
 }
+.team-question-waiting {
+    padding: 8px 10px;
+    background: #e6f0ff;
+    color: #1c3f66;
+    font-size: 11px;
+}
 .team-question-error {
     color: var(--c-danger);
     font-size: 11px;

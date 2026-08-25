@@ -51,6 +51,13 @@ function phaseIndex(status) {
   return index < 0 ? 0 : index;
 }
 
+// Shared by the "정지 요청됨" banner and the ask-a-question dialog's waiting
+// state -- both are describing the exact same wait, so the copy has to match.
+function pauseWaitCopy(status) {
+  return "돌고 있는 작업이 끝나면 멈춥니다."
+    + (status === "planning" ? " 계획 단계라 계획이 끝날 때까지 걸립니다." : "");
+}
+
 function initials(name) {
   return (name || "")
     .trim()
@@ -420,8 +427,11 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
   );
 }
 
-function AskQuestionDialog({ open, history, value, submitting, failed, onChange, onClose, onSubmit }) {
+function AskQuestionDialog({
+  open, awaitingPause, runStatus, history, value, submitting, failed, onChange, onClose, onSubmit
+}) {
   if (!open) return null;
+  const inputDisabled = submitting || awaitingPause;
 
   return (
     <div className="modal-backdrop" onClick={submitting ? undefined : onClose}>
@@ -451,6 +461,9 @@ function AskQuestionDialog({ open, history, value, submitting, failed, onChange,
               ))}
             </div>
           ) : null}
+          {awaitingPause ? (
+            <div className="team-question-waiting mono" role="status">{pauseWaitCopy(runStatus)}</div>
+          ) : null}
           {failed ? <div className="team-question-error mono">답을 받지 못했습니다</div> : null}
           <label className="mono team-task-dialog-label" htmlFor="team-question-input">QUESTION</label>
           <textarea
@@ -459,12 +472,13 @@ function AskQuestionDialog({ open, history, value, submitting, failed, onChange,
             value={value}
             onChange={(event) => onChange(event.target.value)}
             placeholder="리드에게 물어볼 질문을 적어주세요."
+            disabled={inputDisabled}
             autoFocus
           />
         </div>
         <div className="team-question-dialog-actions">
           <Button size="btn-sm" disabled={submitting} onClick={onClose}>닫기</Button>
-          <Button size="btn-sm" variant="primary" disabled={submitting || !value.trim()} onClick={onSubmit}>
+          <Button size="btn-sm" variant="primary" disabled={inputDisabled || !value.trim()} onClick={onSubmit}>
             {submitting ? "보내는 중..." : "보내기"}
           </Button>
         </div>
@@ -1022,8 +1036,7 @@ export function TeamRunDetail({
     onCancel && ["planning", "running", "summarizing", "waiting_for_user", "paused"].includes(run.status)
   );
   const isExecuting = ["planning", "running", "summarizing"].includes(run.status);
-  const canRequestPause = Boolean(onPause && isExecuting && !run.pause_requested_at);
-  const canAskQuestion = Boolean(onAskQuestion && (run.status === "paused" || !isExecuting));
+  const canAskQuestion = Boolean(onAskQuestion && !TERMINAL_STATUSES.includes(run.status));
   const questionHistory = [
     ...messages.filter((message) => message.kind === "user_question" || message.kind === "lead_answer"),
     ...askedMessages
@@ -1114,24 +1127,28 @@ export function TeamRunDetail({
           {canAddWork ? (
             <Button size="btn-sm" variant="primary" onClick={() => setWorkDialogOpen(true)}>Add work</Button>
           ) : null}
-          {canRequestPause ? (
+          {canAskQuestion ? (
             <Button
               size="btn-sm"
+              variant="primary"
               disabled={pausing}
               onClick={async () => {
-                setPausing(true);
-                try {
-                  await onPause(run.id);
-                } finally {
-                  setPausing(false);
+                if (isExecuting && onPause) {
+                  setPausing(true);
+                  try {
+                    await onPause(run.id);
+                  } catch {
+                    // Opening the dialog anyway: it will keep showing the
+                    // waiting state, and closing/reopening retries the pause.
+                  } finally {
+                    setPausing(false);
+                  }
                 }
+                setQuestionDialogOpen(true);
               }}
             >
-              {pausing ? "정지 요청 중..." : "정지"}
+              {pausing ? "정지 요청 중..." : "물어보기"}
             </Button>
-          ) : null}
-          {canAskQuestion ? (
-            <Button size="btn-sm" variant="primary" onClick={() => setQuestionDialogOpen(true)}>물어보기</Button>
           ) : null}
           {canCancel ? (
             <Button
@@ -1441,12 +1458,7 @@ export function TeamRunDetail({
       {run.status !== "paused" && run.pause_requested_at ? (
         <div className="team-paused-banner" role="status">
           <span className="headline team-paused-title">정지 요청됨</span>
-          <span className="team-paused-copy">
-            돌고 있는 작업이 끝나면 멈춥니다.
-            {run.status === "planning"
-              ? " 계획 단계라 계획이 끝날 때까지 걸립니다."
-              : ""}
-          </span>
+          <span className="team-paused-copy">{pauseWaitCopy(run.status)}</span>
         </div>
       ) : null}
 
@@ -1861,6 +1873,8 @@ export function TeamRunDetail({
       />
       <AskQuestionDialog
         open={questionDialogOpen}
+        awaitingPause={isExecuting}
+        runStatus={run.status}
         history={questionHistory}
         value={questionInput}
         submitting={askingQuestion}
