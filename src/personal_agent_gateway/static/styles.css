@@ -5582,3 +5582,15 @@ p {
         justify-content: flex-start;
     }
 }
+
+/* 답이 오기 전 구간이 가장 길다. 대기 문구와 경과 시간을 한 줄에 붙여, 무엇을
+   기다리는지와 얼마나 기다렸는지가 같이 읽히게 한다. */
+.team-question-progress { margin: 8px 0; border: 2px solid #000; background: #fff; padding: 8px 10px; }
+.team-question-progress-head { display: flex; justify-content: space-between; gap: 12px; font-size: 10px; color: var(--c-grey); }
+.team-question-progress-elapsed { flex: none; }
+/* 리드가 지금 만지는 파일. 답과 섞이면 어디까지가 근거고 어디부터가 답인지
+   구분이 안 되므로 크기와 색을 낮춘다. */
+.team-question-progress-activity { margin-top: 6px; font-size: 10px; color: var(--c-grey); overflow-wrap: anywhere; }
+/* 아직 완성되지 않은 답. 기록에 남은 답과 같은 크기로 두되, 확정된 것이
+   아니라는 것이 보이도록 배경을 주지 않는다. */
+.team-question-progress-answer { margin-top: 6px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -467,7 +467,7 @@ def make_operation_runtime(tmp_path, *, cycle_instruction=None):
     )
     factory_sessions = []
 
-    def model_factory(agent, _cycle_id=None):
+    def model_factory(agent, _cycle_id=None, *, on_event=None):
         factory_sessions.append((agent.id, agent.upstream_session_id))
         return lead_client if agent.role == "leader" else worker_client
 
@@ -10286,3 +10286,77 @@ def test_the_question_prompt_forbids_planning_and_demands_grounding():
     assert "read the workspace" in QUESTION_PROMPT
     assert "name the file that shows it" in QUESTION_PROMPT
     assert "say so plainly instead of" in QUESTION_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_a_question_reports_progress_while_the_lead_works(tmp_path):
+    """리드가 답을 쓰는 동안 화면이 볼 수 있는 신호가 나가야 한다.
+
+    이 호출은 워커 한 명의 작업만큼 오래 걸릴 수 있는데 HTTP 요청 하나로
+    동기 처리된다. 진행을 내지 않으면 사용자는 "보내는 중" 하나만 보고
+    리드가 파일을 읽는 중인지, 어딘가에서 막힌 것인지, 이미 죽었는지
+    구분할 수 없다 -- 화면에서 가장 오래 걸리면서 가장 말이 없는 자리가 된다.
+    """
+    setup = make_operation_runtime(tmp_path)
+    bus = EventBus()
+    setup.runtime._event_bus = bus
+
+    class StreamingLead:
+        def __init__(self, on_event):
+            self._on_event = on_event
+
+        async def complete(self, messages):
+            await self._on_event(
+                {"kind": "tool.activity", "text": "read src/foo.py"}
+            )
+            await self._on_event({"kind": "message.delta", "text": "src/foo.py 를 "})
+            await self._on_event({"kind": "message.delta", "text": "봤습니다."})
+            return ModelResponse(content="src/foo.py 를 봤습니다.", tool_calls=[])
+
+    def model_factory(agent, cycle_id=None, *, on_event=None):
+        if agent.role == "leader":
+            assert on_event is not None, "질문 경로가 on_event 를 넘기지 않았다"
+            return StreamingLead(on_event)
+        return setup.worker_client
+
+    setup.runtime._model_factory = model_factory
+
+    answer = await setup.runtime.answer_question(setup.run.id, "이건 왜 이렇죠?")
+
+    assert answer == "src/foo.py 를 봤습니다."
+    progress = [
+        event
+        for event in bus.recent()
+        if event["type"] == "team.question.progress"
+    ]
+    assert progress, "진행 이벤트가 하나도 나가지 않았다"
+    assert all(event["team_run_id"] == setup.run.id for event in progress)
+    assert any(event.get("activity") == "read src/foo.py" for event in progress)
+    # 마지막 조각은 그때까지 쌓인 답 전체를 실어야 한다. 조각만 보내면
+    # 프런트가 순서와 누락을 스스로 관리해야 한다.
+    assert progress[-1]["answer_partial"] == "src/foo.py 를 봤습니다."
+
+
+@pytest.mark.asyncio
+async def test_other_team_model_calls_do_not_stream_progress(tmp_path):
+    """진행 이벤트는 질문 경로만 켠다.
+
+    모든 팀 모델 호출에 켜면 계획·워커·수용 심사까지 전부 쏟아진다. 화면이
+    감당해야 할 이벤트가 수십 배로 늘어나는데, 사용자가 기다리며 보고 있는
+    자리는 질문 하나뿐이다.
+    """
+    setup = make_operation_runtime(tmp_path)
+    seen = []
+
+    def model_factory(agent, cycle_id=None, *, on_event=None):
+        seen.append((agent.role, on_event is not None))
+        return setup.lead_client if agent.role == "leader" else setup.worker_client
+
+    setup.runtime._model_factory = model_factory
+    _pause_test_task(setup, "Only")
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert seen, "모델 호출이 없었다"
+    assert not any(streams for _role, streams in seen)
+

@@ -148,6 +148,7 @@ export function GatewayApp() {
     handleAddWork,
     handlePauseTeamRun,
     handleAskTeamRun,
+    questionProgress,
     handleResumeTeamRun,
     handleAnswerTeamDecision,
     handleCancelTeamRun,
@@ -1111,6 +1112,7 @@ export function GatewayApp() {
               onAddWork={handleAddWork}
               onPause={handlePauseTeamRun}
               onAskQuestion={handleAskTeamRun}
+              questionProgress={questionProgress}
               onResume={handleResumeTeamRun}
               onAnswerDecision={handleAnswerTeamDecision}
               onCancel={handleCancelTeamRun}

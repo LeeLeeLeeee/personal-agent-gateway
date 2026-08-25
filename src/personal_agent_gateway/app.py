@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import traceback
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -663,6 +664,8 @@ def _team_model_factory(
     def team_model_factory(
         agent: TeamAgent,
         cycle_id: str | None = None,
+        *,
+        on_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
     ) -> ModelClient:
         session = agent.upstream_session_id or None
         workspace_root = (
@@ -768,6 +771,7 @@ def _team_model_factory(
             )
         return HttpModelClient(
             base_url=config.lmg_base_url,
+            on_event=on_event,
             provider=agent.backend,
             model=agent.model,
             execution=execution,

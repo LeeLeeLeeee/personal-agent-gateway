@@ -1132,7 +1132,9 @@ def test_a_question_returns_an_answer_and_creates_no_tasks(tmp_path: Path) -> No
     run_id = created["id"]
     app.state.team_runtime = TeamRuntime(
         app.state.team_run_service,
-        lambda _agent: AnsweringModel("설정 파일에서 정해집니다."),
+        lambda _agent, _cycle_id=None, *, on_event=None: AnsweringModel(
+            "설정 파일에서 정해집니다."
+        ),
         app.state.event_bus,
     )
 
@@ -1159,7 +1161,7 @@ def test_the_question_log_holds_both_sides(tmp_path: Path) -> None:
     run_id = created["id"]
     app.state.team_runtime = TeamRuntime(
         app.state.team_run_service,
-        lambda _agent: AnsweringModel("왜냐하면요."),
+        lambda _agent, _cycle_id=None, *, on_event=None: AnsweringModel("왜냐하면요."),
         app.state.event_bus,
     )
 
@@ -1227,7 +1229,7 @@ def test_a_question_answers_under_the_paused_cycles_frozen_policy(
             prompts.append(str(messages[0]["content"]))
             return ModelResponse("답입니다.", [])
 
-    def model_factory(_agent, cycle_id=None):
+    def model_factory(_agent, cycle_id=None, *, on_event=None):
         factory_cycle_ids.append(cycle_id)
         return RecordingModel()
 
@@ -1276,7 +1278,7 @@ def test_a_question_on_a_settled_run_answers_under_the_run_policy(
 
     factory_cycle_ids: list[str | None] = []
 
-    def model_factory(_agent, cycle_id=None):
+    def model_factory(_agent, cycle_id=None, *, on_event=None):
         factory_cycle_ids.append(cycle_id)
         return AnsweringModel("끝난 뒤에도 답합니다.")
 
@@ -1505,7 +1507,7 @@ async def test_pause_ask_and_resume_settle_the_parked_cycle_request(
         worker_model = WorkerModel()
         app.state.team_runtime = TeamRuntime(
             teams,
-            lambda agent, _cycle_id=None: (
+            lambda agent, _cycle_id=None, *, on_event=None: (
                 lead_model if agent.id == run.leader_agent_id else worker_model
             ),
             app.state.event_bus,

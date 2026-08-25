@@ -2281,3 +2281,46 @@ describe("TeamRunDetail pause and ask a question", () => {
     );
   });
 });
+
+describe("TeamRunDetail question progress", () => {
+  async function openDialog(props) {
+    renderDetail({ run: { ...baseRun, status: "paused" }, ...props });
+    await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
+  }
+
+  it("리드가 무엇을 하고 있는지 보여준다", async () => {
+    // 답이 나오기 전 구간이 가장 길다. 여기가 비어 있으면 사용자는 파일을
+    // 읽는 중인지 막힌 것인지 구분할 수 없다.
+    await openDialog({
+      onAskQuestion: vi.fn(),
+      questionProgress: { activity: "read src/foo.py", answerPartial: null }
+    });
+    expect(screen.getByText(/read src\/foo\.py/)).toBeInTheDocument();
+  });
+
+  it("답이 써지는 대로 보여준다", async () => {
+    await openDialog({
+      onAskQuestion: vi.fn(),
+      questionProgress: { activity: null, answerPartial: "src/foo.py 를 봤" }
+    });
+    expect(screen.getByText("src/foo.py 를 봤")).toBeInTheDocument();
+  });
+
+  it("보내는 동안 경과 시간을 센다", async () => {
+    // 진행이 아직 아무것도 안 왔을 때도 살아 있다는 신호가 필요하다.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const never = new Promise(() => {});
+      await openDialog({ onAskQuestion: vi.fn(() => never) });
+      await userEvent.type(screen.getByLabelText(/QUESTION/i), "왜죠");
+      await userEvent.click(screen.getByRole("button", { name: /보내기/ }));
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(screen.getByText(/3초/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

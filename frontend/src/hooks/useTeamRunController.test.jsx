@@ -655,3 +655,66 @@ describe("useTeamRunController delete", () => {
     expect(dependencies.toast).toHaveBeenCalledWith("Team run deleted", "success");
   });
 });
+
+describe("useTeamRunController question progress", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.teamRuns.mockResolvedValue([]);
+    api.teamRunDetail.mockImplementation(async (id) => detail(id));
+    api.teamDocuments.mockImplementation(async (id) => [`${id}.md`]);
+    api.teamRunDelivery.mockImplementation(async (id) => ({ source: { path: id } }));
+  });
+
+  it("진행 이벤트는 상세를 다시 읽지 않는다", async () => {
+    // 아래의 갱신 규칙은 델타가 없는 이벤트를 전부 재조회로 보낸다. 리드가
+    // 답을 쓰는 동안 조각마다 상세를 다시 읽으면 화면이 그 요청들에 잠긴다.
+    const { result } = renderController();
+    await selectRun(result, "run-a");
+    const before = api.teamRunDetail.mock.calls.length;
+
+    act(() => result.current.handleTeamEvent({
+      type: "team.question.progress",
+      team_run_id: "run-a",
+      answer_partial: "src/foo.py 를 "
+    }));
+
+    expect(api.teamRunDetail.mock.calls.length).toBe(before);
+    expect(result.current.questionProgress.answerPartial).toBe("src/foo.py 를 ");
+  });
+
+  it("활동과 답변 조각은 서로를 지우지 않는다", async () => {
+    // 둘은 다른 이벤트로 온다. 통째로 갈아치우면 답이 써지기 시작한 순간
+    // 무슨 파일을 읽었는지가 사라지고, 그 반대도 마찬가지다.
+    const { result } = renderController();
+    await selectRun(result, "run-a");
+
+    act(() => result.current.handleTeamEvent({
+      type: "team.question.progress",
+      team_run_id: "run-a",
+      activity: "read src/foo.py"
+    }));
+    act(() => result.current.handleTeamEvent({
+      type: "team.question.progress",
+      team_run_id: "run-a",
+      answer_partial: "봤습니다."
+    }));
+
+    expect(result.current.questionProgress).toEqual({
+      activity: "read src/foo.py",
+      answerPartial: "봤습니다."
+    });
+  });
+
+  it("다른 런의 진행은 무시한다", async () => {
+    const { result } = renderController();
+    await selectRun(result, "run-a");
+
+    act(() => result.current.handleTeamEvent({
+      type: "team.question.progress",
+      team_run_id: "run-b",
+      answer_partial: "남의 답"
+    }));
+
+    expect(result.current.questionProgress).toBeNull();
+  });
+});

@@ -427,12 +427,33 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
   );
 }
 
+function useElapsedSeconds(active) {
+  // 진행 이벤트가 아직 하나도 안 온 구간에도 살아 있다는 신호가 필요하다.
+  // 리드가 파일을 읽는 동안은 답이 한 글자도 안 나오는데, 그 구간이 보통
+  // 가장 길다.
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setSeconds(0);
+      return undefined;
+    }
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      setSeconds(Math.floor((Date.now() - started) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return seconds;
+}
+
 function AskQuestionDialog({
   open, awaitingPause, runStatus, history, value, submitting, failed,
-  pauseFailed, onRetryPause, onChange, onClose, onSubmit
+  pauseFailed, onRetryPause, progress, onChange, onClose, onSubmit
 }) {
+  const elapsed = useElapsedSeconds(Boolean(open && submitting));
   if (!open) return null;
   const inputDisabled = submitting || awaitingPause;
+  const showProgress = submitting || progress?.activity || progress?.answerPartial;
 
   return (
     <div className="modal-backdrop" onClick={submitting ? undefined : onClose}>
@@ -472,6 +493,22 @@ function AskQuestionDialog({
             </div>
           ) : awaitingPause ? (
             <div className="team-question-waiting mono" role="status">{pauseWaitCopy(runStatus)}</div>
+          ) : null}
+          {showProgress ? (
+            <div className="team-question-progress" role="status">
+              {submitting ? (
+                <div className="team-question-progress-head mono">
+                  <span>리드가 파일을 읽고 답을 쓰는 중입니다. 몇 분 걸릴 수 있습니다.</span>
+                  <span className="team-question-progress-elapsed">{elapsed}초</span>
+                </div>
+              ) : null}
+              {progress?.activity ? (
+                <div className="team-question-progress-activity mono">{progress.activity}</div>
+              ) : null}
+              {progress?.answerPartial ? (
+                <div className="team-question-progress-answer">{progress.answerPartial}</div>
+              ) : null}
+            </div>
           ) : null}
           {failed ? <div className="team-question-error mono">답을 받지 못했습니다</div> : null}
           <label className="mono team-task-dialog-label" htmlFor="team-question-input">QUESTION</label>
@@ -877,7 +914,7 @@ export function TeamRunDetail({
   loading = false, loadError = false,
   onLoadDocument, onAddWork, onResume, onAnswerDecision,
   onRetryTask, onCancel, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto,
-  onPause, onAskQuestion,
+  onPause, onAskQuestion, questionProgress = null,
   onRefreshDelivery, onCommitDelivery, onApplyDelivery,
   onResolveDeliveryConflict, onContinueDelivery, onCancelDeliveryConflicts,
   onContestPlan, onOpenSettings, onViewOutputs
@@ -1901,6 +1938,7 @@ export function TeamRunDetail({
         failed={askQuestionFailed}
         pauseFailed={pauseFailed}
         onRetryPause={requestPause}
+        progress={questionProgress}
         onChange={setQuestionInput}
         onClose={() => setQuestionDialogOpen(false)}
         onSubmit={async () => {

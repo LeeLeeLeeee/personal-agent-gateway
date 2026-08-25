@@ -38,6 +38,9 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
   const [runFilter, setRunFilter] = useState("all");
   const [selectedTeamRunId, setSelectedTeamRunId] = useState(null);
   const [teamRunDetail, setTeamRunDetail] = useState(null);
+  // 리드가 답을 쓰는 동안의 진행. 상세와 따로 두는 이유: 이것은 서버가
+  // 가진 상태가 아니라 지나가는 신호라, 상세를 다시 읽으면 사라진다.
+  const [questionProgress, setQuestionProgress] = useState(null);
   const [teamRunDocuments, setTeamRunDocuments] = useState([]);
   const [teamRunDelivery, setTeamRunDelivery] = useState(null);
   const [teamRunDeliveryLoading, setTeamRunDeliveryLoading] = useState(false);
@@ -154,6 +157,17 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
         .catch(setScreenError);
     }
     if (event.team_run_id !== selectedTeamRunIdRef.current) return;
+    // 진행 이벤트는 상세를 다시 읽지 않는다. 아래 규칙은 델타가 없는 이벤트를
+    // 전부 재조회로 보내는데, 답이 써지는 동안 조각마다 상세를 다시 읽으면
+    // 화면이 그 요청들에 잠긴다. 활동과 답변 조각은 다른 이벤트로 오므로
+    // 통째로 갈아치우지 않고 각각 남긴다.
+    if (event.type === "team.question.progress") {
+      setQuestionProgress((current) => ({
+        activity: event.activity ?? current?.activity ?? null,
+        answerPartial: event.answer_partial ?? current?.answerPartial ?? null
+      }));
+      return;
+    }
     const invalidatesPendingDetail = teamRunDetailRequestPendingRef.current;
     const detailEventVersion = beginTeamRunDetailRequest();
     const requestedRun = {
@@ -373,7 +387,15 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     const targetId = runId || requestedRun.id;
     const text = question?.trim();
     if (!targetId || !text) throw new Error("Question is empty");
-    const result = await api.askQuestion(targetId, text);
+    // 이전 질문의 진행이 남아 있으면 새 질문이 시작하자마자 남의 답이 보인다.
+    setQuestionProgress(null);
+    try {
+      var result = await api.askQuestion(targetId, text);
+    } finally {
+      // 성공이든 실패든 진행은 여기서 끝난다. 남기면 대화상자가 이미 끝난
+      // 호출의 조각을 계속 보여준다.
+      setQuestionProgress(null);
+    }
     if (!result?.answer) throw new Error("The lead returned no answer");
     // 서버가 가진 질문 기록을 다시 읽는다. 보낸 것을 화면에서 이어붙이면
     // 다음 상세 갱신 때 저장된 행과 겹쳐 같은 문답이 두 번 그려진다.
@@ -690,6 +712,7 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     handleAddWork,
     handlePauseTeamRun,
     handleAskTeamRun,
+    questionProgress,
     handleResumeTeamRun,
     handleAnswerTeamDecision,
     handleCancelTeamRun,

@@ -837,6 +837,8 @@ class TeamModelFactory(Protocol):
         self,
         agent: TeamAgent,
         cycle_id: str | None = None,
+        *,
+        on_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
     ) -> ModelClient: ...
 
 
@@ -891,6 +893,7 @@ class TeamRuntime:
         cycle_id: str | None,
         *,
         upstream_session_id: str | None | object = _SESSION_UNSET,
+        on_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
     ) -> ModelClient:
         if upstream_session_id is not _SESSION_UNSET:
             agent = replace(
@@ -901,9 +904,13 @@ class TeamRuntime:
                     else None
                 ),
             )
+        # on_event 는 있을 때만 넘긴다. 이 저장소의 팩토리 스텁 대부분이
+        # (agent, cycle_id) 두 자리만 받으므로, 늘 넘기면 질문과 무관한 모든
+        # 모델 호출이 TypeError 로 깨진다.
+        streaming = {} if on_event is None else {"on_event": on_event}
         if cycle_id is None:
-            return self._model_factory(agent)
-        return self._model_factory(agent, cycle_id)
+            return self._model_factory(agent, **streaming)
+        return self._model_factory(agent, cycle_id, **streaming)
 
     async def _invoke_with_repair(
         self,
@@ -4901,6 +4908,42 @@ class TeamRuntime:
             self._settle_canceled(run, cycle_id)
             raise
 
+    def _question_progress(
+        self, team_run_id: str
+    ) -> Callable[[dict[str, object]], Awaitable[None]]:
+        """질문 호출이 흘리는 상류 이벤트를 화면이 아는 형태로 옮긴다.
+
+        이 경로에만 다는 이유: 질문은 사용자가 화면 앞에서 기다리는 유일한
+        모델 호출이다. 계획·워커·수용 심사에도 켜면 같은 이벤트가 수십 배로
+        나오지만 아무도 그것을 기다리며 보고 있지 않다.
+
+        조각이 아니라 그때까지 쌓인 답 전체를 싣는다. 조각만 보내면 프런트가
+        순서와 누락을 스스로 관리해야 하고, 이벤트 하나를 놓치면 그 뒤가 전부
+        어긋난 채로 남는다.
+        """
+        accumulated: list[str] = []
+
+        async def report(event: dict[str, object]) -> None:
+            kind = event.get("kind")
+            progress: dict[str, object] = {
+                "type": "team.question.progress",
+                "team_run_id": team_run_id,
+            }
+            if kind == "tool.activity":
+                progress["activity"] = str(event.get("text") or "")
+            elif kind in {"message.delta", "message.snapshot"}:
+                # snapshot 은 누적이 아니라 교체다 (remote_model_client 의
+                # _EVENT_KINDS 주석). 이어붙이면 답이 두 배로 늘어난다.
+                if kind == "message.snapshot":
+                    accumulated.clear()
+                accumulated.append(str(event.get("text") or ""))
+                progress["answer_partial"] = "".join(accumulated)
+            else:
+                return
+            await self._publish(progress)
+
+        return report
+
     async def answer_question(
         self,
         team_run_id: str,
@@ -4934,7 +4977,9 @@ class TeamRuntime:
             ) or "(no tasks yet)",
             question=question,
         )
-        model = self._model(leader_agent, cycle_id)
+        model = self._model(
+            leader_agent, cycle_id, on_event=self._question_progress(run.id)
+        )
         response = await model.complete([{"role": "user", "content": prompt}])
         if response.upstream_session_id:
             self._teams.set_agent_session(leader_agent.id, response.upstream_session_id)
