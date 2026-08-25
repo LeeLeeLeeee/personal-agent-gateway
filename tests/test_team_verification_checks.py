@@ -174,3 +174,117 @@ def test_unrecognized_check_type_fails_closed(tmp_path: Path) -> None:
 
     assert not result.passed
     assert "unknown" in result.evidence.lower()
+
+
+def _empty_workspace(tmp_path: Path) -> Path:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    return workspace
+
+
+def test_a_command_check_needs_a_command_and_no_path():
+    """이 검사만 파일을 가리키지 않는다.
+
+    나머지 넷은 "이 파일이 어떠한가" 를 묻지만 이것은 "이것이 도는가" 를
+    묻는다. path 를 강제하면 리드가 아무 파일이나 하나 적어 넣게 된다.
+    """
+    check = parse_verification_check(
+        {"type": "command_succeeds", "command": "python -c \"pass\""}
+    )
+
+    assert check.type == "command_succeeds"
+    assert check.command == 'python -c "pass"'
+    assert check.path == ""
+
+
+def test_a_command_check_rejects_a_blank_or_missing_command():
+    with pytest.raises(ValueError):
+        parse_verification_check({"type": "command_succeeds"})
+    with pytest.raises(ValueError):
+        parse_verification_check({"type": "command_succeeds", "command": "   "})
+
+
+def test_a_command_check_rejects_extra_fields():
+    with pytest.raises(ValueError):
+        parse_verification_check(
+            {"type": "command_succeeds", "command": "true", "path": "a.txt"}
+        )
+
+
+def test_a_command_that_exits_zero_passes(tmp_path: Path) -> None:
+    result = run_verification_check(
+        VerificationCheck(type="command_succeeds", path="", command="python -c \"pass\""),
+        _empty_workspace(tmp_path),
+    )
+
+    assert result.passed is True
+
+
+def test_a_failing_command_carries_its_output_as_evidence(tmp_path: Path) -> None:
+    """왜 떨어졌는지가 근거에 실려야 리드가 다음 지시를 쓸 수 있다.
+
+    종료 코드만 남기면 리드는 "실패했다" 만 알고 워커에게 무엇을 고치라고
+    말할 수 없다.
+    """
+    result = run_verification_check(
+        VerificationCheck(
+            type="command_succeeds",
+            path="",
+            command='python -c "import sys; sys.stderr.write(\'boom detail\'); sys.exit(3)"',
+        ),
+        _empty_workspace(tmp_path),
+    )
+
+    assert result.passed is False
+    assert "3" in result.evidence
+    assert "boom detail" in result.evidence
+
+
+def test_a_command_runs_in_the_workspace(tmp_path: Path) -> None:
+    """작업 폴더에서 돈다. 그래야 워커가 만든 파일을 검사가 볼 수 있다."""
+    workspace = _workspace(tmp_path, "made.txt", "x")
+
+    result = run_verification_check(
+        VerificationCheck(
+            type="command_succeeds",
+            path="",
+            command='python -c "import os,sys; sys.exit(0 if os.path.exists(\'made.txt\') else 1)"',
+        ),
+        workspace,
+    )
+
+    assert result.passed is True
+
+
+def test_a_command_that_never_ends_fails_instead_of_hanging(tmp_path: Path) -> None:
+    """제한 시간이 없으면 멈춘 명령 하나가 런 전체를 영원히 붙잡는다.
+
+    파일 검사는 즉시 끝나므로 이 위험이 없었다. 명령은 다르다.
+    """
+    result = run_verification_check(
+        VerificationCheck(
+            type="command_succeeds",
+            path="",
+            command='python -c "import time; time.sleep(30)"',
+        ),
+        _empty_workspace(tmp_path),
+        timeout_seconds=1,
+    )
+
+    assert result.passed is False
+    assert "시간" in result.evidence or "timed out" in result.evidence.lower()
+
+
+def test_long_output_is_truncated(tmp_path: Path) -> None:
+    """근거는 기록에 저장되고 프롬프트로도 간다. 통째로 실으면 둘 다 넘친다."""
+    result = run_verification_check(
+        VerificationCheck(
+            type="command_succeeds",
+            path="",
+            command='python -c "print(\'x\' * 50000); raise SystemExit(1)"',
+        ),
+        _empty_workspace(tmp_path),
+    )
+
+    assert result.passed is False
+    assert len(result.evidence) < 5000

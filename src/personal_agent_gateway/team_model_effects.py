@@ -3555,8 +3555,19 @@ def _canonical_check_payload(value: object) -> dict[str, str] | None:
     if not isinstance(value, dict):
         return None
     check_type = value.get("type")
+    if check_type not in CHECK_TYPES:
+        return None
+    # command_succeeds 만 파일을 가리키지 않는다. path 를 요구하면 이 검사가
+    # 조용히 버려지고, 리드가 붙인 판정 근거가 사라진 채 일감이 통과한다.
+    if check_type == "command_succeeds":
+        command = value.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return None
+        return verification_check_payload(
+            VerificationCheck(type=check_type, path="", command=command.strip())
+        )
     path = value.get("path")
-    if check_type not in CHECK_TYPES or not isinstance(path, str):
+    if not isinstance(path, str):
         return None
     check_value = value.get("value", "")
     pattern = value.get("pattern", "")

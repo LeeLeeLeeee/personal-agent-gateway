@@ -128,6 +128,12 @@ Return ONLY one of:
    {{"type":"file_contains","path":"relative/path","value":"substring"}}
    {{"type":"file_matches","path":"relative/path","pattern":"regex, at most 200 characters"}}
    {{"type":"json_parses","path":"relative/path"}}
+   {{"type":"command_succeeds","command":"python -m pytest tests/test_x.py -q"}}
+   command_succeeds runs the command in the workspace and passes only on exit 0.
+   Prefer it whenever the question is whether something WORKS. A file check can
+   only ask whether text appears somewhere; a worker that cannot make the thing
+   work can still add an import line that satisfies it, and the task passes
+   while the product is broken. That has happened here.
    A check you supply decides the outcome; your own claim about it is ignored.
    Name each verification for the part of the goal it settles, not for the file
    it looks at: "covers-the-missing-snapshot-case", not "report-exists". A name
@@ -224,7 +230,11 @@ Use exactly the fields shown; no others. Available checks, each with a
 workspace-relative "path": {{"type":"file_nonempty","path":"relative/path"}},
 {{"type":"file_contains","path":"relative/path","value":"substring"}},
 {{"type":"file_matches","path":"relative/path","pattern":"regex, at most 200 characters"}},
-{{"type":"json_parses","path":"relative/path"}}.
+{{"type":"json_parses","path":"relative/path"}},
+{{"type":"command_succeeds","command":"a command run in the workspace; passes on exit 0"}}.
+When a file check passed but the product does not work, replace it with
+command_succeeds -- that is the usual cause of a task that satisfied its
+contract without doing its job.
 A check you supply decides the outcome; your own claim about it is ignored."""
 
 SYNTHESIS_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
@@ -317,6 +327,10 @@ each with a workspace-relative "path":
 {{"type":"file_contains","path":"relative/path","value":"substring"}}
 {{"type":"file_matches","path":"relative/path","pattern":"regex, at most 200 characters"}}
 {{"type":"json_parses","path":"relative/path"}}
+{{"type":"command_succeeds","command":"python -m pytest tests/test_x.py -q"}}
+command_succeeds runs the command in the workspace and passes only on exit 0.
+Prefer it whenever the question is whether something WORKS -- a file check can be
+satisfied by an import line while the product stays broken.
 A check you supply decides the outcome; your own claim about it is ignored.
 plan_task_id is required and must be unique in this response.
 depends_on_task_ids may reference only plan_task_id values in this response.

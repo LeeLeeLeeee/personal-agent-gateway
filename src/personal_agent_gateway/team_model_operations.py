@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from personal_agent_gateway.db import Database
 from personal_agent_gateway.team_plan_negotiation import OBJECTION_KINDS
+from personal_agent_gateway.team_verification_checks import CHECK_TYPES
 
 OperationStage = Literal[
     "cycle_planning",
@@ -883,8 +884,12 @@ def _valid_verification_check(value: object) -> bool:
     if not isinstance(value, dict):
         return False
     check_type = value.get("type")
-    if check_type not in {"file_nonempty", "file_contains", "file_matches", "json_parses"}:
+    if check_type not in CHECK_TYPES:
         return False
+    # 파일을 가리키지 않는 유일한 검사. 이 분기가 없으면 리드가 낸 응답이
+    # 통째로 형식 오류가 되어 수리 요청으로 되돌아간다.
+    if check_type == "command_succeeds":
+        return set(value) == {"type", "command"} and _nonempty_text(value.get("command"))
     if not _nonempty_text(value.get("path")):
         return False
     expected = {"type", "path"}
