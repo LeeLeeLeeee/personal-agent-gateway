@@ -983,6 +983,9 @@ export function TeamRunDetail({
   const [previewDoc, setPreviewDoc] = useState(null);
   // 물어보기와 일감 추가가 있는 자리라 가장 자주 쓴다.
   const [activeTab, setActiveTab] = useState("run");
+  // Cycle 기록과 에이전트 보고는 성격이 다른 두 기록이다. 세로로 쌓으면
+  // 사이클이 많은 런에서 보고를 보려고 한참 스크롤해야 한다.
+  const [historyTab, setHistoryTab] = useState("cycles");
   const [showAllTasks, setShowAllTasks] = useState(false);
   const [canceling, setCanceling] = useState(false);
   const run = detail?.run;
@@ -1555,17 +1558,6 @@ export function TeamRunDetail({
 
           {run.execution_policy === "triggered" ? (
             <>
-              <details className="team-previous-cycle">
-                <summary className="mono">
-                  {previousCycle ? `PREVIOUS CYCLE #${previousCycle.sequence}` : "NO SETTLED CYCLE"}
-                </summary>
-                <div>
-                  <MarkdownContent
-                    source={previousCycle?.summary || "No previous Cycle summary."}
-                    pathRegistration={false}
-                  />
-                </div>
-              </details>
               <form
                 className="team-cycle-trigger"
                 onSubmit={async (event) => {
@@ -1850,7 +1842,25 @@ export function TeamRunDetail({
 
       {activeTab === "history" ? (
         <div className="team-tab-panel" role="tabpanel" aria-label="History">
-        <section className="team-cycles team-tab-panel" aria-label="Team Run cycles">
+          <div className="team-subtabs" role="tablist" aria-label="History views">
+            {[["cycles", "CYCLE HISTORY", cycles.length], ["reports", "AGENT REPORTS", reports.length]].map(
+              ([key, label, count]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={historyTab === key}
+                  className={`team-subtab${historyTab === key ? " active" : ""}`}
+                  onClick={() => setHistoryTab(key)}
+                >
+                  <span>{label}</span>
+                  {count ? <span className="team-detail-tab-badge mono">{count}</span> : null}
+                </button>
+              )
+            )}
+          </div>
+        {historyTab === "cycles" ? (
+        <section className="team-cycles" aria-label="Team Run cycles">
           <div className="team-section-head">
             <span className="mono team-section-label">Cycle History</span>
             <span className="mono team-section-count">{cycles.length}</span>
@@ -1909,7 +1919,9 @@ export function TeamRunDetail({
             <div className="team-task-empty mono">No Cycle history yet.</div>
           )}
         </section>
-        <div className="team-overview-disclosures" role="tabpanel" aria-label="Overview">
+        ) : null}
+        {historyTab === "reports" ? (
+        <div className="team-overview-disclosures" aria-label="Agent reports">
           <details
             className="team-overview-disclosure"
             open={TERMINAL_STATUSES.includes(run.status)}
@@ -1967,6 +1979,7 @@ export function TeamRunDetail({
             ) : <div className="team-task-empty mono">No handoffs yet.</div>}
           </details>
         </div>
+        ) : null}
         </div>
       ) : null}
 

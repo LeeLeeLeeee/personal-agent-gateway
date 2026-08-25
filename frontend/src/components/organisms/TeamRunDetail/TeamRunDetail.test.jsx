@@ -228,6 +228,8 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     // 쪽지 기록은 이제 History 탭 안에 있다.
     await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    // 쪽지 기록은 History 안의 AGENT REPORTS 하위 탭에 있다.
+    await userEvent.click(screen.getByRole("tab", { name: /AGENT REPORTS/ }));
     await userEvent.click(screen.getByText(/SHARED \/ HANDOFFS/));
     const handoffsSection = container.querySelector(".team-handoffs");
     expect(within(handoffsSection).getByText("which schema?")).toBeInTheDocument();
@@ -612,7 +614,10 @@ describe("TeamRunDetail", () => {
     // Triggered 박스는 이제 Run 탭 안에 있다.
     await userEvent.click(screen.getByRole("tab", { name: /^RUN/ }));
     const policyPanel = screen.getByRole("region", { name: "Cycle policy" });
-    expect(within(policyPanel).getByText("latest result")).toBeInTheDocument();
+    // 지난 사이클 요약은 더 이상 여기 그리지 않는다. 그 기록은 History 탭이
+    // 갖고 있고, 이 상자는 다음 사이클을 거는 자리다. 다만 어느 사이클을
+    // 이어받는지는 아래 payload 로 계속 확인한다.
+    expect(within(policyPanel).queryByText("latest result")).not.toBeInTheDocument();
     expect(within(policyPanel).queryByText("older result")).not.toBeInTheDocument();
     expect(within(policyPanel).getByText(/QUEUE · 2/)).toBeInTheDocument();
     expect(within(policyPanel).getByText(/ACTIVE REQUEST · request-9/)).toBeInTheDocument();
