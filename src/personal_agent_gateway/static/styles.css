@@ -3639,6 +3639,14 @@ p {
     color: var(--c-danger);
     font-size: 11px;
 }
+.team-question-pause-failed {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--c-danger);
+    font-size: 11px;
+}
 .team-question-input {
     width: 100%;
     min-height: 90px;

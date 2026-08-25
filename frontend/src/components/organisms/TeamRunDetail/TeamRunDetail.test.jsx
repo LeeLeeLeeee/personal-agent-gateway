@@ -2102,7 +2102,7 @@ describe("TeamRunDetail contest availability", () => {
 
 const baseRun = { id: "r1", goal: "Design", status: "running", run_mode: "plan_and_execute" };
 
-function renderDetail({ run, ...props } = {}) {
+function renderDetail({ run, messages = [], ...props } = {}) {
   return render(
     <TeamRunDetail
       {...props}
@@ -2110,7 +2110,7 @@ function renderDetail({ run, ...props } = {}) {
         run: run || baseRun,
         agents: [],
         tasks: [],
-        messages: []
+        messages
       }}
     />
   );
@@ -2139,7 +2139,7 @@ describe("TeamRunDetail pause and ask a question", () => {
     expect(onAskQuestion).toHaveBeenCalledWith(baseRun.id, "이건 왜 이렇죠");
   });
 
-  it("답을 받아도 대화상자가 닫히지 않는다", async () => {
+  it("답을 받아도 대화상자가 닫히지 않고 입력만 비운다", async () => {
     const onAskQuestion = vi.fn().mockResolvedValue({ answer: "답입니다" });
     renderDetail({ run: { ...baseRun, status: "paused" }, onAskQuestion });
 
@@ -2147,8 +2147,30 @@ describe("TeamRunDetail pause and ask a question", () => {
     await userEvent.type(screen.getByLabelText(/QUESTION/i), "질문");
     await userEvent.click(screen.getByRole("button", { name: /보내기/ }));
 
-    expect(await screen.findByText("답입니다")).toBeInTheDocument();
-    expect(screen.getByLabelText(/QUESTION/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText(/QUESTION/i)).toHaveValue(""));
+    expect(screen.getByRole("dialog", { name: "물어보기" })).toBeInTheDocument();
+  });
+
+  it("저장된 문답을 한 번만 그린다", async () => {
+    /* 화면이 보낸 것을 따로 들고 있으면 저장된 행이 도착할 때 겹쳐서 같은
+       문답이 두 번 나온다. 기록의 출처는 서버 하나여야 한다. */
+    const onAskQuestion = vi.fn().mockResolvedValue({ answer: "답입니다" });
+    renderDetail({
+      run: { ...baseRun, status: "paused" },
+      onAskQuestion,
+      messages: [
+        { id: "m1", kind: "user_question", content: "질문입니다" },
+        { id: "m2", kind: "lead_answer", content: "답입니다" }
+      ]
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
+    await userEvent.type(screen.getByLabelText(/QUESTION/i), "질문입니다");
+    await userEvent.click(screen.getByRole("button", { name: /보내기/ }));
+
+    await waitFor(() => expect(screen.getByLabelText(/QUESTION/i)).toHaveValue(""));
+    expect(screen.getAllByText("질문입니다")).toHaveLength(1);
+    expect(screen.getAllByText("답입니다")).toHaveLength(1);
   });
 
   it("보내는 중에는 보내기 버튼을 비활성화한다", async () => {
@@ -2217,5 +2239,45 @@ describe("TeamRunDetail pause and ask a question", () => {
 
     expect(onPause).not.toHaveBeenCalled();
     expect(screen.getByLabelText(/QUESTION/i)).toBeEnabled();
+  });
+
+  it.each(["completed", "completed_with_failures"])(
+    "끝난 런(%s)에서도 물어볼 수 있다",
+    async (status) => {
+      /* API 로 만든 팀런은 모두 continuous 이고, 그런 런에서 사이클 사이와
+         마지막 사이클 뒤의 대기 상태가 바로 이 둘이다. 설계가 "정지 단계를
+         건너뛰고 바로 질문"이라고 말하는 자리를 막으면 안 된다. */
+      const onPause = vi.fn();
+      renderDetail({ run: { ...baseRun, status }, onPause, onAskQuestion: vi.fn() });
+
+      await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
+
+      expect(onPause).not.toHaveBeenCalled();
+      expect(screen.getByLabelText(/QUESTION/i)).toBeEnabled();
+    }
+  );
+
+  it("정지 요청이 실패하면 대화상자에서 말하고 다시 걸 수 있다", async () => {
+    /* awaitingPause 는 run.status 에서 나오므로, 실패를 말하지 않으면
+       보내기는 영영 막혀 있고 출구는 대화상자를 닫는 것뿐이다. */
+    const onPause = vi.fn()
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce();
+    renderDetail({
+      run: { ...baseRun, status: "running" },
+      onPause,
+      onAskQuestion: vi.fn()
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
+
+    expect(await screen.findByText("정지를 요청하지 못했습니다")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "정지 다시 요청" }));
+
+    expect(onPause).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(screen.queryByText("정지를 요청하지 못했습니다")).not.toBeInTheDocument()
+    );
   });
 });

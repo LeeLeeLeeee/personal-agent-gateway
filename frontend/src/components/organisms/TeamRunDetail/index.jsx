@@ -428,7 +428,8 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
 }
 
 function AskQuestionDialog({
-  open, awaitingPause, runStatus, history, value, submitting, failed, onChange, onClose, onSubmit
+  open, awaitingPause, runStatus, history, value, submitting, failed,
+  pauseFailed, onRetryPause, onChange, onClose, onSubmit
 }) {
   if (!open) return null;
   const inputDisabled = submitting || awaitingPause;
@@ -461,7 +462,15 @@ function AskQuestionDialog({
               ))}
             </div>
           ) : null}
-          {awaitingPause ? (
+          {awaitingPause && pauseFailed ? (
+            // 정지 요청이 실패하면 팀은 계속 돌고 있으므로 입력은 계속 막혀
+            // 있어야 한다. 그대로 두면 대화상자는 영영 기다리는 모습으로
+            // 남고 출구가 닫는 것뿐이므로, 여기서 다시 걸 수 있게 한다.
+            <div className="team-question-pause-failed mono" role="status">
+              <span>정지를 요청하지 못했습니다</span>
+              <Button size="btn-sm" onClick={onRetryPause}>정지 다시 요청</Button>
+            </div>
+          ) : awaitingPause ? (
             <div className="team-question-waiting mono" role="status">{pauseWaitCopy(runStatus)}</div>
           ) : null}
           {failed ? <div className="team-question-error mono">답을 받지 못했습니다</div> : null}
@@ -886,7 +895,7 @@ export function TeamRunDetail({
   const [questionInput, setQuestionInput] = useState("");
   const [askingQuestion, setAskingQuestion] = useState(false);
   const [askQuestionFailed, setAskQuestionFailed] = useState(false);
-  const [askedMessages, setAskedMessages] = useState([]);
+  const [pauseFailed, setPauseFailed] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
@@ -1036,11 +1045,17 @@ export function TeamRunDetail({
     onCancel && ["planning", "running", "summarizing", "waiting_for_user", "paused"].includes(run.status)
   );
   const isExecuting = ["planning", "running", "summarizing"].includes(run.status);
-  const canAskQuestion = Boolean(onAskQuestion && !TERMINAL_STATUSES.includes(run.status));
-  const questionHistory = [
-    ...messages.filter((message) => message.kind === "user_question" || message.kind === "lead_answer"),
-    ...askedMessages
-  ];
+  // 끝난 런도 뺄 이유가 없다. API 로 만든 팀런은 모두 continuous 이고,
+  // 그런 런에서 사이클 사이와 마지막 사이클 뒤의 대기 상태가 바로
+  // completed / completed_with_failures 다 -- 설계가 "정지 단계를 건너뛰고
+  // 바로 질문"이라고 말하는 자리가 여기서 통째로 막혀 있었다. 정지 분기는
+  // isExecuting 으로 따로 걸려 있으므로 다른 것은 그대로다.
+  const canAskQuestion = Boolean(onAskQuestion);
+  // 서버가 가진 기록만 그린다. 보낸 것을 화면에서 덧붙이면 다음 갱신 때
+  // 저장된 행과 겹쳐 같은 문답이 두 번 나온다.
+  const questionHistory = messages.filter(
+    (message) => message.kind === "user_question" || message.kind === "lead_answer"
+  );
   const retriedTaskIds = new Set(
     tasks.map((task) => task.retry_of_task_id).filter(Boolean)
   );
@@ -1067,6 +1082,21 @@ export function TeamRunDetail({
       && ["failed", "completed_with_failures"].includes(run.status)
   );
   const canResumeFailure = Boolean(onResume && run.status === "interrupted" && failureRetryTask);
+
+  async function requestPause() {
+    if (!isExecuting || !onPause) return;
+    setPausing(true);
+    setPauseFailed(false);
+    try {
+      await onPause(run.id);
+    } catch {
+      // 대화상자는 그래도 연다. 실패는 그 안에서 말하고 그 안에서 다시
+      // 시도한다 -- 여기서 닫아버리면 무엇이 잘못됐는지 볼 자리가 없다.
+      setPauseFailed(true);
+    } finally {
+      setPausing(false);
+    }
+  }
 
   async function resumeRun() {
     setResuming(true);
@@ -1133,17 +1163,7 @@ export function TeamRunDetail({
               variant="primary"
               disabled={pausing}
               onClick={async () => {
-                if (isExecuting && onPause) {
-                  setPausing(true);
-                  try {
-                    await onPause(run.id);
-                  } catch {
-                    // Opening the dialog anyway: it will keep showing the
-                    // waiting state, and closing/reopening retries the pause.
-                  } finally {
-                    setPausing(false);
-                  }
-                }
+                await requestPause();
                 setQuestionDialogOpen(true);
               }}
             >
@@ -1879,6 +1899,8 @@ export function TeamRunDetail({
         value={questionInput}
         submitting={askingQuestion}
         failed={askQuestionFailed}
+        pauseFailed={pauseFailed}
+        onRetryPause={requestPause}
         onChange={setQuestionInput}
         onClose={() => setQuestionDialogOpen(false)}
         onSubmit={async () => {
@@ -1886,12 +1908,7 @@ export function TeamRunDetail({
           setAskingQuestion(true);
           setAskQuestionFailed(false);
           try {
-            const result = await onAskQuestion(run.id, text);
-            setAskedMessages((previous) => [
-              ...previous,
-              { id: `local-question-${previous.length}`, kind: "user_question", content: text },
-              { id: `local-answer-${previous.length}`, kind: "lead_answer", content: result.answer }
-            ]);
+            await onAskQuestion(run.id, text);
             setQuestionInput("");
           } catch {
             setAskQuestionFailed(true);
