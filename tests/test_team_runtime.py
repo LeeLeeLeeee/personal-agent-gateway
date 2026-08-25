@@ -10109,6 +10109,69 @@ async def test_a_pause_does_not_mark_the_run_failed(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_resuming_a_paused_cycle_keeps_the_same_cycle(tmp_path):
+    """새 사이클이 생기면 정지 전 일감이 다른 사이클에 남는다."""
+    setup = make_operation_runtime(tmp_path)
+    teams = setup.teams
+    first = _pause_test_task(setup, "First")
+    second = _pause_test_task(setup, "Second")
+
+    model_effects = setup.runtime._model_effects
+    original_apply = model_effects.apply_worker_outcome
+
+    def apply_and_request_pause(operation_id, acceptance, *, workspace_changes):
+        result = original_apply(
+            operation_id, acceptance, workspace_changes=workspace_changes
+        )
+        if result.task.id == first.id:
+            teams.request_pause(setup.run.id)
+        return result
+
+    model_effects.apply_worker_outcome = apply_and_request_pause
+
+    with pytest.raises(RunPaused):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    model_effects.apply_worker_outcome = original_apply
+    # make_operation_runtime's worker_client is seeded with exactly one
+    # response, spent on "First" before the pause. Resuming runs "Second"
+    # through the same worker client, so it needs a response of its own --
+    # without this the second worker call pops from an empty list and the
+    # task fails instead of completing, which is exactly what this test is
+    # checking did not happen.
+    setup.worker_client.responses.append(ModelResponse(_outcome_json("done"), []))
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert len(teams.list_cycles(setup.run.id)) == 1
+    assert teams.get_task(second.id).cycle_id == setup.cycle.id
+    assert teams.get_task(second.id).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_a_pause_requested_during_planning_lands_after_planning(tmp_path):
+    """계획 중에는 검사 지점이 없다. 계획이 끝난 뒤 첫 배치 경계에서 멈춘다."""
+    setup = make_operation_runtime(tmp_path, cycle_instruction="work")
+    teams = setup.teams
+
+    # 리드가 계획을 반환하는 순간(OperationModel.complete_operation 이 응답을
+    # 소비하기 직전) 정지를 건다. OperationModel 은 that hook 을
+    # `before_complete` 로 미리 제공한다 -- 매 호출마다 응답을 pop 하기 전에
+    # 부른다. 계획은 유효한 plan JSON 을 한 번에 돌려주므로 이 호출이 곧
+    # "리드가 계획하는 중"이다.
+    setup.lead_client.responses = [ModelResponse(valid_plan_json(), [])]
+    setup.lead_client.before_complete = lambda _call_count: teams.request_pause(
+        setup.run.id
+    )
+
+    with pytest.raises(RunPaused):
+        await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    tasks = teams.list_tasks(setup.run.id, setup.cycle.id)
+    assert tasks  # 계획이 정상적으로 만들어졌다
+    assert all(task.status == "pending" for task in tasks)  # 하나도 실행되지 않았다
+
+
+@pytest.mark.asyncio
 async def test_a_question_produces_an_answer_and_no_tasks(tmp_path):
     """이 조각의 본론: 물어도 일감이 생기지 않는다."""
     setup = make_operation_runtime(tmp_path)
@@ -10146,6 +10209,33 @@ async def test_a_question_can_be_asked_more_than_once_while_paused(tmp_path):
     assert first == "첫 번째 답."
     assert second == "두 번째 답."
     assert setup.teams.get_team_run(setup.run.id).status == "paused"
+
+
+@pytest.mark.asyncio
+async def test_a_settled_run_still_answers(tmp_path):
+    setup = make_operation_runtime(tmp_path)
+    setup.teams.set_run_status(setup.run.id, "completed")
+    setup.lead_client.responses = [ModelResponse("끝난 뒤에도 답합니다.", [])]
+
+    answer = await setup.runtime.answer_question(setup.run.id, "무엇을 했나요?")
+
+    assert answer == "끝난 뒤에도 답합니다."
+    assert setup.teams.get_team_run(setup.run.id).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_answer_leaves_the_run_alone(tmp_path):
+    """질문은 팀런 바깥의 일이다. 실패해도 런 상태를 건드리지 않는다."""
+    setup = make_operation_runtime(tmp_path)
+    setup.teams.set_run_status(setup.run.id, "paused")
+    setup.lead_client.responses = [RuntimeError("provider down")]
+
+    with pytest.raises(RuntimeError):
+        await setup.runtime.answer_question(setup.run.id, "왜 이렇죠")
+
+    run = setup.teams.get_team_run(setup.run.id)
+    assert run.status == "paused"
+    assert run.error_message is None
 
 
 def test_the_question_prompt_forbids_planning_and_demands_grounding():
