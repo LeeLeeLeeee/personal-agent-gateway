@@ -2324,3 +2324,55 @@ describe("TeamRunDetail question progress", () => {
     }
   });
 });
+
+describe("TeamRunDetail question dialog layout", () => {
+  const exchange = (n) => ([
+    { id: `q${n}`, kind: "user_question", content: `질문 ${n}` },
+    { id: `a${n}`, kind: "lead_answer", content: `## 답 ${n}\n\n본문 ${n}` }
+  ]);
+
+  async function openDialog(messages) {
+    renderDetail({
+      run: { ...baseRun, status: "paused" },
+      messages,
+      onAskQuestion: vi.fn()
+    });
+    await userEvent.click(screen.getByRole("button", { name: /물어보기/ }));
+  }
+
+  it("답변을 마크다운으로 그린다", async () => {
+    // 리드의 답은 거의 항상 제목과 목록이 있는 마크다운이다. 날것으로
+    // 그리면 "## " 와 "- " 가 그대로 보여 읽는 사람이 직접 해독해야 한다.
+    await openDialog(exchange(1));
+    expect(screen.getByRole("heading", { level: 2, name: "답 1" })).toBeInTheDocument();
+    expect(screen.queryByText("## 답 1")).not.toBeInTheDocument();
+  });
+
+  it("입력창이 문답보다 위에 있다", async () => {
+    // 다음에 물을 것이 화면 맨 위에 있어야 한다. 기록을 위에 쌓으면 대화가
+    // 길어질수록 입력칸이 아래로 밀려 매번 스크롤해야 한다.
+    await openDialog(exchange(1));
+    const input = screen.getByLabelText(/QUESTION/i);
+    const question = screen.getByText("질문 1");
+    expect(
+      input.compareDocumentPosition(question) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("이전 대화는 불러오기를 눌러야 보이고 최신순으로 쌓인다", async () => {
+    await openDialog([...exchange(1), ...exchange(2), ...exchange(3)]);
+    expect(screen.getByText("질문 3")).toBeInTheDocument();
+    expect(screen.queryByText("질문 2")).not.toBeInTheDocument();
+    expect(screen.queryByText("질문 1")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /이전 대화/ }));
+
+    const shown = screen.getAllByText(/^질문 [12]$/).map((node) => node.textContent);
+    expect(shown).toEqual(["질문 2", "질문 1"]);
+  });
+
+  it("이전 대화가 없으면 불러오기 버튼도 없다", async () => {
+    await openDialog(exchange(1));
+    expect(screen.queryByRole("button", { name: /이전 대화/ })).not.toBeInTheDocument();
+  });
+});

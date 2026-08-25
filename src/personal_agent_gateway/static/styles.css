@@ -3621,8 +3621,10 @@ p {
     padding: 8px 10px;
     font-size: 13px;
     line-height: 1.5;
-    white-space: pre-wrap;
 }
+/* 사용자가 친 평문이므로 줄바꿈을 지킨다. 답변에는 걸지 않는다 -- 마크다운
+   블록 사이의 줄바꿈까지 살아나 문단마다 빈 줄이 하나씩 더 생긴다. */
+.team-question-history-question { white-space: pre-wrap; }
 .team-question-history-question {
     background: var(--c-panel);
 }
@@ -3660,7 +3662,6 @@ p {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-    padding: 0 18px 18px;
 }
 @media (max-width: 1100px) {
     .team-run-hero {
@@ -5594,3 +5595,12 @@ p {
 /* 아직 완성되지 않은 답. 기록에 남은 답과 같은 크기로 두되, 확정된 것이
    아니라는 것이 보이도록 배경을 주지 않는다. */
 .team-question-progress-answer { margin-top: 6px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* 한 번의 문답. 질문과 답이 붙어 있어야 어느 답이 어느 질문의 것인지 읽힌다. */
+.team-question-exchange { display: flex; flex-direction: column; gap: 4px; }
+/* 접힌 이전 대화. 펼치면 최신순으로 쌓인다. */
+.team-question-older { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.team-question-older .team-question-exchange { align-self: stretch; }
+/* 마크다운이 만든 블록에 바깥 여백까지 주면 말풍선 안이 헐거워진다. */
+.team-question-history-answer > .md > :first-child { margin-top: 0; }
+.team-question-history-answer > .md > :last-child { margin-bottom: 0; }

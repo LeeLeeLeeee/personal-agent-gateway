@@ -446,14 +446,57 @@ function useElapsedSeconds(active) {
   return seconds;
 }
 
+function toExchanges(messages) {
+  // 서버는 질문과 답을 한 쌍으로 적는다. 그래도 짝이 안 맞는 행을 버리지
+  // 않는 이유: 기록을 화면에서 삼키면 사용자는 답이 사라졌다고 읽는다.
+  const exchanges = [];
+  for (const message of messages) {
+    if (message.kind === "user_question") {
+      exchanges.push({ id: message.id, question: message, answer: null });
+      continue;
+    }
+    const pending = exchanges[exchanges.length - 1];
+    if (pending && !pending.answer) pending.answer = message;
+    else exchanges.push({ id: message.id, question: null, answer: message });
+  }
+  return exchanges;
+}
+
+function QuestionExchange({ exchange }) {
+  return (
+    <div className="team-question-exchange">
+      {exchange.question ? (
+        <div className="team-question-history-question">{exchange.question.content}</div>
+      ) : null}
+      {exchange.answer ? (
+        // 리드의 답은 거의 항상 제목과 목록이 있는 마크다운이다. 날것으로
+        // 두면 "## " 와 "- " 가 그대로 보여 읽는 사람이 직접 해독해야 한다.
+        <div className="team-question-history-answer">
+          <MarkdownContent source={exchange.answer.content} pathRegistration={false} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AskQuestionDialog({
   open, awaitingPause, runStatus, history, value, submitting, failed,
   pauseFailed, onRetryPause, progress, onChange, onClose, onSubmit
 }) {
   const elapsed = useElapsedSeconds(Boolean(open && submitting));
+  const [olderShown, setOlderShown] = useState(false);
+  useEffect(() => {
+    // 닫았다 열면 다시 접힌다. 대화가 길어진 런에서 열 때마다 전부 펼쳐져
+    // 있으면 방금 주고받은 것을 찾기 위해 매번 스크롤해야 한다.
+    if (!open) setOlderShown(false);
+  }, [open]);
   if (!open) return null;
   const inputDisabled = submitting || awaitingPause;
   const showProgress = submitting || progress?.activity || progress?.answerPartial;
+  const exchanges = toExchanges(history);
+  const latest = exchanges.length ? exchanges[exchanges.length - 1] : null;
+  // 최신순. 바로 위에 방금 것이 있으므로, 이어서 거슬러 올라가는 순서가 맞다.
+  const older = exchanges.slice(0, -1).reverse();
 
   return (
     <div className="modal-backdrop" onClick={submitting ? undefined : onClose}>
@@ -469,20 +512,24 @@ function AskQuestionDialog({
           <button type="button" className="modal-close" aria-label="질문 닫기" disabled={submitting} onClick={onClose}>×</button>
         </div>
         <div className="team-question-dialog-body">
-          {history.length ? (
-            <div className="team-question-history">
-              {history.map((message) => (
-                <div
-                  key={message.id}
-                  className={message.kind === "lead_answer"
-                    ? "team-question-history-answer"
-                    : "team-question-history-question"}
-                >
-                  {message.content}
-                </div>
-              ))}
-            </div>
-          ) : null}
+          {/* 다음에 물을 것이 맨 위에 있어야 한다. 기록을 위에 쌓으면 대화가
+              길어질수록 입력칸이 아래로 밀려 매번 스크롤해야 한다. */}
+          <label className="mono team-task-dialog-label" htmlFor="team-question-input">QUESTION</label>
+          <textarea
+            id="team-question-input"
+            className="team-question-input"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="리드에게 물어볼 질문을 적어주세요."
+            disabled={inputDisabled}
+            autoFocus
+          />
+          <div className="team-question-dialog-actions">
+            <Button size="btn-sm" disabled={submitting} onClick={onClose}>닫기</Button>
+            <Button size="btn-sm" variant="primary" disabled={inputDisabled || !value.trim()} onClick={onSubmit}>
+              {submitting ? "보내는 중..." : "보내기"}
+            </Button>
+          </div>
           {awaitingPause && pauseFailed ? (
             // 정지 요청이 실패하면 팀은 계속 돌고 있으므로 입력은 계속 막혀
             // 있어야 한다. 그대로 두면 대화상자는 영영 기다리는 모습으로
@@ -511,22 +558,22 @@ function AskQuestionDialog({
             </div>
           ) : null}
           {failed ? <div className="team-question-error mono">답을 받지 못했습니다</div> : null}
-          <label className="mono team-task-dialog-label" htmlFor="team-question-input">QUESTION</label>
-          <textarea
-            id="team-question-input"
-            className="team-question-input"
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            placeholder="리드에게 물어볼 질문을 적어주세요."
-            disabled={inputDisabled}
-            autoFocus
-          />
-        </div>
-        <div className="team-question-dialog-actions">
-          <Button size="btn-sm" disabled={submitting} onClick={onClose}>닫기</Button>
-          <Button size="btn-sm" variant="primary" disabled={inputDisabled || !value.trim()} onClick={onSubmit}>
-            {submitting ? "보내는 중..." : "보내기"}
-          </Button>
+          {latest ? (
+            <div className="team-question-history">
+              <QuestionExchange exchange={latest} />
+            </div>
+          ) : null}
+          {older.length ? (
+            <div className="team-question-older">
+              {olderShown ? (
+                older.map((item) => <QuestionExchange key={item.id} exchange={item} />)
+              ) : (
+                <Button size="btn-sm" onClick={() => setOlderShown(true)}>
+                  {`이전 대화 ${older.length}개 불러오기`}
+                </Button>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
