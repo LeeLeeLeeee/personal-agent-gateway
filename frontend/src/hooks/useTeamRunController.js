@@ -128,6 +128,9 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
       "team.run.failed",
       "team.run.input_requested",
       "team.run.input_resolved",
+      // 정지는 실행 중에 걸리므로 목록의 상태도 같이 낡는다. 상세는 델타로도
+      // 갱신되지만, 이 자리에 없으면 목록이 `running` 인 채로 남는다.
+      "team.run.paused",
       "team.cycle_request.queued",
       "team.cycle.started",
       "team.cycle.settled",
