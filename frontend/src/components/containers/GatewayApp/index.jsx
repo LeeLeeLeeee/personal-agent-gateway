@@ -146,6 +146,8 @@ export function GatewayApp() {
     handleContinueAuto,
     handleRestartAuto,
     handleAddWork,
+    handlePauseTeamRun,
+    handleAskTeamRun,
     handleResumeTeamRun,
     handleAnswerTeamDecision,
     handleCancelTeamRun,
@@ -1090,6 +1092,10 @@ export function GatewayApp() {
               ← TEAM RUNS
             </a>
             <TeamRunDetail
+              // 런을 바꿔도 이 자리의 엘리먼트는 그대로라 컴포넌트가 다시
+              // 마운트되지 않는다. 열어둔 대화상자와 입력한 질문 같은 화면
+              // 상태가 다음 런으로 넘어가므로 런 id 를 key 로 준다.
+              key={selectedTeamRunId}
               detail={teamRunDetailReady ? teamRunDetail : null}
               documents={teamRunDetailReady ? teamRunDocuments : []}
               delivery={teamRunDetailReady ? teamRunDelivery : null}
@@ -1103,6 +1109,8 @@ export function GatewayApp() {
               onContinueAuto={handleContinueAuto}
               onRestartAuto={handleRestartAuto}
               onAddWork={handleAddWork}
+              onPause={handlePauseTeamRun}
+              onAskQuestion={handleAskTeamRun}
               onResume={handleResumeTeamRun}
               onAnswerDecision={handleAnswerTeamDecision}
               onCancel={handleCancelTeamRun}

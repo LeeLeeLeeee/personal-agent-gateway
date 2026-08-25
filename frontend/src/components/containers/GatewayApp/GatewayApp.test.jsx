@@ -1769,6 +1769,157 @@ describe("GatewayApp", () => {
     expect(await screen.findByText("팀 작업을 중지했습니다")).toBeInTheDocument();
   });
 
+  it("물어보기를 화면까지 연결하고 서버가 가진 문답을 그린다", async () => {
+    /* 컨테이너가 onAskQuestion 을 넘기지 않으면 버튼 자체가 렌더되지 않는다.
+       조직 테스트는 prop 을 직접 주입하므로 이 결선을 못 잡는다. */
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": { team_runs: [{ id: "run-1", goal: "Ship it", status: "paused", run_mode: "plan_and_execute" }] },
+      "GET /api/team-runs/run-1": { team_run: { id: "run-1", goal: "Ship it", status: "paused", run_mode: "plan_and_execute" } },
+      "GET /api/team-runs/run-1/agents": { agents: [] },
+      "GET /api/team-runs/run-1/tasks": { tasks: [] },
+      "GET /api/team-runs/run-1/messages": { messages: [] },
+      "POST /api/team-runs/run-1/questions": { answer: "리드가 읽고 답합니다", team_run: { id: "run-1", status: "paused" } },
+      "GET /api/team-runs/run-1/questions": {
+        messages: [
+          { id: "q1", kind: "user_question", content: "이건 왜 이렇죠" },
+          { id: "a1", kind: "lead_answer", content: "리드가 읽고 답합니다" }
+        ]
+      }
+    });
+
+    await renderGatewayApp({ uiProvider: true });
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
+
+    await userEvent.click(await screen.findByRole("button", { name: /물어보기/ }));
+    await userEvent.type(screen.getByLabelText(/QUESTION/i), "이건 왜 이렇죠");
+    await userEvent.click(screen.getByRole("button", { name: /보내기/ }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/run-1/questions",
+      expect.objectContaining({ body: JSON.stringify({ question: "이건 왜 이렇죠" }) })
+    ));
+    // 기록은 서버에서 다시 읽는다. 한 번만 그려져야 한다.
+    expect((await screen.findAllByText("리드가 읽고 답합니다"))).toHaveLength(1);
+    expect(screen.getAllByText("이건 왜 이렇죠")).toHaveLength(1);
+  });
+
+  it("실행 중인 런에서 물어보기를 누르면 정지부터 요청한다", async () => {
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/team-runs": { team_runs: [{ id: "run-1", goal: "Ship it", status: "running", run_mode: "plan_and_execute" }] },
+      "GET /api/team-runs/run-1": { team_run: { id: "run-1", goal: "Ship it", status: "running", run_mode: "plan_and_execute" } },
+      "GET /api/team-runs/run-1/agents": { agents: [] },
+      "GET /api/team-runs/run-1/tasks": { tasks: [] },
+      "GET /api/team-runs/run-1/messages": { messages: [] },
+      "POST /api/team-runs/run-1/pause": {
+        team_run: { id: "run-1", status: "running", pause_requested_at: "2026-08-25T00:00:00Z" }
+      }
+    });
+
+    await renderGatewayApp({ uiProvider: true });
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
+    await userEvent.click(await screen.findByRole("button", { name: /물어보기/ }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/team-runs/run-1/pause",
+      expect.objectContaining({ method: "POST" })
+    ));
+    expect(await screen.findByRole("dialog", { name: "물어보기" })).toBeInTheDocument();
+  });
+
+  it("런을 제자리에서 바꿔도 물어보기 대화상자 상태가 따라오지 않는다", async () => {
+    /* 목록으로 돌아갔다 들어오면 상세가 언마운트되지만, 알림 클릭처럼
+       선택된 런만 바뀌는 경로에서는 엘리먼트가 같은 자리에 남아 컴포넌트가
+       다시 마운트되지 않는다. key 가 없으면 앞 런에서 적던 질문이 다음 런의
+       대화상자에 그대로 들어 있다. */
+    class FakeNotification {
+      static permission = "default";
+      static requestPermission = vi.fn(async () => {
+        FakeNotification.permission = "granted";
+        return "granted";
+      });
+
+      constructor(title, options) {
+        this.title = title;
+        this.options = options;
+        this.close = vi.fn();
+        FakeNotification.sent.push(this);
+      }
+    }
+    FakeNotification.sent = [];
+    vi.stubGlobal("Notification", FakeNotification);
+    vi.spyOn(window, "focus").mockImplementation(() => {});
+
+    const runs = [
+      { id: "run-1", goal: "Ship it", status: "paused", run_mode: "plan_and_execute" },
+      { id: "run-2", goal: "Second run", status: "failed", run_mode: "plan_and_execute" }
+    ];
+    const detail = (run) => ({
+      team_run: run, agents: [], tasks: [], messages: [], document_summary: null
+    });
+    installFetch({
+      "GET /api/auth/status": { authenticated: true, totp_configured: true },
+      "GET /api/status": status,
+      "GET /api/sessions": { sessions },
+      "GET /api/history": { events: [] },
+      "GET /api/agents": { agents: [] },
+      "GET /api/sessions/active/config": { config: null },
+      "GET /api/personas": { personas: [] },
+      "GET /api/settings": { settings: { access_mode: "restricted", agent_availability: [] } },
+      "GET /api/auth/sessions": { sessions: [] },
+      "GET /api/teams": { teams: [] },
+      "GET /api/team-runs": { team_runs: runs },
+      "GET /api/team-runs/run-1/detail": detail(runs[0]),
+      "GET /api/team-runs/run-1/documents": { documents: [] },
+      "GET /api/team-runs/run-1/delivery": { delivery: { available: false } },
+      "GET /api/team-runs/run-2/detail": detail(runs[1]),
+      "GET /api/team-runs/run-2/documents": { documents: [] },
+      "GET /api/team-runs/run-2/delivery": { delivery: { available: false } }
+    });
+
+    await renderGatewayApp({ uiProvider: true });
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    await userEvent.click(await screen.findByRole("button", { name: /enable notifications/i }));
+
+    await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
+    await userEvent.click(await screen.findByRole("button", { name: /물어보기/ }));
+    await userEvent.type(screen.getByLabelText(/QUESTION/i), "첫 런에서 적던 질문");
+    await userEvent.click(screen.getByRole("button", { name: "질문 닫기" }));
+
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.emit({
+        id: "terminal-run-2",
+        type: "team.run.failed",
+        team_run_id: "run-2",
+        run: { status: "failed", finished_at: "2026-08-25T00:00:00Z" }
+      });
+    });
+    expect(FakeNotification.sent).toHaveLength(1);
+    act(() => FakeNotification.sent[0].onclick());
+
+    expect(await screen.findByText("Second run")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: /물어보기/ }));
+
+    expect(screen.getByLabelText(/QUESTION/i)).toHaveValue("");
+  });
+
   it("confirms a failed task retry and refreshes detail and list", async () => {
     let listCalls = 0;
     let detailCalls = 0;

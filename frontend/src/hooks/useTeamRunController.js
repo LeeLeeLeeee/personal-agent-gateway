@@ -21,6 +21,17 @@ export function applyTeamRunDelta(detail, event) {
   return { ...detail, run, tasks, agents };
 }
 
+// 질문·답변만 서버 목록으로 갈아끼운다. 나머지 메시지는 그대로 둔다.
+// 이어붙이지 않고 갈아끼우는 것이 요점이다 -- 화면이 보낸 것을 덧붙이면
+// 다음 상세 갱신 때 저장된 행이 함께 도착해 같은 문답이 두 번 그려진다.
+export function withQuestionMessages(detail, messages) {
+  if (!detail) return detail;
+  const others = (detail.messages || []).filter(
+    (message) => message.kind !== "user_question" && message.kind !== "lead_answer"
+  );
+  return { ...detail, messages: [...others, ...messages] };
+}
+
 export function useTeamRunController({ toast, confirm, setScreenError, reloadKey = 0 }) {
   const [teamRuns, setTeamRuns] = useState([]);
   const [creatingTeamRun, setCreatingTeamRun] = useState(false);
@@ -340,6 +351,40 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     }
   }
 
+  async function handlePauseTeamRun(runId) {
+    const requestedRun = captureSelectedRun();
+    const targetId = runId || requestedRun.id;
+    if (!targetId) return false;
+    // 실패를 삼키지 않는다. 다른 조작과 달리 정지 실패는 물어보기 대화상자
+    // 안에서 보여주고 그 자리에서 다시 시도하게 해야 한다 -- toast 로만
+    // 알리면 대화상자는 영영 정지를 기다리는 모습으로 남는다.
+    await api.pauseRun(targetId);
+    const [detail, runs] = await Promise.all([
+      api.teamRunDetail(targetId),
+      api.teamRuns()
+    ]);
+    if (ownsSelectedRun(requestedRun)) setTeamRunDetail(detail);
+    setTeamRuns(runs);
+    return true;
+  }
+
+  async function handleAskTeamRun(runId, question) {
+    const requestedRun = captureSelectedRun();
+    const targetId = runId || requestedRun.id;
+    const text = question?.trim();
+    if (!targetId || !text) throw new Error("Question is empty");
+    const result = await api.askQuestion(targetId, text);
+    if (!result?.answer) throw new Error("The lead returned no answer");
+    // 서버가 가진 질문 기록을 다시 읽는다. 보낸 것을 화면에서 이어붙이면
+    // 다음 상세 갱신 때 저장된 행과 겹쳐 같은 문답이 두 번 그려진다.
+    // /detail 의 messages 는 잘릴 수 있으므로 전용 목록을 쓴다.
+    const questions = await api.listQuestions(targetId);
+    if (ownsSelectedRun(requestedRun)) {
+      setTeamRunDetail((current) => withQuestionMessages(current, questions?.messages || []));
+    }
+    return result;
+  }
+
   async function handleResumeTeamRun() {
     const requestedRun = captureSelectedRun();
     if (!requestedRun.id) return false;
@@ -643,6 +688,8 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     handleContinueAuto,
     handleRestartAuto,
     handleAddWork,
+    handlePauseTeamRun,
+    handleAskTeamRun,
     handleResumeTeamRun,
     handleAnswerTeamDecision,
     handleCancelTeamRun,
