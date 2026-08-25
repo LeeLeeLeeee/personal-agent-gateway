@@ -1173,6 +1173,130 @@ def test_the_question_log_holds_both_sides(tmp_path: Path) -> None:
     assert kinds == ["user_question", "lead_answer"]
 
 
+def test_a_question_answers_under_the_paused_cycles_frozen_policy(
+    tmp_path: Path,
+) -> None:
+    """멈춰 있는 사이클이 있으면 그 사이클의 계약으로 답한다.
+
+    cycle_id 를 넘기지 않으면 _space_policy 가 런 수준 스냅숏으로 떨어져,
+    사이클이 읽기를 좁혀뒀는데도 넓은 범위로 답하게 된다. 모델 팩토리도
+    같은 값으로 갈린다 -- capabilities_for_cycle 대신 살아 있는 레지스트리를
+    읽어, 프로바이더 스냅숏이 없으면 얼어 있는 좋은 스냅숏을 두고도
+    provider_not_ready 로 500 이 난다.
+    """
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    service = app.state.team_run_service
+    run = service.create_team_run(
+        "goal",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = service.create_cycle(run.id, "manual", "manual-1")
+    # 사이클이 읽기를 좁힌 상태를 만든다. 스냅숏은 사이클 생성 때 한 번
+    # 얼려지고 그 뒤로 바꾸는 서비스 경로가 없으므로 직접 쓴다.
+    app.state.database.execute(
+        """
+        update team_run_cycles
+        set space_policy_snapshot_json = ?
+        where id = ?
+        """,
+        (
+            json.dumps(
+                {
+                    "read_mode": "path",
+                    "read_path": "/narrowed-by-the-cycle",
+                    "write_mode": "isolated",
+                }
+            ),
+            cycle.id,
+        ),
+    )
+    service.set_cycle_status(cycle.id, "paused")
+    service.set_run_status(run.id, "paused")
+
+    prompts: list[str] = []
+    factory_cycle_ids: list[str | None] = []
+
+    class RecordingModel:
+        async def complete(self, messages):
+            prompts.append(str(messages[0]["content"]))
+            return ModelResponse("답입니다.", [])
+
+    def model_factory(_agent, cycle_id=None):
+        factory_cycle_ids.append(cycle_id)
+        return RecordingModel()
+
+    app.state.team_runtime = TeamRuntime(
+        service,
+        model_factory,
+        app.state.event_bus,
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        response = client.post(
+            f"/api/team-runs/{run.id}/questions",
+            json={"question": "이 값은 어디서 정해지나요?"},
+        )
+
+    assert response.status_code == 200
+    assert factory_cycle_ids == [cycle.id]
+    assert "frozen at cycle start" in prompts[0]
+    assert "/narrowed-by-the-cycle" in prompts[0]
+
+
+def test_a_question_on_a_settled_run_answers_under_the_run_policy(
+    tmp_path: Path,
+) -> None:
+    """끝난 사이클은 고르지 않는다.
+
+    사이클 사이나 이미 끝난 런에서 묻는 것은 설계가 허용하는 경로이고,
+    그때 유효한 계약은 런 수준 스냅숏이다.
+    """
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    service = app.state.team_run_service
+    run = service.create_team_run(
+        "goal",
+        leader.id,
+        [],
+        "plan_and_execute",
+        1,
+        lifecycle_mode="continuous",
+        execution_policy="triggered",
+    )
+    cycle = service.create_cycle(run.id, "manual", "manual-1")
+    service.set_cycle_status(cycle.id, "completed", summary="done")
+    service.set_run_status(run.id, "completed", summary="done")
+
+    factory_cycle_ids: list[str | None] = []
+
+    def model_factory(_agent, cycle_id=None):
+        factory_cycle_ids.append(cycle_id)
+        return AnsweringModel("끝난 뒤에도 답합니다.")
+
+    app.state.team_runtime = TeamRuntime(
+        service,
+        model_factory,
+        app.state.event_bus,
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        response = client.post(
+            f"/api/team-runs/{run.id}/questions",
+            json={"question": "무엇을 했나요?"},
+        )
+
+    assert response.status_code == 200
+    assert factory_cycle_ids == [None]
+
+
 def test_a_blank_question_is_refused(tmp_path: Path) -> None:
     app = create_app(make_config(tmp_path))
     leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])

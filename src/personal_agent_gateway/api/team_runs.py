@@ -20,7 +20,10 @@ from personal_agent_gateway.team_build_evidence import (
     run_build_evidence,
     task_build_evidence,
 )
-from personal_agent_gateway.team_lifecycle import MAX_CONCURRENT_WORKERS
+from personal_agent_gateway.team_lifecycle import (
+    MAX_CONCURRENT_WORKERS,
+    TERMINAL_CYCLE_STATUSES,
+)
 from personal_agent_gateway.team_cycles import TeamAutoSeries, TeamCycleRequest
 from personal_agent_gateway.team_delivery import TeamRunDeliveryError
 from personal_agent_gateway.team_provider_recovery import (
@@ -915,6 +918,25 @@ async def pause_team_run(
     return {"team_run": _team_run_payload(run, service)}
 
 
+def _answerable_cycle_id(service, team_run_id: str) -> str | None:
+    """The cycle the run is stopped inside, if any.
+
+    질문은 사이클을 만들지 않지만, 답변은 사이클이 얼려둔 계약 안에서
+    나와야 한다 -- SPACE 정책·룰 스냅숏·프로바이더 능력이 모두 사이클에
+    붙어 있고, 사이클이 읽기 범위를 좁혔다면 그 답도 좁은 범위에서 나와야
+    한다.
+
+    끝난 사이클은 고르지 않는다. 사이클 사이나 이미 끝난 런에서 묻는 것은
+    설계가 허용하는 경로이고(「런이 돌고 있지 않을 때」), 그때 유효한 계약은
+    런 수준 스냅숏이다. 가장 마지막 것을 고르는 이유는 사이클이 순서대로
+    쌓이고, 살아 있는 것은 많아야 하나이기 때문이다.
+    """
+    for cycle in reversed(service.list_cycles(team_run_id)):
+        if cycle.status not in TERMINAL_CYCLE_STATUSES:
+            return cycle.id
+    return None
+
+
 @router.post("/{team_run_id}/questions")
 async def ask_team_run(
     request: Request,
@@ -934,9 +956,17 @@ async def ask_team_run(
             status_code=409,
             detail="Pause the run before asking; it is still working",
         )
+    # 리드가 답할 때 어느 계약으로 도는지를 정하는 값이다. None 으로 두면
+    # 두 가지가 조용히 바뀐다: _space_policy/_rules_snapshot 이 사이클이
+    # 좁혀둔 읽기 범위 대신 런 수준 스냅숏으로 떨어지고, 모델 팩토리가
+    # capabilities_for_cycle 대신 살아 있는 AgentRegistry 를 읽어 -- 프로바이더
+    # 스냅숏이 없으면 얼어 있는 좋은 스냅숏을 두고도 provider_not_ready 로
+    # 500 이 난다. 멈춰 있는 사이클이 있으면 그 사이클로 답한다.
+    cycle_id = _answerable_cycle_id(service, team_run_id)
     answer = await request.app.state.team_runtime.answer_question(
         team_run_id,
         payload.question,
+        cycle_id,
     )
     record_domain_audit(
         request,
