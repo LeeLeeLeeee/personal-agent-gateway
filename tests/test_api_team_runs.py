@@ -1023,6 +1023,11 @@ class AnsweringModel:
 
 
 def test_pausing_an_idle_run_marks_it_paused_immediately(tmp_path: Path) -> None:
+    """실행 상태로 남아 있지만 아무도 돌리고 있지 않은 런.
+
+    크래시로 오케스트레이션 태스크만 사라진 경우가 이렇다. 기다릴 배치가
+    없으므로 곧바로 paused 로 간다.
+    """
     app = create_app(make_config(tmp_path))
     leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
     created = create_standard_run(app, leader.id)
@@ -1030,10 +1035,94 @@ def test_pausing_an_idle_run_marks_it_paused_immediately(tmp_path: Path) -> None
 
     with TestClient(app) as client:
         client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        # 시작 훅의 interrupt_active_runs 가 실행 중 상태를 interrupted 로
+        # 돌려놓으므로, 클라이언트가 뜬 뒤에 세운다.
+        app.state.team_run_service.set_run_status(run_id, "running")
         response = client.post(f"/api/team-runs/{run_id}/pause")
 
     assert response.status_code == 200
     assert response.json()["team_run"]["status"] == "paused"
+
+
+@pytest.mark.parametrize(
+    ("status", "detail"),
+    [
+        ("draft", "Draft team runs are not running; ask directly"),
+        ("waiting_for_user", "Answer the pending decision request first"),
+        ("interrupted", "Resume the run before pausing it"),
+        (
+            "waiting_for_provider",
+            "The run is waiting on provider recovery, not working",
+        ),
+    ],
+)
+def test_pause_refuses_the_statuses_it_would_brick(
+    tmp_path: Path,
+    status: str,
+    detail: str,
+) -> None:
+    """이 네 상태를 paused 로 덮으면 런이 못 쓰게 된다.
+
+    draft: /start 는 status == "draft" 를 요구하고 /resume 은 재개할 사이클을
+    찾는다 -- draft 를 paused 로 덮으면 남는 출구는 취소뿐이다.
+    waiting_for_user: 결정 요청은 awaiting_user 인 채로 남는데 화면의 결정
+    패널은 run.status 로 걸려 있어 사라진다. 세워둔 질문에 답할 길이 없어진다.
+    """
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    created = create_standard_run(app, leader.id)
+    run_id = created["id"]
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        if status != "draft":
+            app.state.team_run_service.set_run_status(run_id, status)
+        response = client.post(f"/api/team-runs/{run_id}/pause")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == detail
+    assert app.state.team_run_service.get_team_run(run_id).status == status
+
+
+@pytest.mark.asyncio
+async def test_pausing_a_working_run_only_files_the_request(tmp_path: Path) -> None:
+    """돌고 있는 런은 즉시 멈추지 않는다 -- 요청만 걸리고 상태는 그대로다.
+
+    이 분기는 registry.is_running 이 참일 때만 도는데, 여기까지 HTTP 로
+    들어오는 검사가 없었다. GatedModel 이 리드 호출을 붙잡아 런을 실제로
+    registry 에 올려둔 채로 /pause 를 친다.
+    """
+    app = create_app(make_config(tmp_path))
+    gate = asyncio.Event()
+    _inject_gated_team_runtime(app, gate)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        leader_id = await _async_create_persona(client, "Lead")
+        created = create_standard_run(app, leader_id, run_mode="planning_only")
+        run_id = created["id"]
+        registry = app.state.team_run_registry
+
+        await client.post(f"/api/team-runs/{run_id}/start")
+        assert registry.is_running(run_id) is True
+
+        response = await client.post(f"/api/team-runs/{run_id}/pause")
+
+        assert response.status_code == 200
+        paused = response.json()["team_run"]
+        # 즉시 정지가 아니다: 상태는 아직 실행 중이고 요청만 걸려 있다.
+        assert paused["status"] != "paused"
+        assert paused["pause_requested_at"] is not None
+
+        gate.set()
+        await _poll_until(lambda: not registry.is_running(run_id))
+
+    # planning_only 런은 검사 지점(실행 단계)에 닿지 않고 끝난다. 이행될 자리가
+    # 없으므로 종료가 요청을 소진시킨다.
+    settled = app.state.team_run_service.get_team_run(run_id)
+    assert settled.status == "completed"
+    assert settled.pause_requested_at is None
 
 
 def test_a_question_returns_an_answer_and_creates_no_tasks(tmp_path: Path) -> None:
@@ -1100,17 +1189,37 @@ def test_a_blank_question_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_paused_run_can_be_resumed(tmp_path: Path) -> None:
+    """`!= 409` 로는 500 도 통과한다. 200 과 재개 지시까지 본다."""
     app = create_app(make_config(tmp_path))
     leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
     created = create_standard_run(app, leader.id)
     run_id = created["id"]
 
+    class RecordingOrchestrator:
+        def __init__(self):
+            self.resume_calls = []
+
+        def resume(self, team_run_id, cycle_id=None):
+            self.resume_calls.append((team_run_id, cycle_id))
+
+    orchestrator = RecordingOrchestrator()
+    app.state.team_run_orchestrator = orchestrator
+    app.state.team_cycle_dispatcher._orchestrator = orchestrator
+
     with TestClient(app) as client:
         client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
-        client.post(f"/api/team-runs/{run_id}/pause")
+        # 시작 훅의 interrupt_active_runs 가 실행 중 상태를 되돌리므로 그 뒤에.
+        app.state.team_run_service.set_run_status(run_id, "running")
+        paused = client.post(f"/api/team-runs/{run_id}/pause")
         response = client.post(f"/api/team-runs/{run_id}/resume")
 
-    assert response.status_code != 409
+    assert paused.status_code == 200
+    assert paused.json()["team_run"]["status"] == "paused"
+    assert response.status_code == 200
+    # 페이로드는 재개를 지시하기 직전의 런이다.
+    assert response.json()["team_run"]["status"] == "paused"
+    # lifecycle_mode="standard" 라 사이클이 없다.
+    assert orchestrator.resume_calls == [(run_id, None)]
 
 
 def test_a_paused_cycle_on_a_continuous_run_is_the_one_resumed(tmp_path: Path) -> None:

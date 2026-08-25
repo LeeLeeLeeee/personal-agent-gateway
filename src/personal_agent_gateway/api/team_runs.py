@@ -854,6 +854,10 @@ async def pause_team_run(
     team_run_id: str,
     principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
+    # require_intake_open 이 없는 것은 의도다. 정지는 취소와 같은 "멈추는"
+    # 조작이고, cancel_team_run 도 같은 이유로 빼고 있다 -- 접수가 닫힌
+    # 동안에도 돌고 있는 런은 멈출 수 있어야 한다. 위아래 이웃(resume,
+    # questions)에는 있으므로 빠뜨린 것으로 보이기 쉬워 적어 둔다.
     service = request.app.state.team_run_service
     registry = request.app.state.team_run_registry
     try:
@@ -865,6 +869,33 @@ async def pause_team_run(
     if run.status in _TERMINAL:
         raise HTTPException(
             status_code=409, detail="Settled team runs cannot be paused"
+        )
+    # 아래 네 상태는 "돌고 있지 않다"는 이유로 곧장 paused 로 넘어가면
+    # 런을 못 쓰게 만든다. 설계상 이들은 정지 단계를 건너뛰고 바로 질문
+    # 단계로 가야 한다(「런이 돌고 있지 않을 때」). add_work 가 바로 아래에서
+    # 같은 상태들을 같은 이유로 막고 있다.
+    if run.status == "draft":
+        # draft 를 paused 로 덮으면 시작할 방법이 사라진다. /start 는
+        # status == "draft" 를 요구하고, /resume 은 continuous 런에서
+        # 재개할 사이클을 찾는데 아직 사이클이 없다. 남는 출구는 취소뿐이다.
+        raise HTTPException(
+            status_code=409, detail="Draft team runs are not running; ask directly"
+        )
+    if run.status == "waiting_for_user":
+        # 결정 요청은 awaiting_user 인 채로 남는데 런 상태만 paused 가 되면
+        # 화면의 결정 패널(run.status === "waiting_for_user" 로 걸려 있다)이
+        # 사라지고, 세워둔 질문에 답할 길이 없어진다.
+        raise HTTPException(
+            status_code=409, detail="Answer the pending decision request first"
+        )
+    if run.status == "interrupted":
+        raise HTTPException(
+            status_code=409, detail="Resume the run before pausing it"
+        )
+    if run.status == "waiting_for_provider":
+        raise HTTPException(
+            status_code=409,
+            detail="The run is waiting on provider recovery, not working",
         )
     if registry.is_running(team_run_id):
         # 돌고 있으면 요청만 건다. 런타임이 배치 경계에서 집는다.
