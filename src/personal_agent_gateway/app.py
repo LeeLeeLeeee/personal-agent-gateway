@@ -105,6 +105,7 @@ from personal_agent_gateway.team_model_invoker import TeamModelInvoker
 from personal_agent_gateway.team_model_operations import (
     TeamModelOperationService,
 )
+from personal_agent_gateway.team_outcomes import task_outcome_schema
 from personal_agent_gateway.team_provider_recovery import (
     TeamProviderRecovery,
     capabilities_for_cycle,
