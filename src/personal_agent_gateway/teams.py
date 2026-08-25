@@ -3769,7 +3769,16 @@ class TeamRunService:
     ) -> TeamRun:
         self.get_team_run(team_run_id)
         started_at = _now() if status in _ACTIVE_RUN_STATUSES else None
-        finished_at = _now() if status in TERMINAL_RUN_STATUSES else None
+        # 종료는 걸려 있던 정지 요청을 소진시킨다. 끝난 런은 다시 배치 경계에
+        # 닿지 않으므로 이행될 자리가 없고, 남겨두면 두 가지가 깨진다: 완료된
+        # 런에 `정지 요청됨` 배너가 뜨고, 나중에 일감 추가로 그 런을 다시
+        # 열었을 때 아무도 누르지 않은 정지가 첫 배치 경계에서 걸린다.
+        #
+        # finished_at 과 같은 사실에서 나오므로 같은 문장에서 함께 쓴다.
+        # interrupted 는 TERMINAL_RUN_STATUSES 에 없다 -- 재시작을 건너 살아
+        # 남는 요청(설계 「요청이 소진되는 조건」)은 여기에 걸리지 않는다.
+        settled = status in TERMINAL_RUN_STATUSES
+        finished_at = _now() if settled else None
         self._db.execute(
             """
             update team_runs
@@ -3778,10 +3787,21 @@ class TeamRunService:
                 error_message = ?,
                 started_at = coalesce(?, started_at),
                 finished_at = coalesce(?, finished_at),
+                pause_requested_at = case
+                    when ? = 1 then null else pause_requested_at end,
                 updated_at = ?
             where id = ?
             """,
-            (status, summary, error_message, started_at, finished_at, _now(), team_run_id),
+            (
+                status,
+                summary,
+                error_message,
+                started_at,
+                finished_at,
+                1 if settled else 0,
+                _now(),
+                team_run_id,
+            ),
         )
         return self.get_team_run(team_run_id)
 

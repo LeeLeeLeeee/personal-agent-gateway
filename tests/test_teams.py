@@ -2391,6 +2391,46 @@ def test_a_second_pause_request_keeps_the_first_time(tmp_path):
     assert first == second
 
 
+def test_a_settled_run_drops_its_pause_request(tmp_path):
+    """끝난 런에는 정지가 걸릴 자리가 없다.
+
+    남겨두면 완료된 런에 `정지 요청됨` 배너가 뜨고, 나중에 일감 추가로 그
+    런을 다시 열었을 때 아무도 누르지 않은 정지가 첫 배치 경계에서 걸린다.
+    """
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    lead = personas.create_persona("Lead", "lead", "d", [], [])
+    member = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run("goal", lead.id, [member.id], "plan_and_execute", 1)
+    teams.request_pause(run.id)
+
+    settled = teams.set_run_status(run.id, "completed", summary="done")
+
+    assert settled.pause_requested_at is None
+
+
+def test_an_interrupted_run_keeps_its_pause_request(tmp_path):
+    """재시작을 건너 살아남는 요청(설계 「요청이 소진되는 조건」)의 반대편.
+
+    interrupted 는 TERMINAL_RUN_STATUSES 에 없으므로 종료가 아니고, 사용자가
+    누른 정지는 재개 후 첫 배치 경계에서 이행되어야 한다.
+    """
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    personas = PersonaService(db)
+    teams = TeamRunService(db, personas, tmp_path / "workspace")
+    lead = personas.create_persona("Lead", "lead", "d", [], [])
+    member = personas.create_persona("Worker", "worker", "d", [], [])
+    run = teams.create_team_run("goal", lead.id, [member.id], "plan_and_execute", 1)
+    requested = teams.request_pause(run.id).pause_requested_at
+
+    interrupted = teams.set_run_status(run.id, "interrupted")
+
+    assert interrupted.pause_requested_at == requested
+
+
 def test_a_run_can_hold_the_paused_status(tmp_path):
     db = Database(tmp_path / "app.db")
     db.initialize()
