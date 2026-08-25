@@ -27,11 +27,10 @@ const TERMINAL_STATUSES = [
 ];
 
 const DETAIL_TABS = [
-  ["overview", "SUMMARY"],
-  ["tasks", "TASKS"],
-  ["history", "CYCLES"],
-  ["activity", "LOG"],
-  ["files", "OUTPUTS"]
+  ["run", "RUN"],
+  ["tasks", "TASK"],
+  ["config", "CONFIGURATION"],
+  ["history", "HISTORY"]
 ];
 
 const RUN_PHASES = [
@@ -397,12 +396,12 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
         className="modal-card team-add-work-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="Add work"
+        aria-label="일감 추가"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-head">
           <span className="mono">ADD WORK</span>
-          <button type="button" className="modal-close" aria-label="Close add work" disabled={submitting} onClick={onClose}>×</button>
+          <button type="button" className="modal-close" aria-label="일감 추가 닫기" disabled={submitting} onClick={onClose}>×</button>
         </div>
         <div className="team-add-work-dialog-body">
           <label className="mono team-task-dialog-label" htmlFor="team-add-work-input">INSTRUCTION</label>
@@ -982,7 +981,8 @@ export function TeamRunDetail({
   const [pauseFailed, setPauseFailed] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
-  const [activeTab, setActiveTab] = useState("overview");
+  // 물어보기와 일감 추가가 있는 자리라 가장 자주 쓴다.
+  const [activeTab, setActiveTab] = useState("run");
   const [showAllTasks, setShowAllTasks] = useState(false);
   const [canceling, setCanceling] = useState(false);
   const run = detail?.run;
@@ -1076,6 +1076,9 @@ export function TeamRunDetail({
   const focusTask = tasks.find((task) => task.status === "in_progress")
     || tasks.find((task) => OPEN_TASK_STATUSES.has(task.status))
     || null;
+  // 지금 실제로 돌고 있는 것 전부. 동시에 최대 세 개까지 돌 수 있는데
+  // 예전에는 헤더가 "NOW · 제목" 하나만 보여줘서 나머지가 화면 어디에도 없었다.
+  const runningTasks = tasks.filter((task) => task.status === "in_progress");
   const previousCycle = cycles.find(
     (cycle) => [
       "completed",
@@ -1217,28 +1220,11 @@ export function TeamRunDetail({
             </span>
             <StatusBadge kind={run.status} />
           </div>
-          <span className="mono team-run-request-label">CURRENT REQUEST</span>
-          <h1
-            className="headline team-run-detail-goal team-run-current-request"
-            title={currentInstruction}
-          >
-            {currentInstruction}
-          </h1>
-          {distinctBaseObjective ? (
-            <div className="team-run-base-objective">BASE OBJECTIVE · {distinctBaseObjective}</div>
-          ) : null}
           <div className="team-run-hero-summary mono">
             <span>{String(run.execution_policy || run.lifecycle_mode || "standard").toUpperCase()}</span>
             <span>LEAD · {leader?.name || "-"}</span>
             <span>{currentCycle ? `CYCLE #${currentCycle.sequence}` : "NO CYCLE"}</span>
             <span>{tasks.filter((task) => OPEN_TASK_STATUSES.has(task.status)).length} OPEN TASKS</span>
-            {showPlanShape ? (
-              <span className={splitBoughtNothing ? "team-plan-shape team-plan-shape-flat" : "team-plan-shape"}>
-                {`일감 ${planShape.task_count}개 · 최대 ${planShape.longest_chain}단계 대기 · ${planShape.ready_at_start}개 즉시 시작`}
-                {splitBoughtNothing ? " · 나눈 이득이 없습니다" : ""}
-              </span>
-            ) : null}
-            {focusTask ? <span className="team-run-focus-task">NOW · {focusTask.title}</span> : null}
           </div>
         </div>
         <div className="team-run-hero-actions">
@@ -1252,22 +1238,6 @@ export function TeamRunDetail({
               {run.status === "paused"
                 ? (resuming ? "재개하는 중..." : "재개")
                 : (resuming ? "Resuming..." : "Resume")}
-            </Button>
-          ) : null}
-          {canAddWork ? (
-            <Button size="btn-sm" variant="primary" onClick={() => setWorkDialogOpen(true)}>Add work</Button>
-          ) : null}
-          {canAskQuestion ? (
-            <Button
-              size="btn-sm"
-              variant="primary"
-              disabled={pausing}
-              onClick={async () => {
-                await requestPause();
-                setQuestionDialogOpen(true);
-              }}
-            >
-              {pausing ? "정지 요청 중..." : "물어보기"}
             </Button>
           ) : null}
           {canCancel ? (
@@ -1371,51 +1341,206 @@ export function TeamRunDetail({
         })}
       </div>
 
-      <details className="team-run-details">
-        <summary className="mono">RUN DETAILS</summary>
-        <div className="team-run-meta">
-          <div className="team-run-meta-cell">
-            <div className="mono team-run-meta-k">ID</div>
-            <div className="mono team-run-meta-v team-run-meta-copy">{run.id}</div>
-          </div>
-          <div className="team-run-meta-cell">
-            <div className="mono team-run-meta-k">MODE</div>
-            <div className="mono team-run-meta-v">{run.run_mode}</div>
-          </div>
-          <div className="team-run-meta-cell">
-            <div className="mono team-run-meta-k">LIFECYCLE</div>
-            <div className="mono team-run-meta-v">{run.lifecycle_mode || "standard"}</div>
-          </div>
-          <div className="team-run-meta-cell">
-            <div className="mono team-run-meta-k">WORKERS</div>
-            <div className="mono team-run-meta-v">{run.max_workers ?? "-"}</div>
-          </div>
-          <div className="team-run-meta-cell">
-            <div className="mono team-run-meta-k">STARTED</div>
-            <div className="mono team-run-meta-v">{fmtDateTime(run.started_at) || "-"}</div>
-          </div>
-          <div className="team-run-meta-cell team-run-meta-wide team-run-meta-workspace">
-            <div className="mono team-run-meta-k">WORKSPACE</div>
-            <div className="mono team-run-meta-v team-run-meta-path" title={run.workspace_root || ""}>
-              {run.workspace_root || "-"}
-            </div>
-          </div>
+
+
+
+      {run.status === "interrupted" ? (
+        <div className="team-interrupted-banner" role="status">
+          <span className="headline team-interrupted-title">Run interrupted</span>
+          <span className="team-interrupted-copy">Running work was returned to Pending. Resume when you are ready.</span>
         </div>
-      </details>
+      ) : null}
 
-      <DeliveryPanel
-        key={run.id}
-        runId={run.id}
-        delivery={delivery}
-        loading={deliveryLoading}
-        onRefresh={onRefreshDelivery}
-        onCommit={onCommitDelivery}
-        onApply={onApplyDelivery}
-        onResolve={onResolveDeliveryConflict}
-        onContinue={onContinueDelivery}
-        onCancelConflicts={onCancelDeliveryConflicts}
-      />
+      {run.status === "paused" ? (
+        <div className="team-paused-banner" role="status">
+          <span className="headline team-paused-title">정지됨</span>
+          <span className="team-paused-copy">
+            물어보기로 리드에게 질문할 수 있습니다. 재개하면 하던 일을 이어서 합니다.
+          </span>
+        </div>
+      ) : null}
 
+      {run.status !== "paused" && run.pause_requested_at ? (
+        <div className="team-paused-banner" role="status">
+          <span className="headline team-paused-title">정지 요청됨</span>
+          <span className="team-paused-copy">{pauseWaitCopy(run.status)}</span>
+        </div>
+      ) : null}
+
+      {run.status === "waiting_for_user" ? (
+        canAnswerDecision ? (
+          <DecisionRequestPanel
+            key={`${decisionRequest.id}:${decisionRequest.revision}`}
+            request={decisionRequest}
+            onSubmit={onAnswerDecision}
+          />
+        ) : (
+          <div className="team-decision-unavailable" role="status">
+            Decision request is unavailable. Refresh this run.
+          </div>
+        )
+      ) : null}
+
+
+      {/* 열자마자 보여야 하는 것만 모은다. 나머지는 탭 뒤로 보냈다 -- 예전에는
+          전달·정책·검토 패널이 전부 이 자리에 세로로 쌓여서, 지금 무슨 요청이
+          돌고 있는지가 스크롤 아래로 밀렸다. */}
+      <section className="team-dashboard" role="region" aria-label="Dashboard">
+        <div className="team-dashboard-request">
+          <span className="mono team-run-request-label">CURRENT REQUEST</span>
+          <h1
+            className="headline team-run-detail-goal team-run-current-request"
+            title={currentInstruction}
+          >
+            {currentInstruction}
+          </h1>
+          {distinctBaseObjective ? (
+            <div className="team-run-base-objective">BASE OBJECTIVE · {distinctBaseObjective}</div>
+          ) : null}
+          {showPlanShape ? (
+            <div className={splitBoughtNothing ? "team-plan-shape team-plan-shape-flat mono" : "team-plan-shape mono"}>
+              {`일감 ${planShape.task_count}개 · 최대 ${planShape.longest_chain}단계 대기 · ${planShape.ready_at_start}개 즉시 시작`}
+              {splitBoughtNothing ? " · 나눈 이득이 없습니다" : ""}
+            </div>
+          ) : null}
+        </div>
+        <div className="team-dashboard-now">
+          <div className="team-section-head team-section-toolbar">
+            <span className="mono team-section-label">진행 중</span>
+            <span className="mono team-section-count">{runningTasks.length}</span>
+            <span className="team-section-rule" />
+          </div>
+          {runningTasks.length ? (
+            <ul className="team-dashboard-now-list">
+              {runningTasks.map((task) => (
+                <li key={task.id} className="team-dashboard-now-item">
+                  <span className="team-dashboard-now-title">{task.title}</span>
+                  <span className="mono team-dashboard-now-owner">
+                    {agents.find((agent) => agent.id === task.owner_agent_id)?.name || "미배정"}
+                  </span>
+                  {task.started_at ? (
+                    <span className="mono team-dashboard-now-since">{fmtElapsed(elapsedSeconds(task.started_at))}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="mono team-dashboard-now-empty">돌고 있는 일감이 없습니다</div>
+          )}
+        </div>
+          <div className="team-section-head team-section-toolbar">
+            <span className="mono team-section-label">Agent Sessions</span>
+            <span className="mono team-section-count">{agents.length}</span>
+            <span className="team-section-rule" />
+          </div>
+          <div className="team-lanes">
+            {agents.map((agent) => {
+              const currentTask = findTask(tasks, agent.current_task_id);
+              const avatar = agent.persona_snapshot?.avatar;
+              const roleLabel = agent.persona_snapshot?.role || agent.role;
+              return (
+                <article className={`team-lane team-lane-${agent.status}${agent.role === "leader" ? " team-lane-leader" : ""}`} key={agent.id}>
+                  <div className="team-lane-head">
+                    {avatar ? (
+                      <img className="team-lane-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
+                    ) : (
+                      <span className="team-lane-avatar team-lane-avatar-initials mono">{initials(agent.name)}</span>
+                    )}
+                    <div className="team-lane-title">
+                      <div className="mono team-lane-name">{agent.name}</div>
+                      <div className="team-lane-role">{roleLabel}</div>
+                    </div>
+                    {agent.role === "leader" ? <span className="team-lane-lead mono">LEAD</span> : null}
+                  </div>
+                  <div className="team-lane-body">
+                    <div className="team-lane-status-row">
+                      <StatusBadge kind={agent.status} />
+                      {agent.status === "running" ? <span className="mono team-lane-live">LIVE</span> : null}
+                    </div>
+                    {(() => {
+                      const work = currentWork(agent, currentTask, run.status);
+                      const seconds = elapsedSeconds(work.startedAt, nowMs);
+                      return (
+                        <div className="team-lane-task">
+                          <span className="team-lane-task-title">{work.title}</span>
+                          {seconds === null ? null : (
+                            <>
+                              {" "}
+                              <span className="mono team-lane-elapsed">{fmtElapsed(seconds)} 경과</span>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    <details className="team-lane-runtime">
+                      <summary className="mono">RUNTIME</summary>
+                      <div className="mono team-lane-snapshot">{agent.backend}/{agent.model}</div>
+                    </details>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+          {run.summary ? (
+            <div className="team-final-summary team-overview-summary">
+              <div className="mono team-final-summary-head">LATEST SUMMARY · {leader?.name || "TEAM"}</div>
+              <div className="team-final-summary-body">
+                <MarkdownContent source={run.summary} pathRegistration={false} />
+              </div>
+            </div>
+          ) : currentCycle?.summary ? (
+            <div className="team-final-summary team-overview-summary">
+              <div className="mono team-final-summary-head">CURRENT CYCLE · #{currentCycle.sequence}</div>
+              <div className="team-final-summary-body">
+                <MarkdownContent source={currentCycle.summary} pathRegistration={false} />
+              </div>
+            </div>
+          ) : null}
+      </section>
+
+      <div className="team-detail-tabs" role="tablist" aria-label="Run detail views">
+        {DETAIL_TABS.map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === key}
+            className={`team-detail-tab${activeTab === key ? " active" : ""}`}
+            onClick={() => setActiveTab(key)}
+          >
+            <span>{label}</span>
+            {/* 현재 사이클 기준이다. 전체를 세면 사이클을 여러 번 돈 런에서
+                지금 할 일이 몇 개인지가 지난 것에 묻힌다. */}
+            {key === "tasks" && currentCycleTasks.length ? (
+              <span className="team-detail-tab-badge mono">{currentCycleTasks.length}</span>
+            ) : null}
+            {key === "history" && cycles.length ? (
+              <span className="team-detail-tab-badge mono">{cycles.length}</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "run" ? (
+        <div className="team-tab-panel" role="tabpanel" aria-label="Run">
+          <div className="team-run-actions">
+            {canAskQuestion ? (
+              <Button
+                size="btn-sm"
+                variant="primary"
+                disabled={pausing}
+                onClick={async () => {
+                  await requestPause();
+                  setQuestionDialogOpen(true);
+                }}
+              >
+                {pausing ? "정지 요청 중..." : "물어보기"}
+              </Button>
+            ) : null}
+            {canAddWork ? (
+              <Button size="btn-sm" variant="primary" onClick={() => setWorkDialogOpen(true)}>일감 추가</Button>
+            ) : null}
+          </div>
       {run.lifecycle_mode === "continuous" ? (
         <details className="team-policy-panel" role="region" aria-label="Cycle policy" open>
           <summary className="team-policy-summary">
@@ -1558,44 +1683,6 @@ export function TeamRunDetail({
           </div>
         </details>
       ) : null}
-
-      {run.status === "interrupted" ? (
-        <div className="team-interrupted-banner" role="status">
-          <span className="headline team-interrupted-title">Run interrupted</span>
-          <span className="team-interrupted-copy">Running work was returned to Pending. Resume when you are ready.</span>
-        </div>
-      ) : null}
-
-      {run.status === "paused" ? (
-        <div className="team-paused-banner" role="status">
-          <span className="headline team-paused-title">정지됨</span>
-          <span className="team-paused-copy">
-            물어보기로 리드에게 질문할 수 있습니다. 재개하면 하던 일을 이어서 합니다.
-          </span>
-        </div>
-      ) : null}
-
-      {run.status !== "paused" && run.pause_requested_at ? (
-        <div className="team-paused-banner" role="status">
-          <span className="headline team-paused-title">정지 요청됨</span>
-          <span className="team-paused-copy">{pauseWaitCopy(run.status)}</span>
-        </div>
-      ) : null}
-
-      {run.status === "waiting_for_user" ? (
-        canAnswerDecision ? (
-          <DecisionRequestPanel
-            key={`${decisionRequest.id}:${decisionRequest.revision}`}
-            request={decisionRequest}
-            onSubmit={onAnswerDecision}
-          />
-        ) : (
-          <div className="team-decision-unavailable" role="status">
-            Decision request is unavailable. Refresh this run.
-          </div>
-        )
-      ) : null}
-
       {hasPlanReview ? (
         <details className="team-plan-review">
           <summary className="team-plan-review-summary">
@@ -1619,32 +1706,150 @@ export function TeamRunDetail({
           </div>
         </details>
       ) : null}
+        </div>
+      ) : null}
 
-      <div className="team-detail-tabs" role="tablist" aria-label="Run detail views">
-        {DETAIL_TABS.map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === key}
-            className={`team-detail-tab${activeTab === key ? " active" : ""}`}
-            onClick={() => setActiveTab(key)}
-          >
-            <span>{label}</span>
-            {key === "tasks" && tasks.length ? (
-              <span className="team-detail-tab-badge mono">{tasks.length}</span>
+      {activeTab === "tasks" ? (
+        <div className="team-tab-panel" role="tabpanel" aria-label="Tasks">
+          <div className="team-section-head team-section-toolbar">
+            <span className="mono team-section-label">Task Board</span>
+            <span className="mono team-section-count">
+              {showAllTasks ? `${tasks.length} ALL CYCLES` : `${visibleTasks.length} CURRENT CYCLE`}
+            </span>
+            <BuildEvidenceSummary summary={detail.buildEvidenceSummary} />
+            <span className="team-section-rule" />
+            {currentCycle && tasksHaveCycleIds ? (
+              <Button size="btn-sm" onClick={() => setShowAllTasks((value) => !value)}>
+                {showAllTasks ? "Current cycle" : "All cycles"}
+              </Button>
             ) : null}
-            {key === "history" && cycles.length ? (
-              <span className="team-detail-tab-badge mono">{cycles.length}</span>
-            ) : null}
-            {key === "files" && documents.length ? (
-              <span className="team-detail-tab-badge mono">{documents.length}</span>
-            ) : null}
-          </button>
-        ))}
-      </div>
+          </div>
+          <div className="team-task-board">
+            {TASK_STATUS_GROUPS.map((group) => {
+              const columnTasks = visibleTasks.filter(
+                (task) => groupForTaskStatus(task.status) === group.key
+              );
+              return (
+                <div className="team-task-column" key={group.key}>
+                  <div className="team-task-column-head mono">
+                    <span>{group.label}</span>
+                    <span>{columnTasks.length}</span>
+                  </div>
+                  <div className="team-task-column-body">
+                    {columnTasks.length ? (
+                      columnTasks.map((task) => {
+                        const taskReports = reportsByTask.get(task.id) || [];
+                        return (
+                          <TeamTaskCard
+                            key={task.id}
+                            task={task}
+                            owner={findAgent(agents, task.owner_agent_id)}
+                            prerequisiteTitles={(task.depends_on_task_ids || [])
+                              .map((taskId) => taskTitlesById.get(taskId) || taskId)}
+                            fileCount={taskFileCount(taskReports)}
+                            reportCount={taskReports.length}
+                            onOpen={() => setSelectedTaskId(task.id)}
+                          />
+                        );
+                      })
+                    ) : (
+                      <div className="team-task-empty mono">-</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+
+      {activeTab === "config" ? (
+        <div className="team-tab-panel" role="tabpanel" aria-label="Configuration">
+      <details className="team-run-details">
+        <summary className="mono">RUN DETAILS</summary>
+        <div className="team-run-meta">
+          <div className="team-run-meta-cell">
+            <div className="mono team-run-meta-k">ID</div>
+            <div className="mono team-run-meta-v team-run-meta-copy">{run.id}</div>
+          </div>
+          <div className="team-run-meta-cell">
+            <div className="mono team-run-meta-k">MODE</div>
+            <div className="mono team-run-meta-v">{run.run_mode}</div>
+          </div>
+          <div className="team-run-meta-cell">
+            <div className="mono team-run-meta-k">LIFECYCLE</div>
+            <div className="mono team-run-meta-v">{run.lifecycle_mode || "standard"}</div>
+          </div>
+          <div className="team-run-meta-cell">
+            <div className="mono team-run-meta-k">WORKERS</div>
+            <div className="mono team-run-meta-v">{run.max_workers ?? "-"}</div>
+          </div>
+          <div className="team-run-meta-cell">
+            <div className="mono team-run-meta-k">STARTED</div>
+            <div className="mono team-run-meta-v">{fmtDateTime(run.started_at) || "-"}</div>
+          </div>
+          <div className="team-run-meta-cell team-run-meta-wide team-run-meta-workspace">
+            <div className="mono team-run-meta-k">WORKSPACE</div>
+            <div className="mono team-run-meta-v team-run-meta-path" title={run.workspace_root || ""}>
+              {run.workspace_root || "-"}
+            </div>
+          </div>
+        </div>
+      </details>
+      <DeliveryPanel
+        key={run.id}
+        runId={run.id}
+        delivery={delivery}
+        loading={deliveryLoading}
+        onRefresh={onRefreshDelivery}
+        onCommit={onCommitDelivery}
+        onApply={onApplyDelivery}
+        onResolve={onResolveDeliveryConflict}
+        onContinue={onContinueDelivery}
+        onCancelConflicts={onCancelDeliveryConflicts}
+      />
+          <div className="team-config-outputs">
+          {onViewOutputs ? (
+            <div className="team-files-actions">
+              <Button size="btn-sm" onClick={() => onViewOutputs(run.id)}>Outputs에서 모두 보기</Button>
+            </div>
+          ) : null}
+          <div className="team-docs-list">
+            {documents.length ? documents.map((doc) => {
+              const label = documentLabel(doc.path);
+              return (
+              <button
+                key={doc.path}
+                type="button"
+                className="team-docs-list-row"
+                aria-label={`Preview ${doc.path}`}
+                disabled={!doc.previewable || !onLoadDocument}
+                onClick={async () => {
+                  if (!onLoadDocument) return;
+                  try {
+                    const loaded = await onLoadDocument(doc.path);
+                    setPreviewDoc(loaded || { ...doc, previewable: false, reason: "load failed" });
+                  } catch (_error) {
+                    setPreviewDoc({ ...doc, previewable: false, reason: "load failed" });
+                  }
+                }}
+              >
+                <span className="team-docs-label">
+                  <span className="mono team-docs-name">{label.name}</span>
+                  {label.parent ? <span className="mono team-docs-parent">{label.parent}</span> : null}
+                </span>
+                <span className="mono team-docs-kind">{doc.kind}</span>
+              </button>
+              );
+            }) : <div className="team-task-empty mono">No documents in the workspace yet.</div>}
+          </div>
+        </div>
+        </div>
+      ) : null}
 
       {activeTab === "history" ? (
+        <div className="team-tab-panel" role="tabpanel" aria-label="History">
         <section className="team-cycles team-tab-panel" aria-label="Team Run cycles">
           <div className="team-section-head">
             <span className="mono team-section-label">Cycle History</span>
@@ -1704,137 +1909,6 @@ export function TeamRunDetail({
             <div className="team-task-empty mono">No Cycle history yet.</div>
           )}
         </section>
-      ) : null}
-
-      {activeTab === "overview" ? (
-        <>
-          {run.summary ? (
-            <div className="team-final-summary team-overview-summary">
-              <div className="mono team-final-summary-head">LATEST SUMMARY · {leader?.name || "TEAM"}</div>
-              <div className="team-final-summary-body">
-                <MarkdownContent source={run.summary} pathRegistration={false} />
-              </div>
-            </div>
-          ) : currentCycle?.summary ? (
-            <div className="team-final-summary team-overview-summary">
-              <div className="mono team-final-summary-head">CURRENT CYCLE · #{currentCycle.sequence}</div>
-              <div className="team-final-summary-body">
-                <MarkdownContent source={currentCycle.summary} pathRegistration={false} />
-              </div>
-            </div>
-          ) : null}
-
-          <div className="team-section-head team-section-toolbar">
-            <span className="mono team-section-label">Agent Sessions</span>
-            <span className="mono team-section-count">{agents.length}</span>
-            <span className="team-section-rule" />
-          </div>
-          <div className="team-lanes">
-            {agents.map((agent) => {
-              const currentTask = findTask(tasks, agent.current_task_id);
-              const avatar = agent.persona_snapshot?.avatar;
-              const roleLabel = agent.persona_snapshot?.role || agent.role;
-              return (
-                <article className={`team-lane team-lane-${agent.status}${agent.role === "leader" ? " team-lane-leader" : ""}`} key={agent.id}>
-                  <div className="team-lane-head">
-                    {avatar ? (
-                      <img className="team-lane-avatar" src={`/static/avatars/${avatar}.png`} alt="" />
-                    ) : (
-                      <span className="team-lane-avatar team-lane-avatar-initials mono">{initials(agent.name)}</span>
-                    )}
-                    <div className="team-lane-title">
-                      <div className="mono team-lane-name">{agent.name}</div>
-                      <div className="team-lane-role">{roleLabel}</div>
-                    </div>
-                    {agent.role === "leader" ? <span className="team-lane-lead mono">LEAD</span> : null}
-                  </div>
-                  <div className="team-lane-body">
-                    <div className="team-lane-status-row">
-                      <StatusBadge kind={agent.status} />
-                      {agent.status === "running" ? <span className="mono team-lane-live">LIVE</span> : null}
-                    </div>
-                    {(() => {
-                      const work = currentWork(agent, currentTask, run.status);
-                      const seconds = elapsedSeconds(work.startedAt, nowMs);
-                      return (
-                        <div className="team-lane-task">
-                          <span className="team-lane-task-title">{work.title}</span>
-                          {seconds === null ? null : (
-                            <>
-                              {" "}
-                              <span className="mono team-lane-elapsed">{fmtElapsed(seconds)} 경과</span>
-                            </>
-                          )}
-                        </div>
-                      );
-                    })()}
-                    <details className="team-lane-runtime">
-                      <summary className="mono">RUNTIME</summary>
-                      <div className="mono team-lane-snapshot">{agent.backend}/{agent.model}</div>
-                    </details>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </>
-      ) : null}
-
-      {activeTab === "tasks" ? (
-        <div className="team-tab-panel" role="tabpanel" aria-label="Tasks">
-          <div className="team-section-head team-section-toolbar">
-            <span className="mono team-section-label">Task Board</span>
-            <span className="mono team-section-count">
-              {showAllTasks ? `${tasks.length} ALL CYCLES` : `${visibleTasks.length} CURRENT CYCLE`}
-            </span>
-            <BuildEvidenceSummary summary={detail.buildEvidenceSummary} />
-            <span className="team-section-rule" />
-            {currentCycle && tasksHaveCycleIds ? (
-              <Button size="btn-sm" onClick={() => setShowAllTasks((value) => !value)}>
-                {showAllTasks ? "Current cycle" : "All cycles"}
-              </Button>
-            ) : null}
-          </div>
-          <div className="team-task-board">
-            {TASK_STATUS_GROUPS.map((group) => {
-              const columnTasks = visibleTasks.filter(
-                (task) => groupForTaskStatus(task.status) === group.key
-              );
-              return (
-                <div className="team-task-column" key={group.key}>
-                  <div className="team-task-column-head mono">
-                    <span>{group.label}</span>
-                    <span>{columnTasks.length}</span>
-                  </div>
-                  <div className="team-task-column-body">
-                    {columnTasks.length ? (
-                      columnTasks.map((task) => {
-                        const taskReports = reportsByTask.get(task.id) || [];
-                        return (
-                          <TeamTaskCard
-                            key={task.id}
-                            task={task}
-                            owner={findAgent(agents, task.owner_agent_id)}
-                            prerequisiteTitles={(task.depends_on_task_ids || [])
-                              .map((taskId) => taskTitlesById.get(taskId) || taskId)}
-                            fileCount={taskFileCount(taskReports)}
-                            reportCount={taskReports.length}
-                            onOpen={() => setSelectedTaskId(task.id)}
-                          />
-                        );
-                      })
-                    ) : (
-                      <div className="team-task-empty mono">-</div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
-      {activeTab === "overview" ? (
         <div className="team-overview-disclosures" role="tabpanel" aria-label="Overview">
           <details
             className="team-overview-disclosure"
@@ -1893,64 +1967,14 @@ export function TeamRunDetail({
             ) : <div className="team-task-empty mono">No handoffs yet.</div>}
           </details>
         </div>
-      ) : null}
-
-      {activeTab === "activity" ? (
-        <div className="team-tab-panel" role="tabpanel" aria-label="Live activity">
-          <div className="timeline">
-            {activity.map((message) => {
-              const sender = findAgent(agents, message.sender_agent_id);
-              return (
-                <div className={`tl-row tl-kind-${message.kind}`} key={message.id}>
-                  <span className="tl-time mono">{fmtDateTime(message.created_at)}</span>
-                  <span className="mono team-activity-agent">{sender ? sender.name : "SYSTEM"}</span>
-                  <span className="mono tl-label">{message.kind}</span>
-                  <span className="tl-detail">{message.content}</span>
-                </div>
-              );
-            })}
-          </div>
         </div>
       ) : null}
 
-      {activeTab === "files" ? (
-        <div className="team-tab-panel" role="tabpanel" aria-label="Files">
-          {onViewOutputs ? (
-            <div className="team-files-actions">
-              <Button size="btn-sm" onClick={() => onViewOutputs(run.id)}>Outputs에서 모두 보기</Button>
-            </div>
-          ) : null}
-          <div className="team-docs-list">
-            {documents.length ? documents.map((doc) => {
-              const label = documentLabel(doc.path);
-              return (
-              <button
-                key={doc.path}
-                type="button"
-                className="team-docs-list-row"
-                aria-label={`Preview ${doc.path}`}
-                disabled={!doc.previewable || !onLoadDocument}
-                onClick={async () => {
-                  if (!onLoadDocument) return;
-                  try {
-                    const loaded = await onLoadDocument(doc.path);
-                    setPreviewDoc(loaded || { ...doc, previewable: false, reason: "load failed" });
-                  } catch (_error) {
-                    setPreviewDoc({ ...doc, previewable: false, reason: "load failed" });
-                  }
-                }}
-              >
-                <span className="team-docs-label">
-                  <span className="mono team-docs-name">{label.name}</span>
-                  {label.parent ? <span className="mono team-docs-parent">{label.parent}</span> : null}
-                </span>
-                <span className="mono team-docs-kind">{doc.kind}</span>
-              </button>
-              );
-            }) : <div className="team-task-empty mono">No documents in the workspace yet.</div>}
-          </div>
-        </div>
-      ) : null}
+
+
+
+
+
 
       <DocumentPreview open={Boolean(previewDoc)} doc={previewDoc} onClose={() => setPreviewDoc(null)} />
 

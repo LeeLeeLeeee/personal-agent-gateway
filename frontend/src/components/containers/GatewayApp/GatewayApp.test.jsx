@@ -1643,7 +1643,7 @@ describe("GatewayApp", () => {
     await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Add work" }));
+    await userEvent.click(await screen.findByRole("button", { name: "일감 추가" }));
     await userEvent.type(screen.getByLabelText("Additional work"), "write release notes");
     await userEvent.click(screen.getByRole("button", { name: "Request work" }));
 
@@ -1675,12 +1675,12 @@ describe("GatewayApp", () => {
     await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Add work" }));
+    await userEvent.click(await screen.findByRole("button", { name: "일감 추가" }));
     await userEvent.type(screen.getByLabelText("Additional work"), "write release notes");
     await userEvent.click(screen.getByRole("button", { name: "Request work" }));
 
     expect(await screen.findByText("Failed to add work")).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "Add work" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "일감 추가" })).toBeInTheDocument();
     expect(screen.getByLabelText("Additional work")).toHaveValue("write release notes");
   });
 
@@ -1951,7 +1951,7 @@ describe("GatewayApp", () => {
     await renderGatewayApp({ uiProvider: true });
     await userEvent.click(await screen.findByRole("button", { name: "Team Runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open team run Ship it" }));
-    await userEvent.click(await screen.findByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: /^TASK/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Open task Run QA" }));
     await userEvent.click(screen.getByRole("button", { name: "Retry failed task" }));
     const dialog = await screen.findByRole("dialog", { name: "RETRY FAILED TASK" });
@@ -2053,7 +2053,7 @@ describe("GatewayApp", () => {
     expect((await screen.findAllByText("Tech Lead")).length).toBeGreaterThan(0);
     expect(screen.getByText("LEAD")).toBeInTheDocument();
     expect(screen.queryByText("Define schema")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
 
     const source = MockEventSource.instances[0];
     source.emit({
@@ -2064,7 +2064,8 @@ describe("GatewayApp", () => {
       payload: { item: { type: "agent_message", text: "should not enter chat" } }
     });
 
-    expect(await screen.findByText("Define schema")).toBeInTheDocument();
+    // 진행 중인 일감은 대시보드와 Task 보드 양쪽에 나온다.
+    expect((await screen.findAllByText("Define schema")).length).toBeGreaterThan(0);
 
     const selectedDetailCalls = taskCalls;
     act(() => {

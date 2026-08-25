@@ -5610,3 +5610,19 @@ p {
    "넷이 동시에 한다"로 읽힌다. */
 .team-plan-shape { color: var(--c-grey); }
 .team-plan-shape-flat { color: #8a3b12; font-weight: 600; }
+
+/* 대시보드. 열자마자 보여야 하는 것만 모은 자리라, 탭 패널보다 위에서
+   시각적으로 한 덩어리로 읽혀야 한다. */
+.team-dashboard { display: flex; flex-direction: column; gap: 16px; border: 2px solid #000; background: #fff; padding: 16px; margin-bottom: 16px; }
+.team-dashboard-request { display: flex; flex-direction: column; gap: 6px; }
+.team-dashboard-now { display: flex; flex-direction: column; gap: 8px; }
+.team-dashboard-now-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+/* 제목이 길어도 담당자와 경과 시간은 오른쪽에 붙어 있어야 한 줄로 읽힌다. */
+.team-dashboard-now-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; gap: 10px; padding: 6px 8px; background: var(--c-panel); }
+.team-dashboard-now-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-dashboard-now-owner { font-size: 10px; color: var(--c-grey); }
+.team-dashboard-now-since { font-size: 10px; }
+.team-dashboard-now-empty { font-size: 11px; color: var(--c-grey); padding: 6px 8px; }
+/* Run 탭의 물어보기·일감 추가. 헤더에서 내려온 것들이다. */
+.team-run-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.team-config-outputs { display: flex; flex-direction: column; gap: 12px; }

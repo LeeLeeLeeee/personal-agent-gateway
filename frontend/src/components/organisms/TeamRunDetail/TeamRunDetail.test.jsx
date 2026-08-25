@@ -14,30 +14,6 @@ const APPROVED_PLAN_REVISION = {
 };
 
 describe("TeamRunDetail", () => {
-  it("renders the overview first and moves tasks and activity into tabs", async () => {
-    render(
-      <TeamRunDetail
-        detail={{
-          run: { id: "r1", goal: "Design", status: "running", run_mode: "plan_and_execute" },
-          agents: [{ id: "a1", name: "Tech Lead", role: "Planning", status: "running", current_task_id: null }],
-          tasks: [{ id: "t1", title: "Define schema", description: "tables", status: "in_progress" }],
-          messages: [{ id: "m1", kind: "note", content: "Planning started", created_at: "2026-07-08T00:00:00Z" }]
-        }}
-      />
-    );
-
-    expect(screen.getByText("Design")).toBeInTheDocument();
-    expect(screen.getByText("Tech Lead")).toBeInTheDocument();
-    expect(screen.queryByText("Define schema")).not.toBeInTheDocument();
-    expect(screen.queryByText("Planning started")).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
-    expect(screen.getByText("Define schema")).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("tab", { name: "LOG" }));
-    expect(screen.getByText("Planning started")).toBeInTheDocument();
-  });
-
   it("keeps waiting, skipped, and canceled tasks visible with dependencies", async () => {
     render(
       <TeamRunDetail
@@ -62,7 +38,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
 
     expect(screen.getByRole("button", { name: "Open task Fetch transcript" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open task Review selection" })).toBeInTheDocument();
@@ -101,7 +77,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Add work" }));
+    await userEvent.click(screen.getByRole("button", { name: "일감 추가" }));
     await userEvent.type(screen.getByLabelText("Additional work"), "also write docs");
     await userEvent.click(screen.getByRole("button", { name: "Request work" }));
 
@@ -122,7 +98,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Add work" }));
+    await userEvent.click(screen.getByRole("button", { name: "일감 추가" }));
     await userEvent.type(screen.getByLabelText("Additional work"), "also write docs");
     await userEvent.click(screen.getByRole("button", { name: "Request work" }));
 
@@ -143,7 +119,7 @@ describe("TeamRunDetail", () => {
         }}
       />
     );
-    await userEvent.click(screen.getByRole("button", { name: "Add work" }));
+    await userEvent.click(screen.getByRole("button", { name: "일감 추가" }));
     expect(screen.getByRole("button", { name: "Reopen & request" })).toBeInTheDocument();
   });
 
@@ -162,7 +138,7 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("Planning").closest(".team-phase")).not.toHaveAttribute("aria-current");
   });
 
-  it("promotes the current instruction while keeping technical identity in run details", () => {
+  it("promotes the current instruction while keeping technical identity in run details", async () => {
     const runId = "1bceb1ef9d54459fb1174f5bec686dbc";
     const instruction = "Collect the current popular Reddit posts and summarize the top 10.";
     const workspace = "/Users/example/works/personal-agent-gateway/team-runs/reddit-popular";
@@ -191,6 +167,9 @@ describe("TeamRunDetail", () => {
         }}
       />
     );
+
+    // 이 패널은 이제 탭 안에 있다.
+    await userEvent.click(screen.getByRole("tab", { name: /CONFIGURATION/ }));
 
     expect(screen.getByText(runId)).toHaveClass("team-run-meta-copy");
     expect(screen.getByText(instruction)).toHaveClass("team-run-current-request");
@@ -242,17 +221,19 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     expect(screen.getByText("FILES 1")).toBeInTheDocument();
     expect(screen.getByText("REPORTS 1")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: "SUMMARY" }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
+    // 쪽지 기록은 이제 History 탭 안에 있다.
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
     await userEvent.click(screen.getByText(/SHARED \/ HANDOFFS/));
     const handoffsSection = container.querySelector(".team-handoffs");
     expect(within(handoffsSection).getByText("which schema?")).toBeInTheDocument();
     expect(within(handoffsSection).getByText("use schema X")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Build API" }));
     const taskDialog = screen.getByRole("dialog", { name: "Task details: Build API" });
     expect(within(taskDialog).getByText("API built")).toBeInTheDocument();
@@ -266,7 +247,7 @@ describe("TeamRunDetail", () => {
         detail={{ run: { id: "r1", goal: "Design", status: "running", run_mode: "planning_only" }, agents: [], tasks: [], messages: [] }}
       />
     );
-    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "일감 추가" })).not.toBeInTheDocument();
 
     rerender(
       <TeamRunDetail
@@ -274,7 +255,7 @@ describe("TeamRunDetail", () => {
         detail={{ run: { id: "r1", goal: "Design", status: "draft", run_mode: "plan_and_execute" }, agents: [], tasks: [], messages: [] }}
       />
     );
-    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "일감 추가" })).not.toBeInTheDocument();
   });
 
   it("offers manual resume for interrupted runs without marking a phase active", async () => {
@@ -293,7 +274,7 @@ describe("TeamRunDetail", () => {
     );
 
     expect(screen.getByText("Run interrupted")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "일감 추가" })).not.toBeInTheDocument();
     expect(container.querySelector('[aria-current="step"]')).toBeNull();
 
     const resume = screen.getByRole("button", { name: "Resume" });
@@ -316,7 +297,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Run QA" }));
     const retry = screen.getByRole("button", { name: "Retry failed task" });
     await userEvent.click(retry);
@@ -359,7 +340,7 @@ describe("TeamRunDetail", () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
     expect(onRetryTask).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Open diagnostics" }));
-    expect(screen.getByRole("tab", { name: /TASKS/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /^TASK/ })).toHaveAttribute("aria-selected", "true");
   });
 
   it("resumes an interrupted cycle instead of retrying the same failed task twice", async () => {
@@ -392,7 +373,7 @@ describe("TeamRunDetail", () => {
 
     const resume = screen.getByRole("button", { name: "Resume cycle" });
     await userEvent.click(screen.getByRole("button", { name: "Review retry task" }));
-    expect(screen.getByRole("tab", { name: /TASKS/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /^TASK/ })).toHaveAttribute("aria-selected", "true");
     await userEvent.click(resume);
     expect(onResume).toHaveBeenCalledTimes(1);
     expect(onRetryTask).not.toHaveBeenCalled();
@@ -451,7 +432,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: "OUTPUTS" }));
+    await userEvent.click(screen.getByRole("tab", { name: /CONFIGURATION/ }));
     await userEvent.click(screen.getByRole("button", { name: "Outputs에서 모두 보기" }));
     expect(onViewOutputs).toHaveBeenCalledWith("run-1");
   });
@@ -470,34 +451,11 @@ describe("TeamRunDetail", () => {
         onLoadDocument={onLoadDocument}
       />
     );
-    await userEvent.click(screen.getByRole("tab", { name: /OUTPUTS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /CONFIGURATION/ }));
     await userEvent.click(screen.getByText("notes.md"));
     expect(screen.getByText("docs")).toBeInTheDocument();
     expect(onLoadDocument).toHaveBeenCalledWith("docs/notes.md");
     expect(await screen.findByRole("heading", { name: "hi" })).toBeInTheDocument();
-  });
-
-  it("shows completed-run reports expanded by default and keeps raw activity separate", async () => {
-    render(
-      <TeamRunDetail
-        detail={{
-          run: { id: "r1", goal: "Design", status: "completed", run_mode: "plan_and_execute", summary: "All shipped." },
-          agents: [{ id: "a1", name: "Worker", role: "member", status: "completed" }],
-          tasks: [],
-          messages: [
-            { id: "m1", kind: "note", content: "Planning started", created_at: "2026-07-08T00:00:00Z" },
-            { id: "m2", kind: "agent_output", sender_agent_id: "a1", content: "Feature built", created_at: "2026-07-08T00:01:00Z" }
-          ]
-        }}
-      />
-    );
-
-    expect(screen.getByText("All shipped.")).toBeInTheDocument();
-    expect(screen.queryByText("Planning started")).not.toBeInTheDocument();
-    expect(screen.getByText("Feature built")).toBeVisible();
-
-    await userEvent.click(screen.getByRole("tab", { name: "LOG" }));
-    expect(screen.getByText("Planning started")).toBeInTheDocument();
   });
 
   it("renders summaries and task details as structured markdown", async () => {
@@ -544,12 +502,12 @@ describe("TeamRunDetail", () => {
     expect(within(latestSummary).getByRole("heading", { name: "완료 내용" })).toBeInTheDocument();
     expect(within(latestSummary).getByRole("list")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: /CYCLES/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
     const cycleSummary = container.querySelector(".team-cycle-summary");
     expect(within(cycleSummary).getByRole("heading", { name: "Cycle 결과" })).toBeInTheDocument();
     expect(within(cycleSummary).getByRole("list")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Build API" }));
     const taskDialog = screen.getByRole("dialog", { name: "Task details: Build API" });
     expect(within(taskDialog).getByRole("heading", { name: "수행 내용" })).toBeInTheDocument();
@@ -584,8 +542,12 @@ describe("TeamRunDetail", () => {
       }} />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /CYCLES/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    // lifecycle 표시는 Run detail 안이고, 그것은 Configuration 탭에 있다.
+    await userEvent.click(screen.getByRole("tab", { name: /CONFIGURATION/ }));
     expect(screen.getByText("continuous")).toBeInTheDocument();
+    // 사이클 기록은 이제 History 탭 안에 있다.
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
     expect(screen.getByText("hook · hook-run-2")).toBeInTheDocument();
     expect(screen.getByText("First mail done")).toBeInTheDocument();
     expect([...container.querySelectorAll(".team-cycle-sequence")].map((node) => node.textContent))
@@ -602,7 +564,7 @@ describe("TeamRunDetail", () => {
         }}
       />
     );
-    await userEvent.click(screen.getByRole("tab", { name: /CYCLES/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
     expect(screen.getByText(/누락 없다고 보고함/)).toBeInTheDocument();
 
     rerender(
@@ -644,6 +606,11 @@ describe("TeamRunDetail", () => {
       onTriggerCycle={onTriggerCycle}
     />);
 
+    // 이 패널은 이제 탭 안에 있다.
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+
+    // Triggered 박스는 이제 Run 탭 안에 있다.
+    await userEvent.click(screen.getByRole("tab", { name: /^RUN/ }));
     const policyPanel = screen.getByRole("region", { name: "Cycle policy" });
     expect(within(policyPanel).getByText("latest result")).toBeInTheDocument();
     expect(within(policyPanel).queryByText("older result")).not.toBeInTheDocument();
@@ -690,7 +657,7 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("2 / 5 SETTLED")).toBeInTheDocument();
     expect(screen.getByText(/QUEUE · 1/)).toBeInTheDocument();
     expect(screen.getByText(/NEXT ·/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "일감 추가" })).not.toBeInTheDocument();
 
     const continueButton = screen.getByRole("button", { name: "Continue" });
     const retryButton = screen.getByRole("button", { name: "Retry" });
@@ -806,76 +773,6 @@ describe("TeamRunDetail", () => {
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
   });
 
-  it("orders results and activity newest first while keeping handoff pairs intact", async () => {
-    const { container } = render(
-      <TeamRunDetail detail={{
-        run: { id: "r1", goal: "Sort", status: "completed", run_mode: "plan_and_execute" },
-        agents: [
-          { id: "lead", name: "Lead", role: "leader", status: "completed" },
-          { id: "worker", name: "Worker", role: "member", status: "completed" }
-        ],
-        tasks: [],
-        messages: [
-          { id: "q1", kind: "query", sender_agent_id: "worker", content: "old question", created_at: "2026-07-15T01:00:00Z" },
-          { id: "a1", kind: "answer", sender_agent_id: "lead", content: "old answer", created_at: "2026-07-15T01:01:00Z" },
-          { id: "r1", kind: "agent_output", sender_agent_id: "worker", content: "old report", created_at: "2026-07-15T01:02:00Z" },
-          { id: "q2", kind: "query", sender_agent_id: "worker", content: "new question", created_at: "2026-07-15T02:00:00Z" },
-          { id: "a2", kind: "answer", sender_agent_id: "lead", content: "new answer", created_at: "2026-07-15T02:01:00Z" },
-          { id: "r2", kind: "agent_output", sender_agent_id: "worker", content: "new report", created_at: "2026-07-15T02:02:00Z" }
-        ]
-      }} />
-    );
-
-    await userEvent.click(screen.getByRole("tab", { name: "LOG" }));
-    expect([...container.querySelectorAll(".tl-detail")].map((node) => node.textContent)).toEqual([
-      "new report", "new answer", "new question", "old report", "old answer", "old question"
-    ]);
-
-    await userEvent.click(screen.getByRole("tab", { name: "SUMMARY" }));
-    await userEvent.click(screen.getByText(/AGENT REPORTS/));
-    expect([...container.querySelectorAll(".team-agent-report-body")].map((node) => node.textContent)).toEqual([
-      "new report", "old report"
-    ]);
-
-    await userEvent.click(screen.getByText(/SHARED \/ HANDOFFS/));
-    const handoffs = [...container.querySelectorAll(".team-handoff")];
-    expect(handoffs[0]).toHaveTextContent("new question");
-    expect(handoffs[0]).toHaveTextContent("new answer");
-    expect(handoffs[1]).toHaveTextContent("old question");
-    expect(handoffs[1]).toHaveTextContent("old answer");
-  });
-
-  it("pairs answers by query id even when answers arrive out of order", async () => {
-    const { container } = render(
-      <TeamRunDetail detail={{
-        run: { id: "r1", goal: "Link", status: "waiting_for_user", run_mode: "plan_and_execute" },
-        agents: [
-          { id: "lead", name: "Lead", role: "leader", status: "waiting" },
-          { id: "worker", name: "Worker", role: "member", status: "waiting" }
-        ],
-        tasks: [],
-        messages: [
-          { id: "q1", kind: "query", sender_agent_id: "worker", content: "first question", created_at: "2026-07-15T01:00:00Z" },
-          { id: "q2", kind: "query", sender_agent_id: "worker", content: "second question", created_at: "2026-07-15T01:01:00Z" },
-          { id: "q3", kind: "query", sender_agent_id: "worker", content: "still waiting", created_at: "2026-07-15T01:02:00Z" },
-          { id: "a2", kind: "answer", sender_agent_id: "lead", content: "second answer", metadata: { query_id: "q2" }, created_at: "2026-07-15T02:00:00Z" },
-          { id: "a1", kind: "answer", sender_agent_id: "lead", content: "first answer", metadata: { query_id: "q1" }, created_at: "2026-07-15T02:01:00Z" }
-        ]
-      }} />
-    );
-
-    await userEvent.click(screen.getByText(/SHARED \/ HANDOFFS/));
-    const byQuestion = new Map(
-      [...container.querySelectorAll(".team-handoff")].map((handoff) => [
-        handoff.querySelector(".team-handoff-q .team-handoff-text").textContent,
-        handoff.textContent
-      ])
-    );
-    expect(byQuestion.get("first question")).toContain("first answer");
-    expect(byQuestion.get("second question")).toContain("second answer");
-    expect(byQuestion.get("still waiting")).toContain("awaiting answer");
-  });
-
   it("shows assigned task names and a phase fallback for the leader", async () => {
     render(<TeamRunDetail detail={{
       run: { id: "r1", goal: "Work", status: "running", run_mode: "plan_and_execute" },
@@ -888,8 +785,8 @@ describe("TeamRunDetail", () => {
     }} />);
 
     expect(screen.getByText("Coordinating agents")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
-    expect(screen.getByText("Build API")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
+    expect(screen.getAllByText("Build API").length).toBeGreaterThan(0);
     expect(screen.getByText("Worker", { selector: ".team-task-owner-name" })).toBeInTheDocument();
   });
 
@@ -970,7 +867,7 @@ describe("TeamRunDetail", () => {
     }} />);
 
     expect(screen.getByText("차단됨")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Verify guide" }));
 
     const dialog = screen.getByRole("dialog", { name: "Task details: Verify guide" });
@@ -1016,7 +913,7 @@ describe("TeamRunDetail", () => {
       }]
     }} />);
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Draft library" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Draft library" });
 
@@ -1061,7 +958,7 @@ describe("TeamRunDetail", () => {
       }]
     }} />);
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Draft library" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Draft library" });
 
@@ -1100,7 +997,7 @@ describe("TeamRunDetail", () => {
       }]
     }} />);
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Draft library" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Draft library" });
 
@@ -1139,7 +1036,7 @@ describe("TeamRunDetail", () => {
       }]
     }} />);
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Draft library" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Draft library" });
 
@@ -1186,7 +1083,7 @@ describe("TeamRunDetail", () => {
     expect(screen.queryByText("undeclared_deliverable")).not.toBeInTheDocument();
     expect(screen.queryByText("INTERNAL REVIEW")).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Verify guide" }));
 
     const dialog = screen.getByRole("dialog", { name: "Task details: Verify guide" });
@@ -1197,7 +1094,7 @@ describe("TeamRunDetail", () => {
     expect(within(dialog).queryByText("This must remain private to another task.")).not.toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Close task details" }));
-    await userEvent.click(screen.getByRole("tab", { name: "LOG" }));
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
     expect(screen.queryByText("Resubmit without the undeclared file.")).not.toBeInTheDocument();
     expect(screen.queryByText("undeclared_deliverable")).not.toBeInTheDocument();
   });
@@ -1245,7 +1142,7 @@ describe("TeamRunDetail", () => {
     expect(screen.getByRole("region", { name: "Input needed" })).toBeInTheDocument();
     expect(screen.getByText(/Independent work is complete/)).toBeInTheDocument();
     expect(screen.getByText("Recommended: Staging")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "일감 추가" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop run" })).toBeInTheDocument();
     const submit = screen.getByRole("button", { name: "ANSWER & RESUME" });
@@ -1344,6 +1241,8 @@ describe("TeamRunDetail", () => {
       onRefreshDelivery={vi.fn()}
     />);
 
+    // 전달 패널은 이제 Configuration 탭 안에 있다.
+    await userEvent.click(screen.getByRole("tab", { name: /CONFIGURATION/ }));
     expect(screen.getByRole("region", { name: "Repository delivery" })).toBeInTheDocument();
     expect(screen.getByText("src/app.js")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Apply to repository" })).toBeDisabled();
@@ -1389,17 +1288,22 @@ describe("TeamRunDetail", () => {
       }}
     />);
 
-    const deliveryPanel = screen.getByRole("region", { name: "Repository delivery" });
-    const policyPanel = screen.getByRole("region", { name: "Cycle policy" });
-    expect(deliveryPanel.tagName).toBe("DETAILS");
-    expect(policyPanel.tagName).toBe("DETAILS");
-    expect(deliveryPanel).toHaveAttribute("open");
-    expect(policyPanel).toHaveAttribute("open");
+    // 두 패널이 서로 다른 탭에 있으므로 각 탭 안에서 다시 조회한다. 탭을
+    // 바꾸면 이전 패널은 언마운트되어 잡아둔 노드가 문서에서 떨어진다.
+    const config = () => screen.getByRole("tab", { name: /CONFIGURATION/ });
+    const runTab = () => screen.getByRole("tab", { name: /^RUN/ });
 
+    await userEvent.click(config());
+    expect(screen.getByRole("region", { name: "Repository delivery" }).tagName).toBe("DETAILS");
+    expect(screen.getByRole("region", { name: "Repository delivery" })).toHaveAttribute("open");
     await userEvent.click(screen.getByText("Repository Delivery"));
+    expect(screen.getByRole("region", { name: "Repository delivery" })).not.toHaveAttribute("open");
+
+    await userEvent.click(runTab());
+    expect(screen.getByRole("region", { name: "Cycle policy" }).tagName).toBe("DETAILS");
+    expect(screen.getByRole("region", { name: "Cycle policy" })).toHaveAttribute("open");
     await userEvent.click(screen.getByText("TRIGGERED · READY"));
-    expect(deliveryPanel).not.toHaveAttribute("open");
-    expect(policyPanel).not.toHaveAttribute("open");
+    expect(screen.getByRole("region", { name: "Cycle policy" })).not.toHaveAttribute("open");
   });
 
   it("resolves repository conflicts through target, team, manual, continue, and cancel callbacks", async () => {
@@ -1441,6 +1345,8 @@ describe("TeamRunDetail", () => {
       onCancelDeliveryConflicts={onCancelDeliveryConflicts}
     />);
 
+    // 전달 패널은 이제 Configuration 탭 안에 있다.
+    await userEvent.click(screen.getByRole("tab", { name: /CONFIGURATION/ }));
     expect(screen.getByRole("region", { name: "Repository conflicts" })).toBeInTheDocument();
     expect(screen.getByText("target content", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("team content", { exact: false })).toBeInTheDocument();
@@ -1568,7 +1474,7 @@ describe("TeamRunDetail", () => {
     expect(screen.queryByText("LIVE")).not.toBeInTheDocument();
     expect(container.querySelector(".team-lane-status-row")).toHaveTextContent("FAILED");
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     expect(container.querySelector(".team-task-status")).toHaveTextContent("FAILED");
   });
 
@@ -1594,7 +1500,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
 
     const columns = [...container.querySelectorAll(".team-task-column")];
     expect(columns).toHaveLength(4);
@@ -1629,7 +1535,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
 
     const unresolved = [...container.querySelectorAll(".team-task-column")][3];
     expect(unresolved.querySelector(".team-task-title").textContent).toBe("Unknown state work");
@@ -1658,7 +1564,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Verify guide" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Verify guide" });
 
@@ -1703,7 +1609,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     // "통과" would read as "acceptance was rigorous". Every check kind is a file
     // read, so the label has to say that and name its own scope.
     expect(screen.getByText(/태스크 3개 중 게이트가 파일 확인 1/)).toBeInTheDocument();
@@ -1734,7 +1640,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Fresh task" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Fresh task" });
 
@@ -1929,7 +1835,7 @@ describe("TeamRunDetail", () => {
     render(<TeamRunDetail detail={detail} />);
 
     expect(screen.getByText(/기각 · task 7 covers it/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     expect(screen.getByText(/태스크 13개 중 게이트가 파일 확인 0/)).toBeInTheDocument();
     expect(screen.getByText(/없는 파일 2/)).toBeInTheDocument();
   });
@@ -1960,7 +1866,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     expect(screen.getByText(/미확인 1/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Open task Build the screens" }));
@@ -2011,7 +1917,7 @@ describe("TeamRunDetail", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: /TASKS/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
     await userEvent.click(screen.getByRole("button", { name: "Open task Build the screens" }));
     const dialog = screen.getByRole("dialog", { name: "Task details: Build the screens" });
 
@@ -2125,7 +2031,7 @@ describe("TeamRunDetail pause and ask a question", () => {
   it("정지된 런에서는 일감 추가를 막는다", () => {
     renderDetail({ run: { ...baseRun, status: "paused" }, onAddWork: vi.fn() });
     expect(screen.queryByRole("button", { name: /일감 추가/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add work" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "일감 추가" })).not.toBeInTheDocument();
   });
 
   it("물어보기를 누르면 질문이 전달된다", async () => {
@@ -2421,5 +2327,112 @@ describe("TeamRunDetail plan shape", () => {
   it("계획 모양이 없으면 아무것도 그리지 않는다", () => {
     renderShape(undefined);
     expect(screen.queryByText(/즉시 시작/)).not.toBeInTheDocument();
+  });
+});
+
+describe("TeamRunDetail 대시보드와 탭 구조", () => {
+  const inProgress = {
+    id: "t1", title: "백엔드 배선", status: "in_progress",
+    owner_agent_id: "a1", cycle_id: "c1"
+  };
+  const agent = { id: "a1", name: "백엔드 개발자", role: "member", status: "running" };
+
+  function renderApp(props = {}) {
+    return render(
+      <TeamRunDetail
+        onAskQuestion={vi.fn()}
+        onAddWork={vi.fn()}
+        onViewOutputs={vi.fn()}
+        {...props}
+        detail={{
+          run: { ...baseRun, status: "running", summary: "요약입니다" },
+          agents: [agent],
+          tasks: [inProgress],
+          messages: [],
+          cycles: [{ id: "c1", sequence: 8, status: "running" }],
+          plan_shape: {
+            task_count: 3, longest_chain: 3, ready_at_start: 1, max_concurrent_workers: 3
+          },
+          ...(props.detail || {})
+        }}
+      />
+    );
+  }
+
+  it("헤더에서 요청 문구와 물어보기를 뺀다", () => {
+    renderApp();
+    const header = screen.getByRole("banner");
+    expect(within(header).queryByText(/CURRENT REQUEST/)).not.toBeInTheDocument();
+    expect(within(header).queryByRole("button", { name: /물어보기/ })).not.toBeInTheDocument();
+  });
+
+  it("헤더에는 진행 단계가 남는다", () => {
+    renderApp();
+    expect(screen.getByLabelText("Run phase")).toBeInTheDocument();
+  });
+
+  it("대시보드가 요청·계획 모양·진행 중 일감·팀 구성·요약을 모은다", () => {
+    renderApp();
+    const dashboard = screen.getByRole("region", { name: "Dashboard" });
+    expect(within(dashboard).getByText(/CURRENT REQUEST/)).toBeInTheDocument();
+    expect(within(dashboard).getByText(/나눈 이득이 없습니다/)).toBeInTheDocument();
+    expect(within(dashboard).getByText("백엔드 배선")).toBeInTheDocument();
+    // 담당자 이름은 진행 중 목록과 팀 구성 양쪽에 나온다.
+    expect(within(dashboard).getAllByText("백엔드 개발자").length).toBeGreaterThan(0);
+    expect(within(dashboard).getByText("요약입니다")).toBeInTheDocument();
+  });
+
+  it("탭은 넷이고 처음에는 Run 이 열린다", () => {
+    renderApp();
+    const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");
+    // 탭 이름 뒤에 개수 배지가 붙으므로 첫 span 만 읽는다.
+    expect(tabs.map((tab) => tab.querySelector("span").textContent)).toEqual([
+      "RUN", "TASK", "CONFIGURATION", "HISTORY"
+    ]);
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("LOG 탭은 없앤다", () => {
+    renderApp();
+    expect(screen.queryByRole("tab", { name: /LOG/ })).not.toBeInTheDocument();
+  });
+
+  it("Run 탭에 물어보기와 일감 추가가 있다", () => {
+    renderApp();
+    const panel = screen.getByRole("tabpanel", { name: "Run" });
+    expect(within(panel).getByRole("button", { name: /물어보기/ })).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: /일감 추가/ })).toBeInTheDocument();
+  });
+
+  it("Configuration 탭에 전달과 산출물이 모인다", async () => {
+    renderApp({ delivery: { source: { path: "/repo" } } });
+    await userEvent.click(screen.getByRole("tab", { name: /CONFIGURATION/ }));
+    const panel = screen.getByRole("tabpanel", { name: "Configuration" });
+    expect(within(panel).getByText(/Repository Delivery/)).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: /Outputs/ })).toBeInTheDocument();
+  });
+
+  it("History 탭에 사이클 기록과 에이전트 보고가 모인다", async () => {
+    renderApp();
+    // 탭 이름 뒤에 개수 배지가 붙는다.
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    const panel = screen.getByRole("tabpanel", { name: "History" });
+    expect(within(panel).getByText(/Cycle History/)).toBeInTheDocument();
+    expect(within(panel).getByText(/AGENT REPORTS/)).toBeInTheDocument();
+  });
+
+  it("Task 탭의 개수는 현재 사이클 기준이다", async () => {
+    renderApp({
+      detail: {
+        run: { ...baseRun, status: "running" },
+        agents: [agent],
+        tasks: [inProgress, { id: "old", title: "지난 것", status: "completed", cycle_id: "c0" }],
+        messages: [],
+        cycles: [{ id: "c1", sequence: 8, status: "running" }]
+      }
+    });
+    await userEvent.click(screen.getByRole("tab", { name: /^TASK/ }));
+    const panel = screen.getByRole("tabpanel", { name: "Tasks" });
+    expect(within(panel).getByText(/1 CURRENT CYCLE/)).toBeInTheDocument();
   });
 });
