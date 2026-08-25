@@ -3540,6 +3540,14 @@ p {
     line-height: 1.6;
     white-space: pre-wrap;
 }
+/* The acceptance lists are paths and check evidence, not prose. At the block's
+   13px they sat between a 9px label and their own 8px check line. Direct child
+   only, so markdown lists (wrapped in .md) keep the prose size. */
+.team-task-dialog-copy > ul {
+    margin: 4px 0 10px;
+    padding-left: 16px;
+    font-size: 11px;
+}
 .team-acceptance-review-list {
     display: grid;
     gap: 8px;
@@ -4796,6 +4804,12 @@ p {
    body size and a one-line diagnostic ended up larger than the cycle number
    it belongs to. */
 .team-cycle-coverage { margin-top: 5px; color: var(--c-grey); font-size: 10px; }
+/* Same omission as the line above, in the branch that actually has gaps to
+   show: this class had no rule either, so a list of diagnostics rendered at
+   the body size next to 10px siblings. */
+.team-cycle-coverage-gaps { margin-top: 5px; font-size: 10px; }
+.team-cycle-coverage-label { display: block; margin-bottom: 4px; color: var(--c-grey); letter-spacing: 1px; }
+.team-cycle-coverage-gaps ul { margin: 0; padding-left: 16px; }
 .team-plan-review { margin-top: 16px; border: 2px solid #000; background: #fff; }
 .team-plan-review-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 14px; cursor: pointer; list-style: none; }
 .team-plan-review-summary::-webkit-details-marker { display: none; }

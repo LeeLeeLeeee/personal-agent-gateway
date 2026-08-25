@@ -289,16 +289,44 @@ describe("ArchiveView", () => {
       screen.getByLabelText("Content"),
       "# Rollback checklist\n\nPreview the revised marker before publishing."
     );
-    await userEvent.click(screen.getByRole("button", { name: "Preview draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "Preview" }));
 
     const dialog = screen.getByRole("dialog", { name: "Preview: Rollback checklist" });
+    expect(within(dialog).getByText("PRIVATE DRAFT · Rollback checklist")).toBeInTheDocument();
     expect(within(dialog).getByText("Preview the revised marker before publishing."))
       .toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", {
-      name: "Close draft preview"
+      name: "Close preview"
     }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("renders a published entry's markdown in the preview modal", async () => {
+    render(<ArchiveView client={makeClient()} />);
+
+    await screen.findByRole("heading", { name: "Library" });
+    await userEvent.click(await screen.findByText("Deployment reference"));
+    await userEvent.click(screen.getByRole("button", { name: "Preview" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Preview: Deployment reference" });
+    // The revision, not "PRIVATE DRAFT": this content is already published.
+    expect(within(dialog).getByText("REV 1 · Deployment reference")).toBeInTheDocument();
+    // Rendered, not the raw "# Deployment reference" line the textarea shows.
+    expect(within(dialog).getByRole("heading", { name: "Deployment reference" }))
+      .toBeInTheDocument();
+    expect(within(dialog).getByText("Use the release checklist.")).toBeInTheDocument();
+  });
+
+  it("labels an unsaved new entry as such in the preview modal", async () => {
+    render(<ArchiveView client={makeClient()} />);
+
+    await screen.findByRole("heading", { name: "Library" });
+    await userEvent.type(screen.getByLabelText("Content"), "# Draft heading");
+    await userEvent.click(screen.getByRole("button", { name: "Preview" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Preview: Untitled entry" });
+    expect(within(dialog).getByText("NEW ENTRY · Untitled entry")).toBeInTheDocument();
   });
 
   it("lets the user delete a private Team draft after confirmation", async () => {

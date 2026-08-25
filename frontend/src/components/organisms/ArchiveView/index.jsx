@@ -217,10 +217,18 @@ export function ArchiveView({ client = api }) {
     setTab("published");
   }
 
-  function openDraftPreview() {
-    if (!editingDraft) return;
+  // Previews whatever the editor holds, so it is not scoped to drafts: reading a
+  // published entry meant reading raw markdown in the textarea. The label names
+  // which of the three the content came from, since the rendered body cannot.
+  function openPreview() {
+    if (!form.content.trim()) return;
     setPreviewDraft({
-      title: form.title.trim() || "Untitled draft",
+      title: form.title.trim() || "Untitled entry",
+      label: editingDraft
+        ? "PRIVATE DRAFT"
+        : editingEntry
+          ? `REV ${editingEntry.current_revision}`
+          : "NEW ENTRY",
       content: form.content
     });
   }
@@ -594,9 +602,9 @@ export function ArchiveView({ client = api }) {
               ) : form.requestId ? (
                 <span className="archive-request-link mono">FROM REQUEST</span>
               ) : null}
-              {editingDraft ? (
-                <Button type="button" size="btn-sm" onClick={openDraftPreview}>
-                  Preview draft
+              {form.content.trim() ? (
+                <Button type="button" size="btn-sm" onClick={openPreview}>
+                  Preview
                 </Button>
               ) : null}
             </div>
@@ -976,11 +984,11 @@ export function ArchiveView({ client = api }) {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="modal-head">
-              <span className="mono">PRIVATE DRAFT · {previewDraft.title}</span>
+              <span className="mono">{previewDraft.label} · {previewDraft.title}</span>
               <button
                 type="button"
                 className="modal-close"
-                aria-label="Close draft preview"
+                aria-label="Close preview"
                 onClick={() => setPreviewDraft(null)}
               >
                 ×

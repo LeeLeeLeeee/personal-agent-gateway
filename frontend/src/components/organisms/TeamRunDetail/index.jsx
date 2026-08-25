@@ -254,7 +254,7 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
               </div>
             ) : null}
             <div className="team-task-dialog-copy">
-              <div className="mono">REQUIRED OUTPUTS</div>
+              <div className="mono team-task-dialog-label">REQUIRED OUTPUTS</div>
               {(acceptance.required_outputs || []).length ? (
                 <ul>
                   {acceptance.required_outputs.map((path) => (
@@ -262,7 +262,7 @@ function TaskDetailDialog({ task, reports, reviews, agents, canRetry, retrying, 
                   ))}
                 </ul>
               ) : <div>None</div>}
-              <div className="mono">VERIFICATIONS</div>
+              <div className="mono team-task-dialog-label">VERIFICATIONS</div>
               {(acceptance.required_verifications || []).length ? (
                 <ul>
                   {acceptance.required_verifications.map((item) => {
