@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client.js";
 
+// 이벤트를 놓쳤을 때의 안전망이다. 짧게 두면 이벤트가 제 몫을 하는
+// 동안에도 불필요한 요청이 계속 나가고, 길게 두면 낡은 화면을 보는
+// 시간이 그만큼 길어진다.
+const TEAM_RUN_REFRESH_MS = 15000;
+
 export function applyTeamRunDelta(detail, event) {
   if (!detail) return detail;
   const run = event.run ? { ...detail.run, ...event.run } : detail.run;
@@ -134,6 +139,54 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
       alive = false;
     };
   }, [selectedTeamRunId, setScreenError, reloadKey]);
+
+  // 화면은 이벤트로만 갱신된다. 탭이 뒤에 있거나 SSE 를 놓치면 그대로 낡고,
+  // 사용자는 그것이 지금인지 알 방법이 없다. 돌아왔을 때와 주기적으로 한 번씩
+  // 다시 읽는다.
+  //
+  // 처음 불러오기와 달리 상세를 비우지 않고 로딩도 켜지 않는다. 그렇게 하면
+  // 이미 보고 있던 화면이 갱신할 때마다 몇 백 밀리초씩 사라진다.
+  const refreshSelectedTeamRun = useCallback(() => {
+    const runId = selectedTeamRunIdRef.current;
+    if (!runId) return;
+    const requestedRun = {
+      id: runId,
+      version: selectedTeamRunVersionRef.current
+    };
+    const requestVersion = beginTeamRunDetailRequest();
+    teamRunDetailRequestPendingRef.current = true;
+    api.teamRunDetail(runId)
+      .then((detail) => {
+        if (!detail?.run) return;
+        if (ownsSelectedRun(requestedRun) && ownsTeamRunDetailRequest(requestVersion)) {
+          teamRunDetailRequestPendingRef.current = false;
+          setTeamRunDetail(detail);
+        }
+      })
+      .catch(() => {
+        // 조용한 갱신이라 오류를 화면에 올리지 않는다. 사용자가 아무것도 하지
+        // 않았는데 뜨는 오류는 무엇을 하라는 말인지 알 수 없고, 다음 주기에
+        // 다시 시도한다.
+        teamRunDetailRequestPendingRef.current = false;
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!selectedTeamRunId) return undefined;
+    const refreshIfVisible = () => {
+      // 숨어 있는 탭까지 주기적으로 읽으면 열어둔 창 수만큼 트래픽이 는다.
+      if (document.visibilityState === "hidden") return;
+      refreshSelectedTeamRun();
+    };
+    window.addEventListener("focus", refreshIfVisible);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    const timer = window.setInterval(refreshIfVisible, TEAM_RUN_REFRESH_MS);
+    return () => {
+      window.removeEventListener("focus", refreshIfVisible);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+      window.clearInterval(timer);
+    };
+  }, [selectedTeamRunId, refreshSelectedTeamRun]);
 
   const handleTeamEvent = useCallback((event) => {
     const requiresRefresh = [
@@ -712,6 +765,7 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     handleAddWork,
     handlePauseTeamRun,
     handleAskTeamRun,
+    refreshSelectedTeamRun,
     questionProgress,
     handleResumeTeamRun,
     handleAnswerTeamDecision,

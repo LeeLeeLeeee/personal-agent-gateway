@@ -718,3 +718,71 @@ describe("useTeamRunController question progress", () => {
     expect(result.current.questionProgress).toBeNull();
   });
 });
+
+describe("useTeamRunController 조용한 갱신", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.teamRuns.mockResolvedValue([]);
+    api.teamRunDetail.mockImplementation(async (id) => detail(id));
+    api.teamDocuments.mockImplementation(async (id) => [`${id}.md`]);
+    api.teamRunDelivery.mockImplementation(async (id) => ({ source: { path: id } }));
+  });
+
+  it("창으로 돌아오면 상세를 다시 읽는다", async () => {
+    // 화면은 이벤트로만 갱신된다. 탭이 뒤에 있는 동안 이벤트를 놓치면
+    // 돌아왔을 때 낡은 화면을 보게 되고, 그것이 지금인지 알 방법이 없다.
+    const { result } = renderController();
+    await selectRun(result, "run-a");
+    const before = api.teamRunDetail.mock.calls.length;
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() =>
+      expect(api.teamRunDetail.mock.calls.length).toBeGreaterThan(before)
+    );
+  });
+
+  it("일정 시간이 지나면 스스로 다시 읽는다", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { result } = renderController();
+      await selectRun(result, "run-a");
+      const before = api.teamRunDetail.mock.calls.length;
+
+      await act(async () => {
+        vi.advanceTimersByTime(30000);
+      });
+
+      expect(api.teamRunDetail.mock.calls.length).toBeGreaterThan(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("갱신하는 동안 화면이 비지 않는다", async () => {
+    // 처음 불러오기는 상세를 null 로 비우고 로딩을 켠다. 갱신이 그것을
+    // 그대로 하면 이미 보고 있던 화면이 몇 백 밀리초씩 사라진다.
+    const { result } = renderController();
+    await selectRun(result, "run-a");
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(result.current.teamRunDetail?.run?.id).toBe("run-a");
+    expect(result.current.teamRunDetailLoading).toBe(false);
+  });
+
+  it("보고 있는 런이 없으면 아무것도 읽지 않는다", async () => {
+    renderController();
+    const before = api.teamRunDetail.mock.calls.length;
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(api.teamRunDetail.mock.calls.length).toBe(before);
+  });
+});
