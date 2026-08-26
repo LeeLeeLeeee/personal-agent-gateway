@@ -695,3 +695,65 @@ def test_run_usage_totals_are_zero_before_any_call(tmp_path):
 
     assert totals["input_tokens"] == 0
     assert totals["reported_calls"] == 0
+
+
+def _usage_fixture(tmp_path):
+    """리드와 작업자가 각각 호출을 내고, 한 명은 한 번도 안 불린 런."""
+    db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
+    lead = teams.get_agent(run.leader_agent_id)
+    worker = next(item for item in teams.list_agents(run.id) if item.role != "leader")
+    service = TeamModelOperationService(db)
+
+    calls = [
+        (lead, {"input_tokens": 100, "output_tokens": 10, "cache_read_input_tokens": 500}),
+        (lead, {"input_tokens": 40, "output_tokens": 20}),
+        (worker, {"input_tokens": 7, "output_tokens": 7}),
+        (worker, None),
+    ]
+    for index, (agent, usage) in enumerate(calls):
+        # 사이클 하나에 열린 호출은 하나뿐이라 회차마다 새 사이클을 쓴다.
+        cycle = teams.create_cycle(run.id, "manual", f"m-{index}")
+        operation = service.reserve(operation_spec(run, cycle, agent, key=f"u:{index}"))
+        service.begin_attempt(operation.id, "run-1")
+        invoking = service.get(operation.id)
+        service.complete(
+            invoking.id,
+            invoking.version,
+            ValidatedOperationResult("task_plan", {"tasks": []}),
+            usage=usage,
+        )
+    return service, run, {"lead": lead.id, "worker": worker.id}
+
+
+def test_usage_splits_by_agent_and_the_split_adds_up(tmp_path):
+    """총합만 보면 어느 자리가 비싼지 알 수 없다. 리드는 사이클마다 계획과
+    합성으로 두 번씩 불리고 작업자는 자기 일감이 있을 때만 불려서, 같은 런
+    안에서도 자릿수가 다르다.
+
+    합이 총합과 어긋나면 안 된다. 어긋난 두 숫자를 화면에서 보고 어느 쪽이
+    맞는지 가릴 방법이 없다.
+    """
+    service, run, agents = _usage_fixture(tmp_path)
+
+    by_agent = service.usage_by_agent(run.id)
+    totals = service.usage_totals(run.id)
+
+    assert set(by_agent) == {agents["lead"], agents["worker"]}
+    assert by_agent[agents["lead"]]["output_tokens"] == 30
+    assert by_agent[agents["worker"]]["output_tokens"] == 7
+    assert by_agent[agents["worker"]]["unreported_calls"] == 1
+    summed = sum(entry["input_tokens"] for entry in by_agent.values())
+    assert summed == totals["input_tokens"]
+
+
+def test_an_agent_that_was_never_called_is_absent_not_zero(tmp_path):
+    """호출을 낸 적 없는 팀원은 0 이 아니라 아예 없어야 한다.
+
+    0 을 채워 돌려주면 "안 불렸다" 와 "불렸는데 보고를 안 했다" 가 화면에서
+    같아진다. 둘은 다른 상태이고, 뒤쪽은 총합이 실제보다 낮다는 신호다.
+    """
+    db, teams, _cycles, run = make_cycle_services(tmp_path, "triggered")
+    service = TeamModelOperationService(db)
+
+    assert teams.list_agents(run.id)
+    assert service.usage_by_agent(run.id) == {}

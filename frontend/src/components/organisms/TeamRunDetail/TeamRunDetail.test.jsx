@@ -2430,6 +2430,56 @@ describe("TeamRunDetail 대시보드와 탭 구조", () => {
     expect(within(panel).getByText("팀 노트 안 씀")).toBeInTheDocument();
   });
 
+  it("팀원 카드마다 그 사람이 쓴 토큰을 보여준다", () => {
+    // 총합만 보면 어느 자리가 비싼지 알 수 없다. 리드는 사이클마다 두 번씩
+    // 불리고 작업자는 자기 일감이 있을 때만 불려서, 같은 런 안에서도
+    // 자릿수가 다르다.
+    renderApp({
+      detail: {
+        agents: [{
+          ...agent,
+          usage: {
+            input_tokens: 1270454, output_tokens: 29776,
+            cache_creation_input_tokens: 0, cache_read_input_tokens: 31262464,
+            reported_calls: 4, unreported_calls: 0
+          }
+        }]
+      }
+    });
+    const dashboard = screen.getByRole("region", { name: "Dashboard" });
+
+    expect(within(dashboard).getByText("입력 1.3M")).toBeInTheDocument();
+    expect(within(dashboard).getByText("출력 29.8K")).toBeInTheDocument();
+    expect(within(dashboard).getByText("캐시 31.3M")).toBeInTheDocument();
+  });
+
+  it("한 번도 안 불린 팀원에게 0 세 개를 보여주지 않는다", () => {
+    renderApp({ detail: { agents: [{ ...agent, usage: null }] } });
+    const dashboard = screen.getByRole("region", { name: "Dashboard" });
+
+    expect(within(dashboard).queryByText(/^입력 /)).not.toBeInTheDocument();
+  });
+
+  it("불렸는데 보고가 없으면 그 사실을 말한다", () => {
+    // 안 불린 것과 보고를 안 한 것은 다른 상태다. 둘을 같게 그리면 총합이
+    // 실제보다 낮다는 사실이 화면에서 사라진다.
+    renderApp({
+      detail: {
+        agents: [{
+          ...agent,
+          usage: {
+            input_tokens: 0, output_tokens: 0,
+            cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+            reported_calls: 0, unreported_calls: 13
+          }
+        }]
+      }
+    });
+    const dashboard = screen.getByRole("region", { name: "Dashboard" });
+
+    expect(within(dashboard).getByText("13건 미보고")).toBeInTheDocument();
+  });
+
   it("탭은 넷이고 처음에는 Run 이 열린다", () => {
     renderApp();
     const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");

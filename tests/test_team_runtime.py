@@ -10493,27 +10493,69 @@ async def test_a_malformed_note_costs_the_note_and_not_the_cycle(tmp_path):
     assert archive.get_team_note(team_id) is None
 
 
-@pytest.mark.asyncio
-async def test_the_lead_is_shown_the_note_it_already_has(tmp_path):
-    """리드는 덧붙이지 않고 갈아치운다. 지금 뭐가 적혀 있는지 모르는 채로
-    쓰면 지난 사이클이 알아낸 것을 말없이 지운다."""
-    setup, archive, team_id = _note_setup(tmp_path, "끝냈습니다.")
-    archive.save_team_note(
+def _seed_note(archive, team_id, content="마이그레이션은 35번까지다"):
+    return archive.save_team_note(
         actor_type="team",
         team_id=team_id,
         kind="reference",
         title="이미 있는 노트",
         summary="지난 사이클이 남긴 것",
-        content_markdown="마이그레이션은 35번까지다",
+        content_markdown=content,
         tags=[],
         source_urls=[],
     )
+
+
+def test_the_note_reaches_the_planner_and_the_worker(tmp_path):
+    """검색으로 고르던 때는 놓쳤다. 실측에서 "A2도 같은 방식으로 처리" 같은
+    짧은 사이클 지시는 노트의 어느 단어와도 겹치지 않아 계획 단계가 노트를
+    못 봤다. 하필 거기가 "구현자에게 자기 판정 하네스를 맡기지 마라" 같은
+    교훈이 가장 필요한 자리다. 일하는 사람도 마찬가지다 -- "npm 이 안 된다"를
+    모르면 그 일감 하나를 통째로 날린다."""
+    setup, archive, team_id = _note_setup(tmp_path, "끝냈습니다.")
+    _seed_note(archive, team_id)
+    run = setup.teams.get_team_run(setup.run.id)
+    leader = setup.teams.get_agent(run.leader_agent_id)
+    task = setup.teams.list_tasks(run.id, setup.cycle.id)[0]
+
+    planning = setup.runtime._planning_prompt(run, leader, setup.cycle.id)
+    worker = setup.runtime._worker_prompt(run, setup.worker, task)
+
+    assert "마이그레이션은 35번까지다" in planning
+    assert "마이그레이션은 35번까지다" in worker
+    # 두 응답 모두 엄격한 JSON 형식이다. 쓰라고 하지도 않은 펜스 블록 예시를
+    # 보여주면 흉내 낼 이유만 준다.
+    assert "```team-note" not in planning
+    assert "```team-note" not in worker
+
+
+@pytest.mark.asyncio
+async def test_the_note_is_never_written_twice_into_one_prompt(tmp_path):
+    """한 번은 검색으로, 한 번은 전문으로 들어가면 같은 글이 서로 다른 두
+    제목 아래 놓인다 -- 하나는 "확인하라", 하나는 "고쳐 써라"."""
+    setup, archive, team_id = _note_setup(tmp_path, "끝냈습니다.")
+    _seed_note(archive, team_id)
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    synthesis_prompt = setup.lead_client.messages[-1][0]["content"]
+    assert synthesis_prompt.count("마이그레이션은 35번까지다") == 1
+
+
+@pytest.mark.asyncio
+async def test_the_lead_is_shown_the_note_it_already_has(tmp_path):
+    """리드는 덧붙이지 않고 갈아치운다. 지금 뭐가 적혀 있는지 모르는 채로
+    쓰면 지난 사이클이 알아낸 것을 말없이 지운다."""
+    setup, archive, team_id = _note_setup(tmp_path, "끝냈습니다.")
+    _seed_note(archive, team_id)
 
     await setup.runtime.resume(setup.run.id, setup.cycle.id)
 
     synthesis_prompt = setup.lead_client.messages[-1][0]["content"]
     assert "이미 있는 노트" in synthesis_prompt
     assert "마이그레이션은 35번까지다" in synthesis_prompt
+    # 노트가 있을 때만 "전부 갈아치우는 것"이라고 말해야 한다.
+    assert "replacing all of it" in synthesis_prompt
 
 
 @pytest.mark.asyncio
@@ -10528,3 +10570,4 @@ async def test_a_run_with_no_team_is_never_asked_for_a_note(tmp_path):
     assert result.status == "completed"
     assert archive.list_entries() == []
     assert "team-note" not in setup.lead_client.messages[-1][0]["content"]
+    assert "TEAM NOTE" not in setup.lead_client.messages[-1][0]["content"]

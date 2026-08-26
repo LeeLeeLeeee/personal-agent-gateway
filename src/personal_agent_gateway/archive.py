@@ -675,61 +675,49 @@ class ArchiveService:
         query: str,
         *,
         persona_id: str | None,
-        team_id: str | None = None,
         limit: int = 5,
     ) -> list[ArchiveEntry]:
-        """Published knowledge, plus this team's own notes when a team asks.
+        """Published knowledge that matches the message.
 
-        A team note is a draft: the team wrote it about its own work and the
-        user has not reviewed it. It stays out of the Library and out of every
-        other team's search, and is visible only to the team bound to it. That
-        is what makes it safe to write without the user in the loop -- a wrong
-        note can only mislead the team that wrote it.
-
-        Callers must separate the two in what they render. They do not carry
-        the same weight, and a reader who cannot tell them apart will take an
-        unreviewed note for settled fact.
+        Team notes are deliberately not searched here. A team has exactly one
+        note and it is capped small, so there is nothing to choose between --
+        and search misses: a short cycle instruction shares no word with the
+        note and returns nothing, at the planning stage where the note matters
+        most. `get_team_note` reads it directly instead.
         """
         fts_query = _fts_query(query)
         if not fts_query:
             return []
-        params: list[object] = [fts_query]
-        published_scope = "binding.scope = 'global'"
-        if persona_id is not None:
-            published_scope += (
-                " or (binding.scope = 'persona' and binding.scope_id = ?)"
+        scope_clause = (
+            """
+            exists (
+                select 1 from archive_bindings binding
+                where binding.entry_id = e.id
+                  and (
+                    binding.scope = 'global'
+                    or (binding.scope = 'persona' and binding.scope_id = ?)
+                  )
             )
-        visibility = [
-            f"""(
-                e.status = 'published'
-                and exists (
-                    select 1 from archive_bindings binding
-                    where binding.entry_id = e.id and ({published_scope})
-                )
-            )"""
-        ]
+            """
+            if persona_id is not None
+            else """
+            exists (
+                select 1 from archive_bindings binding
+                where binding.entry_id = e.id and binding.scope = 'global'
+            )
+            """
+        )
+        params: list[object] = [fts_query]
         if persona_id is not None:
             params.append(persona_id)
-        if team_id is not None:
-            visibility.append(
-                """(
-                e.status = 'draft'
-                and exists (
-                    select 1 from archive_bindings binding
-                    where binding.entry_id = e.id
-                      and binding.scope = 'team'
-                      and binding.scope_id = ?
-                )
-            )"""
-            )
-            params.append(team_id)
         params.append(max(1, min(limit, 20)))
         rows = self._db.fetchall(
             f"""
             select e.* from archive_entries e
             join archive_entries_fts on archive_entries_fts.entry_id = e.id
-            where archive_entries_fts match ?
-              and ({" or ".join(visibility)})
+            where e.status = 'published'
+              and archive_entries_fts match ?
+              and {scope_clause}
             order by bm25(archive_entries_fts), e.updated_at desc
             limit ?
             """,
@@ -1002,35 +990,18 @@ class ArchiveService:
         query: str,
         *,
         persona_id: str | None,
-        team_id: str | None = None,
         allow_request: bool = True,
     ) -> str:
-        entries = self.search_entries(query, persona_id=persona_id, team_id=team_id)
-        published = [entry for entry in entries if entry.status == "published"]
-        team_notes = [entry for entry in entries if entry.status != "published"]
+        entries = self.search_entries(query, persona_id=persona_id)
         lines = [
             "ARCHIVE POLICY:",
             "- Archive entries below are user-authored, published knowledge.",
             "- Knowledge Requests are gaps, not facts, and are never included as evidence.",
         ]
-        if team_notes:
-            # The two sections must not read alike. A team note is this team's
-            # own unreviewed writing; presented under the same heading as
-            # user-published knowledge, a model would take what it wrote last
-            # cycle as an established fact and stop checking it. That is the
-            # one failure mode this feature can create that not having it
-            # cannot, so the boundary is stated here, in the prompt itself.
-            lines.append(
-                "- TEAM NOTES are written by this team about its own work and the "
-                "user has not reviewed them. Treat them as leads to verify, not "
-                "as settled fact. Where a note disagrees with what you observe in "
-                "the workspace, the workspace is right and the note is stale."
-            )
-
-        def render(entries_to_render: list[ArchiveEntry], heading: str) -> None:
+        if entries:
             lines.append("")
-            lines.append(heading)
-            for entry in entries_to_render:
+            lines.append("RELEVANT PUBLISHED ARCHIVE ENTRIES:")
+            for entry in entries:
                 lines.extend(
                     [
                         f"[{entry.kind}] {entry.title}",
@@ -1041,12 +1012,7 @@ class ArchiveService:
                 if entry.source_urls:
                     lines.append("Sources: " + ", ".join(entry.source_urls[:5]))
                 lines.append("")
-
-        if published:
-            render(published, "RELEVANT PUBLISHED ARCHIVE ENTRIES:")
-        if team_notes:
-            render(team_notes, "TEAM NOTES (this team wrote these; not reviewed):")
-        if not entries:
+        else:
             lines.extend(["", "No relevant published Archive entry was found for this message."])
         if allow_request:
             lines.extend(

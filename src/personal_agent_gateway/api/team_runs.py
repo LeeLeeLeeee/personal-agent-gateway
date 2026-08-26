@@ -472,6 +472,7 @@ def get_team_run_detail(
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     operations = request.app.state.team_model_operation_service
     failure_shapes = operations.latest_failure_shapes(team_run_id)
+    usage_by_agent = operations.usage_by_agent(team_run_id)
     coverage_by_cycle: dict[str, list[dict[str, str]] | None] = {}
     note_by_cycle: dict[str, str | None] = {}
     verdict_payload_by_cycle: dict[str, dict[str, object]] = {}
@@ -534,7 +535,10 @@ def get_team_run_detail(
     shape = plan_shape([task.id for task in shape_tasks], task_dependencies)
     return {
         "team_run": _team_run_payload(run, request.app.state.team_run_service),
-        "agents": [_agent_payload(agent) for agent in agents],
+        "agents": [
+            _agent_payload(agent, usage_by_agent.get(agent.id))
+            for agent in agents
+        ],
         "tasks": [
             _task_payload(
                 task,
@@ -1671,8 +1675,14 @@ def _team_name(run: TeamRun) -> str | None:
     return name or None
 
 
-def _agent_payload(agent: TeamAgent) -> dict[str, object]:
+def _agent_payload(
+    agent: TeamAgent,
+    usage: dict[str, int] | None = None,
+) -> dict[str, object]:
     return {
+        # 호출을 낸 적 없는 팀원은 None 이다. 0 을 채우면 "안 불렸다" 와
+        # "불렸는데 보고를 안 했다" 가 화면에서 같아진다.
+        "usage": usage,
         "id": agent.id,
         "team_run_id": agent.team_run_id,
         "name": agent.name,

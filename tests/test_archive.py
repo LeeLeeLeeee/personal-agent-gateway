@@ -581,13 +581,11 @@ def test_a_team_sees_its_own_note_and_no_other_team_does(tmp_path: Path) -> None
     archive, _ = archive_service(tmp_path)
     _team_note(archive, "team-a", title="A 노트", content="마이그레이션은 34번까지다")
 
-    mine = archive.search_entries("마이그레이션", persona_id=None, team_id="team-a")
-    theirs = archive.search_entries("마이그레이션", persona_id=None, team_id="team-b")
-    library = archive.search_entries("마이그레이션", persona_id=None)
-
-    assert [entry.title for entry in mine] == ["A 노트"]
-    assert theirs == []
-    assert library == []
+    assert archive.get_team_note("team-a").title == "A 노트"
+    assert archive.get_team_note("team-b") is None
+    # 라이브러리 검색에는 어떤 팀의 노트도 걸리지 않는다. 초안이고, 발행은
+    # 사용자만 할 수 있다.
+    assert archive.search_entries("마이그레이션", persona_id=None) == []
 
 
 def test_a_second_cycle_revises_the_note_instead_of_adding_one(tmp_path: Path) -> None:
@@ -605,14 +603,16 @@ def test_a_second_cycle_revises_the_note_instead_of_adding_one(tmp_path: Path) -
     assert [item.revision for item in archive.list_revisions(first.id)] == [2, 1]
 
 
-def test_a_revised_note_is_searchable_by_its_new_words_only(tmp_path: Path) -> None:
+def test_a_revised_note_replaces_what_it_said_before(tmp_path: Path) -> None:
+    """지난 개정의 내용이 남아 있으면, 읽는 쪽이 이미 틀린 것을 사실로 읽는다."""
     archive, _ = archive_service(tmp_path)
 
     _team_note(archive, "team-a", title="노트", content="예전에는 sqlite 를 썼다")
     _team_note(archive, "team-a", title="노트", content="지금은 postgres 를 쓴다")
 
-    assert archive.search_entries("postgres", persona_id=None, team_id="team-a")
-    assert archive.search_entries("sqlite", persona_id=None, team_id="team-a") == []
+    current = archive.get_team_note("team-a")
+    assert "postgres" in current.content_markdown
+    assert "sqlite" not in current.content_markdown
 
 
 def test_a_note_longer_than_the_cap_is_refused(tmp_path: Path) -> None:
@@ -634,10 +634,11 @@ def test_only_a_team_may_save_a_team_note(tmp_path: Path) -> None:
         )
 
 
-def test_the_prompt_keeps_team_notes_apart_from_published_knowledge(tmp_path: Path) -> None:
-    """같은 제목 아래 섞이면, 모델은 지난 사이클에 자기가 쓴 글을 사용자가
-    확인한 사실로 읽고 더는 검증하지 않는다. 이 기능이 만들 수 있는 유일한
-    새 실패 방식이라, 경계는 프롬프트 안에 글로 있어야 한다."""
+def test_a_team_note_never_leaks_into_the_library_prompt(tmp_path: Path) -> None:
+    """팀 노트는 검색으로 붙지 않는다. 팀당 하나뿐이라 고를 것이 없고,
+    검색은 놓친다 -- 짧은 사이클 지시는 노트의 어느 단어와도 겹치지 않아
+    계획 단계가 노트를 못 보는 일이 실제로 있었다. 필요한 자리에 전문을
+    싣는 쪽으로 옮겼고, 여기로는 새면 안 된다."""
     archive, _ = archive_service(tmp_path)
     archive.publish_entry(
         actor_type="user",
@@ -651,12 +652,7 @@ def test_the_prompt_keeps_team_notes_apart_from_published_knowledge(tmp_path: Pa
     )
     _team_note(archive, "team-a", title="팀 노트", content="postgres 연결은 여기서 만든다")
 
-    context = archive.prompt_context("postgres", persona_id=None, team_id="team-a")
+    context = archive.prompt_context("postgres", persona_id=None)
 
-    assert "RELEVANT PUBLISHED ARCHIVE ENTRIES:" in context
-    assert "TEAM NOTES" in context
     assert "발행된 규약" in context
-    assert "팀 노트" in context
-    assert "the user has not reviewed them" in context
-    # 팀을 밝히지 않은 호출에는 노트가 새지 않는다.
-    assert "팀 노트" not in archive.prompt_context("postgres", persona_id=None)
+    assert "팀 노트" not in context

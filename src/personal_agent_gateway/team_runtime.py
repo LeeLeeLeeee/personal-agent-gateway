@@ -279,13 +279,22 @@ did not check.
 At this stage, ask only about final interpretation or presentation that does not
 require additional worker execution."""
 
-TEAM_NOTE_PROMPT = """
-TEAM NOTE (optional):
-This team keeps one note about what it has learned, and you rewrite it. What is
-below is the whole of it -- there is no other memory of this that survives.
+TEAM_NOTE_HEADER = """
+TEAM NOTE:
+This team keeps one note about what it has learned. This is the whole of it --
+there is no other memory of this that survives. This team wrote it about its own
+work and the user has not reviewed it, so treat it as leads to verify, not as
+settled fact. Where it disagrees with what you observe in the workspace, the
+workspace is right and the note is stale.
 {current_note}
+"""
 
-Rewrite it only when this cycle found something a later cycle would otherwise
+TEAM_NOTE_REWRITE_PROMPT = """
+
+REWRITING THE NOTE (optional):
+{note_state}
+Write or rewrite it only when this cycle found something a later cycle would
+otherwise
 have to work out again: where something lives, why an approach failed, a
 convention this repository actually follows. Do not record what the goal or the
 task list already says, and do not record this cycle's progress -- the summary
@@ -2100,7 +2109,7 @@ class TeamRuntime:
             f"{goal_context}\n{instruction}",
             persona_id=leader.persona_id,
             allow_request=False,
-        ) + ADD_WORK_PROMPT.format(
+        ) + self._team_note_block(run) + ADD_WORK_PROMPT.format(
             goal=goal_context,
             existing_titles=existing,
             instruction=instruction,
@@ -2174,7 +2183,6 @@ class TeamRuntime:
         *,
         persona_id: str,
         allow_request: bool,
-        team_id: str | None = None,
     ) -> str:
         if self._archive_service is None:
             return ""
@@ -2182,23 +2190,37 @@ class TeamRuntime:
             self._archive_service.prompt_context(
                 query,
                 persona_id=persona_id,
-                team_id=team_id,
                 allow_request=allow_request,
             )
             + "\n\n"
         )
 
-    def _team_note_block(
+    def _team_note_block(self, run: TeamRun) -> str:
+        """이 팀의 노트 전문. 없으면 빈 문자열.
+
+        검색으로 고르지 않고 통째로 싣는다. 팀당 하나뿐이고 상한이 작아 고를
+        것이 없는데, 검색은 놓친다 -- 짧은 사이클 지시는 노트의 어느 단어와도
+        겹치지 않아 계획 단계가 노트를 못 보는 일이 실제로 있었다.
+        """
+        if self._archive_service is None or not run.team_id:
+            return ""
+        note = self._archive_service.get_team_note(run.team_id)
+        if note is None:
+            return ""
+        body = f"{note.title}\n{note.content_markdown}"
+        return "\n\n" + TEAM_NOTE_HEADER.format(current_note=body) + "\n\n"
+
+    def _team_note_rewrite_block(
         self,
         run: TeamRun,
-        contract: OutputContract | None = None,
-        cycle_id: str | None = None,
+        contract: OutputContract | None,
+        cycle_id: str | None,
     ) -> str:
-        """리드에게 이 팀의 현재 노트와, 그것을 고쳐 쓰는 법을 준다.
+        """리드가 사이클 끝에 노트를 고쳐 쓰게 하는 지시.
 
-        노트를 통째로 싣는다. 리드는 덧붙이는 것이 아니라 갈아치우기 때문에,
-        지금 뭐가 적혀 있는지 모르는 채로 쓰면 지난 사이클이 알아낸 것을
-        말없이 지운다.
+        노트 전문은 이 앞에 이미 실려 있다. 리드는 덧붙이는 것이 아니라
+        갈아치우므로, 지금 뭐가 적혀 있는지 모르는 채로 쓰면 지난 사이클이
+        알아낸 것을 말없이 지운다.
         """
         if self._archive_service is None or not run.team_id:
             return ""
@@ -2209,14 +2231,14 @@ class TeamRuntime:
         # 물으면 노트는 저장되지 않고, 표식만 요약에 남는다.
         if cycle_id is None:
             return ""
-        note = self._archive_service.get_team_note(run.team_id)
-        current = (
-            f"{note.title}\n{note.content_markdown}"
-            if note is not None
-            else "(this team has no note yet)"
+        has_note = self._archive_service.get_team_note(run.team_id) is not None
+        state = (
+            "The team's note is above; replacing it means replacing all of it."
+            if has_note
+            else "This team has no note yet, so this would be the first one."
         )
-        return "\n\n" + TEAM_NOTE_PROMPT.format(
-            current_note=current, max_chars=TEAM_NOTE_MAX_CHARS
+        return "\n\n" + TEAM_NOTE_REWRITE_PROMPT.format(
+            note_state=state, max_chars=TEAM_NOTE_MAX_CHARS
         )
 
     def _finalize_persona_content(
@@ -2381,7 +2403,7 @@ class TeamRuntime:
             goal_context,
             persona_id=leader_agent.persona_id,
             allow_request=False,
-        ) + PLANNING_PROMPT.format(
+        ) + self._team_note_block(run) + PLANNING_PROMPT.format(
             goal=goal_context,
             persona_snapshot_json=json.dumps(leader_agent.persona_snapshot, ensure_ascii=False),
             team_roster_json=_assignment_roster_json(
@@ -4617,7 +4639,7 @@ class TeamRuntime:
             f"{goal_context}\n{task.title}\n{task.description}",
             persona_id=worker.persona_id,
             allow_request=True,
-        ) + WORKER_PROMPT.format(
+        ) + self._team_note_block(run) + WORKER_PROMPT.format(
             persona_snapshot_json=json.dumps(worker.persona_snapshot, ensure_ascii=False),
             goal=goal_context,
             task_title=task.title,
@@ -5250,9 +5272,8 @@ class TeamRuntime:
         ) + self._archive_block(
             f"{goal_context}\n{results}",
             persona_id=leader_agent.persona_id,
-            team_id=run.team_id,
             allow_request=True,
-        ) + synthesis_block + self._team_note_block(run, contract, cycle_id)
+        ) + self._team_note_block(run) + synthesis_block + self._team_note_rewrite_block(run, contract, cycle_id)
         decision_context = "\n\n".join(
             context
             for context in (

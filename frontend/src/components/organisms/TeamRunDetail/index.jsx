@@ -1071,6 +1071,34 @@ export function TeamRunDetail({
   // elapsedSeconds 는 기준 시각을 반드시 받는다. 안 넘기면 undefined 로
   // 빼면서 NaN 이 되고, 화면에는 "NaN:NaN" 이 찍힌다.
   const nowSince = (startedAt) => elapsedSeconds(startedAt, nowMs);
+  // 총합만 보면 어느 자리가 비싼지 알 수 없다. 리드는 사이클마다 계획과
+  // 합성으로 두 번씩 불리고, 작업자는 자기 일감이 있을 때만 불린다 -- 같은
+  // 런 안에서도 자릿수가 다르다.
+  const agentUsage = (agent) => {
+    const usage = agent.usage;
+    if (!usage) return null;
+    const cache = (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
+    const used = (usage.input_tokens || 0) + (usage.output_tokens || 0) + cache;
+    // 한 번도 안 불린 팀원에게 0 을 세 개 보여줄 이유가 없다. 다만 불렸는데
+    // 보고가 없는 경우는 그 사실을 말한다 -- 둘은 다른 상태다.
+    if (!used) {
+      return usage.unreported_calls ? (
+        <div className="mono team-lane-usage team-lane-usage-gap">
+          {`${usage.unreported_calls}건 미보고`}
+        </div>
+      ) : null;
+    }
+    return (
+      <div className="mono team-lane-usage">
+        <span>{`입력 ${compactTokens(usage.input_tokens || 0)}`}</span>
+        <span>{`출력 ${compactTokens(usage.output_tokens || 0)}`}</span>
+        <span>{`캐시 ${compactTokens(cache)}`}</span>
+        {usage.unreported_calls ? (
+          <span className="team-lane-usage-gap">{`${usage.unreported_calls}건 미보고`}</span>
+        ) : null}
+      </div>
+    );
+  };
   const usageTotals = detail.usage_totals || null;
   // 캐시는 기록분과 조회분을 합쳐 한 숫자로 보여준다. 둘을 나눠 적으면 줄이
   // 길어지는데, 이 자리에서 궁금한 것은 "캐시가 얼마나 먹었나" 하나다.
@@ -1518,6 +1546,7 @@ export function TeamRunDetail({
                         </div>
                       );
                     })()}
+                    {agentUsage(agent)}
                     <details className="team-lane-runtime">
                       <summary className="mono">RUNTIME</summary>
                       <div className="mono team-lane-snapshot">{agent.backend}/{agent.model}</div>
