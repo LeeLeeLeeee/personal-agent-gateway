@@ -2289,7 +2289,7 @@ describe("TeamRunDetail question dialog layout", () => {
 });
 
 describe("TeamRunDetail plan shape", () => {
-  function renderShape(plan_shape) {
+  function renderShape(plan_shape, cycles = [{ id: "c1", sequence: 1, status: "running" }]) {
     return render(
       <TeamRunDetail
         detail={{
@@ -2297,6 +2297,7 @@ describe("TeamRunDetail plan shape", () => {
           agents: [],
           tasks: [],
           messages: [],
+          cycles,
           plan_shape
         }}
       />
@@ -2325,6 +2326,17 @@ describe("TeamRunDetail plan shape", () => {
     renderShape({
       task_count: 1, longest_chain: 1, ready_at_start: 1, max_concurrent_workers: 3
     });
+    expect(screen.queryByText(/즉시 시작/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/나눈 이득이 없습니다/)).not.toBeInTheDocument();
+  });
+
+  it("사이클이 끝났으면 지난 계획의 모양을 남기지 않는다", () => {
+    // 끝난 계획의 모양은 지금 판정할 것이 없다. "돌고 있는 일감이 없습니다"
+    // 바로 위에 남아 있으면 지금 그렇게 돌고 있는 줄로 읽힌다.
+    renderShape(
+      { task_count: 4, longest_chain: 4, ready_at_start: 1, max_concurrent_workers: 3 },
+      [{ id: "c1", sequence: 1, status: "completed" }]
+    );
     expect(screen.queryByText(/즉시 시작/)).not.toBeInTheDocument();
     expect(screen.queryByText(/나눈 이득이 없습니다/)).not.toBeInTheDocument();
   });

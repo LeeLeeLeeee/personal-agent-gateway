@@ -1083,7 +1083,11 @@ export function TeamRunDetail({
   );
   const planShape = detail.plan_shape || null;
   // 하나짜리는 나눈 것이 아니므로 판정할 것이 없다.
-  const showPlanShape = Boolean(planShape && planShape.task_count > 1);
+  // 가장 최근 사이클이 아직 끝나지 않았을 때만 보여준다. 끝난 계획의 모양은
+  // 지금 판정할 것이 없는데, "돌고 있는 일감이 없습니다" 바로 위에 남아 있으면
+  // 지금 그렇게 돌고 있는 줄로 읽힌다.
+  const cycleRunning = Boolean(cycles.length && !TERMINAL_STATUSES.includes(cycles[0].status));
+  const showPlanShape = Boolean(planShape && planShape.task_count > 1 && cycleRunning);
   // 일감 수와 최장 사슬이 같으면 전부 차례로 지나야 한다는 뜻이다 -- 나눈
   // 만큼 인수인계 비용은 치르는데 끝나는 시각은 한 명이 하는 것과 같다.
   const splitBoughtNothing = Boolean(
@@ -1434,13 +1438,18 @@ export function TeamRunDetail({
           {distinctBaseObjective ? (
             <div className="team-run-base-objective">BASE OBJECTIVE · {distinctBaseObjective}</div>
           ) : null}
-          {showPlanShape ? (
-            <div className={splitBoughtNothing ? "team-plan-shape team-plan-shape-flat mono" : "team-plan-shape mono"}>
-              {`일감 ${planShape.task_count}개 · 최대 ${planShape.longest_chain}단계 대기 · ${planShape.ready_at_start}개 즉시 시작`}
-              {splitBoughtNothing ? " · 나눈 이득이 없습니다" : ""}
-            </div>
-          ) : null}
         </div>
+        {showPlanShape ? (
+          <div className="team-dashboard-shape">
+            <span className="mono team-dashboard-shape-label">이번 계획</span>
+            <span className="mono team-dashboard-shape-value">
+              {`일감 ${planShape.task_count}개 · 최대 ${planShape.longest_chain}단계 대기 · ${planShape.ready_at_start}개 즉시 시작`}
+            </span>
+            {splitBoughtNothing ? (
+              <span className="mono team-plan-shape-flat">나눈 이득이 없습니다</span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="team-dashboard-now">
           <div className="team-section-head team-section-toolbar">
             <span className="mono team-section-label">진행 중</span>
