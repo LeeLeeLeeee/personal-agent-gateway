@@ -1953,6 +1953,14 @@ export function TeamRunDetail({
                     ) : (
                       <div className="team-cycle-coverage mono">커버리지를 보고하지 않음</div>
                     )}
+                    {/* 노트는 선택이라, 리드가 그냥 안 쓰고 지나가는지가 보이지
+                        않으면 이 기능은 있으나 마나가 된다. 없는 것과 쓰지
+                        않은 것은 다르다. */}
+                    <div className="team-cycle-note mono">
+                      {cycle.team_note_title
+                        ? `팀 노트 갱신 · ${cycle.team_note_title}`
+                        : "팀 노트 안 씀"}
+                    </div>
                     {cycle.error_message ? <div className="hook-row-error mono">{cycle.error_message}</div> : null}
                   </div>
                 </details>

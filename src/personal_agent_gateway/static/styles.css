@@ -5610,6 +5610,7 @@ p {
    두되, 이득이 없는 계획은 눈에 걸리게 한다 -- 이 줄이 없으면 "일감 4개"가
    "넷이 동시에 한다"로 읽힌다. */
 .team-plan-shape-flat { color: #8a3b12; font-weight: 600; }
+.team-cycle-note { font-size: 10px; color: var(--c-grey); }
 /* 계획 모양은 요청 문장에 딸린 부제가 아니라 별개의 사실이라 자기 줄에 둔다.
    진행 중 목록과 같은 라벨 정렬을 써서 대시보드 안에서 나란히 읽힌다. */
 .team-dashboard-shape { display: flex; align-items: baseline; gap: 10px; font-size: 10px; }

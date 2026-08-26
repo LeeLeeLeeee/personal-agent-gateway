@@ -2382,6 +2382,7 @@ def test_cycle_space_policy_is_included_in_cycle_detail(tmp_path: Path) -> None:
             "effective_instruction": "Read the inbox and summarize actionable messages.",
             "summary": "Mail handled",
             "coverage_gaps": None,
+            "team_note_title": None,
             "error_message": None,
             "created_at": cycle.created_at,
             "started_at": cycle.started_at,
@@ -3570,8 +3571,16 @@ def test_detail_reads_the_real_synthesis_not_the_question_it_asked_first(
     gaps = [
         {"obligation": "T-04 discard", "document": "docs/plan.md §4", "note": ""}
     ]
+    note = {
+        "title": "저장소 지도",
+        "summary": "어디에 뭐가 있나",
+        "content_markdown": "팀런 상태는 teams.py 가 쓴다",
+        "tags": [],
+    }
     synthesis = complete_synthesis(
-        1, "synthesis", {"summary": "Built it.", "coverage_gaps": gaps}
+        1,
+        "synthesis",
+        {"summary": "Built it.", "coverage_gaps": gaps, "team_note": note},
     )
     effects.apply_synthesis(synthesis.id, "Built it.")
 
@@ -3581,6 +3590,10 @@ def test_detail_reads_the_real_synthesis_not_the_question_it_asked_first(
         entry for entry in detail["cycles"] if entry["id"] == cycle.id
     )
     assert reported["coverage_gaps"] == gaps
+    # 노트는 선택이라, 리드가 그냥 안 쓰고 지나가는지가 보이지 않으면 이
+    # 기능은 있으나 마나가 된다 -- 몇 사이클 돌려보고 쓸모를 판단하려면
+    # 어느 사이클이 썼는지가 화면에 있어야 한다.
+    assert reported["team_note_title"] == "저장소 지도"
 
 
 def test_the_detail_reports_whether_splitting_bought_any_parallelism(

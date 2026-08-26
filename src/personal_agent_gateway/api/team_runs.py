@@ -473,6 +473,7 @@ def get_team_run_detail(
     operations = request.app.state.team_model_operation_service
     failure_shapes = operations.latest_failure_shapes(team_run_id)
     coverage_by_cycle: dict[str, list[dict[str, str]] | None] = {}
+    note_by_cycle: dict[str, str | None] = {}
     verdict_payload_by_cycle: dict[str, dict[str, object]] = {}
     for cycle in cycles:
         cycle_operations = operations.list_for_cycle(cycle.id)
@@ -492,9 +493,12 @@ def get_team_run_detail(
             None,
         )
         if synthesis is not None:
-            coverage_by_cycle[cycle.id] = (
-                (synthesis.result_json or {}).get("payload") or {}
-            ).get("coverage_gaps")
+            synthesis_payload = (synthesis.result_json or {}).get("payload") or {}
+            coverage_by_cycle[cycle.id] = synthesis_payload.get("coverage_gaps")
+            note = synthesis_payload.get("team_note")
+            note_by_cycle[cycle.id] = (
+                note.get("title") if isinstance(note, dict) else None
+            )
         if cycle.source_type != "contest":
             continue
         verdict_operation = next(
@@ -549,7 +553,11 @@ def get_team_run_detail(
         },
         "messages": [_message_payload(message) for message in selected_messages],
         "cycles": [
-            _cycle_payload(cycle, coverage_by_cycle.get(cycle.id))
+            _cycle_payload(
+                cycle,
+                coverage_by_cycle.get(cycle.id),
+                note_by_cycle.get(cycle.id),
+            )
             for cycle in cycles
         ],
         "decision_request": _decision_request_payload(
@@ -1737,6 +1745,7 @@ def _message_payload(message: TeamMessage) -> dict[str, object]:
 def _cycle_payload(
     cycle: TeamRunCycle,
     coverage_gaps: list[dict[str, str]] | None = None,
+    team_note_title: str | None = None,
 ) -> dict[str, object]:
     execution_metadata = cycle.execution_metadata or {}
     semantic_source = execution_metadata.get("semantic_source")
@@ -1759,6 +1768,7 @@ def _cycle_payload(
         "effective_instruction": effective_instruction,
         "summary": cycle.summary,
         "coverage_gaps": coverage_gaps,
+        "team_note_title": team_note_title,
         "error_message": cycle.error_message,
         "created_at": cycle.created_at,
         "started_at": cycle.started_at,

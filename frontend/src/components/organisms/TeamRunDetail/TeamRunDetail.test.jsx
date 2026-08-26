@@ -2412,6 +2412,24 @@ describe("TeamRunDetail 대시보드와 탭 구조", () => {
     expect(since.textContent).toMatch(/^\d{2}:\d{2}$/);
   });
 
+  it("사이클 기록이 팀 노트를 썼는지 말한다", async () => {
+    // 노트는 선택이라, 리드가 그냥 안 쓰고 지나가는지가 보이지 않으면 이
+    // 기능은 있으나 마나가 된다. 없는 것과 쓰지 않은 것은 다르다.
+    renderApp({
+      detail: {
+        cycles: [
+          { id: "c1", sequence: 8, status: "running", team_note_title: "저장소 지도" },
+          { id: "c0", sequence: 7, status: "completed", team_note_title: null }
+        ]
+      }
+    });
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    const panel = screen.getByRole("tabpanel", { name: "History" });
+
+    expect(within(panel).getByText(/팀 노트 갱신 · 저장소 지도/)).toBeInTheDocument();
+    expect(within(panel).getByText("팀 노트 안 씀")).toBeInTheDocument();
+  });
+
   it("탭은 넷이고 처음에는 Run 이 열린다", () => {
     renderApp();
     const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");

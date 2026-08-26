@@ -75,6 +75,7 @@ from personal_agent_gateway.team_runtime import (
 )
 from personal_agent_gateway.team_output_contracts import OutputContract
 from personal_agent_gateway.team_verification_checks import VerificationCheck
+from personal_agent_gateway.team_directory import TeamService
 from personal_agent_gateway.teams import (
     ACCEPTANCE_RECOVERY_CAP,
     RequiredVerification,
@@ -10414,3 +10415,116 @@ def test_the_plan_prompts_forbid_a_check_that_the_task_must_first_build():
         assert "must already exist when the task starts" in flat
         assert "make building it its own task" in flat
         assert "depends_on_task_ids" in flat
+
+
+def _note_setup(tmp_path, lead_summary, *, with_team=True):
+    """노트가 오가는 사이클 런.
+
+    조각을 따로 부르지 않고 사이클을 끝까지 돌린다 -- 앞서 한 번, 화면
+    코드와 서버 코드가 둘 다 멀쩡한데 중간 배선이 빠져 기능이 조용히 죽은
+    적이 있다. 이 기능도 리드 응답에서 아카이브까지 세 군데를 지난다.
+    """
+    setup = make_operation_runtime_with_completed_worker(tmp_path)
+    archive = ArchiveService(setup.db)
+    team_id = None
+    if with_team:
+        personas = PersonaService(setup.db)
+        directory = TeamService(setup.db, personas)
+        leader = setup.teams.get_team_run(setup.run.id).leader_agent_id
+        leader_persona = next(
+            agent.persona_id
+            for agent in setup.teams.list_agents(setup.run.id)
+            if agent.id == leader
+        )
+        team_id = directory.create_team("Team", "for notes", leader_persona, []).id
+        setup.db.execute(
+            "update team_runs set team_id = ? where id = ?", (team_id, setup.run.id)
+        )
+    setup.runtime._archive_service = archive
+    setup.lead_client.responses = [ModelResponse(lead_summary, [])]
+    return setup, archive, team_id
+
+
+_NOTE_BLOCK = (
+    "```team-note\n"
+    '{"title":"저장소 지도","summary":"어디에 뭐가 있나",'
+    '"content_markdown":"팀런 상태는 teams.py 가 쓴다 (teams.py:279)",'
+    '"tags":["구조"]}\n'
+    "```"
+)
+
+
+@pytest.mark.asyncio
+async def test_the_lead_note_becomes_this_teams_note(tmp_path):
+    setup, archive, team_id = _note_setup(tmp_path, "끝냈습니다.\n" + _NOTE_BLOCK)
+
+    result = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    note = archive.get_team_note(team_id)
+    assert note is not None
+    assert note.title == "저장소 지도"
+    assert note.status == "draft"
+    assert note.created_by == "team"
+    # 기계용 표식이 사람이 읽는 요약에 남으면 안 된다.
+    assert "team-note" not in (result.summary or "")
+    assert "끝냈습니다." in (result.summary or "")
+
+
+@pytest.mark.asyncio
+async def test_a_cycle_that_records_nothing_still_finishes(tmp_path):
+    """노트는 선택이다. 없다고 사이클이 죽으면 안 된다."""
+    setup, archive, team_id = _note_setup(tmp_path, "끝냈습니다.")
+
+    result = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert result.status == "completed"
+    assert archive.get_team_note(team_id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_note_costs_the_note_and_not_the_cycle(tmp_path):
+    setup, archive, team_id = _note_setup(
+        tmp_path, "끝냈습니다.\n```team-note\n{이건 JSON 이 아니다\n```"
+    )
+
+    result = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert result.status == "completed"
+    assert archive.get_team_note(team_id) is None
+
+
+@pytest.mark.asyncio
+async def test_the_lead_is_shown_the_note_it_already_has(tmp_path):
+    """리드는 덧붙이지 않고 갈아치운다. 지금 뭐가 적혀 있는지 모르는 채로
+    쓰면 지난 사이클이 알아낸 것을 말없이 지운다."""
+    setup, archive, team_id = _note_setup(tmp_path, "끝냈습니다.")
+    archive.save_team_note(
+        actor_type="team",
+        team_id=team_id,
+        kind="reference",
+        title="이미 있는 노트",
+        summary="지난 사이클이 남긴 것",
+        content_markdown="마이그레이션은 35번까지다",
+        tags=[],
+        source_urls=[],
+    )
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    synthesis_prompt = setup.lead_client.messages[-1][0]["content"]
+    assert "이미 있는 노트" in synthesis_prompt
+    assert "마이그레이션은 35번까지다" in synthesis_prompt
+
+
+@pytest.mark.asyncio
+async def test_a_run_with_no_team_is_never_asked_for_a_note(tmp_path):
+    """노트는 팀에 묶인다. 팀이 없으면 묶을 곳이 없으므로 묻지도 않는다."""
+    setup, archive, _team_id = _note_setup(
+        tmp_path, "끝냈습니다.", with_team=False
+    )
+
+    result = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    assert result.status == "completed"
+    assert archive.list_entries() == []
+    assert "team-note" not in setup.lead_client.messages[-1][0]["content"]

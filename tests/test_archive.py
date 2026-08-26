@@ -546,3 +546,117 @@ def test_delete_entry_rejects_an_unknown_id(tmp_path: Path) -> None:
 
     with pytest.raises(KeyError):
         archive.delete_entry("nope")
+
+
+def _team_note(archive, team_id, *, title, content):
+    # team_run_id/cycle_id 는 실제 행을 가리켜야 하는 외래키라 여기서는 비운다.
+    # 그 연결은 팀런 경로에서 진짜 번호로 검증한다.
+    return archive.save_team_note(
+        actor_type="team",
+        team_id=team_id,
+        kind="reference",
+        title=title,
+        summary="what this team knows",
+        content_markdown=content,
+        tags=["team"],
+        source_urls=[],
+    )
+
+
+def test_a_team_note_is_a_draft_the_team_wrote_itself(tmp_path: Path) -> None:
+    archive, _ = archive_service(tmp_path)
+
+    entry = _team_note(archive, "team-a", title="A가 아는 것", content="api.py:40 이 상태를 만든다")
+
+    assert entry.status == "draft"
+    assert entry.created_by == "team"
+
+
+def test_a_team_sees_its_own_note_and_no_other_team_does(tmp_path: Path) -> None:
+    """이 격리가 없으면 사용자 검토 없이 쓰게 둘 수 없다.
+
+    팀 노트는 팀이 자기 일에 대해 쓴 미검토 글이다. 잘못 써도 그 팀만
+    오도한다는 것이, 발행 절차 없이 바로 쓰게 해도 되는 근거다.
+    """
+    archive, _ = archive_service(tmp_path)
+    _team_note(archive, "team-a", title="A 노트", content="마이그레이션은 34번까지다")
+
+    mine = archive.search_entries("마이그레이션", persona_id=None, team_id="team-a")
+    theirs = archive.search_entries("마이그레이션", persona_id=None, team_id="team-b")
+    library = archive.search_entries("마이그레이션", persona_id=None)
+
+    assert [entry.title for entry in mine] == ["A 노트"]
+    assert theirs == []
+    assert library == []
+
+
+def test_a_second_cycle_revises_the_note_instead_of_adding_one(tmp_path: Path) -> None:
+    """사이클마다 새 항목을 만들면 한 런에 스무 개가 남고, 읽는 쪽이 어느
+    것이 현재인지 스스로 알아내야 한다. 답은 하나여야 한다."""
+    archive, _ = archive_service(tmp_path)
+
+    first = _team_note(archive, "team-a", title="1차", content="처음 알아낸 것")
+    second = _team_note(archive, "team-a", title="2차", content="고쳐 쓴 것")
+
+    assert second.id == first.id
+    assert second.current_revision == 2
+    assert second.title == "2차"
+    # list_revisions 는 최신순이다.
+    assert [item.revision for item in archive.list_revisions(first.id)] == [2, 1]
+
+
+def test_a_revised_note_is_searchable_by_its_new_words_only(tmp_path: Path) -> None:
+    archive, _ = archive_service(tmp_path)
+
+    _team_note(archive, "team-a", title="노트", content="예전에는 sqlite 를 썼다")
+    _team_note(archive, "team-a", title="노트", content="지금은 postgres 를 쓴다")
+
+    assert archive.search_entries("postgres", persona_id=None, team_id="team-a")
+    assert archive.search_entries("sqlite", persona_id=None, team_id="team-a") == []
+
+
+def test_a_note_longer_than_the_cap_is_refused(tmp_path: Path) -> None:
+    from personal_agent_gateway.archive import TEAM_NOTE_MAX_CHARS
+
+    archive, _ = archive_service(tmp_path)
+
+    with pytest.raises(ValueError, match="at most"):
+        _team_note(archive, "team-a", title="긴 노트", content="가" * (TEAM_NOTE_MAX_CHARS + 1))
+
+
+def test_only_a_team_may_save_a_team_note(tmp_path: Path) -> None:
+    archive, _ = archive_service(tmp_path)
+
+    with pytest.raises(ValueError, match="Only a team"):
+        archive.save_team_note(
+            actor_type="user", team_id="team-a", kind="reference", title="t",
+            summary="s", content_markdown="c", tags=[], source_urls=[],
+        )
+
+
+def test_the_prompt_keeps_team_notes_apart_from_published_knowledge(tmp_path: Path) -> None:
+    """같은 제목 아래 섞이면, 모델은 지난 사이클에 자기가 쓴 글을 사용자가
+    확인한 사실로 읽고 더는 검증하지 않는다. 이 기능이 만들 수 있는 유일한
+    새 실패 방식이라, 경계는 프롬프트 안에 글로 있어야 한다."""
+    archive, _ = archive_service(tmp_path)
+    archive.publish_entry(
+        actor_type="user",
+        kind="reference",
+        title="발행된 규약",
+        summary="사용자가 확인한 것",
+        content_markdown="게이트웨이는 postgres 를 쓴다",
+        tags=[],
+        source_urls=[],
+        persona_ids=[],
+    )
+    _team_note(archive, "team-a", title="팀 노트", content="postgres 연결은 여기서 만든다")
+
+    context = archive.prompt_context("postgres", persona_id=None, team_id="team-a")
+
+    assert "RELEVANT PUBLISHED ARCHIVE ENTRIES:" in context
+    assert "TEAM NOTES" in context
+    assert "발행된 규약" in context
+    assert "팀 노트" in context
+    assert "the user has not reviewed them" in context
+    # 팀을 밝히지 않은 호출에는 노트가 새지 않는다.
+    assert "팀 노트" not in archive.prompt_context("postgres", persona_id=None)
