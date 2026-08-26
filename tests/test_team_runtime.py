@@ -10400,3 +10400,17 @@ def test_the_acceptance_review_demands_a_diagnosis_before_it_spends_an_attempt()
     assert "name what is actually blocking" in prompt
     assert "can the worker close it within the attempts that remain" in prompt
     assert "choose fail now rather than spending" in prompt
+
+
+def test_the_plan_prompts_forbid_a_check_that_the_task_must_first_build():
+    """검사 도구를 만드는 것이 일이면 그건 일감이지 판정 기준이 아니다.
+
+    실측: 리드가 `smoke_e2e.py --http-restart` 를 통과 조건으로 걸었는데 그
+    모드는 아직 없었고, 만드는 것도 같은 일감에 들어 있었다. 워커가 그것을
+    세 번 못 만들었고 검사는 실행조차 되지 못했다 -- 판정 근거가 0개로 남았다.
+    """
+    for prompt in (PLANNING_PROMPT, ADD_WORK_PROMPT):
+        flat = " ".join(prompt.split())
+        assert "must already exist when the task starts" in flat
+        assert "make building it its own task" in flat
+        assert "depends_on_task_ids" in flat

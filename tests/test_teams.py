@@ -2444,3 +2444,59 @@ def test_a_run_can_hold_the_paused_status(tmp_path):
     paused = teams.set_run_status(run.id, "paused")
     assert paused.status == "paused"
     assert paused.finished_at is None
+
+
+def test_a_retry_carries_what_the_last_attempt_learned(tmp_path):
+    """재시도 일감이 설명을 그대로 복사하면 워커는 처음부터 다시 시작한다.
+
+    실측: 같은 일감을 세 사이클에 걸쳐 재시도했는데, 매번 같은 벽에 부딪혔다.
+    두 번째 사이클에서 리드가 "이 워커는 다단계 하네스를 못 만든다" 를
+    알아냈지만 그 진단이 다음 재시도로 가지 않았다. 재시도야말로 지난번에 왜
+    실패했는지가 가장 필요한 자리인데 정반대로 아무것도 싣지 않았다.
+    """
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    failed = teams.create_task(run.id, "배선", "원래 지시")
+    teams.record_task_outcome(
+        failed.id,
+        {
+            "status": "failed",
+            "summary": "저장소 주입까지만 했고 HTTP 흐름은 못 돌렸습니다",
+            "reason_code": "HTTP_FLOW_INCOMPLETE",
+            "deliverables": [],
+            "verifications": [],
+        },
+        {"accepted": False, "status": "failed", "reason_code": "HTTP_FLOW_INCOMPLETE", "evidence": {}},
+    )
+    teams.set_task_status(failed.id, "failed", error_message="HTTP_FLOW_INCOMPLETE")
+    teams.set_run_status(run.id, "failed")
+    lead_agent = next(a for a in teams.list_agents(run.id) if a.role == "leader")
+    teams.append_message(
+        run.id, lead_agent.id, None, "acceptance_review",
+        "이 작업자는 국소 수정은 하지만 다단계 하네스 저작은 산출하지 못한다.",
+        {"task_id": failed.id},
+    )
+
+    _run, retry_task, _cycle = teams.retry_failed_task(run.id, failed.id)
+
+    assert "원래 지시" in retry_task.description
+    assert "HTTP_FLOW_INCOMPLETE" in retry_task.description
+    assert "HTTP 흐름은 못 돌렸습니다" in retry_task.description
+    assert "다단계 하네스 저작은 산출하지 못한다" in retry_task.description
+
+
+def test_a_first_attempt_description_is_untouched(tmp_path):
+    """실패 이력이 없으면 붙일 것도 없다. 빈 절을 달면 노이즈만 는다."""
+    personas, teams = make_services(tmp_path)
+    leader = personas.create_persona("L", "lead", "d", [], [])
+    member = personas.create_persona("W", "work", "d", [], [])
+    run = teams.create_team_run("goal", leader.id, [member.id], "plan_and_execute", 1)
+    failed = teams.create_task(run.id, "t", "원래 지시")
+    teams.set_task_status(failed.id, "failed")
+    teams.set_run_status(run.id, "failed")
+
+    _run, retry_task, _cycle = teams.retry_failed_task(run.id, failed.id)
+
+    assert retry_task.description == "원래 지시"

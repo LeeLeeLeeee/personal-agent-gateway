@@ -2107,7 +2107,7 @@ class TeamRunService:
                     retry_cycle_id,
                     task_id,
                     task["title"],
-                    task["description"],
+                    _retry_description(connection, task),
                     task["owner_agent_id"],
                     task["required"],
                     task["acceptance_json"],
@@ -4064,6 +4064,59 @@ def _persona_snapshot(persona: Persona) -> dict[str, object]:
         "default_options": persona.default_options,
         "avatar": persona.avatar,
     }
+
+
+def _retry_description(
+    connection: sqlite3.Connection, task: sqlite3.Row
+) -> str:
+    """지난 시도에서 알아낸 것을 재시도 일감의 설명에 싣는다.
+
+    설명을 그대로 복사하면 워커는 자기가 이미 실패했다는 것조차 모른 채 같은
+    프롬프트를 다시 받는다. 실측에서 같은 일감이 세 사이클에 걸쳐 재시도됐고
+    매번 같은 벽에 부딪혔다 -- 두 번째에 리드가 "이 워커는 다단계 하네스를
+    못 만든다" 를 알아냈지만 그 진단이 다음 재시도로 가지 않았다.
+
+    리드의 심사를 함께 싣는 이유: 워커가 스스로 쓴 요약은 무엇을 했는지를
+    말하지만, 무엇이 막고 있는지는 그것을 밖에서 본 리드가 말한다. 재시도가
+    필요한 이유는 대개 후자다.
+    """
+    description = str(task["description"] or "")
+    lines: list[str] = []
+
+    reason = str(task["error_message"] or "").strip()
+    if reason:
+        lines.append(f"- 판정: {reason}")
+    if task["outcome_json"]:
+        try:
+            outcome = json.loads(task["outcome_json"])
+        except (TypeError, ValueError):
+            outcome = {}
+        summary = str(outcome.get("summary") or "").strip()
+        if summary:
+            lines.append(f"- 지난 시도가 남긴 말: {summary}")
+
+    review = connection.execute(
+        """
+        select content from team_messages
+        where team_run_id = ? and kind = 'acceptance_review'
+          and json_extract(metadata_json, '$.task_id') = ?
+        order by created_at desc limit 1
+        """,
+        (task["team_run_id"], task["id"]),
+    ).fetchone()
+    if review is not None:
+        content = str(review["content"] or "").strip()
+        if content:
+            lines.append(f"- 리드의 마지막 판단: {content}")
+
+    if not lines:
+        return description
+    return (
+        description
+        + "\n\nPREVIOUS ATTEMPT\n"
+        + "\n".join(lines)
+        + "\n이번에는 위에서 막힌 지점을 먼저 닫아라. 같은 방법으로 다시 시도하지 마라."
+    )
 
 
 def _team_run_from_row(row: object) -> TeamRun:

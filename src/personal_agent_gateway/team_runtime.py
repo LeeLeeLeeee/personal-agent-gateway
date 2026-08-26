@@ -135,6 +135,13 @@ Return ONLY one of:
    work can still add an import line that satisfies it, and the task passes
    while the product is broken. That has happened here.
    A check you supply decides the outcome; your own claim about it is ignored.
+   The command in a command_succeeds check must already exist when the task starts:
+   something the repository already has, or something an EARLIER task in this plan
+   produces. Never a tool this same task has to build. A check that has to be built
+   by the work it judges cannot run when the work stalls -- it leaves the task with
+   no evidence at all, which is what happened here. If the verification needs a tool
+   nobody has written yet, make building it its own task and put that task in this
+   one's depends_on_task_ids, so the tool exists before anything is judged by it.
    Name each verification for the part of the goal it settles, not for the file
    it looks at: "covers-the-missing-snapshot-case", not "report-exists". A name
    that says only that a file was produced leaves nobody able to tell which
@@ -345,6 +352,13 @@ command_succeeds runs the command in the workspace and passes only on exit 0.
 Prefer it whenever the question is whether something WORKS -- a file check can be
 satisfied by an import line while the product stays broken.
 A check you supply decides the outcome; your own claim about it is ignored.
+The command in a command_succeeds check must already exist when the task starts:
+something the repository already has, or something an EARLIER task in this plan
+produces. Never a tool this same task has to build. A check that has to be built
+by the work it judges cannot run when the work stalls -- it leaves the task with
+no evidence at all, which is what happened here. If the verification needs a tool
+nobody has written yet, make building it its own task and put that task in this
+one's depends_on_task_ids, so the tool exists before anything is judged by it.
 plan_task_id is required and must be unique in this response.
 depends_on_task_ids may reference only plan_task_id values in this response.
 A task that reads, revises, or verifies another task's required_outputs MUST list
