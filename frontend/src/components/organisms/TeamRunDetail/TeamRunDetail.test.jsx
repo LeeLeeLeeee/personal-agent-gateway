@@ -2412,6 +2412,72 @@ describe("TeamRunDetail 대시보드와 탭 구조", () => {
     expect(since.textContent).toMatch(/^\d{2}:\d{2}$/);
   });
 
+  it("사이클 기록이 팀 노트를 썼는지 말한다", async () => {
+    // 노트는 선택이라, 리드가 그냥 안 쓰고 지나가는지가 보이지 않으면 이
+    // 기능은 있으나 마나가 된다. 없는 것과 쓰지 않은 것은 다르다.
+    renderApp({
+      detail: {
+        cycles: [
+          { id: "c1", sequence: 8, status: "running", team_note_title: "저장소 지도" },
+          { id: "c0", sequence: 7, status: "completed", team_note_title: null }
+        ]
+      }
+    });
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    const panel = screen.getByRole("tabpanel", { name: "History" });
+
+    expect(within(panel).getByText(/팀 노트 갱신 · 저장소 지도/)).toBeInTheDocument();
+    expect(within(panel).getByText("팀 노트 안 씀")).toBeInTheDocument();
+  });
+
+  it("팀원 카드마다 그 사람이 쓴 토큰을 보여준다", () => {
+    // 총합만 보면 어느 자리가 비싼지 알 수 없다. 리드는 사이클마다 두 번씩
+    // 불리고 작업자는 자기 일감이 있을 때만 불려서, 같은 런 안에서도
+    // 자릿수가 다르다.
+    renderApp({
+      detail: {
+        agents: [{
+          ...agent,
+          usage: {
+            input_tokens: 1270454, output_tokens: 29776,
+            cache_creation_input_tokens: 0, cache_read_input_tokens: 31262464,
+            reported_calls: 4, unreported_calls: 0
+          }
+        }]
+      }
+    });
+    const dashboard = screen.getByRole("region", { name: "Dashboard" });
+
+    expect(within(dashboard).getByText("입력 1.3M")).toBeInTheDocument();
+    expect(within(dashboard).getByText("출력 29.8K")).toBeInTheDocument();
+    expect(within(dashboard).getByText("캐시 31.3M")).toBeInTheDocument();
+  });
+
+  it("한 번도 안 불린 팀원에게 0 세 개를 보여주지 않는다", () => {
+    renderApp({ detail: { agents: [{ ...agent, usage: null }] } });
+    const dashboard = screen.getByRole("region", { name: "Dashboard" });
+
+    expect(within(dashboard).queryByText(/^입력 /)).not.toBeInTheDocument();
+  });
+
+  it("쓴 것이 없는 팀원에게는 아무 숫자도 그리지 않는다", () => {
+    renderApp({
+      detail: {
+        agents: [{
+          ...agent,
+          usage: {
+            input_tokens: 0, output_tokens: 0,
+            cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+            reported_calls: 0, unreported_calls: 13
+          }
+        }]
+      }
+    });
+    const dashboard = screen.getByRole("region", { name: "Dashboard" });
+
+    expect(within(dashboard).queryByText(/^입력 /)).not.toBeInTheDocument();
+  });
+
   it("탭은 넷이고 처음에는 Run 이 열린다", () => {
     renderApp();
     const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");
@@ -2490,17 +2556,6 @@ describe("TeamRunDetail 토큰 사용량", () => {
     expect(within(phases).getByText(/12\.4K/)).toBeInTheDocument();
     expect(within(phases).getByText(/3\.1K/)).toBeInTheDocument();
     expect(within(phases).getByText(/88\.9K/)).toBeInTheDocument();
-  });
-
-  it("보고하지 않은 호출이 있으면 합계가 낮다는 것을 말한다", () => {
-    // 총합만 보여주면 그것이 전부인 줄 읽는다. 보고 안 한 호출이 섞여 있으면
-    // 실제 사용량은 더 크다.
-    renderUsage({
-      input_tokens: 100, output_tokens: 10,
-      cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
-      reported_calls: 2, unreported_calls: 3
-    });
-    expect(screen.getByText(/3건 미보고/)).toBeInTheDocument();
   });
 
   it("아직 쓴 것이 없으면 아무것도 그리지 않는다", () => {

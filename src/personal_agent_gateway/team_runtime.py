@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal, Protocol
 
-from personal_agent_gateway.archive import ArchiveService
+from personal_agent_gateway.archive import TEAM_NOTE_MAX_CHARS, ArchiveService
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.model_client import ModelClient, ModelResponse
 from personal_agent_gateway.redaction import redact_text
@@ -29,6 +29,7 @@ from personal_agent_gateway.team_collaboration_service import (
     TeamCollaborationService,
 )
 from personal_agent_gateway.team_coverage_report import extract_coverage_gaps
+from personal_agent_gateway.team_note_report import extract_team_note
 from personal_agent_gateway.team_artifact_publisher import (
     ArtifactPublicationError,
     TeamArtifactPublisher,
@@ -277,6 +278,40 @@ did not check.
 2. ONLY {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the final response cannot be completed accurately","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"run"}}}}
 At this stage, ask only about final interpretation or presentation that does not
 require additional worker execution."""
+
+TEAM_NOTE_HEADER = """
+TEAM NOTE:
+This team keeps one note about what it has learned. This is the whole of it --
+there is no other memory of this that survives. This team wrote it about its own
+work and the user has not reviewed it, so treat it as leads to verify, not as
+settled fact. Where it disagrees with what you observe in the workspace, the
+workspace is right and the note is stale.
+{current_note}
+"""
+
+TEAM_NOTE_REWRITE_PROMPT = """
+
+REWRITING THE NOTE (optional):
+{note_state}
+Write or rewrite it only when this cycle found something a later cycle would
+otherwise
+have to work out again: where something lives, why an approach failed, a
+convention this repository actually follows. Do not record what the goal or the
+task list already says, and do not record this cycle's progress -- the summary
+above covers that.
+
+State each fact with the file that shows it, with the line when you can, and
+name what your claim is true as of -- a commit, a path, a date. A fact with no
+anchor cannot be told apart from one that went stale months ago.
+
+The whole note must stay under {max_chars} characters, so replacing it means
+choosing what to drop. If nothing this cycle changes it, omit the block and
+change nothing.
+
+```team-note
+{{"title":"short title","summary":"one line","content_markdown":"the complete note","tags":["tag"]}}
+```
+"""
 
 SYNTHESIS_CONTRACT_PROMPT = """You are the leader of a personal-agent-gateway Team Run.
 Goal: {goal}
@@ -1984,7 +2019,42 @@ class TeamRuntime:
         if operation.result_kind != "synthesis":
             raise OperationConflict("Completed synthesis operation is invalid")
         summary = _operation_synthesis_summary(operation)
-        return self._model_effects.apply_synthesis(operation.id, summary)
+        applied = self._model_effects.apply_synthesis(operation.id, summary)
+        self._save_team_note(operation)
+        return applied
+
+    def _save_team_note(self, operation: TeamModelOperation) -> None:
+        """리드가 남긴 노트를 이 팀의 노트로 기록한다.
+
+        어떤 이유로도 던지지 않는다. 이 시점의 사이클은 이미 끝났고,
+        노트는 선택이다. 선택인 것을 저장하다 실패해서 끝난 사이클을
+        뒤집으면, 노트가 없느니만 못하다.
+        """
+        if self._archive_service is None:
+            return
+        note = _operation_team_note(operation)
+        if note is None:
+            return
+        try:
+            run = self._teams.get_team_run(operation.team_run_id)
+            if not run.team_id:
+                return
+            self._archive_service.save_team_note(
+                actor_type="team",
+                team_id=run.team_id,
+                kind="reference",
+                title=note["title"],
+                summary=note["summary"],
+                content_markdown=note["content_markdown"],
+                tags=note["tags"],
+                source_urls=[],
+                team_run_id=run.id,
+                cycle_id=operation.cycle_id,
+            )
+        except Exception:  # noqa: BLE001 - 위 docstring 참조
+            _LOGGER.exception(
+                "team note could not be saved", extra={"operation": operation.id}
+            )
 
     def _space_policy(
         self,
@@ -2039,7 +2109,7 @@ class TeamRuntime:
             f"{goal_context}\n{instruction}",
             persona_id=leader.persona_id,
             allow_request=False,
-        ) + ADD_WORK_PROMPT.format(
+        ) + self._team_note_block(run) + ADD_WORK_PROMPT.format(
             goal=goal_context,
             existing_titles=existing,
             instruction=instruction,
@@ -2123,6 +2193,52 @@ class TeamRuntime:
                 allow_request=allow_request,
             )
             + "\n\n"
+        )
+
+    def _team_note_block(self, run: TeamRun) -> str:
+        """이 팀의 노트 전문. 없으면 빈 문자열.
+
+        검색으로 고르지 않고 통째로 싣는다. 팀당 하나뿐이고 상한이 작아 고를
+        것이 없는데, 검색은 놓친다 -- 짧은 사이클 지시는 노트의 어느 단어와도
+        겹치지 않아 계획 단계가 노트를 못 보는 일이 실제로 있었다.
+        """
+        if self._archive_service is None or not run.team_id:
+            return ""
+        note = self._archive_service.get_team_note(run.team_id)
+        if note is None:
+            return ""
+        body = f"{note.title}\n{note.content_markdown}"
+        return "\n\n" + TEAM_NOTE_HEADER.format(current_note=body) + "\n\n"
+
+    def _team_note_rewrite_block(
+        self,
+        run: TeamRun,
+        contract: OutputContract | None,
+        cycle_id: str | None,
+    ) -> str:
+        """리드가 사이클 끝에 노트를 고쳐 쓰게 하는 지시.
+
+        노트 전문은 이 앞에 이미 실려 있다. 리드는 덧붙이는 것이 아니라
+        갈아치우므로, 지금 뭐가 적혀 있는지 모르는 채로 쓰면 지난 사이클이
+        알아낸 것을 말없이 지운다.
+        """
+        if self._archive_service is None or not run.team_id:
+            return ""
+        # 계약은 응답의 마지막 형태를 못박는다. 뒤에 블록을 더 붙이면 깨진다.
+        if contract is not None:
+            return ""
+        # 사이클이 없는 런은 합성 응답에서 블록을 떼어내지 않는다. 거기서
+        # 물으면 노트는 저장되지 않고, 표식만 요약에 남는다.
+        if cycle_id is None:
+            return ""
+        has_note = self._archive_service.get_team_note(run.team_id) is not None
+        state = (
+            "The team's note is above; replacing it means replacing all of it."
+            if has_note
+            else "This team has no note yet, so this would be the first one."
+        )
+        return "\n\n" + TEAM_NOTE_REWRITE_PROMPT.format(
+            note_state=state, max_chars=TEAM_NOTE_MAX_CHARS
         )
 
     def _finalize_persona_content(
@@ -2287,7 +2403,7 @@ class TeamRuntime:
             goal_context,
             persona_id=leader_agent.persona_id,
             allow_request=False,
-        ) + PLANNING_PROMPT.format(
+        ) + self._team_note_block(run) + PLANNING_PROMPT.format(
             goal=goal_context,
             persona_snapshot_json=json.dumps(leader_agent.persona_snapshot, ensure_ascii=False),
             team_roster_json=_assignment_roster_json(
@@ -4523,7 +4639,7 @@ class TeamRuntime:
             f"{goal_context}\n{task.title}\n{task.description}",
             persona_id=worker.persona_id,
             allow_request=True,
-        ) + WORKER_PROMPT.format(
+        ) + self._team_note_block(run) + WORKER_PROMPT.format(
             persona_snapshot_json=json.dumps(worker.persona_snapshot, ensure_ascii=False),
             goal=goal_context,
             task_title=task.title,
@@ -5157,7 +5273,7 @@ class TeamRuntime:
             f"{goal_context}\n{results}",
             persona_id=leader_agent.persona_id,
             allow_request=True,
-        ) + synthesis_block
+        ) + self._team_note_block(run) + synthesis_block + self._team_note_rewrite_block(run, contract, cycle_id)
         decision_context = "\n\n".join(
             context
             for context in (
@@ -5287,10 +5403,18 @@ class TeamRuntime:
             persona_id=leader.persona_id,
             team_run_id=run.id,
         )
-        summary, gaps = extract_coverage_gaps(content)
+        without_note, note = extract_team_note(content)
+        summary, gaps = extract_coverage_gaps(without_note)
         payload: dict[str, object] = {"summary": summary}
         if gaps is not None:
             payload["coverage_gaps"] = gaps
+        if note is not None:
+            payload["team_note"] = {
+                "title": note.title,
+                "summary": note.summary,
+                "content_markdown": note.content_markdown,
+                "tags": note.tags,
+            }
         if contract is None:
             return ValidatedOperationResult("synthesis", payload)
         try:
@@ -6290,6 +6414,15 @@ def _operation_user_decision(
     ):
         raise OperationConflict("Completed user decision is invalid")
     return payload
+
+
+def _operation_team_note(
+    operation: TeamModelOperation,
+) -> dict[str, object] | None:
+    stored = operation.result_json
+    payload = stored.get("payload") if isinstance(stored, dict) else None
+    note = payload.get("team_note") if isinstance(payload, dict) else None
+    return note if isinstance(note, dict) else None
 
 
 def _operation_synthesis_summary(operation: TeamModelOperation) -> str:

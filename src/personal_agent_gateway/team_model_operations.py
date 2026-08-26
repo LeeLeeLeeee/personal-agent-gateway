@@ -152,6 +152,45 @@ _USAGE_KEYS = (
 )
 
 
+
+class _UsageBucket:
+    """사용량 행을 모아 한 덩어리로 세는 자리.
+
+    총합과 팀원별 합이 같은 셈을 쓰게 하려고 따로 뒀다. 한쪽만 고치면 둘이
+    어긋나는데, 어긋난 두 숫자를 화면에서 보고 어느 쪽이 맞는지 가릴 방법은
+    없다.
+    """
+
+    def __init__(self) -> None:
+        self.totals = {key: 0 for key in _USAGE_KEYS}
+        self.reported = 0
+        self.unreported = 0
+
+    def add(self, raw: object) -> None:
+        if not raw:
+            self.unreported += 1
+            return
+        try:
+            usage = json.loads(raw)
+        except (TypeError, ValueError):
+            self.unreported += 1
+            return
+        if not isinstance(usage, dict):
+            self.unreported += 1
+            return
+        self.reported += 1
+        for key in _USAGE_KEYS:
+            value = usage.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                self.totals[key] += value
+
+    def result(self) -> dict[str, int]:
+        return {
+            **self.totals,
+            "reported_calls": self.reported,
+            "unreported_calls": self.unreported,
+        }
+
 class TeamModelOperationService:
     def __init__(
         self,
@@ -432,35 +471,39 @@ class TeamModelOperationService:
     def usage_totals(self, team_run_id: str) -> dict[str, int]:
         """이 런이 쓴 토큰의 합계.
 
-        호출 단위로 저장한 것을 여기서 합친다. 사이클별·에이전트별도 같은
-        행에서 나오므로, 필요해지면 이 함수 옆에 조건만 다른 것을 하나 더
-        두면 된다 -- 저장을 잘게 해둔 값이 그것이다.
+        호출 단위로 저장한 것을 여기서 합친다.
 
         보고하지 않은 호출은 세지 않고 개수만 따로 돌려준다. 0 으로 합치면
         총합이 실제보다 낮다는 사실 자체가 화면에서 사라진다.
         """
-        totals = {key: 0 for key in _USAGE_KEYS}
-        reported = 0
-        unreported = 0
+        bucket = _UsageBucket()
         for row in self._db.fetchall(
             "select usage_json from team_model_operations where team_run_id = ?",
             (team_run_id,),
         ):
-            raw = row["usage_json"]
-            if not raw:
-                unreported += 1
-                continue
-            try:
-                usage = json.loads(raw)
-            except (TypeError, ValueError):
-                unreported += 1
-                continue
-            reported += 1
-            for key in _USAGE_KEYS:
-                value = usage.get(key)
-                if isinstance(value, int) and not isinstance(value, bool):
-                    totals[key] += value
-        return {**totals, "reported_calls": reported, "unreported_calls": unreported}
+            bucket.add(row["usage_json"])
+        return bucket.result()
+
+    def usage_by_agent(self, team_run_id: str) -> dict[str, dict[str, int]]:
+        """이 런에서 팀원 한 사람이 각각 얼마나 썼는지.
+
+        총합만 보면 어느 자리가 비싼지 알 수 없다. 리드는 사이클마다 계획과
+        합성으로 두 번씩 불리고, 작업자는 자기 일감이 있을 때만 불린다 --
+        같은 런 안에서도 자릿수가 다르다.
+
+        호출을 낸 적이 없는 팀원은 아예 나오지 않는다. 0 을 채워 돌려주면
+        "안 불렸다" 와 "불렸는데 보고를 안 했다" 가 화면에서 같아진다.
+        """
+        buckets: dict[str, _UsageBucket] = {}
+        for row in self._db.fetchall(
+            """
+            select agent_id, usage_json from team_model_operations
+            where team_run_id = ? and agent_id is not null
+            """,
+            (team_run_id,),
+        ):
+            buckets.setdefault(row["agent_id"], _UsageBucket()).add(row["usage_json"])
+        return {agent_id: bucket.result() for agent_id, bucket in buckets.items()}
 
     def get(self, operation_id: str) -> TeamModelOperation:
         with self._db.connection() as connection:

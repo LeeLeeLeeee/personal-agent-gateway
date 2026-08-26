@@ -472,7 +472,9 @@ def get_team_run_detail(
         raise HTTPException(status_code=404, detail="Team run not found") from exc
     operations = request.app.state.team_model_operation_service
     failure_shapes = operations.latest_failure_shapes(team_run_id)
+    usage_by_agent = operations.usage_by_agent(team_run_id)
     coverage_by_cycle: dict[str, list[dict[str, str]] | None] = {}
+    note_by_cycle: dict[str, str | None] = {}
     verdict_payload_by_cycle: dict[str, dict[str, object]] = {}
     for cycle in cycles:
         cycle_operations = operations.list_for_cycle(cycle.id)
@@ -492,9 +494,12 @@ def get_team_run_detail(
             None,
         )
         if synthesis is not None:
-            coverage_by_cycle[cycle.id] = (
-                (synthesis.result_json or {}).get("payload") or {}
-            ).get("coverage_gaps")
+            synthesis_payload = (synthesis.result_json or {}).get("payload") or {}
+            coverage_by_cycle[cycle.id] = synthesis_payload.get("coverage_gaps")
+            note = synthesis_payload.get("team_note")
+            note_by_cycle[cycle.id] = (
+                note.get("title") if isinstance(note, dict) else None
+            )
         if cycle.source_type != "contest":
             continue
         verdict_operation = next(
@@ -530,7 +535,10 @@ def get_team_run_detail(
     shape = plan_shape([task.id for task in shape_tasks], task_dependencies)
     return {
         "team_run": _team_run_payload(run, request.app.state.team_run_service),
-        "agents": [_agent_payload(agent) for agent in agents],
+        "agents": [
+            _agent_payload(agent, usage_by_agent.get(agent.id))
+            for agent in agents
+        ],
         "tasks": [
             _task_payload(
                 task,
@@ -549,7 +557,11 @@ def get_team_run_detail(
         },
         "messages": [_message_payload(message) for message in selected_messages],
         "cycles": [
-            _cycle_payload(cycle, coverage_by_cycle.get(cycle.id))
+            _cycle_payload(
+                cycle,
+                coverage_by_cycle.get(cycle.id),
+                note_by_cycle.get(cycle.id),
+            )
             for cycle in cycles
         ],
         "decision_request": _decision_request_payload(
@@ -1663,8 +1675,14 @@ def _team_name(run: TeamRun) -> str | None:
     return name or None
 
 
-def _agent_payload(agent: TeamAgent) -> dict[str, object]:
+def _agent_payload(
+    agent: TeamAgent,
+    usage: dict[str, int] | None = None,
+) -> dict[str, object]:
     return {
+        # 호출을 낸 적 없는 팀원은 None 이다. 0 을 채우면 "안 불렸다" 와
+        # "불렸는데 보고를 안 했다" 가 화면에서 같아진다.
+        "usage": usage,
         "id": agent.id,
         "team_run_id": agent.team_run_id,
         "name": agent.name,
@@ -1737,6 +1755,7 @@ def _message_payload(message: TeamMessage) -> dict[str, object]:
 def _cycle_payload(
     cycle: TeamRunCycle,
     coverage_gaps: list[dict[str, str]] | None = None,
+    team_note_title: str | None = None,
 ) -> dict[str, object]:
     execution_metadata = cycle.execution_metadata or {}
     semantic_source = execution_metadata.get("semantic_source")
@@ -1759,6 +1778,7 @@ def _cycle_payload(
         "effective_instruction": effective_instruction,
         "summary": cycle.summary,
         "coverage_gaps": coverage_gaps,
+        "team_note_title": team_note_title,
         "error_message": cycle.error_message,
         "created_at": cycle.created_at,
         "started_at": cycle.started_at,

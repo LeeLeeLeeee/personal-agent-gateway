@@ -1071,6 +1071,24 @@ export function TeamRunDetail({
   // elapsedSeconds 는 기준 시각을 반드시 받는다. 안 넘기면 undefined 로
   // 빼면서 NaN 이 되고, 화면에는 "NaN:NaN" 이 찍힌다.
   const nowSince = (startedAt) => elapsedSeconds(startedAt, nowMs);
+  // 총합만 보면 어느 자리가 비싼지 알 수 없다. 리드는 사이클마다 계획과
+  // 합성으로 두 번씩 불리고, 작업자는 자기 일감이 있을 때만 불린다 -- 같은
+  // 런 안에서도 자릿수가 다르다.
+  const agentUsage = (agent) => {
+    const usage = agent.usage;
+    if (!usage) return null;
+    const cache = (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
+    const used = (usage.input_tokens || 0) + (usage.output_tokens || 0) + cache;
+    // 쓴 것이 없으면 아무것도 그리지 않는다. 0 을 세 개 보여줄 이유가 없다.
+    if (!used) return null;
+    return (
+      <div className="mono team-lane-usage">
+        <span>{`입력 ${compactTokens(usage.input_tokens || 0)}`}</span>
+        <span>{`출력 ${compactTokens(usage.output_tokens || 0)}`}</span>
+        <span>{`캐시 ${compactTokens(cache)}`}</span>
+      </div>
+    );
+  };
   const usageTotals = detail.usage_totals || null;
   // 캐시는 기록분과 조회분을 합쳐 한 숫자로 보여준다. 둘을 나눠 적으면 줄이
   // 길어지는데, 이 자리에서 궁금한 것은 "캐시가 얼마나 먹었나" 하나다.
@@ -1371,13 +1389,6 @@ export function TeamRunDetail({
             <span>{`입력 ${compactTokens(usageTotals.input_tokens || 0)}`}</span>
             <span>{`출력 ${compactTokens(usageTotals.output_tokens || 0)}`}</span>
             <span>{`캐시 ${compactTokens(usageCache)}`}</span>
-            {usageTotals.unreported_calls ? (
-              // 총합만 보이면 그것이 전부인 줄 읽는다. 보고하지 않은 호출이
-              // 섞여 있으면 실제 사용량은 이보다 크다.
-              <span className="team-phase-usage-gap">
-                {`${usageTotals.unreported_calls}건 미보고`}
-              </span>
-            ) : null}
           </span>
         ) : null}
       </div>
@@ -1518,6 +1529,7 @@ export function TeamRunDetail({
                         </div>
                       );
                     })()}
+                    {agentUsage(agent)}
                     <details className="team-lane-runtime">
                       <summary className="mono">RUNTIME</summary>
                       <div className="mono team-lane-snapshot">{agent.backend}/{agent.model}</div>
@@ -1953,6 +1965,14 @@ export function TeamRunDetail({
                     ) : (
                       <div className="team-cycle-coverage mono">커버리지를 보고하지 않음</div>
                     )}
+                    {/* 노트는 선택이라, 리드가 그냥 안 쓰고 지나가는지가 보이지
+                        않으면 이 기능은 있으나 마나가 된다. 없는 것과 쓰지
+                        않은 것은 다르다. */}
+                    <div className="team-cycle-note mono">
+                      {cycle.team_note_title
+                        ? `팀 노트 갱신 · ${cycle.team_note_title}`
+                        : "팀 노트 안 씀"}
+                    </div>
                     {cycle.error_message ? <div className="hook-row-error mono">{cycle.error_message}</div> : null}
                   </div>
                 </details>

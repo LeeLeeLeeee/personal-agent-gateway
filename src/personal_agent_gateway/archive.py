@@ -26,7 +26,12 @@ _KINDS = {
 _REQUEST_STATUSES = {"open", "in_progress", "deferred", "dismissed", "fulfilled"}
 _USER_REQUEST_STATUSES = _REQUEST_STATUSES - {"fulfilled"}
 _ACTIVE_REQUEST_STATUSES = {"open", "in_progress", "deferred"}
-_DRAFT_SOURCE_TYPES = {"hook", "knowledge_request"}
+_DRAFT_SOURCE_TYPES = {"hook", "knowledge_request", "team_note"}
+#: A team note is rewritten in full every cycle, so it has to stay small enough
+#: that rewriting it is cheap and that the lead has to choose what to keep. An
+#: uncapped note only grows: nothing is ever dropped because nothing forces a
+#: choice, and the note stops being knowledge and becomes a log.
+TEAM_NOTE_MAX_CHARS = 4_000
 _REQUEST_PATTERN = re.compile(
     r"<knowledge_request>\s*(\{.*?\})\s*</knowledge_request>",
     re.DOTALL,
@@ -407,6 +412,169 @@ class ArchiveService:
                 )
         return self.get_entry(existing_id)
 
+    def save_team_note(
+        self,
+        *,
+        actor_type: str,
+        team_id: str,
+        kind: str,
+        title: str,
+        summary: str,
+        content_markdown: str,
+        tags: list[str],
+        source_urls: list[str],
+        team_run_id: str | None = None,
+        cycle_id: str | None = None,
+    ) -> ArchiveEntry:
+        """Write or revise the one note a team keeps about its own work.
+
+        One note per team, revised in place -- not one per cycle. A note per
+        cycle would leave twenty near-duplicates behind a single run, and the
+        reader would have to work out which one is current. Revising keeps a
+        single answer to "what does this team know", and the revision table
+        already holds what each cycle changed.
+
+        It is bound to the team, not to the run, so the next run of the same
+        team starts with what the last one learned instead of deriving it
+        again. It stays a draft: the user publishes it if it turns out to be
+        worth more than this team.
+        """
+        if actor_type != "team":
+            raise ValueError("Only a team can save its own note")
+        clean_team_id = _required(team_id, "Team id", 128)
+        if len(content_markdown.strip()) > TEAM_NOTE_MAX_CHARS:
+            msg = f"Team note must be at most {TEAM_NOTE_MAX_CHARS} characters"
+            raise ValueError(msg)
+        normalized = _validated_entry(
+            kind, title, summary, content_markdown, tags, source_urls, []
+        )
+        now = _now()
+        with self._db.connection() as connection:
+            existing = connection.execute(
+                """
+                select entry_id from archive_draft_origins
+                where source_type = 'team_note' and source_id = ?
+                """,
+                (clean_team_id,),
+            ).fetchone()
+            if existing is None:
+                entry_id = uuid4().hex
+                revision = 1
+                connection.execute(
+                    """
+                    insert into archive_entries (
+                        id, kind, title, summary, content_markdown, tags_json,
+                        source_urls_json, status, current_revision, created_by,
+                        created_at, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, 'draft', 1, 'team', ?, ?)
+                    """,
+                    (
+                        entry_id,
+                        normalized["kind"],
+                        normalized["title"],
+                        normalized["summary"],
+                        normalized["content_markdown"],
+                        _json(normalized["tags"]),
+                        _json(normalized["source_urls"]),
+                        now,
+                        now,
+                    ),
+                )
+                connection.execute(
+                    """
+                    insert into archive_bindings (entry_id, scope, scope_id, created_at)
+                    values (?, 'team', ?, ?)
+                    """,
+                    (entry_id, clean_team_id, now),
+                )
+                connection.execute(
+                    """
+                    insert into archive_draft_origins (
+                        entry_id, source_type, source_id, team_run_id, cycle_id,
+                        created_at
+                    ) values (?, 'team_note', ?, ?, ?, ?)
+                    """,
+                    (entry_id, clean_team_id, team_run_id, cycle_id, now),
+                )
+            else:
+                entry_id = str(existing["entry_id"])
+                row = connection.execute(
+                    "select current_revision from archive_entries where id = ?",
+                    (entry_id,),
+                ).fetchone()
+                revision = int(row["current_revision"]) + 1
+                connection.execute(
+                    """
+                    update archive_entries set kind = ?, title = ?, summary = ?,
+                        content_markdown = ?, tags_json = ?, source_urls_json = ?,
+                        current_revision = ?, updated_at = ?
+                    where id = ?
+                    """,
+                    (
+                        normalized["kind"],
+                        normalized["title"],
+                        normalized["summary"],
+                        normalized["content_markdown"],
+                        _json(normalized["tags"]),
+                        _json(normalized["source_urls"]),
+                        revision,
+                        now,
+                        entry_id,
+                    ),
+                )
+                # The origin points at the cycle that last touched the note, so
+                # a reader asking "when was this last true" lands on that cycle
+                # rather than on the run that first created it.
+                connection.execute(
+                    """
+                    update archive_draft_origins
+                    set team_run_id = ?, cycle_id = ?
+                    where entry_id = ?
+                    """,
+                    (team_run_id, cycle_id, entry_id),
+                )
+            connection.execute(
+                """
+                insert into archive_revisions (
+                    id, entry_id, revision, kind, title, summary,
+                    content_markdown, tags_json, source_urls_json,
+                    change_summary, created_by, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'team', ?)
+                """,
+                (
+                    uuid4().hex,
+                    entry_id,
+                    revision,
+                    normalized["kind"],
+                    normalized["title"],
+                    normalized["summary"],
+                    normalized["content_markdown"],
+                    _json(normalized["tags"]),
+                    _json(normalized["source_urls"]),
+                    f"Team note revised in cycle {cycle_id or '(unknown)'}",
+                    now,
+                ),
+            )
+            self._index_entry(connection, entry_id, normalized)
+        return self.get_entry(entry_id)
+
+    def get_team_note(self, team_id: str) -> ArchiveEntry | None:
+        """이 팀이 지금 들고 있는 노트. 없으면 None.
+
+        검색을 거치지 않는다. 리드가 노트를 갈아치우려면 관련어가 걸리든
+        말든 현재 내용 전부를 봐야 한다 -- 검색으로 가져오면 안 걸린 부분을
+        모르는 채로 지우게 된다.
+        """
+        row = self._db.fetchone(
+            """
+            select e.* from archive_entries e
+            join archive_draft_origins o on o.entry_id = e.id
+            where o.source_type = 'team_note' and o.source_id = ?
+            """,
+            (team_id,),
+        )
+        return None if row is None else self._entry_from_row(row)
+
     def get_entry(self, entry_id: str) -> ArchiveEntry:
         row = self._db.fetchone("select * from archive_entries where id = ?", (entry_id,))
         if row is None:
@@ -509,6 +677,14 @@ class ArchiveService:
         persona_id: str | None,
         limit: int = 5,
     ) -> list[ArchiveEntry]:
+        """Published knowledge that matches the message.
+
+        Team notes are deliberately not searched here. A team has exactly one
+        note and it is capped small, so there is nothing to choose between --
+        and search misses: a short cycle instruction shares no word with the
+        note and returns nothing, at the planning stage where the note matters
+        most. `get_team_note` reads it directly instead.
+        """
         fts_query = _fts_query(query)
         if not fts_query:
             return []
