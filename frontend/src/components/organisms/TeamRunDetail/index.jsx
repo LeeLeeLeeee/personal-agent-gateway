@@ -1079,23 +1079,13 @@ export function TeamRunDetail({
     if (!usage) return null;
     const cache = (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
     const used = (usage.input_tokens || 0) + (usage.output_tokens || 0) + cache;
-    // 한 번도 안 불린 팀원에게 0 을 세 개 보여줄 이유가 없다. 다만 불렸는데
-    // 보고가 없는 경우는 그 사실을 말한다 -- 둘은 다른 상태다.
-    if (!used) {
-      return usage.unreported_calls ? (
-        <div className="mono team-lane-usage team-lane-usage-gap">
-          {`${usage.unreported_calls}건 미보고`}
-        </div>
-      ) : null;
-    }
+    // 쓴 것이 없으면 아무것도 그리지 않는다. 0 을 세 개 보여줄 이유가 없다.
+    if (!used) return null;
     return (
       <div className="mono team-lane-usage">
         <span>{`입력 ${compactTokens(usage.input_tokens || 0)}`}</span>
         <span>{`출력 ${compactTokens(usage.output_tokens || 0)}`}</span>
         <span>{`캐시 ${compactTokens(cache)}`}</span>
-        {usage.unreported_calls ? (
-          <span className="team-lane-usage-gap">{`${usage.unreported_calls}건 미보고`}</span>
-        ) : null}
       </div>
     );
   };
@@ -1399,13 +1389,6 @@ export function TeamRunDetail({
             <span>{`입력 ${compactTokens(usageTotals.input_tokens || 0)}`}</span>
             <span>{`출력 ${compactTokens(usageTotals.output_tokens || 0)}`}</span>
             <span>{`캐시 ${compactTokens(usageCache)}`}</span>
-            {usageTotals.unreported_calls ? (
-              // 총합만 보이면 그것이 전부인 줄 읽는다. 보고하지 않은 호출이
-              // 섞여 있으면 실제 사용량은 이보다 크다.
-              <span className="team-phase-usage-gap">
-                {`${usageTotals.unreported_calls}건 미보고`}
-              </span>
-            ) : null}
           </span>
         ) : null}
       </div>

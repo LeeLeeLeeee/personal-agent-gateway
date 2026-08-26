@@ -2460,9 +2460,7 @@ describe("TeamRunDetail 대시보드와 탭 구조", () => {
     expect(within(dashboard).queryByText(/^입력 /)).not.toBeInTheDocument();
   });
 
-  it("불렸는데 보고가 없으면 그 사실을 말한다", () => {
-    // 안 불린 것과 보고를 안 한 것은 다른 상태다. 둘을 같게 그리면 총합이
-    // 실제보다 낮다는 사실이 화면에서 사라진다.
+  it("쓴 것이 없는 팀원에게는 아무 숫자도 그리지 않는다", () => {
     renderApp({
       detail: {
         agents: [{
@@ -2477,7 +2475,7 @@ describe("TeamRunDetail 대시보드와 탭 구조", () => {
     });
     const dashboard = screen.getByRole("region", { name: "Dashboard" });
 
-    expect(within(dashboard).getByText("13건 미보고")).toBeInTheDocument();
+    expect(within(dashboard).queryByText(/^입력 /)).not.toBeInTheDocument();
   });
 
   it("탭은 넷이고 처음에는 Run 이 열린다", () => {
@@ -2558,17 +2556,6 @@ describe("TeamRunDetail 토큰 사용량", () => {
     expect(within(phases).getByText(/12\.4K/)).toBeInTheDocument();
     expect(within(phases).getByText(/3\.1K/)).toBeInTheDocument();
     expect(within(phases).getByText(/88\.9K/)).toBeInTheDocument();
-  });
-
-  it("보고하지 않은 호출이 있으면 합계가 낮다는 것을 말한다", () => {
-    // 총합만 보여주면 그것이 전부인 줄 읽는다. 보고 안 한 호출이 섞여 있으면
-    // 실제 사용량은 더 크다.
-    renderUsage({
-      input_tokens: 100, output_tokens: 10,
-      cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
-      reported_calls: 2, unreported_calls: 3
-    });
-    expect(screen.getByText(/3건 미보고/)).toBeInTheDocument();
   });
 
   it("아직 쓴 것이 없으면 아무것도 그리지 않는다", () => {
