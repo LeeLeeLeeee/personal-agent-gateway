@@ -2571,6 +2571,7 @@ p {
     letter-spacing: 1.2px;
 }
 .team-run-current-request {
+    font-size: 14px;
     display: -webkit-box;
     max-width: 900px;
     overflow: hidden;
@@ -5608,8 +5609,12 @@ p {
 /* 계획을 나눈 것이 동시 실행을 만들었는지. hero 의 다른 요약과 같은 크기로
    두되, 이득이 없는 계획은 눈에 걸리게 한다 -- 이 줄이 없으면 "일감 4개"가
    "넷이 동시에 한다"로 읽힌다. */
-.team-plan-shape { color: var(--c-grey); }
 .team-plan-shape-flat { color: #8a3b12; font-weight: 600; }
+/* 계획 모양은 요청 문장에 딸린 부제가 아니라 별개의 사실이라 자기 줄에 둔다.
+   진행 중 목록과 같은 라벨 정렬을 써서 대시보드 안에서 나란히 읽힌다. */
+.team-dashboard-shape { display: flex; align-items: baseline; gap: 10px; font-size: 10px; }
+.team-dashboard-shape-label { color: var(--c-grey); letter-spacing: 1px; }
+.team-dashboard-shape-value { color: var(--c-dark); }
 
 /* 대시보드. 열자마자 보여야 하는 것만 모은 자리라, 탭 패널보다 위에서
    시각적으로 한 덩어리로 읽혀야 한다. */

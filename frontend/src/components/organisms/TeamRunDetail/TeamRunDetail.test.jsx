@@ -2289,7 +2289,7 @@ describe("TeamRunDetail question dialog layout", () => {
 });
 
 describe("TeamRunDetail plan shape", () => {
-  function renderShape(plan_shape) {
+  function renderShape(plan_shape, cycles = [{ id: "c1", sequence: 1, status: "running" }]) {
     return render(
       <TeamRunDetail
         detail={{
@@ -2297,6 +2297,7 @@ describe("TeamRunDetail plan shape", () => {
           agents: [],
           tasks: [],
           messages: [],
+          cycles,
           plan_shape
         }}
       />
@@ -2325,6 +2326,17 @@ describe("TeamRunDetail plan shape", () => {
     renderShape({
       task_count: 1, longest_chain: 1, ready_at_start: 1, max_concurrent_workers: 3
     });
+    expect(screen.queryByText(/즉시 시작/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/나눈 이득이 없습니다/)).not.toBeInTheDocument();
+  });
+
+  it("사이클이 끝났으면 지난 계획의 모양을 남기지 않는다", () => {
+    // 끝난 계획의 모양은 지금 판정할 것이 없다. "돌고 있는 일감이 없습니다"
+    // 바로 위에 남아 있으면 지금 그렇게 돌고 있는 줄로 읽힌다.
+    renderShape(
+      { task_count: 4, longest_chain: 4, ready_at_start: 1, max_concurrent_workers: 3 },
+      [{ id: "c1", sequence: 1, status: "completed" }]
+    );
     expect(screen.queryByText(/즉시 시작/)).not.toBeInTheDocument();
     expect(screen.queryByText(/나눈 이득이 없습니다/)).not.toBeInTheDocument();
   });
@@ -2385,6 +2397,19 @@ describe("TeamRunDetail 대시보드와 탭 구조", () => {
     // 담당자 이름은 진행 중 목록과 팀 구성 양쪽에 나온다.
     expect(within(dashboard).getAllByText("백엔드 개발자").length).toBeGreaterThan(0);
     expect(within(dashboard).getByText("요약입니다")).toBeInTheDocument();
+  });
+
+  it("진행 중 일감의 경과 시간이 숫자로 나온다", () => {
+    // elapsedSeconds 는 기준 시각을 받는다. 안 넘기면 NaN 이 되어 화면에
+    // "NaN:NaN" 이 찍히는데, 위 픽스처에 started_at 이 없어 이 분기가 한
+    // 번도 돌지 않았고 그대로 새어나갔다.
+    const { container } = renderApp({
+      detail: {
+        tasks: [{ ...inProgress, started_at: new Date(Date.now() - 90_000).toISOString() }]
+      }
+    });
+    const since = container.querySelector(".team-dashboard-now-since");
+    expect(since.textContent).toMatch(/^\d{2}:\d{2}$/);
   });
 
   it("탭은 넷이고 처음에는 Run 이 열린다", () => {
