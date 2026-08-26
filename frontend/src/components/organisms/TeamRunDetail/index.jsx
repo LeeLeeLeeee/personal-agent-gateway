@@ -1068,6 +1068,9 @@ export function TeamRunDetail({
   const cycles = [...(detail.cycles || [])].sort((left, right) => right.sequence - left.sequence);
   // 서버가 잘리지 않은 전체 일감으로 계산해 보낸다. 화면에서 세면 목록이
   // 잘린 큰 런에서 숫자가 조용히 작아진다.
+  // elapsedSeconds 는 기준 시각을 반드시 받는다. 안 넘기면 undefined 로
+  // 빼면서 NaN 이 되고, 화면에는 "NaN:NaN" 이 찍힌다.
+  const nowSince = (startedAt) => elapsedSeconds(startedAt, nowMs);
   const usageTotals = detail.usage_totals || null;
   // 캐시는 기록분과 조회분을 합쳐 한 숫자로 보여준다. 둘을 나눠 적으면 줄이
   // 길어지는데, 이 자리에서 궁금한 것은 "캐시가 얼마나 먹었나" 하나다.
@@ -1452,8 +1455,8 @@ export function TeamRunDetail({
                   <span className="mono team-dashboard-now-owner">
                     {agents.find((agent) => agent.id === task.owner_agent_id)?.name || "미배정"}
                   </span>
-                  {task.started_at ? (
-                    <span className="mono team-dashboard-now-since">{fmtElapsed(elapsedSeconds(task.started_at))}</span>
+                  {nowSince(task.started_at) !== null ? (
+                    <span className="mono team-dashboard-now-since">{fmtElapsed(nowSince(task.started_at))}</span>
                   ) : null}
                 </li>
               ))}

@@ -623,6 +623,12 @@ export const api = {
         activeAutoSeries: body?.active_auto_series || null,
         queueCount: body?.queue_count || 0,
         activeRequest: body?.active_request || null,
+        // 서버가 계산해서 보내는 두 값. 바로 아래 주석이 경고하는 그 함정에
+        // 그대로 빠져서, 화면 코드와 서버 코드가 둘 다 멀쩡한데 이름을 여기
+        // 적지 않아 계속 비어 있었다. 안쪽 키가 snake_case 라 바깥도 서버가
+        // 보내는 이름 그대로 둔다.
+        usage_totals: body?.usage_totals || null,
+        plan_shape: body?.plan_shape || null,
         // This mapper lists every field it forwards, so a new top-level field
         // on /detail is invisible to the UI until it is named here. Per-task
         // build_evidence and per-cycle coverage_gaps ride inside tasks/cycles,
@@ -655,6 +661,8 @@ export const api = {
         activeAutoSeries: null,
         queueCount: 0,
         activeRequest: null,
+        usage_totals: null,
+        plan_shape: null,
         buildEvidenceSummary: null,
         contests: [],
         planRevisions: [],

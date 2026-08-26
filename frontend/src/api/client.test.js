@@ -275,7 +275,21 @@ describe("api client", () => {
           reviews: { w1: "object" },
           objections: { w1: [{ kind: "gap", task_ref: "T-01", detail: "마이그레이션 담당 없음" }] }
         }],
-        truncated: { tasks: true, messages: false, build_evidence_summary: true }
+        truncated: { tasks: true, messages: false, build_evidence_summary: true },
+        usage_totals: {
+          input_tokens: 120,
+          output_tokens: 30,
+          cache_creation_input_tokens: 10,
+          cache_read_input_tokens: 5,
+          reported_calls: 2,
+          unreported_calls: 1
+        },
+        plan_shape: {
+          task_count: 4,
+          longest_chain: 4,
+          ready_at_start: 1,
+          max_concurrent_workers: 3
+        }
       }));
 
     await expect(api.addWork("r1", "write docs")).resolves.toEqual({ team_run: { id: "r1", status: "running" } });
@@ -314,7 +328,24 @@ describe("api client", () => {
       }],
       // The rollup covers only the returned task window, so whether it was cut
       // has to be readable, not just present in the response.
-      truncated: { tasks: true, messages: false, build_evidence_summary: true }
+      truncated: { tasks: true, messages: false, build_evidence_summary: true },
+      // 서버가 계산해서 보내는 값들. 이 매퍼가 이름을 적어야만 화면에 닿는데,
+      // 화면과 서버가 둘 다 멀쩡한 채로 여기만 비어서 두 기능이 조용히 죽어
+      // 있었다. 응답 mock 에도 함께 넣어야 이 단언이 실제로 무언가를 지킨다.
+      usage_totals: {
+        input_tokens: 120,
+        output_tokens: 30,
+        cache_creation_input_tokens: 10,
+        cache_read_input_tokens: 5,
+        reported_calls: 2,
+        unreported_calls: 1
+      },
+      plan_shape: {
+        task_count: 4,
+        longest_chain: 4,
+        ready_at_start: 1,
+        max_concurrent_workers: 3
+      }
     });
 
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/team-runs/r1/add-work", expect.objectContaining({
@@ -353,7 +384,9 @@ describe("api client", () => {
       buildEvidenceSummary: null,
       contests: [],
       planRevisions: [],
-      truncated: null
+      truncated: null,
+      usage_totals: null,
+      plan_shape: null
     });
   });
 

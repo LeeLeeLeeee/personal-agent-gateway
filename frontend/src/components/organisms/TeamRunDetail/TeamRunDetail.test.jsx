@@ -2387,6 +2387,19 @@ describe("TeamRunDetail 대시보드와 탭 구조", () => {
     expect(within(dashboard).getByText("요약입니다")).toBeInTheDocument();
   });
 
+  it("진행 중 일감의 경과 시간이 숫자로 나온다", () => {
+    // elapsedSeconds 는 기준 시각을 받는다. 안 넘기면 NaN 이 되어 화면에
+    // "NaN:NaN" 이 찍히는데, 위 픽스처에 started_at 이 없어 이 분기가 한
+    // 번도 돌지 않았고 그대로 새어나갔다.
+    const { container } = renderApp({
+      detail: {
+        tasks: [{ ...inProgress, started_at: new Date(Date.now() - 90_000).toISOString() }]
+      }
+    });
+    const since = container.querySelector(".team-dashboard-now-since");
+    expect(since.textContent).toMatch(/^\d{2}:\d{2}$/);
+  });
+
   it("탭은 넷이고 처음에는 Run 이 열린다", () => {
     renderApp();
     const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");
