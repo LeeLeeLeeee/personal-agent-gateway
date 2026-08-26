@@ -5638,3 +5638,8 @@ p {
 .team-subtabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 2px solid #000; }
 .team-subtab { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border: 0; background: transparent; font-family: inherit; font-size: 10px; letter-spacing: 1px; color: var(--c-grey); cursor: pointer; }
 .team-subtab.active { color: var(--c-black); font-weight: 700; box-shadow: inset 0 -3px 0 var(--c-black); }
+
+/* 토큰 사용량. 진행 단계 오른쪽 끝에 붙어 단계 표시를 밀어내지 않는다. */
+.team-phase-usage { margin-left: auto; display: flex; gap: 10px; align-items: center; font-size: 10px; color: var(--c-grey); }
+/* 총합이 실제보다 낮다는 신호라 회색에 묻히면 안 된다. */
+.team-phase-usage-gap { color: #8a3b12; font-weight: 600; }

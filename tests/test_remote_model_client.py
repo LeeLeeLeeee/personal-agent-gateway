@@ -11,6 +11,7 @@ from personal_agent_gateway.remote_model_client import (
     RemoteRunError,
     RemoteRunFailedError,
     RemoteRunProtocolError,
+    _terminal_result,
 )
 
 
@@ -832,3 +833,36 @@ async def test_terminal_and_incomplete_stream_failures_are_ambiguous(body):
 
     assert raised.value.pre_stream is False
     assert raised.value.consumer_run_id == "operation-attempt-4"
+
+
+def test_a_completed_run_carries_the_token_counts_the_gateway_reported():
+    """게이트웨이가 종료 이벤트에 사용량을 싣기 시작했다. 여기서 읽지 않으면
+    한 층 위에서 저장할 것이 없다."""
+    response = _terminal_result(
+        {
+            "kind": "run.completed",
+            "content": "done",
+            "usage": {
+                "input_tokens": 120,
+                "output_tokens": 45,
+                "cache_creation_input_tokens": 900,
+                "cache_read_input_tokens": 7000,
+            },
+        },
+        None,
+    )
+
+    assert response.usage == {
+        "input_tokens": 120,
+        "output_tokens": 45,
+        "cache_creation_input_tokens": 900,
+        "cache_read_input_tokens": 7000,
+    }
+
+
+def test_a_run_without_reported_usage_leaves_it_unset():
+    """보고하지 않은 것과 0 을 쓴 것은 다르다. 0 으로 채우면 합계가 조용히
+    낮아지고, 어느 프로바이더가 보고를 안 하는지도 알 수 없게 된다."""
+    response = _terminal_result({"kind": "run.completed", "content": "done"}, None)
+
+    assert response.usage is None

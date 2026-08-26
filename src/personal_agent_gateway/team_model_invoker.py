@@ -154,6 +154,7 @@ class TeamModelInvoker:
                     invoking.version,
                     result,
                     upstream_session_id=response.upstream_session_id,
+                    usage=response.usage,
                 )
             except OperationSessionConflict as exc:
                 raise AmbiguousModelOperation(

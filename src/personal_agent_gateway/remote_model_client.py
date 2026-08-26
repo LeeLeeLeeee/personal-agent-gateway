@@ -368,6 +368,33 @@ def _decode_event(event_name: str, raw_data: str) -> dict[str, object]:
     return event
 
 
+_USAGE_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+)
+
+
+def _parse_usage(value: object) -> dict[str, int] | None:
+    """게이트웨이가 실어 보낸 토큰 수를 읽는다.
+
+    없으면 None 이다. 0 으로 채우지 않는 이유: 보고하지 않는 프로바이더와
+    정말 아무것도 안 쓴 호출이 구분되지 않게 되고, 합계는 후자로 읽힌다.
+
+    모르는 칸은 버린다. 프로바이더마다 이름이 달라 새 칸이 붙을 수 있는데,
+    그것을 그대로 저장하면 합계를 내는 쪽이 무엇을 더해야 할지 모른다.
+    """
+    if not isinstance(value, dict):
+        return None
+    counts = {
+        key: int(value[key])
+        for key in _USAGE_KEYS
+        if isinstance(value.get(key), int) and not isinstance(value.get(key), bool)
+    }
+    return counts or None
+
+
 def _terminal_result(
     terminal: dict[str, object],
     upstream_session_id: str | None,
@@ -385,6 +412,7 @@ def _terminal_result(
             content=content,
             tool_calls=_parse_tool_calls(terminal.get("tool_calls")),
             upstream_session_id=upstream_session_id,
+            usage=_parse_usage(terminal.get("usage")),
         )
 
     code = terminal.get("error_code")

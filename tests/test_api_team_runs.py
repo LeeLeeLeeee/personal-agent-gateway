@@ -3625,3 +3625,20 @@ def test_the_detail_reports_whether_splitting_bought_any_parallelism(
     assert shape["longest_chain"] == 3
     assert shape["ready_at_start"] == 1
     assert shape["max_concurrent_workers"] == MAX_CONCURRENT_WORKERS
+
+
+def test_the_detail_reports_what_the_run_has_spent(tmp_path: Path) -> None:
+    """토큰은 호출 단위로 저장되고 화면에는 런 합계로 보인다."""
+    app = create_app(make_config(tmp_path))
+    leader = app.state.persona_service.create_persona("Lead", "lead", "d", [], [])
+    created = create_standard_run(app, leader.id)
+    run_id = created["id"]
+
+    with TestClient(app) as client:
+        client.cookies.set("agent_session", app.state.auth_session_service.issue().token)
+        totals = client.get(f"/api/team-runs/{run_id}/detail").json()["usage_totals"]
+
+    assert totals["input_tokens"] == 0
+    assert totals["output_tokens"] == 0
+    assert totals["reported_calls"] == 0
+    assert totals["unreported_calls"] == 0

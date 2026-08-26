@@ -132,6 +132,9 @@ class TeamModelOperation:
     effect_type: str | None
     effect_ref_json: dict[str, object] | None
     reason_code: str | None
+    #: 이 호출이 쓴 토큰. None 은 프로바이더가 보고하지 않았다는 뜻이고
+    #: 0 과 다르다 -- 합계를 낼 때 None 을 건너뛰지 않으면 총합이 낮아진다.
+    usage: dict[str, int] | None
     failure_digest: str | None
     failure_shape: dict[str, object] | None
     created_at: str
@@ -139,6 +142,14 @@ class TeamModelOperation:
     completed_at: str | None
     applied_at: str | None
     updated_at: str
+
+
+_USAGE_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+)
 
 
 class TeamModelOperationService:
@@ -278,6 +289,7 @@ class TeamModelOperationService:
         result: ValidatedOperationResult,
         *,
         upstream_session_id: str | None = None,
+        usage: dict[str, int] | None = None,
     ) -> TeamModelOperation:
         timestamp = _now()
         with self._db.connection() as connection:
@@ -317,6 +329,7 @@ class TeamModelOperationService:
                 set status = 'completed', version = version + 1, result_kind = ?,
                     result_json = ?, result_digest = ?,
                     upstream_session_id = coalesce(upstream_session_id, ?),
+                    usage_json = ?,
                     completed_at = ?, updated_at = ?
                 where id = ? and status = ? and version = ?
                 """,
@@ -325,6 +338,7 @@ class TeamModelOperationService:
                     serialized,
                     digest,
                     upstream_session_id,
+                    json.dumps(usage, sort_keys=True) if usage else None,
                     timestamp,
                     timestamp,
                     operation_id,
@@ -414,6 +428,39 @@ class TeamModelOperationService:
             target_status="canceled",
             reason_code=reason_code,
         )
+
+    def usage_totals(self, team_run_id: str) -> dict[str, int]:
+        """이 런이 쓴 토큰의 합계.
+
+        호출 단위로 저장한 것을 여기서 합친다. 사이클별·에이전트별도 같은
+        행에서 나오므로, 필요해지면 이 함수 옆에 조건만 다른 것을 하나 더
+        두면 된다 -- 저장을 잘게 해둔 값이 그것이다.
+
+        보고하지 않은 호출은 세지 않고 개수만 따로 돌려준다. 0 으로 합치면
+        총합이 실제보다 낮다는 사실 자체가 화면에서 사라진다.
+        """
+        totals = {key: 0 for key in _USAGE_KEYS}
+        reported = 0
+        unreported = 0
+        for row in self._db.fetchall(
+            "select usage_json from team_model_operations where team_run_id = ?",
+            (team_run_id,),
+        ):
+            raw = row["usage_json"]
+            if not raw:
+                unreported += 1
+                continue
+            try:
+                usage = json.loads(raw)
+            except (TypeError, ValueError):
+                unreported += 1
+                continue
+            reported += 1
+            for key in _USAGE_KEYS:
+                value = usage.get(key)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    totals[key] += value
+        return {**totals, "reported_calls": reported, "unreported_calls": unreported}
 
     def get(self, operation_id: str) -> TeamModelOperation:
         with self._db.connection() as connection:
@@ -945,6 +992,11 @@ def _operation_from_row(row: sqlite3.Row) -> TeamModelOperation:
             json.loads(row["effect_ref_json"]) if row["effect_ref_json"] else None
         ),
         reason_code=row["reason_code"],
+        usage=(
+            json.loads(row["usage_json"])
+            if "usage_json" in row.keys() and row["usage_json"]
+            else None
+        ),
         failure_digest=row["failure_digest"],
         failure_shape=(
             json.loads(row["failure_shape_json"])

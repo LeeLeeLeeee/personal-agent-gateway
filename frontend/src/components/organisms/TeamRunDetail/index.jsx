@@ -426,6 +426,13 @@ function AddWorkDialog({ open, runStatus, value, submitting, onChange, onClose, 
   );
 }
 
+function compactTokens(count) {
+  // 토큰은 만 단위로 가는데 자릿수를 다 적으면 진행 단계 줄이 숫자로 덮인다.
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
+  return String(count);
+}
+
 function useElapsedSeconds(active) {
   // 진행 이벤트가 아직 하나도 안 온 구간에도 살아 있다는 신호가 필요하다.
   // 리드가 파일을 읽는 동안은 답이 한 글자도 안 나오는데, 그 구간이 보통
@@ -1061,6 +1068,16 @@ export function TeamRunDetail({
   const cycles = [...(detail.cycles || [])].sort((left, right) => right.sequence - left.sequence);
   // 서버가 잘리지 않은 전체 일감으로 계산해 보낸다. 화면에서 세면 목록이
   // 잘린 큰 런에서 숫자가 조용히 작아진다.
+  const usageTotals = detail.usage_totals || null;
+  // 캐시는 기록분과 조회분을 합쳐 한 숫자로 보여준다. 둘을 나눠 적으면 줄이
+  // 길어지는데, 이 자리에서 궁금한 것은 "캐시가 얼마나 먹었나" 하나다.
+  const usageCache = usageTotals
+    ? (usageTotals.cache_creation_input_tokens || 0) + (usageTotals.cache_read_input_tokens || 0)
+    : 0;
+  const showUsage = Boolean(
+    usageTotals
+    && ((usageTotals.input_tokens || 0) + (usageTotals.output_tokens || 0) + usageCache > 0)
+  );
   const planShape = detail.plan_shape || null;
   // 하나짜리는 나눈 것이 아니므로 판정할 것이 없다.
   const showPlanShape = Boolean(planShape && planShape.task_count > 1);
@@ -1342,6 +1359,20 @@ export function TeamRunDetail({
             </div>
           );
         })}
+        {showUsage ? (
+          <span className="mono team-phase-usage">
+            <span>{`입력 ${compactTokens(usageTotals.input_tokens || 0)}`}</span>
+            <span>{`출력 ${compactTokens(usageTotals.output_tokens || 0)}`}</span>
+            <span>{`캐시 ${compactTokens(usageCache)}`}</span>
+            {usageTotals.unreported_calls ? (
+              // 총합만 보이면 그것이 전부인 줄 읽는다. 보고하지 않은 호출이
+              // 섞여 있으면 실제 사용량은 이보다 크다.
+              <span className="team-phase-usage-gap">
+                {`${usageTotals.unreported_calls}건 미보고`}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
       </div>
 
 

@@ -2441,3 +2441,54 @@ describe("TeamRunDetail 대시보드와 탭 구조", () => {
     expect(within(panel).getByText(/1 CURRENT CYCLE/)).toBeInTheDocument();
   });
 });
+
+describe("TeamRunDetail 토큰 사용량", () => {
+  function renderUsage(usage_totals) {
+    return render(
+      <TeamRunDetail
+        detail={{
+          run: { ...baseRun, status: "running" },
+          agents: [], tasks: [], messages: [],
+          usage_totals
+        }}
+      />
+    );
+  }
+
+  it("진행 단계 옆에 입력·출력·캐시를 보여준다", () => {
+    renderUsage({
+      input_tokens: 12400, output_tokens: 3100,
+      cache_creation_input_tokens: 900, cache_read_input_tokens: 88000,
+      reported_calls: 6, unreported_calls: 0
+    });
+    const phases = screen.getByLabelText("Run phase");
+    expect(within(phases).getByText(/12\.4K/)).toBeInTheDocument();
+    expect(within(phases).getByText(/3\.1K/)).toBeInTheDocument();
+    expect(within(phases).getByText(/88\.9K/)).toBeInTheDocument();
+  });
+
+  it("보고하지 않은 호출이 있으면 합계가 낮다는 것을 말한다", () => {
+    // 총합만 보여주면 그것이 전부인 줄 읽는다. 보고 안 한 호출이 섞여 있으면
+    // 실제 사용량은 더 크다.
+    renderUsage({
+      input_tokens: 100, output_tokens: 10,
+      cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+      reported_calls: 2, unreported_calls: 3
+    });
+    expect(screen.getByText(/3건 미보고/)).toBeInTheDocument();
+  });
+
+  it("아직 쓴 것이 없으면 아무것도 그리지 않는다", () => {
+    renderUsage({
+      input_tokens: 0, output_tokens: 0,
+      cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+      reported_calls: 0, unreported_calls: 0
+    });
+    expect(screen.queryByText(/입력/)).not.toBeInTheDocument();
+  });
+
+  it("합계가 없으면 아무것도 그리지 않는다", () => {
+    renderUsage(undefined);
+    expect(screen.queryByText(/입력/)).not.toBeInTheDocument();
+  });
+});

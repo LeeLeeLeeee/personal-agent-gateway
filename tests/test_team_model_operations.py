@@ -599,3 +599,99 @@ def test_overturning_a_decision_requires_the_work_to_correct_it():
 def test_an_unknown_kind_is_invalid():
     assert not _valid_contest_verdict({"kind": "whatever", "reason": "r"})
 
+
+
+def test_a_completed_operation_records_what_the_call_cost(tmp_path):
+    """토큰 사용량을 호출 단위로 저장한다.
+
+    가장 잘게 저장하면 런 합계·사이클별·에이전트별을 전부 이것으로 뽑을 수
+    있다. 위에서 합쳐 저장하면 "어느 워커가 많이 쓰나" 를 나중에 물을 수 없다.
+    """
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    agent = teams.get_agent(run.leader_agent_id)
+    service = TeamModelOperationService(db)
+    operation = service.reserve(operation_spec(run, cycle, agent))
+    service.begin_attempt(operation.id, "run-1")
+    invoking = service.get(operation.id)
+
+    completed = service.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult("task_plan", {"tasks": []}),
+        usage={"input_tokens": 120, "output_tokens": 45, "cache_read_input_tokens": 7000},
+    )
+
+    assert completed.usage == {
+        "input_tokens": 120,
+        "output_tokens": 45,
+        "cache_read_input_tokens": 7000,
+    }
+
+
+def test_an_operation_without_reported_usage_stays_none(tmp_path):
+    """보고하지 않은 호출을 0 으로 적으면 합계가 조용히 낮아진다."""
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    cycle = make_queued_cycle(teams, cycles, run)
+    agent = teams.get_agent(run.leader_agent_id)
+    service = TeamModelOperationService(db)
+    operation = service.reserve(operation_spec(run, cycle, agent))
+    service.begin_attempt(operation.id, "run-1")
+    invoking = service.get(operation.id)
+
+    completed = service.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult("task_plan", {"tasks": []}),
+    )
+
+    assert completed.usage is None
+
+
+def test_run_usage_totals_sum_every_call_and_skip_unreported(tmp_path):
+    """런 전체가 얼마나 썼는지는 호출들을 합쳐서 낸다.
+
+    보고하지 않은 호출은 건너뛴다. 0 으로 세면 총합은 같지만 "몇 건이
+    보고되지 않았나" 를 잃는다 -- 총합이 실제보다 낮다는 사실 자체가
+    안 보이게 된다.
+    """
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    agent = teams.get_agent(run.leader_agent_id)
+    service = TeamModelOperationService(db)
+
+    for index, usage in enumerate(
+        [
+            {"input_tokens": 100, "output_tokens": 10, "cache_read_input_tokens": 500},
+            {"input_tokens": 50, "output_tokens": 5},
+            None,
+        ]
+    ):
+        # 사이클 하나에 열린 호출은 하나뿐이라 회차마다 새 사이클을 쓴다.
+        cycle = teams.create_cycle(run.id, "manual", f"m-{index}")
+        operation = service.reserve(operation_spec(run, cycle, agent, key=f"w:{index}"))
+        service.begin_attempt(operation.id, "run-1")
+        invoking = service.get(operation.id)
+        service.complete(
+            invoking.id,
+            invoking.version,
+            ValidatedOperationResult("task_plan", {"tasks": []}),
+            usage=usage,
+        )
+
+    totals = service.usage_totals(run.id)
+
+    assert totals["input_tokens"] == 150
+    assert totals["output_tokens"] == 15
+    assert totals["cache_read_input_tokens"] == 500
+    assert totals["reported_calls"] == 2
+    assert totals["unreported_calls"] == 1
+
+
+def test_run_usage_totals_are_zero_before_any_call(tmp_path):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+    service = TeamModelOperationService(db)
+
+    totals = service.usage_totals(run.id)
+
+    assert totals["input_tokens"] == 0
+    assert totals["reported_calls"] == 0

@@ -540,6 +540,7 @@ def get_team_run_detail(
             )
             for task in selected_tasks
         ],
+        "usage_totals": operations.usage_totals(team_run_id),
         "plan_shape": {
             "task_count": shape.task_count,
             "longest_chain": shape.longest_chain,

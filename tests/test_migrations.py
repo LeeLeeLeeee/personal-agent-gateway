@@ -94,7 +94,7 @@ def test_migration_21_adds_knowledge_request_draft_failure_columns_idempotently(
         "last_draft_failed_at",
         "last_draft_cycle_id",
     } <= columns
-    assert LATEST_SCHEMA_VERSION == 34
+    assert LATEST_SCHEMA_VERSION == 35
 
 
 def test_migration_18_adds_nullable_cycle_space_snapshot() -> None:

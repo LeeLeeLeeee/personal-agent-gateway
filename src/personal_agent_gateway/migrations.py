@@ -1072,6 +1072,14 @@ def _migration_33_open_operation_per_task(
     )
 
 
+def _migration_35_operation_usage(connection: sqlite3.Connection) -> None:
+    if "usage_json" not in _columns(connection, "team_model_operations"):
+        connection.execute(
+            "alter table team_model_operations add column usage_json text"
+        )
+
+
+
 def _migration_34_team_run_pause_request(
     connection: sqlite3.Connection,
 ) -> None:
@@ -1116,6 +1124,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (32, "team-collaboration-deliveries", _migration_32_team_collaboration_deliveries),
     (33, "open-operation-per-task", _migration_33_open_operation_per_task),
     (34, "team-run-pause-request", _migration_34_team_run_pause_request),
+    (35, "operation-usage", _migration_35_operation_usage),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
