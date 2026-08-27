@@ -335,7 +335,7 @@ Omit the block when there is nothing left worth a cycle. That is how this run
 ends -- an omitted block stops it, and the remaining cycles are not spent.
 
 ```next-cycle
-{{"instruction":"what the next cycle should do"}}
+{"instruction":"what the next cycle should do"}
 ```
 """
 

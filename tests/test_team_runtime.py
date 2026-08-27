@@ -10669,12 +10669,14 @@ def test_the_acceptance_form_says_where_instruction_and_reason_go():
     보이지 않았다. 리드는 instruction 과 reason 을 acceptance 안에 넣었고,
     그 결과 괄호가 하나 모자랐다."""
     assert "sit beside \"acceptance\" inside" in ACCEPTANCE_REVIEW_PROMPT
+    assert "one closing brace short" in ACCEPTANCE_REVIEW_PROMPT
 
 
 @pytest.mark.asyncio
 async def test_the_lead_is_asked_for_the_next_cycle_instruction(tmp_path):
     """리드는 이미 요약에 다음 할 일을 쓰고 있다. 기계가 읽을 수 있는 자리로
-    옮기는 것뿐이다."""
+    옮기는 것뿐이다. 이중 중괄호가 그대로 남으면 리드가 받는 것은 예시가
+    아니라 깨진 텍스트다 -- 렌더된 형태를 못박는다."""
     setup, _archive, _team_id = _note_setup(tmp_path, "끝냈습니다.")
     setup.db.execute(
         "update team_runs set execution_policy = 'auto' where id = ?", (setup.run.id,)
@@ -10685,14 +10687,18 @@ async def test_the_lead_is_asked_for_the_next_cycle_instruction(tmp_path):
     synthesis_prompt = setup.lead_client.messages[-1][0]["content"]
     assert "NEXT CYCLE" in synthesis_prompt
     assert "```next-cycle" in synthesis_prompt
+    assert '{"instruction":"what the next cycle should do"}' in synthesis_prompt
 
 
-def test_the_worker_is_not_asked_for_the_next_cycle_instruction(tmp_path):
-    """작업자 응답은 엄격한 JSON 형식이다. 쓰라고 하지도 않은 블록 예시를
-    보여주면 흉내 낼 이유만 준다."""
+@pytest.mark.asyncio
+async def test_a_triggered_run_is_not_asked_for_the_next_cycle_instruction(tmp_path):
+    """사람이 매번 지시를 주는 런에서는 리드가 쓴 것이 쓰이지 않는다. 물어놓고
+    버리면 기계용 표식만 사람이 읽는 요약에 남는다."""
     setup, _archive, _team_id = _note_setup(tmp_path, "끝냈습니다.")
-    run = setup.teams.get_team_run(setup.run.id)
-    task = setup.teams.list_tasks(run.id, setup.cycle.id)[0]
+    # _note_setup 이 만드는 런은 'triggered' 정책이다 -- 바꾸지 않는다.
 
-    assert "```next-cycle" not in setup.runtime._worker_prompt(run, setup.worker, task)
-    assert "one closing brace short" in ACCEPTANCE_REVIEW_PROMPT
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    synthesis_prompt = setup.lead_client.messages[-1][0]["content"]
+    assert "NEXT CYCLE" not in synthesis_prompt
+    assert "```next-cycle" not in synthesis_prompt
