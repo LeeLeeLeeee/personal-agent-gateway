@@ -62,6 +62,7 @@ from personal_agent_gateway.team_runtime import (
     _acceptance_worker_repair_messages,
     _bounded_path_exists,
     _contest_repair_messages,
+    _repair_messages,
     _parse_acceptance_review_resolution,
     _parse_task_plan,
     _planning_repair_messages,
@@ -10619,3 +10620,53 @@ async def test_a_run_with_no_team_is_never_asked_for_a_note(tmp_path):
     assert archive.list_entries() == []
     assert "team-note" not in setup.lead_client.messages[-1][0]["content"]
     assert "TEAM NOTE" not in setup.lead_client.messages[-1][0]["content"]
+
+
+def test_the_retry_is_told_which_brace_was_missing():
+    """실측: 리드가 같은 판정을 네 번 연속 내보냈고 매번 닫는 괄호가 하나
+    모자랐다. 재시도할 때마다 들은 말은 "파싱할 수 없다" 뿐이었고, 무엇이
+    깨졌는지는 서버가 이미 세어 두고도 알려주지 않았다. 모를 때 모델은 같은
+    방식으로 다시 틀린다."""
+    shape = {
+        "fenced": False,
+        "parsed_json": False,
+        "unclosed_braces": 1,
+        "missing_expected_keys": [],
+    }
+
+    content = _repair_messages("invalid_structured_output", shape)[0]["content"]
+
+    assert "1 closing brace(s) were missing" in content
+
+
+def test_the_retry_is_told_it_used_a_code_fence():
+    shape = {"fenced": True, "parsed_json": True, "unclosed_braces": 0}
+
+    content = _repair_messages("invalid_structured_output", shape)[0]["content"]
+
+    assert "code fence" in content
+
+
+def test_the_retry_names_the_keys_the_contract_wanted():
+    """키 이름은 계약에서 온 것이라 모델이 지어낸 것을 되읊는 것이 아니다."""
+    shape = {"parsed_json": True, "unclosed_braces": 0, "missing_expected_keys": ["resolution"]}
+
+    content = _repair_messages("invalid_structured_output", shape)[0]["content"]
+
+    assert "Missing required keys: resolution" in content
+
+
+def test_a_retry_without_a_recorded_shape_still_works():
+    """오래된 호출에는 형태 기록이 없다. 그때도 예전처럼 동작해야 한다."""
+    content = _repair_messages("invalid_structured_output")[0]["content"]
+
+    assert "could not be parsed" in content
+    assert "brace" not in content
+
+
+def test_the_acceptance_form_says_where_instruction_and_reason_go():
+    """중괄호 열다섯 개가 한 줄에 겹쳐 있어 어디까지가 acceptance 인지 눈으로
+    보이지 않았다. 리드는 instruction 과 reason 을 acceptance 안에 넣었고,
+    그 결과 괄호가 하나 모자랐다."""
+    assert "sit beside \"acceptance\" inside" in ACCEPTANCE_REVIEW_PROMPT
+    assert "one closing brace short" in ACCEPTANCE_REVIEW_PROMPT

@@ -763,7 +763,38 @@ def failure_shape(text: str, expected_keys: frozenset[str]) -> dict[str, object]
         "parsed_json": isinstance(parsed, dict),
         "missing_expected_keys": sorted(expected_keys - keys),
         "unexpected_key_count": len(keys - expected_keys),
+        "unclosed_braces": _unclosed_braces(body),
     }
+
+
+def _unclosed_braces(body: str) -> int:
+    """문자열 밖에서 열린 채 남은 중괄호 수. 닫는 쪽이 많으면 음수.
+
+    개수만 센다 -- 이름도 내용도 아니라서 원문을 기록하지 않는 규칙 안에
+    있고, "같은 방식으로 깨졌는가" 라는 첫 질문에 답한다. 실측에서 리드가
+    네 번 연속 정확히 하나씩 빠뜨렸는데, 이 숫자가 없었다면 그 규칙성을
+    보지 못했을 것이다.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in body:
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+    return depth
 
 
 def _result_serialization(
