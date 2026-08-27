@@ -35,6 +35,9 @@ _ACTIVE_SERIES_STATUSES = {
     "paused_interrupted",
 }
 _SETTLED_CYCLE_STATUSES = {"completed", "completed_with_failures"}
+# settle_cycle 이 사이클을 이 상태로 종결지으면 시리즈는 paused_failure 로
+# 간다 -- 합성이 아예 돌지 못하고 죽은 경우다.
+_AUTO_FAILURE_CYCLE_STATUSES = {"failed", "blocked"}
 _PREVIOUS_CONTEXT_CYCLE_STATUSES = {
     "completed",
     "completed_with_failures",
@@ -877,38 +880,53 @@ class TeamCycleService:
         직전 사이클에서 리드가 낸 제안을 쓴다. 목표를 그대로 반복하던 예전
         동작은 지난 사이클이 무엇을 알아냈든 다음 사이클을 처음으로 되돌렸다.
 
-        첫 슬롯만 예외다 -- 읽을 제안이 아직 없으므로 목표를 쓴다. 그 뒤로
-        제안이 없으면 None 을 돌려주고, 부르는 쪽이 시리즈를 끝낸다.
+        목표로 되돌아가는 경우는 둘뿐이다: 읽을 제안이 아직 없는 첫 슬롯,
+        그리고 직전 사이클이 실패/차단으로 죽어 합성이 아예 돌지 못한 경우
+        (사용자가 명시적으로 이어가기를 눌렀다 -- 실패 맥락은
+        previous_summary_text 로 따로 전달된다). 그 외에 제안이 없으면
+        None 을 돌려주고, 부르는 쪽이 시리즈를 끝낸다.
         """
-        if previous_cycle_id is None:
+        if previous_cycle_id is not None:
             row = connection.execute(
-                "select goal from team_runs where id = ?", (team_run_id,)
+                """
+                select result_json from team_model_operations
+                where cycle_id = ? and stage in ('cycle_synthesis', 'cycle_synthesis_repair')
+                  and status = 'applied' and result_kind = 'synthesis'
+                order by created_at desc limit 1
+                """,
+                (previous_cycle_id,),
             ).fetchone()
-            if row is None:
-                raise KeyError(f"Team run not found: {team_run_id}")
-            instruction = str(row["goal"] or "").strip()
-            if not instruction:
-                raise ValueError("AUTO Team Run requires a base objective")
-            return instruction
+            instruction = None
+            if row is not None and row["result_json"]:
+                try:
+                    payload = (json.loads(row["result_json"]) or {}).get("payload") or {}
+                except (TypeError, ValueError):
+                    payload = {}
+                candidate = (
+                    payload.get("next_cycle") if isinstance(payload, dict) else None
+                )
+                if isinstance(candidate, str) and candidate.strip():
+                    instruction = candidate.strip()
+            if instruction is not None:
+                return instruction
+            cycle = connection.execute(
+                "select status from team_run_cycles where id = ?",
+                (previous_cycle_id,),
+            ).fetchone()
+            if cycle is None or cycle["status"] not in _AUTO_FAILURE_CYCLE_STATUSES:
+                # 정상적으로 끝난 사이클에 제안이 없다 -- 리드가 더 할 일이
+                # 없다고 본 것이다. 시리즈는 여기서 끝난다.
+                return None
+
         row = connection.execute(
-            """
-            select result_json from team_model_operations
-            where cycle_id = ? and stage in ('cycle_synthesis', 'cycle_synthesis_repair')
-              and status = 'applied' and result_kind = 'synthesis'
-            order by created_at desc limit 1
-            """,
-            (previous_cycle_id,),
+            "select goal from team_runs where id = ?", (team_run_id,)
         ).fetchone()
-        if row is None or not row["result_json"]:
-            return None
-        try:
-            payload = (json.loads(row["result_json"]) or {}).get("payload") or {}
-        except (TypeError, ValueError):
-            return None
-        instruction = payload.get("next_cycle") if isinstance(payload, dict) else None
-        if not isinstance(instruction, str) or not instruction.strip():
-            return None
-        return instruction.strip()
+        if row is None:
+            raise KeyError(f"Team run not found: {team_run_id}")
+        instruction = str(row["goal"] or "").strip()
+        if not instruction:
+            raise ValueError("AUTO Team Run requires a base objective")
+        return instruction
 
     def mark_request_settled(
         self,

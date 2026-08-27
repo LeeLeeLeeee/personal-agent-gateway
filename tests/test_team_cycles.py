@@ -335,8 +335,6 @@ def test_auto_continue_passes_failed_cycle_context_to_next_slot(
         "failed",
         error_message="Required task failed",
     )
-    leader = teams.get_agent(run.leader_agent_id)
-    seed_next_cycle_proposal(_db, run, failed_cycle, leader, "continue")
     cycles.settle_cycle(failed_cycle.id, now=dt("2026-07-20T00:01:00+00:00"))
     cycles.continue_failed(run.id, series.id, now=dt("2026-07-20T00:02:00+00:00"))
 
@@ -344,6 +342,10 @@ def test_auto_continue_passes_failed_cycle_context_to_next_slot(
         now=dt("2026-07-20T00:07:00+00:00")
     )[0]
 
+    # 실패로 죽은 사이클은 합성이 아예 돌지 못해 제안이 없다 -- 그렇다고
+    # 시리즈가 "리드가 끝냈다"로 끝나면 안 된다. 사용자가 이어가기를 눌렀으니
+    # 목표로 돌아가 계속되고, 실패 맥락은 previous_summary_text 로 전달된다.
+    assert next_request.instruction == "goal"
     assert next_request.previous_cycle_id == failed_cycle.id
     assert next_request.previous_summary_text == (
         "STATUS: FAILED\n\nERROR\nRequired task failed"
