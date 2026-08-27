@@ -152,6 +152,7 @@ export function GatewayApp() {
     handleResumeTeamRun,
     handleAnswerTeamDecision,
     handleCancelTeamRun,
+    handleReopenTeamRun,
     handleRetryTeamTask,
     handleRefreshTeamRunDelivery,
     handleCommitTeamRunDelivery,
@@ -1116,6 +1117,7 @@ export function GatewayApp() {
               onResume={handleResumeTeamRun}
               onAnswerDecision={handleAnswerTeamDecision}
               onCancel={handleCancelTeamRun}
+              onReopen={handleReopenTeamRun}
               onRetryTask={handleRetryTeamTask}
               onRefreshDelivery={handleRefreshTeamRunDelivery}
               onCommitDelivery={handleCommitTeamRunDelivery}
