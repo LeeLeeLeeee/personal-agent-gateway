@@ -29,6 +29,7 @@ from personal_agent_gateway.team_collaboration_service import (
     TeamCollaborationService,
 )
 from personal_agent_gateway.team_coverage_report import extract_coverage_gaps
+from personal_agent_gateway.team_next_cycle_report import extract_next_cycle
 from personal_agent_gateway.team_note_report import extract_team_note
 from personal_agent_gateway.team_artifact_publisher import (
     ArtifactPublicationError,
@@ -5455,7 +5456,8 @@ class TeamRuntime:
             persona_id=leader.persona_id,
             team_run_id=run.id,
         )
-        without_note, note = extract_team_note(content)
+        without_next, next_cycle = extract_next_cycle(content)
+        without_note, note = extract_team_note(without_next)
         summary, gaps = extract_coverage_gaps(without_note)
         payload: dict[str, object] = {"summary": summary}
         if gaps is not None:
@@ -5467,6 +5469,8 @@ class TeamRuntime:
                 "content_markdown": note.content_markdown,
                 "tags": note.tags,
             }
+        if next_cycle is not None:
+            payload["next_cycle"] = next_cycle
         if contract is None:
             return ValidatedOperationResult("synthesis", payload)
         try:
