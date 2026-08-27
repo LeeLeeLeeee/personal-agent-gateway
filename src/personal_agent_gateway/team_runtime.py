@@ -214,7 +214,9 @@ conversation, so checking a background job twenty times costs twenty full
 prompts even though nineteen of them learned nothing. When you wait for
 something to finish, wait inside one command -- loop there until it is done or
 a bound you set is reached, and report what the last check saw. Do not call the
-tool once per check."""
+tool once per check. The loop is the whole point, not a longer sleep:
+    powershell: for ($i=0; $i -lt 20; $i++) {{ $s = <check>; if ($s -eq 'done') {{ break }}; Start-Sleep 30 }}; $s
+    sh:         for i in $(seq 20); do s=$(<check>); [ $s = done ] && break; sleep 30; done; echo $s"""
 
 ACCEPTANCE_REVIEW_PROMPT = f"""You are the leader reviewing a rejected Team Run task outcome.
 Decide only from the goal, Cycle instruction, frozen rules, SPACE, Task contract,
@@ -294,6 +296,25 @@ work and the user has not reviewed it, so treat it as leads to verify, not as
 settled fact. Where it disagrees with what you observe in the workspace, the
 workspace is right and the note is stale.
 {current_note}
+"""
+
+COMMIT_PROMPT = """
+
+COMMITTING THIS CYCLE (only when the working root is a Git repository):
+Commit what this cycle produced before you finish. You are the only one who can:
+every teammate writes into the same directory, so a worker committing would
+sweep up whatever the others were half-way through.
+
+Without a commit there is no point to go back to. A team that has run for nine
+cycles on a single scaffold commit cannot answer "did the last change cause
+this" by any means except memory, and cannot undo a bad change at all -- which
+is the position this instruction exists to prevent.
+
+Stage and commit only what belongs to the work. If something must not be
+tracked, add it to .gitignore rather than leaving it staged. Never commit a
+credential, even one an assignment handed you. Write the message the way the
+repository's existing messages are written. If the working root is not a Git
+repository, skip this and say so in your summary.
 """
 
 TEAM_NOTE_REWRITE_PROMPT = """
@@ -2247,6 +2268,24 @@ class TeamRuntime:
         return "\n\n" + TEAM_NOTE_REWRITE_PROMPT.format(
             note_state=state, max_chars=TEAM_NOTE_MAX_CHARS
         )
+
+    def _commit_block(self, cycle_id: str | None) -> str:
+        """사이클이 만든 것을 리드가 커밋하게 한다.
+
+        작업자가 아니라 리드인 이유는 팀원 전원이 같은 폴더를 쓰기 때문이다 --
+        작업자가 `git add --all` 을 하면 동시에 도는 다른 작업자가 반쯤 고쳐둔
+        파일까지 함께 담긴다. 합성은 모든 작업자가 끝난 뒤라 그 자리가 안전한
+        유일한 지점이다.
+
+        PAG 의 전달 기능(team_delivery)은 worktree 모드 런에만 붙는다. 작업
+        폴더 안에서 팀이 직접 만든 저장소는 그 경로를 타지 않으므로, 커밋을
+        시킬 방법은 리드에게 말하는 것뿐이다.
+        """
+        # 사이클이 없는 런은 합성 응답을 뜯지 않는다. 다른 선택 지시들과 같은
+        # 이유로 여기서도 묻지 않는다.
+        if cycle_id is None:
+            return ""
+        return "\n\n" + COMMIT_PROMPT
 
     def _finalize_persona_content(
         self,
@@ -5280,7 +5319,7 @@ class TeamRuntime:
             f"{goal_context}\n{results}",
             persona_id=leader_agent.persona_id,
             allow_request=True,
-        ) + self._team_note_block(run) + synthesis_block + self._team_note_rewrite_block(run, contract, cycle_id)
+        ) + self._team_note_block(run) + synthesis_block + self._team_note_rewrite_block(run, contract, cycle_id) + self._commit_block(cycle_id)
         decision_context = "\n\n".join(
             context
             for context in (

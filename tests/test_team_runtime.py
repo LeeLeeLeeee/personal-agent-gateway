@@ -10471,6 +10471,31 @@ async def test_the_lead_note_becomes_this_teams_note(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_the_lead_is_asked_to_commit_and_the_worker_is_not(tmp_path):
+    """커밋은 리드만 할 수 있다.
+
+    팀원 전원이 같은 폴더를 쓴다(agent.workspace_path 가 모두 같다). 작업자가
+    `git add --all` 을 하면 동시에 도는 다른 작업자가 반쯤 고쳐둔 파일까지
+    담긴다. 합성은 모든 작업자가 끝난 뒤라 안전한 유일한 지점이다.
+
+    실측: 이 팀은 아홉 사이클을 스캐폴드 커밋 하나 위에서 돌았다. 되돌릴
+    지점이 없어 "직전 변경이 원인인가" 를 기억 말고는 가릴 방법이 없었다.
+    """
+    setup, _archive, _team_id = _note_setup(tmp_path, "끝냈습니다.")
+    run = setup.teams.get_team_run(setup.run.id)
+    task = setup.teams.list_tasks(run.id, setup.cycle.id)[0]
+
+    worker_prompt = setup.runtime._worker_prompt(run, setup.worker, task)
+    assert "COMMITTING THIS CYCLE" not in worker_prompt
+
+    await setup.runtime.resume(setup.run.id, setup.cycle.id)
+
+    synthesis_prompt = setup.lead_client.messages[-1][0]["content"]
+    assert "COMMITTING THIS CYCLE" in synthesis_prompt
+    assert "Never commit a" in synthesis_prompt
+
+
+@pytest.mark.asyncio
 async def test_a_cycle_that_records_nothing_still_finishes(tmp_path):
     """노트는 선택이다. 없다고 사이클이 죽으면 안 된다."""
     setup, archive, team_id = _note_setup(tmp_path, "끝냈습니다.")
@@ -10523,6 +10548,10 @@ def test_the_worker_is_told_not_to_poll_with_separate_tool_calls(tmp_path):
     assert "wait inside one command" in prompt
     # 프롬프트가 줄바꿈되므로 한 줄 안에 있는 조각으로 본다.
     assert "once per check" in prompt
+    # 예시가 format() 을 거쳐 실제 중괄호로 나와야 한다. 규칙만 있고 방법이
+    # 없을 때 실측에서 작업자는 잠자는 시간만 30 초에서 55 초로 늘리고 호출은
+    # 여전히 따로 냈다.
+    assert "if ($s -eq 'done') { break }" in prompt
 
 
 def test_the_note_reaches_the_planner_and_the_worker(tmp_path):
