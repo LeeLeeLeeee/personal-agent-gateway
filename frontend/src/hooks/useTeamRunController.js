@@ -489,6 +489,32 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     }
   }
 
+  async function handleReopenTeamRun() {
+    // Stop 은 결정 질문 하나를 끊으려고 누르기도 하는데, 그러면 런 전체가
+    // 취소되고 일감 추가가 거절된다. 되살릴 길이 화면에 없으면 그 버튼은
+    // 함정이 된다.
+    const requestedRun = captureSelectedRun();
+    if (!requestedRun.id) return false;
+    try {
+      const result = await api.reopenTeamRun(requestedRun.id);
+      if (!result) {
+        toast("팀 작업을 다시 열지 못했습니다", "error");
+        return false;
+      }
+      const [detail, runs] = await Promise.all([
+        api.teamRunDetail(requestedRun.id),
+        api.teamRuns()
+      ]);
+      if (ownsSelectedRun(requestedRun)) setTeamRunDetail(detail);
+      setTeamRuns(runs);
+      toast("다시 열었습니다. Resume 으로 이어가세요", "success");
+      return true;
+    } catch (error) {
+      toast(error?.detail || "팀 작업을 다시 열지 못했습니다", "error");
+      return false;
+    }
+  }
+
   async function handleCancelTeamRun() {
     const requestedRun = captureSelectedRun();
     if (!requestedRun.id) return false;
@@ -770,6 +796,7 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     handleResumeTeamRun,
     handleAnswerTeamDecision,
     handleCancelTeamRun,
+    handleReopenTeamRun,
     handleRetryTeamTask,
     handleRefreshTeamRunDelivery,
     handleCommitTeamRunDelivery,

@@ -2478,6 +2478,21 @@ describe("TeamRunDetail 대시보드와 탭 구조", () => {
     expect(within(dashboard).queryByText(/^입력 /)).not.toBeInTheDocument();
   });
 
+  it("취소된 팀런은 다시 열 수 있다", () => {
+    // Stop 은 결정 질문 하나를 끊으려고 누르기도 하는데, 그러면 런 전체가
+    // 취소되고 일감 추가가 거절된다. 되살릴 길이 화면에 없으면 그 버튼은
+    // 함정이다 -- 실제로 한 번 그렇게 런을 잃었다.
+    renderApp({ onReopen: vi.fn(), detail: { run: { ...baseRun, status: "canceled" } } });
+
+    expect(screen.getByRole("button", { name: /다시 열기/ })).toBeInTheDocument();
+  });
+
+  it("돌고 있는 팀런에는 다시 열기가 없다", () => {
+    renderApp({ onReopen: vi.fn() });
+
+    expect(screen.queryByRole("button", { name: /다시 열기/ })).not.toBeInTheDocument();
+  });
+
   it("탭은 넷이고 처음에는 Run 이 열린다", () => {
     renderApp();
     const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");

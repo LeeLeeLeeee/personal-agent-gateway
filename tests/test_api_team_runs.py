@@ -3655,3 +3655,54 @@ def test_the_detail_reports_what_the_run_has_spent(tmp_path: Path) -> None:
     assert totals["output_tokens"] == 0
     assert totals["reported_calls"] == 0
     assert totals["unreported_calls"] == 0
+
+
+def test_a_canceled_run_can_be_reopened_and_then_accepts_work(tmp_path: Path) -> None:
+    """Stop 은 결정 질문 하나를 끊으려고 누르기도 하는데, 그러면 런 전체가
+    취소되고 add-work 가 영구히 거절된다. 되살릴 길이 없으면 그 버튼은
+    함정이다 -- 실제로 그렇게 아홉 사이클치 작업이 든 런을 잃었다.
+
+    되살리는 것을 명시적인 한 동작으로 두면 add-work 의 방어는 그대로 두면서
+    빠져나갈 길이 생긴다.
+    """
+    client = authenticated_client(tmp_path)
+    teams = client.app.state.team_run_service
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    run = _create_triggered_run(client, leader_id, [member_id])
+    teams.set_run_status(run["id"], "canceled")
+
+    cycles = client.app.state.team_cycle_service
+    # 취소된 런은 사이클 요청 자체를 받지 못한다 -- 사용자가 실제로 막힌 자리다.
+    with pytest.raises(ValueError, match="canceled"):
+        cycles.enqueue_request(
+            run["id"], "manual", "m-1", "이어서 간다", previous_cycle_id=None
+        )
+
+    reopened = client.post(f"/api/team-runs/{run['id']}/reopen")
+    assert reopened.status_code == 200
+    assert reopened.json()["team_run"]["status"] == "interrupted"
+
+    cycles.enqueue_request(run["id"], "manual", "m-1", "이어서 간다", previous_cycle_id=None)
+    assert cycles.claim_next(run["id"]) is not None
+
+
+def test_only_a_canceled_run_can_be_reopened(tmp_path: Path) -> None:
+    """돌고 있거나 이미 끝난 런에 이 동작이 있으면 상태가 뒤엉킨다."""
+    client = authenticated_client(tmp_path)
+    teams = client.app.state.team_run_service
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    run = _create_triggered_run(client, leader_id, [member_id])
+    teams.set_run_status(run["id"], "completed")
+
+    response = client.post(f"/api/team-runs/{run['id']}/reopen")
+
+    assert response.status_code == 409
+    assert "canceled" in response.json()["detail"]
+
+
+def test_reopening_a_missing_run_is_a_404(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+
+    assert client.post("/api/team-runs/nope/reopen").status_code == 404

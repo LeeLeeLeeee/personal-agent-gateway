@@ -761,3 +761,26 @@ describe("api client", () => {
     });
   });
 });
+
+
+describe("취소된 팀런 다시 열기", () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+
+  it("다시 열기 요청을 보내고 되돌아온 런을 준다", async () => {
+    // Stop 은 결정 질문 하나를 끊으려고 누르기도 하는데, 그러면 런 전체가
+    // 취소되고 일감 추가가 거절된다. 되살릴 길이 없으면 그 버튼은 함정이다.
+    fetch.mockResolvedValueOnce(
+      Promise.resolve({ ok: true, json: () => Promise.resolve({
+        team_run: { id: "r1", status: "interrupted" }
+      }) })
+    );
+
+    await expect(api.reopenTeamRun("r1")).resolves.toEqual({
+      id: "r1",
+      status: "interrupted"
+    });
+    expect(fetch).toHaveBeenCalledWith("/api/team-runs/r1/reopen", { method: "POST" });
+  });
+});

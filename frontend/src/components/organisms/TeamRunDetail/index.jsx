@@ -966,7 +966,7 @@ export function TeamRunDetail({
   detail, documents = [], delivery = null, deliveryLoading = false,
   loading = false, loadError = false,
   onLoadDocument, onAddWork, onResume, onAnswerDecision,
-  onRetryTask, onCancel, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto,
+  onRetryTask, onCancel, onReopen, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto,
   onPause, onAskQuestion, questionProgress = null,
   onRefreshDelivery, onCommitDelivery, onApplyDelivery,
   onResolveDeliveryConflict, onContinueDelivery, onCancelDeliveryConflicts,
@@ -995,6 +995,7 @@ export function TeamRunDetail({
   const [historyTab, setHistoryTab] = useState("cycles");
   const [showAllTasks, setShowAllTasks] = useState(false);
   const [canceling, setCanceling] = useState(false);
+  const [reopening, setReopening] = useState(false);
   const run = detail?.run;
   const nextRunAt = detail?.activeAutoSeries?.next_run_at || null;
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
@@ -1186,6 +1187,10 @@ export function TeamRunDetail({
   const canCancel = Boolean(
     onCancel && ["planning", "running", "summarizing", "waiting_for_user", "paused"].includes(run.status)
   );
+  // Stop 은 결정 질문 하나를 끊으려고 누르기도 하는데, 그러면 런 전체가
+  // 취소되고 일감 추가가 거절된다. 되살릴 길이 화면에 없으면 그 버튼은
+  // 함정이 된다.
+  const canReopen = Boolean(onReopen && run.status === "canceled");
   const isExecuting = ["planning", "running", "summarizing"].includes(run.status);
   // 끝난 런도 뺄 이유가 없다. API 로 만든 팀런은 모두 continuous 이고,
   // 그런 런에서 사이클 사이와 마지막 사이클 뒤의 대기 상태가 바로
@@ -1283,6 +1288,22 @@ export function TeamRunDetail({
               {run.status === "paused"
                 ? (resuming ? "재개하는 중..." : "재개")
                 : (resuming ? "Resuming..." : "Resume")}
+            </Button>
+          ) : null}
+          {canReopen ? (
+            <Button
+              size="btn-sm"
+              disabled={reopening}
+              onClick={async () => {
+                setReopening(true);
+                try {
+                  await onReopen();
+                } finally {
+                  setReopening(false);
+                }
+              }}
+            >
+              {reopening ? "여는 중..." : "다시 열기"}
             </Button>
           ) : null}
           {canCancel ? (

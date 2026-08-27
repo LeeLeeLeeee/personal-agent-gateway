@@ -1289,6 +1289,58 @@ async def cancel_team_run(
     return {"team_run": _team_run_payload(run, request.app.state.team_run_service)}
 
 
+@router.post("/{team_run_id}/reopen")
+async def reopen_team_run(
+    request: Request,
+    team_run_id: str,
+    principal: SessionPrincipal = session_dependency,
+) -> dict[str, object]:
+    """취소한 런을 다시 이어갈 수 있는 상태로 되돌린다.
+
+    add-work 는 취소된 런을 거절한다. 그 거절에는 이유가 있다 -- 취소 직후
+    일감을 더하면 런이 조용히 다시 돌아, Stop 을 누른 사람은 멈춘 줄 알지만
+    작업 폴더에는 계속 쓰인다. 하지만 그 방어가 유일한 길을 막고 있었다:
+    결정 질문 하나를 끊으려고 Stop 을 누른 사람이 런 전체를 영구히 잃고,
+    화면에서 되살릴 방법이 없었다.
+
+    되살리는 것을 명시적인 한 동작으로 만들면 둘 다 지킨다. 일감 추가는
+    여전히 취소된 런을 거절하고, 되살리는 것은 사람이 그러겠다고 말할 때만
+    일어난다.
+
+    상태는 interrupted 로 둔다 -- 종료가 아니면서 재개가 정의된 유일한
+    자리이고, 실제로 그 런이 처한 상태이기도 하다. completed 로 적으면
+    기록이 거짓이 된다.
+    """
+    service = request.app.state.team_run_service
+    registry = request.app.state.team_run_registry
+    try:
+        run = service.get_team_run(team_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team run not found") from exc
+    if run.status != "canceled":
+        raise HTTPException(
+            status_code=409,
+            detail="Only a canceled team run can be reopened",
+        )
+    # 돌고 있는 런의 상태를 바꾸면 두 실행이 같은 작업 폴더를 쓴다.
+    if registry.is_running(team_run_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Team run is still running; wait for it to stop",
+        )
+    run = service.set_run_status(team_run_id, "interrupted")
+    record_domain_audit(
+        request,
+        principal,
+        event_type="team.run_reopened",
+        action="team_runs.reopen",
+        resource_type="team_run",
+        resource_id=team_run_id,
+        team_run_id=team_run_id,
+    )
+    return {"team_run": _team_run_payload(run, service)}
+
+
 @router.delete("/{team_run_id}")
 def delete_team_run(
     request: Request,
