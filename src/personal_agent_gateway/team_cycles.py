@@ -430,7 +430,7 @@ class TeamCycleService:
             team_run_id,
             "auto",
             _auto_source_id(series_id, 1, 1),
-            self._auto_instruction(connection, team_run_id),
+            self._auto_instruction(connection, team_run_id, None),
             previous_cycle_id=None,
             auto_series_id=series_id,
             slot_ordinal=1,
@@ -823,12 +823,32 @@ class TeamCycleService:
                     """,
                     (series.team_run_id,),
                 ).fetchone()
+                instruction = self._auto_instruction(
+                    connection,
+                    series.team_run_id,
+                    previous["id"] if previous is not None else None,
+                )
+                if instruction is None:
+                    # 제안이 없으면 목표를 다시 던지지 않는다 -- 그것이 팀을
+                    # 제자리에 돌리는 예전 동작이다. 남은 횟수를 쓰지 않고
+                    # 끝내되, 왜 끝났는지는 남긴다.
+                    connection.execute(
+                        """
+                        update team_run_auto_series
+                        set status = 'auto_completed', next_run_at = null,
+                            pause_reason = 'lead_proposed_no_next_cycle',
+                            paused_cycle_id = null, completed_at = ?, updated_at = ?
+                        where id = ? and status = 'waiting_interval'
+                        """,
+                        (timestamp, timestamp, series.id),
+                    )
+                    continue
                 request = self._enqueue_request(
                     connection,
                     series.team_run_id,
                     "auto",
                     _auto_source_id(series.id, slot, 1),
-                    self._auto_instruction(connection, series.team_run_id),
+                    instruction,
                     previous_cycle_id=previous["id"] if previous is not None else None,
                     auto_series_id=series.id,
                     slot_ordinal=slot,
@@ -848,17 +868,47 @@ class TeamCycleService:
 
     @staticmethod
     def _auto_instruction(
-        connection: sqlite3.Connection, team_run_id: str
-    ) -> str:
+        connection: sqlite3.Connection,
+        team_run_id: str,
+        previous_cycle_id: str | None,
+    ) -> str | None:
+        """다음 자동 사이클이 받을 지시.
+
+        직전 사이클에서 리드가 낸 제안을 쓴다. 목표를 그대로 반복하던 예전
+        동작은 지난 사이클이 무엇을 알아냈든 다음 사이클을 처음으로 되돌렸다.
+
+        첫 슬롯만 예외다 -- 읽을 제안이 아직 없으므로 목표를 쓴다. 그 뒤로
+        제안이 없으면 None 을 돌려주고, 부르는 쪽이 시리즈를 끝낸다.
+        """
+        if previous_cycle_id is None:
+            row = connection.execute(
+                "select goal from team_runs where id = ?", (team_run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Team run not found: {team_run_id}")
+            instruction = str(row["goal"] or "").strip()
+            if not instruction:
+                raise ValueError("AUTO Team Run requires a base objective")
+            return instruction
         row = connection.execute(
-            "select goal from team_runs where id = ?", (team_run_id,)
+            """
+            select result_json from team_model_operations
+            where cycle_id = ? and stage in ('cycle_synthesis', 'cycle_synthesis_repair')
+              and status = 'applied' and result_kind = 'synthesis'
+            order by created_at desc limit 1
+            """,
+            (previous_cycle_id,),
         ).fetchone()
-        if row is None:
-            raise KeyError(f"Team run not found: {team_run_id}")
-        instruction = str(row["goal"] or "").strip()
-        if not instruction:
-            raise ValueError("AUTO Team Run requires a base objective")
-        return instruction
+        if row is None or not row["result_json"]:
+            return None
+        try:
+            payload = (json.loads(row["result_json"]) or {}).get("payload") or {}
+        except (TypeError, ValueError):
+            return None
+        instruction = payload.get("next_cycle") if isinstance(payload, dict) else None
+        if not isinstance(instruction, str) or not instruction.strip():
+            return None
+        return instruction.strip()
 
     def mark_request_settled(
         self,

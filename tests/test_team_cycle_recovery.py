@@ -13,7 +13,12 @@ from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_provider_recovery import OperationReconcileResult
 from personal_agent_gateway.teams import TeamRunService
-from team_cycle_helpers import RecordingOrchestrator, dt, make_cycle_services
+from team_cycle_helpers import (
+    RecordingOrchestrator,
+    dt,
+    make_cycle_services,
+    seed_next_cycle_proposal,
+)
 
 
 @dataclass(frozen=True)
@@ -286,6 +291,8 @@ def test_reconcile_enqueues_due_and_existing_queued_requests_once(
         request_id=first_request.id,
     )
     teams.set_cycle_status(first_cycle.id, "completed", summary="done")
+    leader = teams.get_agent(auto_run.leader_agent_id)
+    seed_next_cycle_proposal(db, auto_run, first_cycle, leader, "continue")
     cycles.settle_cycle(
         first_cycle.id,
         now=dt("2026-07-20T00:05:00+00:00"),
@@ -364,6 +371,8 @@ def test_failure_recovery_preserves_retry_and_continue_ownership(
         "failed",
         error_message="continue me",
     )
+    continue_leader = teams.get_agent(continue_run.leader_agent_id)
+    seed_next_cycle_proposal(_db, continue_run, continue_cycle, continue_leader, "continue")
     before_counts = {
         retry_run.id: (
             len(cycles.list_requests(retry_run.id)),

@@ -8,7 +8,7 @@ from personal_agent_gateway.team_cycle_loop import TeamCycleLoop
 from personal_agent_gateway.team_provider_recovery import (
     ProviderRecoveryClaim,
 )
-from team_cycle_helpers import dt, make_cycle_services
+from team_cycle_helpers import dt, make_cycle_services, seed_next_cycle_proposal
 
 
 class RecordingDispatcher:
@@ -62,6 +62,8 @@ async def test_loop_enqueues_due_auto_slot_once(
         "completed",
         summary="done",
     )
+    leader = teams.get_agent(run.leader_agent_id)
+    seed_next_cycle_proposal(_db, run, first_cycle, leader, "continue")
     cycles.settle_cycle(
         first_cycle.id,
         now=dt("2026-07-20T00:55:00+00:00"),
