@@ -251,6 +251,10 @@ unchanged, so without those paths the same rejection returns.
 Return ONLY one JSON object in exactly one of these forms:
 {{"resolution":{{"kind":"retry_worker","instruction":"concrete correction", "reason":"why the current outcome was rejected"}}}}
 {{"resolution":{{"kind":"revise_acceptance","acceptance":{{"required_outputs":["relative/path"],"required_verifications":[{{"name":"verification-name","check":null}}]}},"instruction":"concrete resubmission instruction", "reason":"why the contract is wrong"}}}}
+  In that second form "instruction" and "reason" sit beside "acceptance" inside
+  "resolution" -- not inside "acceptance", which holds only required_outputs and
+  required_verifications. Putting them inside is the mistake that leaves the
+  object one closing brace short.
 {{"resolution":{{"kind":"ask_user","topic":"short topic","question":"one concrete question","why_needed":"why the Team cannot infer the answer","options":[{{"id":"stable-id","label":"label","impact":"tradeoff"}}],"recommended_option_id":"stable-id or null","blocking_scope":"task"}}}}
 {{"resolution":{{"kind":"fail","reason_code":"stable-code","summary":"why recovery cannot continue"}}}}
 A revised verification may carry a check the server runs itself. Prefer one whenever a
@@ -1109,7 +1113,9 @@ class TeamRuntime:
         if callable(repair_messages):
             prompt = repair_messages(failed.reason_code)
         else:
-            prompt = repair_messages or _repair_messages(failed.reason_code)
+            prompt = repair_messages or _repair_messages(
+                failed.reason_code, failed.failure_shape
+            )
         repair_spec = _operation_spec(
             self._teams.get_team_run(team_run_id),
             cycle_id,
@@ -5965,27 +5971,63 @@ def _acceptance_worker_messages(
     ]
 
 
-def _repair_messages(reason_code: str | None) -> list[dict[str, object]]:
-    """Shape-agnostic on purpose.
+def _repair_messages(
+    reason_code: str | None,
+    shape: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
+    """Still shape-agnostic about the contract, but not about the breakage.
 
-    Only the parser knows the expected keys and there is no schema to read them
-    from, so naming keys here would be right for one stage and subtly wrong for
-    the rest. A stage that wants to restate its keys passes its own
-    repair_messages.
+    Only the parser knows which keys a stage expects, so naming keys here would
+    be right for one stage and subtly wrong for the rest. What this may say is
+    how the text was malformed -- that is true of every stage.
+
+    Saying only "could not be parsed" leaves the model to guess, and it guesses
+    the same way twice: measured, a leader emitted the same resolution four
+    times in a row, each missing exactly one closing brace, and each retry was
+    told nothing but the reason code. The server had counted the brace already.
     """
     error = reason_code or "invalid_structured_output"
-    return [
-        {
-            "role": "user",
-            "content": (
-                "Your previous response could not be parsed.\n"
-                f"Error: {error}.\n\n"
-                "Do not repeat the work and do not modify files. Re-emit only "
-                "the previous final result as one raw JSON object. No "
-                "explanations, no Markdown, no code fences."
-            ),
-        }
+    lines = [
+        "Your previous response could not be parsed.",
+        f"Error: {error}.",
     ]
+    for symptom in _repair_symptoms(shape):
+        lines.append(f"- {symptom}")
+    lines.extend(
+        [
+            "",
+            "Do not repeat the work and do not modify files. Re-emit only "
+            "the previous final result as one raw JSON object. No "
+            "explanations, no Markdown, no code fences.",
+        ]
+    )
+    return [{"role": "user", "content": "\n".join(lines)}]
+
+
+def _repair_symptoms(shape: dict[str, object] | None) -> list[str]:
+    """What was observably wrong, in the model's own terms."""
+    if not isinstance(shape, dict):
+        return []
+    symptoms: list[str] = []
+    if shape.get("fenced"):
+        symptoms.append(
+            "It was wrapped in a Markdown code fence. Emit the object itself."
+        )
+    unclosed = shape.get("unclosed_braces")
+    if isinstance(unclosed, int) and unclosed > 0:
+        symptoms.append(
+            f"{unclosed} closing brace(s) were missing -- the object never "
+            "closed. Check the nesting of the form you copied: a field that "
+            "belongs beside a nested object, not inside it, is the usual cause."
+        )
+    elif isinstance(unclosed, int) and unclosed < 0:
+        symptoms.append(f"{-unclosed} closing brace(s) too many.")
+    elif not shape.get("parsed_json"):
+        symptoms.append("It was not valid JSON.")
+    missing = shape.get("missing_expected_keys")
+    if isinstance(missing, list) and missing:
+        symptoms.append("Missing required keys: " + ", ".join(str(k) for k in missing))
+    return symptoms
 
 
 def _undeclared_retry_repair_messages(

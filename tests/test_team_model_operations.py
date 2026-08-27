@@ -757,3 +757,33 @@ def test_an_agent_that_was_never_called_is_absent_not_zero(tmp_path):
 
     assert teams.list_agents(run.id)
     assert service.usage_by_agent(run.id) == {}
+
+
+def test_the_shape_counts_a_brace_that_was_never_closed():
+    """실측: 리드가 같은 판정을 네 번 연속 내보냈고 매번 정확히 닫는 괄호가
+    하나 모자랐다. 기록에는 parsed_json: false 만 남아 어떻게 깨졌는지도,
+    네 번이 같은 방식으로 깨졌는지도 알 수 없었다."""
+    body = '{"resolution":{"kind":"revise_acceptance","acceptance":{"reason":"x"}}'
+
+    shape = failure_shape(body, frozenset({"resolution"}))
+
+    assert shape["parsed_json"] is False
+    assert shape["unclosed_braces"] == 1
+
+
+def test_a_brace_inside_a_string_is_not_counted():
+    """모델이 쓰는 이유 문장에 중괄호가 들어갈 수 있다. 그것을 세면 멀쩡한
+    응답이 깨진 것으로 보고된다."""
+    body = '{"reason":"the shape is {like this}"}'
+
+    assert failure_shape(body, frozenset())["unclosed_braces"] == 0
+
+
+def test_an_escaped_quote_does_not_flip_the_string_state():
+    body = '{"reason":"he said \\"no\\" and left"}'
+
+    assert failure_shape(body, frozenset())["unclosed_braces"] == 0
+
+
+def test_too_many_closing_braces_are_counted_as_negative():
+    assert failure_shape('{"a":1}}', frozenset())["unclosed_braces"] == -1
