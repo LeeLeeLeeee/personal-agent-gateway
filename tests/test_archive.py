@@ -656,3 +656,90 @@ def test_a_team_note_never_leaks_into_the_library_prompt(tmp_path: Path) -> None
 
     assert "발행된 규약" in context
     assert "팀 노트" not in context
+
+def _publish(archive, title, body, tags=()):
+    return archive.publish_entry(
+        actor_type="user",
+        kind="reference",
+        title=title,
+        summary=title,
+        content_markdown=body,
+        tags=list(tags),
+        source_urls=[],
+        persona_ids=[],
+    )
+
+
+_LMG_DOC = (
+    "LMG 로컬 호출 규약. Base URL 은 127.0.0.1:8788 이다. 엔드포인트 와 인증 을 "
+    "적는다. 토큰 은 Bearer 로 보낸다. SSE 응답 과 오류 코드, 타임아웃 과 동시성, "
+    "모델 발견 을 정리한다."
+)
+_D3_DOC = (
+    "에이전트용 d3 v7 코드 생성 규약. React 환경에서 line chart 를 그린다. "
+    "margin convention 과 DOM 소유권 경계 를 정리한다. 버전 은 고정한다."
+)
+
+
+def test_one_shared_word_does_not_pull_a_whole_document_in(tmp_path: Path) -> None:
+    """실측에서 "점심 메뉴를 고르고 영수증을 정리한다" 가 `정리` 하나로 d3 규약을
+    끌어왔고, bm25 는 그것을 실제 일감보다 높게 매겼다(-0.409 대 -0.499).
+    문서가 몇 개 없을 때 bm25 는 신호가 되지 못한다.
+    """
+    archive, _ = archive_service(tmp_path)
+    _publish(archive, "LMG 호출 규약", _LMG_DOC)
+    _publish(archive, "d3 코드 규약", _D3_DOC)
+
+    assert archive.search_entries("점심 메뉴를 고르고 영수증을 정리한다", persona_id=None) == []
+
+
+def test_a_document_about_the_same_subject_still_comes(tmp_path: Path) -> None:
+    archive, _ = archive_service(tmp_path)
+    _publish(archive, "LMG 호출 규약", _LMG_DOC)
+    _publish(archive, "d3 코드 규약", _D3_DOC)
+
+    hits = archive.search_entries(
+        "LMG 게이트웨이 엔드포인트 인증 토큰 SSE 오류 코드", persona_id=None
+    )
+
+    assert [entry.title for entry in hits] == ["LMG 호출 규약"]
+
+
+def test_the_words_that_matter_are_not_cut_off_by_the_head_of_the_query(
+    tmp_path: Path,
+) -> None:
+    """앞에서 열두 개만 자르던 때는 "이거 근데 때 그" 같은 것이 자리를 다 차지하고,
+    일감의 핵심어는 설명 뒷부분에 있어 검색에 들어가지도 못했다."""
+    archive, _ = archive_service(tmp_path)
+    _publish(
+        archive,
+        "문법 포인트 인용 규약",
+        "문법 포인트 의 인용 문구 가 대상 문장 과 어긋나는지 대조한다. 대소문자 와 "
+        "앞뒤 공백 과 문장부호 를 본다.",
+    )
+
+    filler = "이거 근데 그 때 그리고 또 그래서 하지만 물론 사실 어쨌든 아무튼 "
+    hits = archive.search_entries(
+        filler + "문법 포인트 인용 문구 가 대상 문장 과 어긋나는지 대조", persona_id=None
+    )
+
+    assert [entry.title for entry in hits] == ["문법 포인트 인용 규약"]
+
+
+def test_a_query_shorter_than_the_floor_can_still_find_something(tmp_path: Path) -> None:
+    """문턱값을 그대로 적용하면 한두 단어짜리 질의는 영원히 아무것도 못 찾는다."""
+    archive, _ = archive_service(tmp_path)
+    _publish(archive, "LMG 호출 규약", _LMG_DOC)
+
+    assert [entry.title for entry in archive.search_entries("타임아웃", persona_id=None)] == [
+        "LMG 호출 규약"
+    ]
+
+
+def test_the_library_browse_search_is_not_tightened(tmp_path: Path) -> None:
+    """list_entries 는 사람이 검색창에 치는 것을 받는다. 한 단어만 겹쳐도 보여야
+    한다 -- 조인 것은 지시에 실을 것을 고르는 쪽뿐이다."""
+    archive, _ = archive_service(tmp_path)
+    _publish(archive, "d3 코드 규약", _D3_DOC)
+
+    assert [entry.title for entry in archive.list_entries(query="chart")] == ["d3 코드 규약"]

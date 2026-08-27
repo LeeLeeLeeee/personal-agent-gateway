@@ -207,7 +207,14 @@ When you state something as fact about this repository, name the file that shows
 it, with the line when you can. If the assignment appears to take something for
 granted that you could not confirm, say that instead of asserting it. A claim
 nobody checked, written as fact, is worse than a stated gap: it reads as an
-answer and cannot be told apart from one."""
+answer and cannot be told apart from one.
+
+Waiting costs as much as working. Every tool call resends this whole
+conversation, so checking a background job twenty times costs twenty full
+prompts even though nineteen of them learned nothing. When you wait for
+something to finish, wait inside one command -- loop there until it is done or
+a bound you set is reached, and report what the last check saw. Do not call the
+tool once per check."""
 
 ACCEPTANCE_REVIEW_PROMPT = f"""You are the leader reviewing a rejected Team Run task outcome.
 Decide only from the goal, Cycle instruction, frozen rules, SPACE, Task contract,

@@ -10506,6 +10506,25 @@ def _seed_note(archive, team_id, content="마이그레이션은 35번까지다")
     )
 
 
+def test_the_worker_is_told_not_to_poll_with_separate_tool_calls(tmp_path):
+    """기다리는 것이 일하는 것만큼 비싸다.
+
+    실측: 기능 QA 가 배경 작업이 끝나기를 기다리며 `Start-Sleep 30` 뒤에
+    상태를 확인하는 호출을 21 번 따로 냈다. 호출 하나마다 그때까지의 대화
+    70 만 토큰이 통째로 다시 나가므로, 아무것도 하지 않고 기다리는 데만
+    1,470 만 토큰가량이 들었다. 한 명령 안에서 돌면 21 분의 1 이다.
+    """
+    setup, _archive, _team_id = _note_setup(tmp_path, "끝냈습니다.")
+    run = setup.teams.get_team_run(setup.run.id)
+    task = setup.teams.list_tasks(run.id, setup.cycle.id)[0]
+
+    prompt = setup.runtime._worker_prompt(run, setup.worker, task)
+
+    assert "wait inside one command" in prompt
+    # 프롬프트가 줄바꿈되므로 한 줄 안에 있는 조각으로 본다.
+    assert "once per check" in prompt
+
+
 def test_the_note_reaches_the_planner_and_the_worker(tmp_path):
     """검색으로 고르던 때는 놓쳤다. 실측에서 "A2도 같은 방식으로 처리" 같은
     짧은 사이클 지시는 노트의 어느 단어와도 겹치지 않아 계획 단계가 노트를
