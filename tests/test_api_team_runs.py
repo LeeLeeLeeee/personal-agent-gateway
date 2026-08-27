@@ -2383,6 +2383,7 @@ def test_cycle_space_policy_is_included_in_cycle_detail(tmp_path: Path) -> None:
             "summary": "Mail handled",
             "coverage_gaps": None,
             "team_note_title": None,
+            "next_cycle_instruction": None,
             "error_message": None,
             "created_at": cycle.created_at,
             "started_at": cycle.started_at,
@@ -3580,7 +3581,12 @@ def test_detail_reads_the_real_synthesis_not_the_question_it_asked_first(
     synthesis = complete_synthesis(
         1,
         "synthesis",
-        {"summary": "Built it.", "coverage_gaps": gaps, "team_note": note},
+        {
+            "summary": "Built it.",
+            "coverage_gaps": gaps,
+            "team_note": note,
+            "next_cycle": "6문장을 다시 돌려 실제 게시 수를 재라",
+        },
     )
     effects.apply_synthesis(synthesis.id, "Built it.")
 
@@ -3594,6 +3600,9 @@ def test_detail_reads_the_real_synthesis_not_the_question_it_asked_first(
     # 기능은 있으나 마나가 된다 -- 몇 사이클 돌려보고 쓸모를 판단하려면
     # 어느 사이클이 썼는지가 화면에 있어야 한다.
     assert reported["team_note_title"] == "저장소 지도"
+    # 스스로 도는 런은 이 지시로 다음 사이클을 연다. 무엇이 갈지 보이지 않으면
+    # 사람이 개입할 자리를 놓친다.
+    assert reported["next_cycle_instruction"] == "6문장을 다시 돌려 실제 게시 수를 재라"
 
 
 def test_the_detail_reports_whether_splitting_bought_any_parallelism(

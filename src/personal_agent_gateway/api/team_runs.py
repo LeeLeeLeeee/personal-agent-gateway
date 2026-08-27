@@ -475,6 +475,7 @@ def get_team_run_detail(
     usage_by_agent = operations.usage_by_agent(team_run_id)
     coverage_by_cycle: dict[str, list[dict[str, str]] | None] = {}
     note_by_cycle: dict[str, str | None] = {}
+    next_cycle_by_cycle: dict[str, str | None] = {}
     verdict_payload_by_cycle: dict[str, dict[str, object]] = {}
     for cycle in cycles:
         cycle_operations = operations.list_for_cycle(cycle.id)
@@ -499,6 +500,10 @@ def get_team_run_detail(
             note = synthesis_payload.get("team_note")
             note_by_cycle[cycle.id] = (
                 note.get("title") if isinstance(note, dict) else None
+            )
+            instruction = synthesis_payload.get("next_cycle")
+            next_cycle_by_cycle[cycle.id] = (
+                instruction if isinstance(instruction, str) else None
             )
         if cycle.source_type != "contest":
             continue
@@ -561,6 +566,7 @@ def get_team_run_detail(
                 cycle,
                 coverage_by_cycle.get(cycle.id),
                 note_by_cycle.get(cycle.id),
+                next_cycle_by_cycle.get(cycle.id),
             )
             for cycle in cycles
         ],
@@ -1808,6 +1814,7 @@ def _cycle_payload(
     cycle: TeamRunCycle,
     coverage_gaps: list[dict[str, str]] | None = None,
     team_note_title: str | None = None,
+    next_cycle_instruction: str | None = None,
 ) -> dict[str, object]:
     execution_metadata = cycle.execution_metadata or {}
     semantic_source = execution_metadata.get("semantic_source")
@@ -1831,6 +1838,7 @@ def _cycle_payload(
         "summary": cycle.summary,
         "coverage_gaps": coverage_gaps,
         "team_note_title": team_note_title,
+        "next_cycle_instruction": next_cycle_instruction,
         "error_message": cycle.error_message,
         "created_at": cycle.created_at,
         "started_at": cycle.started_at,

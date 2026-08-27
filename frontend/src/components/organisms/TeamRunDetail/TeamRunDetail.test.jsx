@@ -2493,6 +2493,37 @@ describe("TeamRunDetail 대시보드와 탭 구조", () => {
     expect(screen.queryByRole("button", { name: /다시 열기/ })).not.toBeInTheDocument();
   });
 
+  it("다음 사이클에 무엇이 갈지 보여준다", async () => {
+    // 승인 단계를 두지 않기로 했으므로, 보이지 않으면 개입할 자리가 없다.
+    renderApp({
+      detail: {
+        cycles: [{
+          id: "c1", sequence: 8, status: "completed",
+          next_cycle_instruction: "6문장을 다시 돌려라"
+        }]
+      }
+    });
+    await userEvent.click(screen.getByRole("tab", { name: /HISTORY/ }));
+    const panel = screen.getByRole("tabpanel", { name: "History" });
+
+    expect(within(panel).getByText(/다음 사이클 · 6문장을 다시 돌려라/)).toBeInTheDocument();
+  });
+
+  it("리드가 다음 할 일을 내지 않으면 그 사실을 말한다", async () => {
+    // 조용히 멈추면 5번 돌 줄 알았던 것이 2번에 끝난 것을 나중에야 안다.
+    renderApp({
+      detail: {
+        activeAutoSeries: {
+          id: "s1", status: "auto_completed", settled_slots: 2, target_slots: 5,
+          pause_reason: "lead_proposed_no_next_cycle"
+        }
+      }
+    });
+    const dashboard = screen.getByRole("region", { name: "Dashboard" });
+
+    expect(within(dashboard).getByText(/다음 할 일이 없어 멈췄습니다/)).toBeInTheDocument();
+  });
+
   it("탭은 넷이고 처음에는 Run 이 열린다", () => {
     renderApp();
     const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");
