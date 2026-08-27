@@ -32,6 +32,22 @@ _DRAFT_SOURCE_TYPES = {"hook", "knowledge_request", "team_note"}
 #: uncapped note only grows: nothing is ever dropped because nothing forces a
 #: choice, and the note stops being knowledge and becomes a log.
 TEAM_NOTE_MAX_CHARS = 4_000
+#: 한 글자짜리 토큰은 어느 문서에나 있어 자리만 차지한다.
+_MIN_TERM_LENGTH = 2
+#: FTS 질의가 무한정 길어지지 않게 막는 상한. 자르는 것이 목적이 아니라
+#: 병적으로 긴 일감 설명 하나가 질의를 망가뜨리는 것을 막는 것이다.
+_MAX_QUERY_TERMS = 32
+#: 단어 하나가 겹치는 것은 우연이다 -- "점심 메뉴를 고르고 영수증을 정리한다"
+#: 가 `정리한다` 하나로 d3 규약 문서를 끌어왔고, bm25 점수는 그것을 실제
+#: 일감보다 높게 매겼다(-0.409 대 -0.499). 문서가 몇 개 없을 때 bm25 는 신호가
+#: 되지 못하므로, 서로 다른 단어가 몇 개나 같은 문서에 있는지로 본다.
+#:
+#: 2 다. 더 올리고 싶은 유혹이 있었고 실제로 4 로 뒀다가 되돌렸다 -- 긴 규약
+#: 문서 두 개에 맞춰 고른 값이었는데, 85 자짜리 문서는 서로 다른 단어 넷을
+#: 담을 자리가 없어서 주제가 정확히 맞아도 걸러졌다. 이 값은 문서 길이에
+#: 기대면 안 된다.
+#: 질의가 그보다 짧으면 그 길이를 쓴다 -- 아니면 짧은 질의는 아무것도 못 찾는다.
+_MIN_TERM_OVERLAP = 2
 _REQUEST_PATTERN = re.compile(
     r"<knowledge_request>\s*(\{.*?\})\s*</knowledge_request>",
     re.DOTALL,
@@ -685,9 +701,10 @@ class ArchiveService:
         note and returns nothing, at the planning stage where the note matters
         most. `get_team_note` reads it directly instead.
         """
-        fts_query = _fts_query(query)
-        if not fts_query:
+        terms = _query_terms(query)
+        if not terms:
             return []
+        fts_query = _fts_match(terms)
         scope_clause = (
             """
             exists (
@@ -707,10 +724,13 @@ class ArchiveService:
             )
             """
         )
+        capped = max(1, min(limit, 20))
         params: list[object] = [fts_query]
         if persona_id is not None:
             params.append(persona_id)
-        params.append(max(1, min(limit, 20)))
+        # 걸러낼 여유를 두고 넉넉히 뽑는다. 검색이 준 순위는 그대로 쓰고,
+        # 약하게 걸린 것만 아래에서 떨어뜨린다.
+        params.append(capped * 4)
         rows = self._db.fetchall(
             f"""
             select e.* from archive_entries e
@@ -723,7 +743,14 @@ class ArchiveService:
             """,
             params,
         )
-        return [self._entry_from_row(row) for row in rows]
+        required = min(_MIN_TERM_OVERLAP, len(terms))
+        kept = []
+        for row in rows:
+            if _term_overlap(row, terms) >= required:
+                kept.append(self._entry_from_row(row))
+            if len(kept) == capped:
+                break
+        return kept
 
     def archive_entry(self, entry_id: str) -> ArchiveEntry:
         self.get_entry(entry_id)
@@ -1286,9 +1313,32 @@ def _required(value: str, label: str, max_length: int) -> str:
     return clean
 
 
+def _query_terms(query: str) -> list[str]:
+    """검색에 쓸 단어. 중복을 지우고, 한 글자짜리는 버리고, 앞에서 자르지 않는다.
+
+    앞에서 열두 개만 자르던 때는 실측에서 이런 일이 있었다: 일감이 "이거 근데
+    번역 요청할 때 모델을..." 로 시작해서 `이거`, `근데`, `때`, `그` 가 자리를
+    다 차지하고, 정작 그 일감의 핵심인 `문법`, `인용`, `어긋나는지` 는 설명
+    뒷부분에 있어 검색에 들어가지도 못했다.
+    """
+    terms = re.findall(r"[\w-]+", query.casefold(), flags=re.UNICODE)
+    unique = [term for term in dict.fromkeys(terms) if len(term) >= _MIN_TERM_LENGTH]
+    return unique[:_MAX_QUERY_TERMS]
+
+
 def _fts_query(query: str) -> str:
-    terms = re.findall(r"[\w-]+", query.casefold(), flags=re.UNICODE)[:12]
+    return _fts_match(_query_terms(query))
+
+
+def _fts_match(terms: list[str]) -> str:
     return " OR ".join(f'"{term.replace(chr(34), chr(34) * 2)}"*' for term in terms)
+
+
+def _term_overlap(entry_row: object, terms: list[str]) -> int:
+    haystack = " ".join(
+        str(entry_row[field]) for field in ("title", "summary", "content_markdown")
+    ).casefold()
+    return sum(1 for term in terms if term in haystack)
 
 
 def _excerpt(content: str, length: int) -> str:
