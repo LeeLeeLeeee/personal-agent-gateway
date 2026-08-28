@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from personal_agent_gateway.team_model_effects import _valid_synthesis
 from personal_agent_gateway.team_model_operations import (
     OperationConflict,
     failure_shape,
@@ -787,3 +788,15 @@ def test_an_escaped_quote_does_not_flip_the_string_state():
 
 def test_too_many_closing_braces_are_counted_as_negative():
     assert failure_shape('{"a":1}}', frozenset())["unclosed_braces"] == -1
+
+
+def test_a_synthesis_payload_may_carry_a_next_cycle_instruction():
+    """제안은 선택이다. 없어도 유효하고, 있어도 유효해야 한다."""
+    assert _valid_synthesis({"summary": "끝냈습니다", "next_cycle": "다음 일"})
+    assert _valid_synthesis({"summary": "끝냈습니다"})
+
+
+def test_an_empty_next_cycle_instruction_is_rejected():
+    """빈 지시로 사이클을 열면 팀이 무엇을 하라는지 모른 채 시작한다."""
+    assert not _valid_synthesis({"summary": "끝냈습니다", "next_cycle": "  "})
+    assert not _valid_synthesis({"summary": "끝냈습니다", "next_cycle": 3})

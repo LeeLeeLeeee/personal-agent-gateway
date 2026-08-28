@@ -475,6 +475,7 @@ def get_team_run_detail(
     usage_by_agent = operations.usage_by_agent(team_run_id)
     coverage_by_cycle: dict[str, list[dict[str, str]] | None] = {}
     note_by_cycle: dict[str, str | None] = {}
+    next_cycle_by_cycle: dict[str, str | None] = {}
     verdict_payload_by_cycle: dict[str, dict[str, object]] = {}
     for cycle in cycles:
         cycle_operations = operations.list_for_cycle(cycle.id)
@@ -499,6 +500,10 @@ def get_team_run_detail(
             note = synthesis_payload.get("team_note")
             note_by_cycle[cycle.id] = (
                 note.get("title") if isinstance(note, dict) else None
+            )
+            instruction = synthesis_payload.get("next_cycle")
+            next_cycle_by_cycle[cycle.id] = (
+                instruction if isinstance(instruction, str) else None
             )
         if cycle.source_type != "contest":
             continue
@@ -561,6 +566,7 @@ def get_team_run_detail(
                 cycle,
                 coverage_by_cycle.get(cycle.id),
                 note_by_cycle.get(cycle.id),
+                next_cycle_by_cycle.get(cycle.id),
             )
             for cycle in cycles
         ],
@@ -568,8 +574,13 @@ def get_team_run_detail(
             service.get_active_decision_request(team_run_id)
         ),
         "policy_status": cycle_service.policy_status(team_run_id),
+        # 활성 시리즈가 없으면 가장 최근 시리즈를 보낸다. 끝난 시리즈는
+        # get_active_series 가 찾지 못하는데, 리드가 다음 할 일을 내지
+        # 않아 몇 번 남기고 끝났다는 사실은 바로 그 끝난 시리즈에만 적혀
+        # 있다. 런 목록이 auto_series 를 읽는 방식과 같다.
         "active_auto_series": _auto_series_payload(
             cycle_service.get_active_series(team_run_id)
+            or cycle_service.get_latest_series(team_run_id)
         ),
         "queue_count": cycle_service.count_queued(team_run_id),
         "active_request": _cycle_request_payload(
@@ -1808,6 +1819,7 @@ def _cycle_payload(
     cycle: TeamRunCycle,
     coverage_gaps: list[dict[str, str]] | None = None,
     team_note_title: str | None = None,
+    next_cycle_instruction: str | None = None,
 ) -> dict[str, object]:
     execution_metadata = cycle.execution_metadata or {}
     semantic_source = execution_metadata.get("semantic_source")
@@ -1831,6 +1843,7 @@ def _cycle_payload(
         "summary": cycle.summary,
         "coverage_gaps": coverage_gaps,
         "team_note_title": team_note_title,
+        "next_cycle_instruction": next_cycle_instruction,
         "error_message": cycle.error_message,
         "created_at": cycle.created_at,
         "started_at": cycle.started_at,

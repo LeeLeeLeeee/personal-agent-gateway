@@ -5,7 +5,13 @@ from types import SimpleNamespace
 import pytest
 
 from personal_agent_gateway.artifacts import ArtifactStore
-from team_cycle_helpers import dt, make_auto_run, make_triggered_run
+from team_cycle_helpers import (
+    dt,
+    make_auto_run,
+    make_cycle_services,
+    make_triggered_run,
+    seed_next_cycle_proposal,
+)
 
 
 def test_cycle_requests_are_idempotent_and_claimed_fifo(tmp_path: Path) -> None:
@@ -286,8 +292,12 @@ def test_retry_preserves_failed_slots_previous_cycle_snapshot(
     assert first.id == initial.id
     first_cycle = teams.create_cycle(run.id, "auto", first.source_id, request_id=first.id)
     teams.set_cycle_status(first_cycle.id, "completed", summary="slot one snapshot")
+    leader = teams.get_agent(run.leader_agent_id)
+    seed_next_cycle_proposal(db, run, first_cycle, leader, "continue")
     cycles.settle_cycle(first_cycle.id, now=dt("2026-07-20T00:01:00+00:00"))
-    second = cycles.enqueue_due_auto_requests(now=dt("2026-07-20T00:06:00+00:00"))[0]
+    second = cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-20T00:06:00+00:00")
+    ).requests[0]
     assert second.previous_cycle_id == first_cycle.id
     assert second.previous_summary_text == (
         "STATUS: COMPLETED\n\nSUMMARY\nslot one snapshot"
@@ -332,8 +342,12 @@ def test_auto_continue_passes_failed_cycle_context_to_next_slot(
 
     next_request = cycles.enqueue_due_auto_requests(
         now=dt("2026-07-20T00:07:00+00:00")
-    )[0]
+    ).requests[0]
 
+    # 실패로 죽은 사이클은 합성이 아예 돌지 못해 제안이 없다 -- 그렇다고
+    # 시리즈가 "리드가 끝냈다"로 끝나면 안 된다. 사용자가 이어가기를 눌렀으니
+    # 목표로 돌아가 계속되고, 실패 맥락은 previous_summary_text 로 전달된다.
+    assert next_request.instruction == "goal"
     assert next_request.previous_cycle_id == failed_cycle.id
     assert next_request.previous_summary_text == (
         "STATUS: FAILED\n\nERROR\nRequired task failed"
@@ -597,12 +611,20 @@ def test_auto_due_slot_read_models_and_restart(tmp_path: Path) -> None:
     assert cycles.list_dispatching_requests() == [claimed]
     first_cycle = teams.create_cycle(run.id, "auto", claimed.source_id, request_id=claimed.id)
     teams.set_cycle_status(first_cycle.id, "completed", summary="one")
+    leader = teams.get_agent(run.leader_agent_id)
+    seed_next_cycle_proposal(db, run, first_cycle, leader, "continue")
     cycles.settle_cycle(first_cycle.id, now=dt("2026-07-20T00:01:00+00:00"))
 
-    assert cycles.enqueue_due_auto_requests(now=dt("2026-07-20T00:05:59+00:00")) == []
-    due = cycles.enqueue_due_auto_requests(now=dt("2026-07-20T00:06:00+00:00"))
+    assert cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-20T00:05:59+00:00")
+    ).requests == []
+    due = cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-20T00:06:00+00:00")
+    ).requests
     assert [request.slot_ordinal for request in due] == [2]
-    assert cycles.enqueue_due_auto_requests(now=dt("2026-07-20T00:06:00+00:00")) == []
+    assert cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-20T00:06:00+00:00")
+    ).requests == []
 
     second = cycles.claim_next(run.id)
     second_cycle = teams.create_cycle(run.id, "auto", second.source_id, request_id=second.id)
@@ -632,9 +654,13 @@ def test_due_comparison_normalizes_equivalent_offset_instants(
     assert request.id == initial.id
     cycle = teams.create_cycle(run.id, "auto", request.source_id, request_id=request.id)
     teams.set_cycle_status(cycle.id, "completed", summary="one")
+    leader = teams.get_agent(run.leader_agent_id)
+    seed_next_cycle_proposal(db, run, cycle, leader, "continue")
 
     settled = cycles.settle_cycle(cycle.id, now=dt("2026-07-20T09:01:00+09:00"))
-    due = cycles.enqueue_due_auto_requests(now=dt("2026-07-19T20:06:00-04:00"))
+    due = cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-19T20:06:00-04:00")
+    ).requests
 
     assert series.created_at == "2026-07-20T00:00:00+00:00"
     assert settled.series.next_run_at == "2026-07-20T00:06:00+00:00"
@@ -755,3 +781,163 @@ def test_a_contest_waits_while_another_request_is_dispatching(
     )
 
     assert cycles.claim_next(run.id) is None
+
+
+def _applied_synthesis(db, teams, run, cycle, agent, payload):
+    """합성 결과 하나를 원장에 적용된 상태로 남긴다.
+
+    apply_synthesis 는 사이클에 종결된 필수 태스크가 최소 하나 있어야 하고,
+    런이 summarizing, 사이클이 running 상태여야 한다 -- make_completed_
+    synthesis_operation (tests/test_team_model_effects.py) 이 실제로 쓰는
+    준비 과정을 그대로 따른다.
+    """
+    import hashlib
+
+    from personal_agent_gateway.team_model_effects import (
+        TeamModelEffectService,
+        team_model_effect_result_validators,
+    )
+    from personal_agent_gateway.team_model_operations import (
+        OperationSpec,
+        TeamModelOperationService,
+        ValidatedOperationResult,
+    )
+
+    teams.set_cycle_status(cycle.id, "running")
+    teams.set_run_status(run.id, "running")
+    worker = next(
+        candidate
+        for candidate in teams.list_agents(run.id)
+        if candidate.id != agent.id
+    )
+    task = teams.create_task(
+        run.id,
+        "Draft",
+        "Create a draft.",
+        owner_agent_id=worker.id,
+        cycle_id=cycle.id,
+    )
+    teams.start_task(task.id, worker.id)
+    teams.finish_task(task.id, worker.id, "completed", result="Drafted.")
+    teams.set_run_status(run.id, "summarizing")
+    teams.set_agent_status(agent.id, "running")
+
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+    )
+    reserved = operations.reserve(
+        OperationSpec(
+            operation_key=f"{cycle.id}:cycle_synthesis:0",
+            team_run_id=run.id,
+            cycle_id=cycle.id,
+            task_id=None,
+            agent_id=agent.id,
+            provider=agent.backend,
+            stage="cycle_synthesis",
+            stage_ordinal=0,
+            request_digest=hashlib.sha256(cycle.id.encode()).hexdigest(),
+        )
+    )
+    invoking = operations.begin_attempt(reserved.id, "consumer-1")
+    completed = operations.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult("synthesis", payload),
+    )
+    # 적용은 효과 서비스가 한다 -- tests/test_api_team_runs.py 가 같은 방식을
+    # 쓴다. operations 에는 적용 메서드가 없다.
+    TeamModelEffectService(db, teams, operations).apply_synthesis(
+        completed.id, payload["summary"]
+    )
+
+
+def test_the_next_auto_cycle_uses_the_proposal_not_the_goal(tmp_path):
+    """지난 사이클이 무엇을 알아냈든 다음 사이클이 처음과 같은 말을 듣는 것이
+    지금 동작이고, 그것이 팀을 제자리에 돌린다."""
+    db, teams, cycles, run = make_cycle_services(tmp_path, "auto")
+    agent = teams.get_agent(run.leader_agent_id)
+    cycle = teams.create_cycle(run.id, "auto", "slot-1")
+    _applied_synthesis(
+        db, teams, run, cycle, agent, {"summary": "끝", "next_cycle": "6문장을 다시 돌려라"}
+    )
+    teams.set_cycle_status(cycle.id, "completed")
+
+    instruction = cycles._auto_instruction(db.connect(), run.id, cycle.id)
+
+    assert instruction == "6문장을 다시 돌려라"
+
+
+def test_the_first_slot_has_no_previous_cycle_and_uses_the_goal(tmp_path):
+    """시리즈를 만들 때 나가는 요청은 읽을 제안이 아직 없다. 대체 경로가
+    아니라 유일한 경로다."""
+    db, teams, cycles, run = make_cycle_services(tmp_path, "auto")
+
+    assert cycles._auto_instruction(db.connect(), run.id, None) == "goal"
+
+
+def test_a_cycle_with_no_proposal_yields_no_instruction(tmp_path):
+    """리드가 더 할 일이 없다고 판단한 경우다. 시리즈는 여기서 끝난다."""
+    db, teams, cycles, run = make_cycle_services(tmp_path, "auto")
+    agent = teams.get_agent(run.leader_agent_id)
+    cycle = teams.create_cycle(run.id, "auto", "slot-1")
+    _applied_synthesis(db, teams, run, cycle, agent, {"summary": "끝"})
+    teams.set_cycle_status(cycle.id, "completed")
+
+    assert cycles._auto_instruction(db.connect(), run.id, cycle.id) is None
+
+
+def test_a_series_carries_the_proposal_into_the_next_slot(tmp_path):
+    """조각을 따로 부르지 않고 시리즈를 이어 붙인다.
+
+    이 기능은 리드 응답에서 다음 요청까지 네 군데를 지난다. 앞서 화면과 서버가
+    둘 다 멀쩡한데 중간 배선이 빠져 기능이 조용히 죽은 적이 있다.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    db, teams, cycles, run = make_cycle_services(tmp_path, "auto")
+    agent = teams.get_agent(run.leader_agent_id)
+    # execution_policy="auto" 로 만든 런은 create_team_run 안에서 이미 시리즈와
+    # 첫 요청을 만든다 -- create_auto_series 를 다시 부르면 "이미 활성 시리즈가
+    # 있다" 에러가 난다. 활성 시리즈는 get_active_series 로 읽는다.
+    series = cycles.get_active_series(run.id)
+    first = cycles.claim_next(run.id)
+    assert first is not None
+    assert first.instruction == "goal"
+
+    cycle = teams.create_cycle(run.id, "auto", first.source_id, request_id=first.id)
+    _applied_synthesis(
+        db, teams, run, cycle, agent, {"summary": "끝", "next_cycle": "6문장을 다시 돌려라"}
+    )
+    teams.set_cycle_status(cycle.id, "completed")
+    cycles.settle_cycle(cycle.id)
+
+    later = datetime.now(UTC) + timedelta(seconds=series.interval_seconds + 1)
+    created = cycles.enqueue_due_auto_requests(now=later).requests
+
+    assert [item.instruction for item in created] == ["6문장을 다시 돌려라"]
+
+
+def test_a_series_ends_when_the_lead_proposes_nothing(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    db, teams, cycles, run = make_cycle_services(tmp_path, "auto")
+    agent = teams.get_agent(run.leader_agent_id)
+    series = cycles.get_active_series(run.id)
+    first = cycles.claim_next(run.id)
+    cycle = teams.create_cycle(run.id, "auto", first.source_id, request_id=first.id)
+    _applied_synthesis(db, teams, run, cycle, agent, {"summary": "끝"})
+    teams.set_cycle_status(cycle.id, "completed")
+    cycles.settle_cycle(cycle.id)
+
+    later = datetime.now(UTC) + timedelta(seconds=series.interval_seconds + 1)
+
+    assert cycles.enqueue_due_auto_requests(now=later).requests == []
+    # 끝난 시리즈는 get_active_series 가 찾지 못한다 -- auto_completed 는
+    # 활성 상태가 아니다. 표에서 직접 읽는다.
+    row = db.fetchone(
+        "select status, pause_reason from team_run_auto_series where id = ?",
+        (series.id,),
+    )
+    assert row["status"] == "auto_completed"
+    assert row["pause_reason"] == "lead_proposed_no_next_cycle"

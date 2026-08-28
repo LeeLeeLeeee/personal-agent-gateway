@@ -29,6 +29,7 @@ from personal_agent_gateway.team_collaboration_service import (
     TeamCollaborationService,
 )
 from personal_agent_gateway.team_coverage_report import extract_coverage_gaps
+from personal_agent_gateway.team_next_cycle_report import extract_next_cycle
 from personal_agent_gateway.team_note_report import extract_team_note
 from personal_agent_gateway.team_artifact_publisher import (
     ArtifactPublicationError,
@@ -319,6 +320,23 @@ tracked, add it to .gitignore rather than leaving it staged. Never commit a
 credential, even one an assignment handed you. Write the message the way the
 repository's existing messages are written. If the working root is not a Git
 repository, skip this and say so in your summary.
+"""
+
+NEXT_CYCLE_PROMPT = """
+
+NEXT CYCLE (optional):
+This run continues on its own. Whatever you write here becomes the next cycle's
+instruction; nobody retypes it. Write what this cycle's findings say to do next
+-- concrete enough that the team can start on it without asking you anything.
+Do not restate the goal: the goal is carried separately and the team sees it
+either way.
+
+Omit the block when there is nothing left worth a cycle. That is how this run
+ends -- an omitted block stops it, and the remaining cycles are not spent.
+
+```next-cycle
+{"instruction":"what the next cycle should do"}
+```
 """
 
 TEAM_NOTE_REWRITE_PROMPT = """
@@ -2274,6 +2292,28 @@ class TeamRuntime:
         return "\n\n" + TEAM_NOTE_REWRITE_PROMPT.format(
             note_state=state, max_chars=TEAM_NOTE_MAX_CHARS
         )
+
+    def _next_cycle_block(
+        self,
+        run: TeamRun,
+        contract: OutputContract | None,
+        cycle_id: str | None,
+    ) -> str:
+        """리드에게 다음 사이클 지시를 요청한다.
+
+        스스로 도는 런에서만 묻는다. 사람이 매번 지시를 주는 런에서는 리드가
+        쓴 것이 쓰이지 않으므로, 물어놓고 버리면 기계용 표식만 사람이 읽는
+        요약에 남는다.
+        """
+        if run.execution_policy != "auto":
+            return ""
+        # 계약은 응답의 마지막 형태를 못박는다. 뒤에 블록을 더 붙이면 깨진다.
+        if contract is not None:
+            return ""
+        # 사이클이 없는 런은 합성 응답에서 블록을 떼어내지 않는다.
+        if cycle_id is None:
+            return ""
+        return "\n\n" + NEXT_CYCLE_PROMPT
 
     def _commit_block(self, cycle_id: str | None) -> str:
         """사이클이 만든 것을 리드가 커밋하게 한다.
@@ -5325,7 +5365,7 @@ class TeamRuntime:
             f"{goal_context}\n{results}",
             persona_id=leader_agent.persona_id,
             allow_request=True,
-        ) + self._team_note_block(run) + synthesis_block + self._team_note_rewrite_block(run, contract, cycle_id) + self._commit_block(cycle_id)
+        ) + self._team_note_block(run) + synthesis_block + self._team_note_rewrite_block(run, contract, cycle_id) + self._commit_block(cycle_id) + self._next_cycle_block(run, contract, cycle_id)
         decision_context = "\n\n".join(
             context
             for context in (
@@ -5455,7 +5495,8 @@ class TeamRuntime:
             persona_id=leader.persona_id,
             team_run_id=run.id,
         )
-        without_note, note = extract_team_note(content)
+        without_next, next_cycle = extract_next_cycle(content)
+        without_note, note = extract_team_note(without_next)
         summary, gaps = extract_coverage_gaps(without_note)
         payload: dict[str, object] = {"summary": summary}
         if gaps is not None:
@@ -5467,6 +5508,8 @@ class TeamRuntime:
                 "content_markdown": note.content_markdown,
                 "tags": note.tags,
             }
+        if next_cycle is not None:
+            payload["next_cycle"] = next_cycle
         if contract is None:
             return ValidatedOperationResult("synthesis", payload)
         try:

@@ -4218,7 +4218,7 @@ def _valid_decision_option(value: object) -> bool:
 
 
 def _valid_synthesis(payload: dict[str, object]) -> bool:
-    optional = {"contract_payload", "coverage_gaps", "team_note"}
+    optional = {"contract_payload", "coverage_gaps", "team_note", "next_cycle"}
     if set(payload) - optional != {"summary"}:
         return False
     if not isinstance(payload["summary"], str) or not payload["summary"].strip():
@@ -4241,6 +4241,10 @@ def _valid_synthesis(payload: dict[str, object]) -> bool:
             isinstance(note.get(field), str) and note.get(field, "").strip()
             for field in ("title", "content_markdown")
         ):
+            return False
+    if "next_cycle" in payload:
+        instruction = payload["next_cycle"]
+        if not isinstance(instruction, str) or not instruction.strip():
             return False
     return True
 

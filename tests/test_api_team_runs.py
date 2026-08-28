@@ -2383,6 +2383,7 @@ def test_cycle_space_policy_is_included_in_cycle_detail(tmp_path: Path) -> None:
             "summary": "Mail handled",
             "coverage_gaps": None,
             "team_note_title": None,
+            "next_cycle_instruction": None,
             "error_message": None,
             "created_at": cycle.created_at,
             "started_at": cycle.started_at,
@@ -3580,7 +3581,12 @@ def test_detail_reads_the_real_synthesis_not_the_question_it_asked_first(
     synthesis = complete_synthesis(
         1,
         "synthesis",
-        {"summary": "Built it.", "coverage_gaps": gaps, "team_note": note},
+        {
+            "summary": "Built it.",
+            "coverage_gaps": gaps,
+            "team_note": note,
+            "next_cycle": "6문장을 다시 돌려 실제 게시 수를 재라",
+        },
     )
     effects.apply_synthesis(synthesis.id, "Built it.")
 
@@ -3594,6 +3600,9 @@ def test_detail_reads_the_real_synthesis_not_the_question_it_asked_first(
     # 기능은 있으나 마나가 된다 -- 몇 사이클 돌려보고 쓸모를 판단하려면
     # 어느 사이클이 썼는지가 화면에 있어야 한다.
     assert reported["team_note_title"] == "저장소 지도"
+    # 스스로 도는 런은 이 지시로 다음 사이클을 연다. 무엇이 갈지 보이지 않으면
+    # 사람이 개입할 자리를 놓친다.
+    assert reported["next_cycle_instruction"] == "6문장을 다시 돌려 실제 게시 수를 재라"
 
 
 def test_the_detail_reports_whether_splitting_bought_any_parallelism(
@@ -3706,3 +3715,50 @@ def test_reopening_a_missing_run_is_a_404(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
 
     assert client.post("/api/team-runs/nope/reopen").status_code == 404
+
+
+def test_detail_still_carries_the_series_the_lead_ended_early(tmp_path: Path) -> None:
+    """리드가 다음 할 일을 내지 않아 끝난 시리즈가 상세에 실려야 한다.
+
+    승인 단계를 두지 않으므로, 5번 돌 줄 알았던 런이 1번에 끝난 것을 사람이
+    볼 수 있는 자리는 이 payload 뿐이다. 끝난 시리즈는 get_active_series 가
+    찾지 못하니 상세가 가장 최근 시리즈로 되짚지 않으면 화면에는 아무것도
+    닿지 않는다.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Leader")
+    team_id = create_team(client, leader_id)
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "AUTO thrice",
+            "execution_policy": "auto",
+            "auto_repeat_count": 3,
+            "auto_interval_minutes": 5,
+        },
+    ).json()["team_run"]
+    cycles = client.app.state.team_cycle_service
+    teams = client.app.state.team_run_service
+    series = cycles.get_active_series(run["id"])
+    first = cycles.claim_next(run["id"])
+    cycle = teams.create_cycle(run["id"], "auto", first.source_id, request_id=first.id)
+    # 합성 결과를 남기지 않는다 -- 리드가 다음 사이클을 제안하지 않은 경우다.
+    teams.set_cycle_status(cycle.id, "completed", summary="done")
+    cycles.settle_cycle(cycle.id)
+    cycles.enqueue_due_auto_requests(
+        now=datetime.now(timezone.utc) + timedelta(minutes=6)
+    )
+
+    detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+
+    assert cycles.get_active_series(run["id"]) is None
+    assert detail["active_auto_series"]["id"] == series.id
+    assert detail["active_auto_series"]["status"] == "auto_completed"
+    assert (
+        detail["active_auto_series"]["pause_reason"] == "lead_proposed_no_next_cycle"
+    )
+    assert detail["active_auto_series"]["settled_slots"] == 1
+    assert detail["active_auto_series"]["target_slots"] == 3

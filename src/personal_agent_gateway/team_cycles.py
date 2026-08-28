@@ -35,6 +35,9 @@ _ACTIVE_SERIES_STATUSES = {
     "paused_interrupted",
 }
 _SETTLED_CYCLE_STATUSES = {"completed", "completed_with_failures"}
+# settle_cycle 이 사이클을 이 상태로 종결지으면 시리즈는 paused_failure 로
+# 간다 -- 합성이 아예 돌지 못하고 죽은 경우다.
+_AUTO_FAILURE_CYCLE_STATUSES = {"failed", "blocked"}
 _PREVIOUS_CONTEXT_CYCLE_STATUSES = {
     "completed",
     "completed_with_failures",
@@ -158,6 +161,20 @@ class CycleSettlement:
     series: TeamAutoSeries | None
     queue_ready: bool
     transitioned: bool
+
+
+@dataclass(frozen=True)
+class AutoEnqueueOutcome:
+    """자동 틱 한 번이 만든 것과 끝낸 것.
+
+    requests 만 돌려주면 리드가 다음 할 일을 내지 않아 끝난 시리즈는
+    부르는 쪽에서 보이지 않는다 -- 그러면 정상 종료와 달리 아무 알림도
+    나가지 못한다. settle_cycle 이 CycleSettlement 로 시리즈를 함께
+    돌려주는 것과 같은 방식이다.
+    """
+
+    requests: list[TeamCycleRequest]
+    completed_series: list[TeamAutoSeries]
 
 
 @dataclass(frozen=True)
@@ -430,7 +447,7 @@ class TeamCycleService:
             team_run_id,
             "auto",
             _auto_source_id(series_id, 1, 1),
-            self._auto_instruction(connection, team_run_id),
+            self._auto_instruction(connection, team_run_id, None),
             previous_cycle_id=None,
             auto_series_id=series_id,
             slot_ordinal=1,
@@ -743,6 +760,23 @@ class TeamCycleService:
         )
         return _series_from_row(row) if row is not None else None
 
+    def get_latest_series(self, team_run_id: str) -> TeamAutoSeries | None:
+        """상태를 가리지 않고 가장 최근 시리즈.
+
+        끝난 시리즈는 get_active_series 가 찾지 못한다. 왜 끝났는지를
+        보여줘야 하는 자리는 이쪽을 쓴다 -- 런 목록이 auto_series 를 읽는
+        방식과 같다.
+        """
+        self._require_run_read(team_run_id)
+        row = self._db.fetchone(
+            """
+            select * from team_run_auto_series
+            where team_run_id = ? order by series_number desc limit 1
+            """,
+            (team_run_id,),
+        )
+        return _series_from_row(row) if row is not None else None
+
     def get_dispatching(self, team_run_id: str) -> TeamCycleRequest | None:
         self._require_run_read(team_run_id)
         row = self._db.fetchone(
@@ -793,9 +827,10 @@ class TeamCycleService:
     def enqueue_due_auto_requests(
         self,
         now: datetime | None = None,
-    ) -> list[TeamCycleRequest]:
+    ) -> AutoEnqueueOutcome:
         timestamp = _timestamp(now)
         created: list[TeamCycleRequest] = []
+        completed: list[TeamAutoSeries] = []
         with self._db.connection() as connection:
             connection.execute("begin immediate")
             due = connection.execute(
@@ -823,12 +858,41 @@ class TeamCycleService:
                     """,
                     (series.team_run_id,),
                 ).fetchone()
+                instruction = self._auto_instruction(
+                    connection,
+                    series.team_run_id,
+                    previous["id"] if previous is not None else None,
+                )
+                if instruction is None:
+                    # 제안이 없으면 목표를 다시 던지지 않는다 -- 그것이 팀을
+                    # 제자리에 돌리는 예전 동작이다. 남은 횟수를 쓰지 않고
+                    # 끝내되, 왜 끝났는지는 남긴다.
+                    ended = connection.execute(
+                        """
+                        update team_run_auto_series
+                        set status = 'auto_completed', next_run_at = null,
+                            pause_reason = 'lead_proposed_no_next_cycle',
+                            paused_cycle_id = null, completed_at = ?, updated_at = ?
+                        where id = ? and status = 'waiting_interval'
+                        """,
+                        (timestamp, timestamp, series.id),
+                    )
+                    if ended.rowcount:
+                        completed.append(
+                            _series_from_row(
+                                connection.execute(
+                                    "select * from team_run_auto_series where id = ?",
+                                    (series.id,),
+                                ).fetchone()
+                            )
+                        )
+                    continue
                 request = self._enqueue_request(
                     connection,
                     series.team_run_id,
                     "auto",
                     _auto_source_id(series.id, slot, 1),
-                    self._auto_instruction(connection, series.team_run_id),
+                    instruction,
                     previous_cycle_id=previous["id"] if previous is not None else None,
                     auto_series_id=series.id,
                     slot_ordinal=slot,
@@ -844,12 +908,57 @@ class TeamCycleService:
                     (timestamp, series.id),
                 )
                 created.append(request)
-        return created
+        return AutoEnqueueOutcome(requests=created, completed_series=completed)
 
     @staticmethod
     def _auto_instruction(
-        connection: sqlite3.Connection, team_run_id: str
-    ) -> str:
+        connection: sqlite3.Connection,
+        team_run_id: str,
+        previous_cycle_id: str | None,
+    ) -> str | None:
+        """다음 자동 사이클이 받을 지시.
+
+        직전 사이클에서 리드가 낸 제안을 쓴다. 목표를 그대로 반복하던 예전
+        동작은 지난 사이클이 무엇을 알아냈든 다음 사이클을 처음으로 되돌렸다.
+
+        목표로 되돌아가는 경우는 둘뿐이다: 읽을 제안이 아직 없는 첫 슬롯,
+        그리고 직전 사이클이 실패/차단으로 죽어 합성이 아예 돌지 못한 경우
+        (사용자가 명시적으로 이어가기를 눌렀다 -- 실패 맥락은
+        previous_summary_text 로 따로 전달된다). 그 외에 제안이 없으면
+        None 을 돌려주고, 부르는 쪽이 시리즈를 끝낸다.
+        """
+        if previous_cycle_id is not None:
+            row = connection.execute(
+                """
+                select result_json from team_model_operations
+                where cycle_id = ? and stage in ('cycle_synthesis', 'cycle_synthesis_repair')
+                  and status = 'applied' and result_kind = 'synthesis'
+                order by created_at desc limit 1
+                """,
+                (previous_cycle_id,),
+            ).fetchone()
+            instruction = None
+            if row is not None and row["result_json"]:
+                try:
+                    payload = (json.loads(row["result_json"]) or {}).get("payload") or {}
+                except (TypeError, ValueError):
+                    payload = {}
+                candidate = (
+                    payload.get("next_cycle") if isinstance(payload, dict) else None
+                )
+                if isinstance(candidate, str) and candidate.strip():
+                    instruction = candidate.strip()
+            if instruction is not None:
+                return instruction
+            cycle = connection.execute(
+                "select status from team_run_cycles where id = ?",
+                (previous_cycle_id,),
+            ).fetchone()
+            if cycle is None or cycle["status"] not in _AUTO_FAILURE_CYCLE_STATUSES:
+                # 정상적으로 끝난 사이클에 제안이 없다 -- 리드가 더 할 일이
+                # 없다고 본 것이다. 시리즈는 여기서 끝난다.
+                return None
+
         row = connection.execute(
             "select goal from team_runs where id = ?", (team_run_id,)
         ).fetchone()

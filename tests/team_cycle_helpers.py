@@ -67,6 +67,58 @@ def make_queued_cycle(teams, cycles, run):
     return cycle
 
 
+def seed_next_cycle_proposal(db, run, cycle, agent, instruction):
+    """이 사이클에 다음 사이클 제안이 이미 적용되어 있던 것처럼 원장에 남긴다.
+
+    이 파일을 쓰는 테스트 다수는 사이클 상태를 직접 지정해 시뮬레이션하고
+    태스크는 만들지 않는다 -- previous_cycle_id/previous_summary_text 전파나
+    다음 슬롯이 나가는지만 확인하면 되기 때문이다. apply_synthesis 전체를
+    거치면 필수 태스크가 있어야 하고 요약/태스크 목록도 새로 계산되어 그
+    검증이 어긋난다. 그래서 team_model_operations 원장에만 이미 적용된 합성
+    결과를 최소한으로 남기고, 사이클/런/태스크 상태는 건드리지 않는다.
+    """
+    import hashlib
+
+    from personal_agent_gateway.team_model_effects import (
+        team_model_effect_result_validators,
+    )
+    from personal_agent_gateway.team_model_operations import (
+        OperationSpec,
+        TeamModelOperationService,
+        ValidatedOperationResult,
+    )
+
+    operations = TeamModelOperationService(
+        db,
+        result_validators=team_model_effect_result_validators(),
+    )
+    reserved = operations.reserve(
+        OperationSpec(
+            operation_key=f"{cycle.id}:cycle_synthesis:0",
+            team_run_id=run.id,
+            cycle_id=cycle.id,
+            task_id=None,
+            agent_id=agent.id,
+            provider=agent.backend,
+            stage="cycle_synthesis",
+            stage_ordinal=0,
+            request_digest=hashlib.sha256(cycle.id.encode()).hexdigest(),
+        )
+    )
+    invoking = operations.begin_attempt(reserved.id, "consumer-1")
+    completed = operations.complete(
+        invoking.id,
+        invoking.version,
+        ValidatedOperationResult(
+            "synthesis", {"summary": "ok", "next_cycle": instruction}
+        ),
+    )
+    db.execute(
+        "update team_model_operations set status = 'applied' where id = ?",
+        (completed.id,),
+    )
+
+
 def make_running_task_in_cycle(teams, cycles, run):
     cycle = make_queued_cycle(teams, cycles, run)
     teams.set_cycle_status(cycle.id, "running")

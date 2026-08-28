@@ -13,7 +13,12 @@ from personal_agent_gateway.team_cycle_dispatcher import TeamCycleDispatcher
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_provider_recovery import OperationReconcileResult
 from personal_agent_gateway.teams import TeamRunService
-from team_cycle_helpers import RecordingOrchestrator, dt, make_cycle_services
+from team_cycle_helpers import (
+    RecordingOrchestrator,
+    dt,
+    make_cycle_services,
+    seed_next_cycle_proposal,
+)
 
 
 @dataclass(frozen=True)
@@ -286,6 +291,8 @@ def test_reconcile_enqueues_due_and_existing_queued_requests_once(
         request_id=first_request.id,
     )
     teams.set_cycle_status(first_cycle.id, "completed", summary="done")
+    leader = teams.get_agent(auto_run.leader_agent_id)
+    seed_next_cycle_proposal(db, auto_run, first_cycle, leader, "continue")
     cycles.settle_cycle(
         first_cycle.id,
         now=dt("2026-07-20T00:05:00+00:00"),
@@ -429,6 +436,10 @@ def test_failure_recovery_preserves_retry_and_continue_ownership(
     assert next_slot.source_id == f"{continue_series.id}:2:1"
     assert next_slot.retry_of_request_id is None
     assert next_slot.status == "queued"
+    # 실패로 죽은 사이클은 합성이 아예 돌지 못해 제안이 없다 -- 사용자가
+    # 이어가기를 눌렀으니 시리즈가 리드의 종료 선언으로 끝나지 않고 목표로
+    # 돌아가 계속된다.
+    assert next_slot.instruction == "goal"
     due_series = due.cycles.get_active_series(continue_run.id)
     assert due_series.id == continue_series.id
     assert due_series.team_run_id == continue_run.id

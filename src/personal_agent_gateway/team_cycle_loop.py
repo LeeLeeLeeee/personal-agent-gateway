@@ -42,10 +42,14 @@ class TeamCycleLoop:
             )
             for claim in claims:
                 self._dispatcher.resume_recovered_operation(claim)
-        for request in self._cycles.enqueue_due_auto_requests(
-            now=now
-        ):
+        outcome = self._cycles.enqueue_due_auto_requests(now=now)
+        for request in outcome.requests:
             await self._dispatcher.enqueue_run(request.team_run_id)
+        for series in outcome.completed_series:
+            # 리드가 다음 할 일을 내지 않아 끝난 시리즈도 알려야 한다.
+            # 알리지 않으면 열려 있는 화면은 다음 사이클을 기다리는 모습
+            # 그대로 남는다.
+            await self._dispatcher.announce_auto_series_completed(series)
 
     @property
     def alive(self) -> bool:

@@ -1470,6 +1470,11 @@ export function TeamRunDetail({
           {distinctBaseObjective ? (
             <div className="team-run-base-objective">BASE OBJECTIVE · {distinctBaseObjective}</div>
           ) : null}
+          {activeAutoSeries?.pause_reason === "lead_proposed_no_next_cycle" ? (
+            <span className="mono team-cycle-note">
+              리드가 다음 할 일이 없어 멈췄습니다
+            </span>
+          ) : null}
         </div>
         {showPlanShape ? (
           <div className="team-dashboard-shape">
@@ -1994,6 +1999,11 @@ export function TeamRunDetail({
                         ? `팀 노트 갱신 · ${cycle.team_note_title}`
                         : "팀 노트 안 씀"}
                     </div>
+                    {cycle.next_cycle_instruction ? (
+                      <div className="team-cycle-note mono">
+                        {`다음 사이클 · ${cycle.next_cycle_instruction}`}
+                      </div>
+                    ) : null}
                     {cycle.error_message ? <div className="hook-row-error mono">{cycle.error_message}</div> : null}
                   </div>
                 </details>

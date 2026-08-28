@@ -6,6 +6,7 @@ from datetime import datetime
 from personal_agent_gateway.events import EventBus
 from personal_agent_gateway.redaction import redact_text
 from personal_agent_gateway.team_cycles import (
+    TeamAutoSeries,
     TeamCycleRequest,
     TeamCycleService,
 )
@@ -304,17 +305,28 @@ class TeamCycleDispatcher:
             result.series is not None
             and result.series.status == "auto_completed"
         ):
-            await self._event_bus.publish(
-                {
-                    "type": "team.auto_series.completed",
-                    "team_run_id": run.id,
-                    "series_id": result.series.id,
-                    "settled_slots": result.series.settled_slots,
-                    "target_slots": result.series.target_slots,
-                }
-            )
+            await self.announce_auto_series_completed(result.series)
         if result.queue_ready:
             await self.enqueue_run(run.id)
+
+    async def announce_auto_series_completed(
+        self,
+        series: TeamAutoSeries,
+    ) -> None:
+        """시리즈가 끝났다고 알린다.
+
+        마지막 슬롯을 다 쓴 종료와 리드가 다음 할 일을 내지 않은 종료는
+        같은 사건이다 -- 화면은 이 알림 하나로 새로 읽는다.
+        """
+        await self._event_bus.publish(
+            {
+                "type": "team.auto_series.completed",
+                "team_run_id": series.team_run_id,
+                "series_id": series.id,
+                "settled_slots": series.settled_slots,
+                "target_slots": series.target_slots,
+            }
+        )
 
     def reconcile(self) -> list[str]:
         operation_result = self._provider_recovery.reconcile_startup()
