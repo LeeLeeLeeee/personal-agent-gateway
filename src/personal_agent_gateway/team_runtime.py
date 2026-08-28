@@ -217,7 +217,14 @@ something to finish, wait inside one command -- loop there until it is done or
 a bound you set is reached, and report what the last check saw. Do not call the
 tool once per check. The loop is the whole point, not a longer sleep:
     powershell: for ($i=0; $i -lt 20; $i++) {{ $s = <check>; if ($s -eq 'done') {{ break }}; Start-Sleep 30 }}; $s
-    sh:         for i in $(seq 20); do s=$(<check>); [ $s = done ] && break; sleep 30; done; echo $s"""
+    sh:         for i in $(seq 20); do s=$(<check>); [ $s = done ] && break; sleep 30; done; echo $s
+One wait has a ceiling, and that loop will reach it. When your run tool comes
+back before the command finished -- partial output, a session or cell id, no
+exit code -- the process is still running and what you were handed is the wait,
+not the result. Resume that id and keep waiting, as many times as it takes,
+until an exit code arrives. Do not start the command over: a rerun pays the
+whole cost again and throws away what the first one had already done. A return
+without an exit code means "not finished yet", never "finished with nothing"."""
 
 ACCEPTANCE_REVIEW_PROMPT = f"""You are the leader reviewing a rejected Team Run task outcome.
 Decide only from the goal, Cycle instruction, frozen rules, SPACE, Task contract,

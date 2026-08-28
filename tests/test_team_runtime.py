@@ -10555,6 +10555,33 @@ def test_the_worker_is_told_not_to_poll_with_separate_tool_calls(tmp_path):
     assert "if ($s -eq 'done') { break }" in prompt
 
 
+def test_the_worker_is_told_a_cut_off_command_is_still_running(tmp_path):
+    """한 번의 기다림에는 천장이 있다. 그 위의 규칙만으로는 그 천장을 못 넘는다.
+
+    codex 가 자기 도구를 설명하는 문장에 박혀 있다 -- "Effective range on
+    Windows is 10000-30000 ms". 명령 실행은 30 초까지만 기다리고, 그 뒤에는
+    세션 id 를 붙여 중간 결과를 돌려준다. 프로세스는 살아 있다. 실측에서
+    영어 학습 TF 는 이것을 "환경이 30 초에서 죽인다" 로 읽고 매번 명령을
+    처음부터 다시 띄웠고, 그때마다 앱이 다시 죽어 다섯 사이클을 썼다.
+
+    도구 이름은 쓰지 않는다. WORKER_PROMPT 는 상수 하나여서 이 팀원이 어느
+    제공자로 도는지 모르고, exec_command 와 write_stdin 은 codex 에만 있다.
+    Claude 로 도는 팀원에게는 없는 도구를 쓰라는 지시가 된다.
+    """
+    setup, _archive, _team_id = _note_setup(tmp_path, "끝냈습니다.")
+    run = setup.teams.get_team_run(setup.run.id)
+    task = setup.teams.list_tasks(run.id, setup.cycle.id)[0]
+
+    prompt = setup.runtime._worker_prompt(run, setup.worker, task)
+
+    assert "the process is still running" in prompt
+    assert "Resume that id and keep waiting" in prompt
+    # 다시 띄우는 것이 실측에서 팀을 다섯 사이클 묶어둔 행동이다.
+    assert "Do not start the command over" in prompt
+    assert "exec_command" not in prompt
+    assert "write_stdin" not in prompt
+
+
 def test_the_note_reaches_the_planner_and_the_worker(tmp_path):
     """검색으로 고르던 때는 놓쳤다. 실측에서 "A2도 같은 방식으로 처리" 같은
     짧은 사이클 지시는 노트의 어느 단어와도 겹치지 않아 계획 단계가 노트를
