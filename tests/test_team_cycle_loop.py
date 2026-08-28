@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from personal_agent_gateway.team_cycle_loop import TeamCycleLoop
+from personal_agent_gateway.team_cycles import AutoEnqueueOutcome
 from personal_agent_gateway.team_provider_recovery import (
     ProviderRecoveryClaim,
 )
@@ -15,9 +16,13 @@ class RecordingDispatcher:
     def __init__(self) -> None:
         self.enqueued_run_ids: list[str] = []
         self.recovered_operation_ids: list[str] = []
+        self.completed_series_ids: list[str] = []
 
     async def enqueue_run(self, team_run_id: str) -> None:
         self.enqueued_run_ids.append(team_run_id)
+
+    async def announce_auto_series_completed(self, series) -> None:
+        self.completed_series_ids.append(series.id)
 
     def resume_recovered_operation(
         self,
@@ -161,7 +166,7 @@ async def test_tick_runs_provider_recovery_off_the_event_loop() -> None:
 
     class NoCycles:
         def enqueue_due_auto_requests(self, *, now):
-            return []
+            return AutoEnqueueOutcome(requests=[], completed_series=[])
 
     class ThreadRecordingRecovery:
         def __init__(self) -> None:
@@ -186,3 +191,38 @@ async def test_tick_runs_provider_recovery_off_the_event_loop() -> None:
         "recover_due ran on the event loop thread; blocking gateway I/O there "
         "freezes every other run, not just this tick"
     )
+
+
+@pytest.mark.asyncio
+async def test_loop_announces_a_series_the_lead_ended(tmp_path: Path) -> None:
+    """리드가 다음 할 일을 내지 않아 끝난 시리즈도 알림을 낸다.
+
+    마지막 슬롯까지 쓴 종료는 team.auto_series.completed 를 내보내고 화면이
+    그 신호로 다시 읽는다. 이쪽만 조용히 끝나면 열려 있는 화면은 다음
+    사이클을 기다리는 모습 그대로 남는다.
+    """
+    _db, teams, cycles, run = make_cycle_services(tmp_path, "auto")
+    series = cycles.get_active_series(run.id)
+    assert series is not None
+    first = cycles.claim_next(run.id)
+    first_cycle = teams.create_cycle(
+        run.id,
+        "auto",
+        first.source_id,
+        request_id=first.id,
+    )
+    # 제안을 남기지 않는다 -- 리드가 더 할 일이 없다고 본 경우다.
+    teams.set_cycle_status(first_cycle.id, "completed", summary="done")
+    cycles.settle_cycle(first_cycle.id, now=dt("2026-07-20T00:55:00+00:00"))
+    dispatcher = RecordingDispatcher()
+    loop = TeamCycleLoop(
+        cycles,
+        dispatcher,
+        now=lambda: dt("2026-07-20T01:00:00+00:00"),
+    )
+
+    await loop.tick()
+
+    assert dispatcher.completed_series_ids == [series.id]
+    assert dispatcher.enqueued_run_ids == []
+    assert cycles.get_latest_series(run.id).status == "auto_completed"

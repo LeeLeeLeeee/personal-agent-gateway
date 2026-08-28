@@ -295,7 +295,9 @@ def test_retry_preserves_failed_slots_previous_cycle_snapshot(
     leader = teams.get_agent(run.leader_agent_id)
     seed_next_cycle_proposal(db, run, first_cycle, leader, "continue")
     cycles.settle_cycle(first_cycle.id, now=dt("2026-07-20T00:01:00+00:00"))
-    second = cycles.enqueue_due_auto_requests(now=dt("2026-07-20T00:06:00+00:00"))[0]
+    second = cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-20T00:06:00+00:00")
+    ).requests[0]
     assert second.previous_cycle_id == first_cycle.id
     assert second.previous_summary_text == (
         "STATUS: COMPLETED\n\nSUMMARY\nslot one snapshot"
@@ -340,7 +342,7 @@ def test_auto_continue_passes_failed_cycle_context_to_next_slot(
 
     next_request = cycles.enqueue_due_auto_requests(
         now=dt("2026-07-20T00:07:00+00:00")
-    )[0]
+    ).requests[0]
 
     # 실패로 죽은 사이클은 합성이 아예 돌지 못해 제안이 없다 -- 그렇다고
     # 시리즈가 "리드가 끝냈다"로 끝나면 안 된다. 사용자가 이어가기를 눌렀으니
@@ -613,10 +615,16 @@ def test_auto_due_slot_read_models_and_restart(tmp_path: Path) -> None:
     seed_next_cycle_proposal(db, run, first_cycle, leader, "continue")
     cycles.settle_cycle(first_cycle.id, now=dt("2026-07-20T00:01:00+00:00"))
 
-    assert cycles.enqueue_due_auto_requests(now=dt("2026-07-20T00:05:59+00:00")) == []
-    due = cycles.enqueue_due_auto_requests(now=dt("2026-07-20T00:06:00+00:00"))
+    assert cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-20T00:05:59+00:00")
+    ).requests == []
+    due = cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-20T00:06:00+00:00")
+    ).requests
     assert [request.slot_ordinal for request in due] == [2]
-    assert cycles.enqueue_due_auto_requests(now=dt("2026-07-20T00:06:00+00:00")) == []
+    assert cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-20T00:06:00+00:00")
+    ).requests == []
 
     second = cycles.claim_next(run.id)
     second_cycle = teams.create_cycle(run.id, "auto", second.source_id, request_id=second.id)
@@ -650,7 +658,9 @@ def test_due_comparison_normalizes_equivalent_offset_instants(
     seed_next_cycle_proposal(db, run, cycle, leader, "continue")
 
     settled = cycles.settle_cycle(cycle.id, now=dt("2026-07-20T09:01:00+09:00"))
-    due = cycles.enqueue_due_auto_requests(now=dt("2026-07-19T20:06:00-04:00"))
+    due = cycles.enqueue_due_auto_requests(
+        now=dt("2026-07-19T20:06:00-04:00")
+    ).requests
 
     assert series.created_at == "2026-07-20T00:00:00+00:00"
     assert settled.series.next_run_at == "2026-07-20T00:06:00+00:00"
@@ -903,7 +913,7 @@ def test_a_series_carries_the_proposal_into_the_next_slot(tmp_path):
     cycles.settle_cycle(cycle.id)
 
     later = datetime.now(UTC) + timedelta(seconds=series.interval_seconds + 1)
-    created = cycles.enqueue_due_auto_requests(now=later)
+    created = cycles.enqueue_due_auto_requests(now=later).requests
 
     assert [item.instruction for item in created] == ["6문장을 다시 돌려라"]
 
@@ -922,7 +932,7 @@ def test_a_series_ends_when_the_lead_proposes_nothing(tmp_path):
 
     later = datetime.now(UTC) + timedelta(seconds=series.interval_seconds + 1)
 
-    assert cycles.enqueue_due_auto_requests(now=later) == []
+    assert cycles.enqueue_due_auto_requests(now=later).requests == []
     # 끝난 시리즈는 get_active_series 가 찾지 못한다 -- auto_completed 는
     # 활성 상태가 아니다. 표에서 직접 읽는다.
     row = db.fetchone(

@@ -164,6 +164,20 @@ class CycleSettlement:
 
 
 @dataclass(frozen=True)
+class AutoEnqueueOutcome:
+    """자동 틱 한 번이 만든 것과 끝낸 것.
+
+    requests 만 돌려주면 리드가 다음 할 일을 내지 않아 끝난 시리즈는
+    부르는 쪽에서 보이지 않는다 -- 그러면 정상 종료와 달리 아무 알림도
+    나가지 못한다. settle_cycle 이 CycleSettlement 로 시리즈를 함께
+    돌려주는 것과 같은 방식이다.
+    """
+
+    requests: list[TeamCycleRequest]
+    completed_series: list[TeamAutoSeries]
+
+
+@dataclass(frozen=True)
 class CycleCancellation:
     team_run_id: str
     changed: bool
@@ -746,6 +760,23 @@ class TeamCycleService:
         )
         return _series_from_row(row) if row is not None else None
 
+    def get_latest_series(self, team_run_id: str) -> TeamAutoSeries | None:
+        """상태를 가리지 않고 가장 최근 시리즈.
+
+        끝난 시리즈는 get_active_series 가 찾지 못한다. 왜 끝났는지를
+        보여줘야 하는 자리는 이쪽을 쓴다 -- 런 목록이 auto_series 를 읽는
+        방식과 같다.
+        """
+        self._require_run_read(team_run_id)
+        row = self._db.fetchone(
+            """
+            select * from team_run_auto_series
+            where team_run_id = ? order by series_number desc limit 1
+            """,
+            (team_run_id,),
+        )
+        return _series_from_row(row) if row is not None else None
+
     def get_dispatching(self, team_run_id: str) -> TeamCycleRequest | None:
         self._require_run_read(team_run_id)
         row = self._db.fetchone(
@@ -796,9 +827,10 @@ class TeamCycleService:
     def enqueue_due_auto_requests(
         self,
         now: datetime | None = None,
-    ) -> list[TeamCycleRequest]:
+    ) -> AutoEnqueueOutcome:
         timestamp = _timestamp(now)
         created: list[TeamCycleRequest] = []
+        completed: list[TeamAutoSeries] = []
         with self._db.connection() as connection:
             connection.execute("begin immediate")
             due = connection.execute(
@@ -835,7 +867,7 @@ class TeamCycleService:
                     # 제안이 없으면 목표를 다시 던지지 않는다 -- 그것이 팀을
                     # 제자리에 돌리는 예전 동작이다. 남은 횟수를 쓰지 않고
                     # 끝내되, 왜 끝났는지는 남긴다.
-                    connection.execute(
+                    ended = connection.execute(
                         """
                         update team_run_auto_series
                         set status = 'auto_completed', next_run_at = null,
@@ -845,6 +877,15 @@ class TeamCycleService:
                         """,
                         (timestamp, timestamp, series.id),
                     )
+                    if ended.rowcount:
+                        completed.append(
+                            _series_from_row(
+                                connection.execute(
+                                    "select * from team_run_auto_series where id = ?",
+                                    (series.id,),
+                                ).fetchone()
+                            )
+                        )
                     continue
                 request = self._enqueue_request(
                     connection,
@@ -867,7 +908,7 @@ class TeamCycleService:
                     (timestamp, series.id),
                 )
                 created.append(request)
-        return created
+        return AutoEnqueueOutcome(requests=created, completed_series=completed)
 
     @staticmethod
     def _auto_instruction(

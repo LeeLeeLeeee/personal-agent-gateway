@@ -3715,3 +3715,50 @@ def test_reopening_a_missing_run_is_a_404(tmp_path: Path) -> None:
     client = authenticated_client(tmp_path)
 
     assert client.post("/api/team-runs/nope/reopen").status_code == 404
+
+
+def test_detail_still_carries_the_series_the_lead_ended_early(tmp_path: Path) -> None:
+    """리드가 다음 할 일을 내지 않아 끝난 시리즈가 상세에 실려야 한다.
+
+    승인 단계를 두지 않으므로, 5번 돌 줄 알았던 런이 1번에 끝난 것을 사람이
+    볼 수 있는 자리는 이 payload 뿐이다. 끝난 시리즈는 get_active_series 가
+    찾지 못하니 상세가 가장 최근 시리즈로 되짚지 않으면 화면에는 아무것도
+    닿지 않는다.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Leader")
+    team_id = create_team(client, leader_id)
+    run = client.post(
+        "/api/team-runs",
+        json={
+            "team_id": team_id,
+            "goal": "AUTO thrice",
+            "execution_policy": "auto",
+            "auto_repeat_count": 3,
+            "auto_interval_minutes": 5,
+        },
+    ).json()["team_run"]
+    cycles = client.app.state.team_cycle_service
+    teams = client.app.state.team_run_service
+    series = cycles.get_active_series(run["id"])
+    first = cycles.claim_next(run["id"])
+    cycle = teams.create_cycle(run["id"], "auto", first.source_id, request_id=first.id)
+    # 합성 결과를 남기지 않는다 -- 리드가 다음 사이클을 제안하지 않은 경우다.
+    teams.set_cycle_status(cycle.id, "completed", summary="done")
+    cycles.settle_cycle(cycle.id)
+    cycles.enqueue_due_auto_requests(
+        now=datetime.now(timezone.utc) + timedelta(minutes=6)
+    )
+
+    detail = client.get(f"/api/team-runs/{run['id']}/detail").json()
+
+    assert cycles.get_active_series(run["id"]) is None
+    assert detail["active_auto_series"]["id"] == series.id
+    assert detail["active_auto_series"]["status"] == "auto_completed"
+    assert (
+        detail["active_auto_series"]["pause_reason"] == "lead_proposed_no_next_cycle"
+    )
+    assert detail["active_auto_series"]["settled_slots"] == 1
+    assert detail["active_auto_series"]["target_slots"] == 3

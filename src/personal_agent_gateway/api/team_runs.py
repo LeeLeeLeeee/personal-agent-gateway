@@ -574,8 +574,13 @@ def get_team_run_detail(
             service.get_active_decision_request(team_run_id)
         ),
         "policy_status": cycle_service.policy_status(team_run_id),
+        # 활성 시리즈가 없으면 가장 최근 시리즈를 보낸다. 끝난 시리즈는
+        # get_active_series 가 찾지 못하는데, 리드가 다음 할 일을 내지
+        # 않아 몇 번 남기고 끝났다는 사실은 바로 그 끝난 시리즈에만 적혀
+        # 있다. 런 목록이 auto_series 를 읽는 방식과 같다.
         "active_auto_series": _auto_series_payload(
             cycle_service.get_active_series(team_run_id)
+            or cycle_service.get_latest_series(team_run_id)
         ),
         "queue_count": cycle_service.count_queued(team_run_id),
         "active_request": _cycle_request_payload(

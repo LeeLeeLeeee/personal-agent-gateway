@@ -225,7 +225,7 @@ def test_emergency_stop_cancels_cycle_queue_and_resume_runs_only_new_work(
         assert app.state.team_cycle_service.get_active_series(due_run.id) is None
         assert app.state.team_cycle_service.enqueue_due_auto_requests(
             now=datetime.now(timezone.utc) + timedelta(days=1)
-        ) == []
+        ).requests == []
 
         resumed = client.post("/api/operations/resume-intake")
         assert resumed.status_code == 200
