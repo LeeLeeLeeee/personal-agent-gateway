@@ -91,6 +91,11 @@ class TriggerCycleRequest(BaseModel):
     instruction: Annotated[str, Field(min_length=1)]
     client_request_id: Annotated[str, Field(min_length=1)]
     previous_cycle_id: str | None = None
+    #: 이번 트리거가 몇 사이클을 돌지. 1 이면 지금까지와 같은 한 번이고, 그보다
+    #: 크면 리드가 사이클마다 다음 지시를 정해 이어간다. 상한은 임의로 고른
+    #: 값이 아니라 되돌릴 수 있는 크기다 -- 방향이 틀어져도 사람이 보기 전에
+    #: 스무 사이클을 태우지는 않는다.
+    repeat: Annotated[int, Field(ge=1, le=20)] = 1
 
     @field_validator("instruction", "client_request_id")
     @classmethod
@@ -249,14 +254,26 @@ async def trigger_cycle(
     principal: SessionPrincipal = session_dependency,
 ) -> dict[str, object]:
     require_intake_open(request)
+    cycles = request.app.state.team_cycle_service
     try:
-        created = request.app.state.team_cycle_service.enqueue_request(
-            team_run_id,
-            "manual",
-            payload.client_request_id,
-            payload.instruction,
-            previous_cycle_id=payload.previous_cycle_id,
-        )
+        if payload.repeat > 1:
+            # 반복은 시리즈가 센다. 첫 슬롯에 사장님이 쓴 지시를 넣는다 --
+            # 넣지 않으면 런의 목표가 쓰이고 방금 입력한 문장이 버려진다.
+            # 간격은 0 이다: 지켜보며 누르는 반복에 기다릴 이유가 없다.
+            _series, created = cycles.create_auto_series(
+                team_run_id,
+                payload.repeat,
+                0,
+                first_instruction=payload.instruction,
+            )
+        else:
+            created = cycles.enqueue_request(
+                team_run_id,
+                "manual",
+                payload.client_request_id,
+                payload.instruction,
+                previous_cycle_id=payload.previous_cycle_id,
+            )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Team Run not found") from exc
     except ValueError as exc:
@@ -266,7 +283,7 @@ async def trigger_cycle(
             "type": "team.cycle_request.queued",
             "team_run_id": team_run_id,
             "cycle_request_id": created.id,
-            "source_type": "manual",
+            "source_type": created.source_type,
         }
     )
     await request.app.state.team_cycle_dispatcher.enqueue_run(team_run_id)

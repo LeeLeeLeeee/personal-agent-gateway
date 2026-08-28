@@ -1089,6 +1089,50 @@ def _migration_34_team_run_pause_request(
         )
 
 
+def _migration_36_auto_series_zero_interval(
+    connection: sqlite3.Connection,
+) -> None:
+    """반복 간격의 하한 60 초를 0 으로 내린다.
+
+    60 초 하한은 "밤새 알아서 돌아라" 를 전제한 값이다. 반복 횟수를 사이클을
+    트리거할 때 적게 되면서 전제가 바뀌었다 -- 사람이 지켜보며 "세 번 돌려라"
+    를 누르는 상황에서 사이클마다 1 분을 세울 이유가 없다.
+
+    CHECK 제약은 ALTER 로 못 바꾸므로 표를 다시 만든다. 컬럼과 인덱스는 그대로
+    두고 제약만 완화하는 것이라 데이터는 전부 옮겨진다.
+    """
+    connection.executescript(
+        """
+        create table team_run_auto_series_new (
+            id text primary key,
+            team_run_id text not null references team_runs(id) on delete cascade,
+            series_number integer not null,
+            status text not null,
+            target_slots integer not null check (target_slots > 0),
+            settled_slots integer not null default 0 check (settled_slots >= 0),
+            interval_seconds integer not null check (interval_seconds >= 0),
+            next_run_at text,
+            pause_reason text,
+            paused_cycle_id text references team_run_cycles(id) on delete set null,
+            created_at text not null,
+            started_at text not null,
+            completed_at text,
+            updated_at text not null,
+            unique (team_run_id, series_number)
+        );
+
+        insert into team_run_auto_series_new
+        select id, team_run_id, series_number, status, target_slots,
+               settled_slots, interval_seconds, next_run_at, pause_reason,
+               paused_cycle_id, created_at, started_at, completed_at, updated_at
+        from team_run_auto_series;
+
+        drop table team_run_auto_series;
+        alter table team_run_auto_series_new rename to team_run_auto_series;
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -1125,6 +1169,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (33, "open-operation-per-task", _migration_33_open_operation_per_task),
     (34, "team-run-pause-request", _migration_34_team_run_pause_request),
     (35, "operation-usage", _migration_35_operation_usage),
+    (36, "auto-series-zero-interval", _migration_36_auto_series_zero_interval),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
