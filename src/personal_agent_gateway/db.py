@@ -166,7 +166,7 @@ create table if not exists team_run_auto_series (
     status text not null,
     target_slots integer not null check (target_slots > 0),
     settled_slots integer not null default 0 check (settled_slots >= 0),
-    interval_seconds integer not null check (interval_seconds >= 60),
+    interval_seconds integer not null check (interval_seconds >= 0),
     next_run_at text,
     pause_reason text,
     paused_cycle_id text references team_run_cycles(id) on delete set null,

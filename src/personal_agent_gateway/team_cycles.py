@@ -361,17 +361,32 @@ class TeamCycleService:
         target_slots: int,
         interval_seconds: int,
         now: datetime | None = None,
+        first_instruction: str | None = None,
     ) -> tuple[TeamAutoSeries, TeamCycleRequest]:
+        """반복 사이클을 시작한다.
+
+        AUTO 정책 런은 런을 만들 때 이것을 자동으로 얻는다. TRIGGERED 런은
+        사이클을 트리거할 때 횟수를 적어 여기에 닿는다 -- "이번에 세 번
+        돌려라" 는 판단이 지시를 쓰는 순간에 나기 때문이다.
+
+        `first_instruction` 은 그 트리거가 쓴 문장이다. 넘기지 않으면 런의
+        목표를 쓴다(AUTO 정책의 예전 동작). 넘긴 것을 버리고 목표를 쓰면
+        사장님이 방금 입력한 지시가 사라진다.
+        """
         timestamp = _timestamp(now)
         with self._db.connection() as connection:
             connection.execute("begin immediate")
-            self._require_policy(connection, team_run_id, "auto")
+            # 정책을 묻지 않는다. 반복은 이제 런의 성질이 아니라 트리거의
+            # 성질이고, 나머지 전제(취소되지 않았다, continuous 다)는 그대로
+            # 지킨다.
+            self._require_run_for_cycle_request(connection, team_run_id)
             return self.initialize_auto_series(
                 connection,
                 team_run_id,
                 target_slots,
                 interval_seconds,
                 timestamp,
+                first_instruction=first_instruction,
             )
 
     def initialize_auto_series(
@@ -381,12 +396,15 @@ class TeamCycleService:
         target_slots: int,
         interval_seconds: int,
         now: str,
+        first_instruction: str | None = None,
     ) -> tuple[TeamAutoSeries, TeamCycleRequest]:
         now = _timestamp(datetime.fromisoformat(now))
         if target_slots < 1:
             raise ValueError("AUTO repeat count must be positive")
-        if interval_seconds < 60:
-            raise ValueError("AUTO interval must be at least 60 seconds")
+        # 0 을 허용한다. 트리거 반복은 사람이 지켜보는 중이라 기다릴 이유가
+        # 없다. 하한 60 초는 "밤새 알아서 돌아라" 용이었다.
+        if interval_seconds < 0:
+            raise ValueError("AUTO interval must not be negative")
         active = connection.execute(
             """
             select id from team_run_auto_series
@@ -447,7 +465,9 @@ class TeamCycleService:
             team_run_id,
             "auto",
             _auto_source_id(series_id, 1, 1),
-            self._auto_instruction(connection, team_run_id, None),
+            first_instruction
+            if first_instruction is not None
+            else self._auto_instruction(connection, team_run_id, None),
             previous_cycle_id=None,
             auto_series_id=series_id,
             slot_ordinal=1,
@@ -668,6 +688,11 @@ class TeamCycleService:
         timestamp = _timestamp(now)
         with self._db.connection() as connection:
             connection.execute("begin immediate")
+            # 재시작은 AUTO 정책 런의 것으로 남긴다. 이 경로는 첫 슬롯에
+            # 런의 목표를 쓰는데, TRIGGERED 런은 목표가 비어 있을 수 있어
+            # 거기서 터진다. 트리거 반복을 다시 돌리려면 횟수를 적어 다시
+            # 트리거하면 되고, 그것이 더 정직하다 -- 무엇을 시킬지 다시
+            # 말하게 된다.
             self._require_policy(connection, team_run_id, "auto")
             latest = connection.execute(
                 """
@@ -1348,14 +1373,14 @@ class TeamCycleService:
         normalized_source_id = source_id.strip()
         if not normalized_source_type or not normalized_source_id:
             raise ValueError("Cycle request source type and source id are required")
-        expected_policy: ExecutionPolicy
         if normalized_source_type in _TRIGGERED_REQUEST_SOURCES:
-            expected_policy = "triggered"
+            self._require_policy(connection, team_run_id, "triggered")
         elif normalized_source_type in {"auto", "retry"}:
-            expected_policy = "auto"
+            # 정책을 묻지 않는다. 반복은 이제 런의 성질이 아니라 트리거의
+            # 성질이라, TRIGGERED 런도 자기 시리즈의 슬롯을 낸다.
+            self._require_run_for_cycle_request(connection, team_run_id)
         else:
             raise ValueError(f"Unsupported cycle request source: {normalized_source_type}")
-        self._require_policy(connection, team_run_id, expected_policy)
         existing = connection.execute(
             """
             select * from team_cycle_requests
@@ -1595,17 +1620,26 @@ class TeamCycleService:
             (settled_slots, next_run_at, now, series.id),
         )
 
+    def _require_run_for_cycle_request(
+        self,
+        connection: sqlite3.Connection,
+        team_run_id: str,
+    ) -> sqlite3.Row:
+        """사이클 요청이 성립하는 런인가. 실행 정책은 묻지 않는다."""
+        run = self._require_run(connection, team_run_id)
+        if run["status"] == "canceled":
+            raise ValueError("Team run is canceled and cannot enqueue cycle requests")
+        if run["lifecycle_mode"] != "continuous":
+            raise ValueError("Cycle requests require a continuous team run")
+        return run
+
     def _require_policy(
         self,
         connection: sqlite3.Connection,
         team_run_id: str,
         expected: ExecutionPolicy,
     ) -> sqlite3.Row:
-        run = self._require_run(connection, team_run_id)
-        if run["status"] == "canceled":
-            raise ValueError("Team run is canceled and cannot enqueue cycle requests")
-        if run["lifecycle_mode"] != "continuous":
-            raise ValueError("Cycle requests require a continuous team run")
+        run = self._require_run_for_cycle_request(connection, team_run_id)
         if run["execution_policy"] != expected:
             raise ValueError(f"Cycle request requires the {expected.upper()} execution policy")
         return run

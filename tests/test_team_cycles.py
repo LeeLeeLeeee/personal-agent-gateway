@@ -941,3 +941,52 @@ def test_a_series_ends_when_the_lead_proposes_nothing(tmp_path):
     )
     assert row["status"] == "auto_completed"
     assert row["pause_reason"] == "lead_proposed_no_next_cycle"
+
+
+def test_a_triggered_run_can_start_a_repeat_series(tmp_path):
+    """반복 횟수는 런을 만들 때가 아니라 사이클을 트리거할 때 정한다.
+
+    auto 정책은 런 전체를 자동으로 만든다. 사장님이 원하는 것은 "이번에 세 번
+    돌려라" 이고, 그 판단은 지시를 쓰는 순간에 난다.
+    """
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+
+    series, request = cycles.create_auto_series(
+        run.id, 3, 0, first_instruction="이번 지시"
+    )
+
+    assert series.target_slots == 3
+    assert series.interval_seconds == 0
+    # 첫 슬롯은 사장님이 쓴 지시다. 런의 목표가 아니다 -- 목표를 쓰면 방금
+    # 입력한 문장이 버려진다.
+    assert request.instruction == "이번 지시"
+
+
+def test_a_repeat_series_may_have_no_interval(tmp_path):
+    """트리거 반복은 지켜보면서 돌리는 상황이다. 기다릴 이유가 없다."""
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+
+    series, _request = cycles.create_auto_series(run.id, 2, 0)
+
+    assert series.interval_seconds == 0
+
+
+def test_an_auto_series_still_falls_back_to_the_goal(tmp_path):
+    """지시를 주지 않으면 예전처럼 목표를 쓴다. auto 정책 경로가 그것이다.
+
+    auto 런은 create_team_run 이 이미 시리즈를 만들어 두므로 여기서 또 만들
+    수 없다. 그 시리즈가 낸 첫 요청을 본다 -- 그것이 이 경로의 산출물이다.
+    """
+    db, teams, cycles, run = make_cycle_services(tmp_path, "auto")
+
+    request = cycles.claim_next(run.id)
+
+    assert request is not None
+    assert request.instruction == "goal"
+
+
+def test_a_negative_interval_is_refused(tmp_path):
+    db, teams, cycles, run = make_cycle_services(tmp_path, "triggered")
+
+    with pytest.raises(ValueError, match="interval"):
+        cycles.create_auto_series(run.id, 2, -1)

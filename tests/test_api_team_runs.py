@@ -3762,3 +3762,59 @@ def test_detail_still_carries_the_series_the_lead_ended_early(tmp_path: Path) ->
     )
     assert detail["active_auto_series"]["settled_slots"] == 1
     assert detail["active_auto_series"]["target_slots"] == 3
+
+
+def test_triggering_with_a_repeat_count_starts_a_series(tmp_path: Path) -> None:
+    """반복 횟수는 런을 만들 때가 아니라 사이클을 트리거할 때 정한다.
+
+    첫 슬롯은 사장님이 쓴 지시여야 한다 -- 런의 목표를 쓰면 방금 입력한
+    문장이 버려진다. TRIGGERED 런의 목표는 비어 있을 수도 있다.
+    """
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    run = _create_triggered_run(client, leader_id, [member_id])
+
+    response = client.post(
+        f"/api/team-runs/{run['id']}/cycle-requests",
+        json={"instruction": "세 번 돌려라", "client_request_id": "ui-1", "repeat": 3},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["cycle_request"]["instruction"] == "세 번 돌려라"
+    series = client.app.state.team_cycle_service.get_active_series(run["id"])
+    assert series is not None
+    assert series.target_slots == 3
+    # 지켜보며 누르는 반복에 기다릴 이유가 없다.
+    assert series.interval_seconds == 0
+
+
+def test_triggering_without_a_repeat_count_behaves_as_before(tmp_path: Path) -> None:
+    """기본은 한 번이다. 시리즈를 만들지 않는다."""
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    run = _create_triggered_run(client, leader_id, [member_id])
+
+    response = client.post(
+        f"/api/team-runs/{run['id']}/cycle-requests",
+        json={"instruction": "한 번만", "client_request_id": "ui-2"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["cycle_request"]["source_type"] == "manual"
+    assert client.app.state.team_cycle_service.get_active_series(run["id"]) is None
+
+
+def test_a_repeat_count_beyond_the_cap_is_refused(tmp_path: Path) -> None:
+    client = authenticated_client(tmp_path)
+    leader_id = create_persona(client, "Tech Lead")
+    member_id = create_persona(client, "Developer")
+    run = _create_triggered_run(client, leader_id, [member_id])
+
+    response = client.post(
+        f"/api/team-runs/{run['id']}/cycle-requests",
+        json={"instruction": "너무 많이", "client_request_id": "ui-3", "repeat": 21},
+    )
+
+    assert response.status_code == 422

@@ -627,7 +627,9 @@ describe("TeamRunDetail", () => {
     await userEvent.click(screen.getByRole("button", { name: "Trigger cycle" }));
     expect(onTriggerCycle).toHaveBeenLastCalledWith({
       instruction: "next work",
-      previous_cycle_id: "c8"
+      previous_cycle_id: "c8",
+      // 반복은 트리거의 성질이다. 기본은 1 -- 지금까지와 같은 한 번.
+      repeat: 1
     });
     expect(instruction).toHaveValue("");
 
@@ -2616,5 +2618,72 @@ describe("TeamRunDetail 토큰 사용량", () => {
   it("합계가 없으면 아무것도 그리지 않는다", () => {
     renderUsage(undefined);
     expect(screen.queryByText(/입력/)).not.toBeInTheDocument();
+  });
+});
+
+
+describe("트리거할 때 반복 횟수", () => {
+  const triggeredRun = {
+    ...baseRun,
+    status: "completed",
+    execution_policy: "triggered",
+    lifecycle_mode: "continuous"
+  };
+
+  function renderTrigger(onTriggerCycle) {
+    return render(
+      <TeamRunDetail
+        detail={{ run: triggeredRun, agents: [], tasks: [], messages: [], cycles: [] }}
+        onTriggerCycle={onTriggerCycle}
+      />
+    );
+  }
+
+  it("입력한 횟수를 트리거에 실어 보낸다", async () => {
+    // 반복은 런의 성질이 아니라 이 트리거의 성질이다 -- "이번에 세 번 돌려라"
+    // 는 판단이 지시를 쓰는 순간에 난다.
+    const onTriggerCycle = vi.fn().mockResolvedValue(true);
+    renderTrigger(onTriggerCycle);
+
+    await userEvent.type(screen.getByLabelText("Cycle instruction"), "이어서 해라");
+    const repeat = screen.getByLabelText("반복 횟수");
+    await userEvent.clear(repeat);
+    await userEvent.type(repeat, "3");
+    await userEvent.click(screen.getByRole("button", { name: "Trigger cycle" }));
+
+    expect(onTriggerCycle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ instruction: "이어서 해라", repeat: 3 })
+    );
+  });
+
+  it("2 이상이면 리드가 이어간다고 말해준다", async () => {
+    // 승인 단계가 없으므로, 몇 번 돌지와 누가 다음을 정하는지가 누르기 전에
+    // 보여야 한다.
+    renderTrigger(vi.fn());
+    const repeat = screen.getByLabelText("반복 횟수");
+
+    expect(screen.getByText("한 번만 돕니다")).toBeInTheDocument();
+
+    await userEvent.clear(repeat);
+    await userEvent.type(repeat, "5");
+
+    expect(screen.getByText(/5회 — 리드가 다음 할 일을 정해 이어갑니다/)).toBeInTheDocument();
+  });
+
+  it("범위 밖 숫자를 쳐도 상한을 넘겨 보내지 않는다", async () => {
+    // 상한은 되돌릴 수 있는 크기다. 사람이 보기 전에 스무 사이클을 넘겨
+    // 태우지 않는다. 화면 표시보다 실제로 나가는 값이 지켜야 할 것이다.
+    const onTriggerCycle = vi.fn().mockResolvedValue(true);
+    renderTrigger(onTriggerCycle);
+
+    await userEvent.type(screen.getByLabelText("Cycle instruction"), "많이");
+    const repeat = screen.getByLabelText("반복 횟수");
+    await userEvent.clear(repeat);
+    await userEvent.type(repeat, "99");
+    await userEvent.click(screen.getByRole("button", { name: "Trigger cycle" }));
+
+    expect(onTriggerCycle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ repeat: 20 })
+    );
   });
 });

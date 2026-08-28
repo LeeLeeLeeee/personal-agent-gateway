@@ -10702,3 +10702,4 @@ async def test_a_triggered_run_is_not_asked_for_the_next_cycle_instruction(tmp_p
     synthesis_prompt = setup.lead_client.messages[-1][0]["content"]
     assert "NEXT CYCLE" not in synthesis_prompt
     assert "```next-cycle" not in synthesis_prompt
+

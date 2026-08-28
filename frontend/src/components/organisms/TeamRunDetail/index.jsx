@@ -975,6 +975,10 @@ export function TeamRunDetail({
   const [workInput, setWorkInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [cycleInstruction, setCycleInstruction] = useState("");
+  // 입력 중에는 사람이 친 그대로 둔다. 비우자마자 1 로 되돌리면 "3" 을 치려던
+  // 사람이 "13" 을 얻는다. 정리는 보낼 때 한 번만 한다.
+  const [cycleRepeat, setCycleRepeat] = useState("1");
+  const repeatCount = Math.min(20, Math.max(1, Number.parseInt(cycleRepeat, 10) || 1));
   const [triggeringCycle, setTriggeringCycle] = useState(false);
   const [autoAction, setAutoAction] = useState(null);
   const [resuming, setResuming] = useState(false);
@@ -1649,9 +1653,13 @@ export function TeamRunDetail({
                   try {
                     const accepted = await onTriggerCycle({
                       instruction,
-                      previous_cycle_id: previousCycle?.id || null
+                      previous_cycle_id: previousCycle?.id || null,
+                      repeat: repeatCount
                     });
-                    if (accepted) setCycleInstruction("");
+                    if (accepted) {
+                      setCycleInstruction("");
+                      setCycleRepeat("1");
+                    }
                   } finally {
                     setTriggeringCycle(false);
                   }
@@ -1665,6 +1673,27 @@ export function TeamRunDetail({
                     value={cycleInstruction}
                     onChange={(event) => setCycleInstruction(event.target.value)}
                   />
+                </label>
+                {/* 반복은 런의 성질이 아니라 이 트리거의 성질이다 -- "이번에
+                    세 번 돌려라" 는 판단이 지시를 쓰는 순간에 난다. 2 이상이면
+                    리드가 사이클마다 다음 지시를 정해 이어간다. */}
+                <label className="schedule-field team-cycle-repeat">
+                  <span className="schedule-field-label">반복</span>
+                  <input
+                    type="number"
+                    className="schedule-input"
+                    aria-label="반복 횟수"
+                    min={1}
+                    max={20}
+                    value={cycleRepeat}
+                    onChange={(event) => setCycleRepeat(event.target.value)}
+                    onBlur={() => setCycleRepeat(String(repeatCount))}
+                  />
+                  <span className="mono team-cycle-repeat-hint">
+                    {repeatCount > 1
+                      ? `${repeatCount}회 — 리드가 다음 할 일을 정해 이어갑니다`
+                      : "한 번만 돕니다"}
+                  </span>
                 </label>
                 <Button
                   type="submit"
