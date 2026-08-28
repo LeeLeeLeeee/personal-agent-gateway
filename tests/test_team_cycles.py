@@ -875,3 +875,59 @@ def test_a_cycle_with_no_proposal_yields_no_instruction(tmp_path):
     teams.set_cycle_status(cycle.id, "completed")
 
     assert cycles._auto_instruction(db.connect(), run.id, cycle.id) is None
+
+
+def test_a_series_carries_the_proposal_into_the_next_slot(tmp_path):
+    """조각을 따로 부르지 않고 시리즈를 이어 붙인다.
+
+    이 기능은 리드 응답에서 다음 요청까지 네 군데를 지난다. 앞서 화면과 서버가
+    둘 다 멀쩡한데 중간 배선이 빠져 기능이 조용히 죽은 적이 있다.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    db, teams, cycles, run = make_cycle_services(tmp_path, "auto")
+    agent = teams.get_agent(run.leader_agent_id)
+    # execution_policy="auto" 로 만든 런은 create_team_run 안에서 이미 시리즈와
+    # 첫 요청을 만든다 -- create_auto_series 를 다시 부르면 "이미 활성 시리즈가
+    # 있다" 에러가 난다. 활성 시리즈는 get_active_series 로 읽는다.
+    series = cycles.get_active_series(run.id)
+    first = cycles.claim_next(run.id)
+    assert first is not None
+    assert first.instruction == "goal"
+
+    cycle = teams.create_cycle(run.id, "auto", first.source_id, request_id=first.id)
+    _applied_synthesis(
+        db, teams, run, cycle, agent, {"summary": "끝", "next_cycle": "6문장을 다시 돌려라"}
+    )
+    teams.set_cycle_status(cycle.id, "completed")
+    cycles.settle_cycle(cycle.id)
+
+    later = datetime.now(UTC) + timedelta(seconds=series.interval_seconds + 1)
+    created = cycles.enqueue_due_auto_requests(now=later)
+
+    assert [item.instruction for item in created] == ["6문장을 다시 돌려라"]
+
+
+def test_a_series_ends_when_the_lead_proposes_nothing(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    db, teams, cycles, run = make_cycle_services(tmp_path, "auto")
+    agent = teams.get_agent(run.leader_agent_id)
+    series = cycles.get_active_series(run.id)
+    first = cycles.claim_next(run.id)
+    cycle = teams.create_cycle(run.id, "auto", first.source_id, request_id=first.id)
+    _applied_synthesis(db, teams, run, cycle, agent, {"summary": "끝"})
+    teams.set_cycle_status(cycle.id, "completed")
+    cycles.settle_cycle(cycle.id)
+
+    later = datetime.now(UTC) + timedelta(seconds=series.interval_seconds + 1)
+
+    assert cycles.enqueue_due_auto_requests(now=later) == []
+    # 끝난 시리즈는 get_active_series 가 찾지 못한다 -- auto_completed 는
+    # 활성 상태가 아니다. 표에서 직접 읽는다.
+    row = db.fetchone(
+        "select status, pause_reason from team_run_auto_series where id = ?",
+        (series.id,),
+    )
+    assert row["status"] == "auto_completed"
+    assert row["pause_reason"] == "lead_proposed_no_next_cycle"
