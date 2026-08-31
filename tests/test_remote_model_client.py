@@ -319,25 +319,27 @@ async def test_run_failed_raises():
 
 
 @pytest.mark.asyncio
-async def test_complete_rejects_events_after_terminal():
+async def test_complete_does_not_read_events_after_terminal():
     body = _sse(
         {"kind": "run.completed", "content": "final"},
         {"kind": "message.completed", "text": "LATE"},
     )
     client = HttpModelClient("http://lmg", "codex", "default", {}, transport=_transport(body))
-    with pytest.raises(RemoteRunProtocolError, match="event_after_terminal"):
-        await client.complete([{"role": "user", "content": "hi"}])
+    result = await client.complete([{"role": "user", "content": "hi"}])
+
+    assert result.content == "final"
 
 
 @pytest.mark.asyncio
-async def test_complete_rejects_duplicate_terminal():
+async def test_complete_uses_first_terminal_as_authoritative():
     body = _sse(
         {"kind": "run.completed", "content": "final"},
         {"kind": "run.completed", "content": "OVERWRITE"},
     )
     client = HttpModelClient("http://lmg", "codex", "default", {}, transport=_transport(body))
-    with pytest.raises(RemoteRunProtocolError, match="duplicate_terminal"):
-        await client.complete([{"role": "user", "content": "hi"}])
+    result = await client.complete([{"role": "user", "content": "hi"}])
+
+    assert result.content == "final"
 
 
 @pytest.mark.asyncio
@@ -631,13 +633,16 @@ async def test_legacy_run_failed_without_code_maps_to_process_failure():
 
 
 class _HangingAfterTerminalStream(httpx.AsyncByteStream):
+    def __init__(self, terminal: dict | None = None) -> None:
+        self._terminal = terminal or {"kind": "run.completed", "content": "done"}
+
     async def __aiter__(self):
-        yield _sse({"kind": "run.completed", "content": "done"})
+        yield _sse(self._terminal)
         await asyncio.Event().wait()
 
 
 @pytest.mark.asyncio
-async def test_overall_timeout_wins_when_stream_hangs_after_terminal():
+async def test_completed_terminal_returns_without_waiting_for_stream_eof():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -656,10 +661,90 @@ async def test_overall_timeout_wins_when_stream_hangs_after_terminal():
         transport=httpx.MockTransport(handler),
     )
 
-    with pytest.raises(RemoteRunAbortedError) as raised:
+    result = await client.complete([{"role": "user", "content": "hi"}])
+
+    assert result.content == "done"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("terminal", "error_type", "expected_code"),
+    [
+        (
+            {
+                "kind": "run.failed",
+                "error": "provider failed",
+                "error_code": "provider_process_failed",
+            },
+            RemoteRunFailedError,
+            "provider_process_failed",
+        ),
+        (
+            {
+                "kind": "run.aborted",
+                "error": "deadline exceeded",
+                "error_code": "run_timeout",
+            },
+            RemoteRunAbortedError,
+            "run_timeout",
+        ),
+    ],
+)
+async def test_error_terminal_raises_without_waiting_for_stream_eof(
+    terminal,
+    error_type,
+    expected_code,
+):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=_HangingAfterTerminalStream(terminal),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        timeout_seconds=0.01,
+        timeout_grace_seconds=0.01,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(error_type) as raised:
         await client.complete([{"role": "user", "content": "hi"}])
 
-    assert raised.value.code == "run_timeout"
+    assert raised.value.code == expected_code
+    assert str(raised.value) == terminal["error"]
+
+
+@pytest.mark.asyncio
+async def test_default_http_read_timeout_outlives_lmg_idle_kill_and_terminal():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(request.extensions["timeout"])
+        return httpx.Response(
+            200,
+            content=_sse({"kind": "run.completed", "content": "done"}),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = HttpModelClient(
+        "http://lmg",
+        "codex",
+        "default",
+        {},
+        idle_timeout_seconds=600,
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.complete([{"role": "user", "content": "hi"}])
+
+    assert captured["read"] == 620
 
 
 @pytest.mark.asyncio

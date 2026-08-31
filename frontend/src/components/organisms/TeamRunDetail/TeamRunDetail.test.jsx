@@ -797,6 +797,87 @@ describe("TeamRunDetail", () => {
     expect(screen.getByText("Worker", { selector: ".team-task-owner-name" })).toBeInTheDocument();
   });
 
+  it("shows pending sessions and PM requirement analysis while queued work starts", () => {
+    const detail = {
+      run: {
+        id: "r1",
+        goal: "Work",
+        status: "completed",
+        run_mode: "plan_and_execute",
+        lifecycle_mode: "continuous"
+      },
+      queueCount: 1,
+      activeRequest: null,
+      agents: [
+        { id: "lead", name: "PM", role: "leader", status: "completed", current_task_id: null },
+        { id: "worker", name: "Worker", role: "member", status: "completed", current_task_id: null }
+      ],
+      tasks: [],
+      cycles: [{ id: "old", sequence: 1, status: "completed" }],
+      messages: []
+    };
+    const { container, rerender } = render(<TeamRunDetail detail={detail} />);
+
+    expect(container.querySelectorAll(".team-lane-pending")).toHaveLength(2);
+    expect(screen.getAllByText("PENDING")).toHaveLength(2);
+    expect(screen.getByText("요구사항 분석중")).toBeInTheDocument();
+
+    rerender(<TeamRunDetail detail={{
+      ...detail,
+      run: { ...detail.run, status: "running" },
+      queueCount: 0,
+      activeRequest: { id: "request-2", status: "dispatching" },
+      agents: [
+        { id: "lead", name: "PM", role: "leader", status: "running", current_task_id: null },
+        { id: "worker", name: "Worker", role: "member", status: "pending", current_task_id: "task-2" }
+      ],
+      tasks: [{
+        id: "task-2",
+        cycle_id: "new",
+        title: "Build API",
+        status: "pending",
+        owner_agent_id: "worker"
+      }],
+      cycles: [
+        { id: "new", sequence: 2, status: "running" },
+        ...detail.cycles
+      ]
+    }} />);
+
+    expect(screen.queryByText("요구사항 분석중")).not.toBeInTheDocument();
+    expect(screen.getByText("Coordinating agents")).toBeInTheDocument();
+  });
+
+  it("shows live activity and accumulated response inside the agent session", () => {
+    render(<TeamRunDetail
+      detail={{
+        run: { id: "r1", goal: "Work", status: "running", run_mode: "plan_and_execute" },
+        agents: [{
+          id: "worker",
+          name: "Backend Worker",
+          role: "member",
+          status: "running",
+          current_task_id: "t1"
+        }],
+        tasks: [{ id: "t1", title: "Build API", status: "in_progress" }],
+        messages: [],
+        cycles: []
+      }}
+      agentProgress={{
+        worker: {
+          operationId: "operation-1",
+          activity: "shell · started",
+          answerPartial: "claim/lease 테스트를 추가하고 있습니다."
+        }
+      }}
+    />);
+
+    const progress = screen.getByRole("status", { name: "Backend Worker live response" });
+    expect(within(progress).getByText("LIVE RESPONSE")).toBeInTheDocument();
+    expect(within(progress).getByText("shell · started")).toBeInTheDocument();
+    expect(within(progress).getByText("claim/lease 테스트를 추가하고 있습니다.")).toBeInTheDocument();
+  });
+
   it("offers Stop run only for active runs and disables it while canceling", async () => {
     const onCancel = vi.fn(() => new Promise(() => {}));
     const detail = {

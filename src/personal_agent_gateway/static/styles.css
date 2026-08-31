@@ -3166,6 +3166,35 @@ p {
     letter-spacing: 1px;
     color: var(--c-grey);
 }
+.team-lane-progress {
+    margin-top: 9px;
+    border: 1px solid var(--c-panel);
+    border-left: 3px solid var(--c-ok);
+    background: var(--c-white);
+    padding: 8px;
+    min-width: 0;
+}
+.team-lane-progress-head {
+    color: var(--c-ok);
+    font-size: 8px;
+    letter-spacing: 1px;
+    margin-bottom: 5px;
+}
+.team-lane-progress-activity {
+    color: var(--c-grey);
+    font-size: 9px;
+    overflow-wrap: anywhere;
+}
+.team-lane-progress-answer {
+    margin-top: 5px;
+    color: var(--c-dark);
+    font-size: 11px;
+    line-height: 1.45;
+    max-height: 140px;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
 .team-lane-snapshot {
     font-size: 9px;
     letter-spacing: 1px;

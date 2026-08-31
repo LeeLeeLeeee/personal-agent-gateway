@@ -46,6 +46,7 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
   // 리드가 답을 쓰는 동안의 진행. 상세와 따로 두는 이유: 이것은 서버가
   // 가진 상태가 아니라 지나가는 신호라, 상세를 다시 읽으면 사라진다.
   const [questionProgress, setQuestionProgress] = useState(null);
+  const [agentProgress, setAgentProgress] = useState({});
   const [teamRunDocuments, setTeamRunDocuments] = useState([]);
   const [teamRunDelivery, setTeamRunDelivery] = useState(null);
   const [teamRunDeliveryLoading, setTeamRunDeliveryLoading] = useState(false);
@@ -65,6 +66,7 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
   useEffect(() => {
     selectedTeamRunIdRef.current = selectedTeamRunId;
     selectedTeamRunVersionRef.current += 1;
+    setAgentProgress({});
   }, [selectedTeamRunId]);
 
   function captureSelectedRun() {
@@ -210,6 +212,31 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
         .catch(setScreenError);
     }
     if (event.team_run_id !== selectedTeamRunIdRef.current) return;
+    if (event.type === "team.agent.progress") {
+      const agentId = event.agent_id;
+      const operationId = event.operation_id;
+      if (!agentId || !operationId) return;
+      setAgentProgress((current) => {
+        const existing = current[agentId];
+        if (event.active === false) {
+          if (existing?.operationId !== operationId) return current;
+          const next = { ...current };
+          delete next[agentId];
+          return next;
+        }
+        return {
+          ...current,
+          [agentId]: {
+            operationId,
+            stage: event.stage || existing?.stage || null,
+            taskId: event.task_id || existing?.taskId || null,
+            activity: event.activity ?? existing?.activity ?? null,
+            answerPartial: event.answer_partial ?? existing?.answerPartial ?? null
+          }
+        };
+      });
+      return;
+    }
     // 진행 이벤트는 상세를 다시 읽지 않는다. 아래 규칙은 델타가 없는 이벤트를
     // 전부 재조회로 보내는데, 답이 써지는 동안 조각마다 상세를 다시 읽으면
     // 화면이 그 요청들에 잠긴다. 활동과 답변 조각은 다른 이벤트로 오므로
@@ -762,6 +789,7 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     setTeamRunDocuments([]);
     setTeamRunDelivery(null);
     setTeamRunDeliveryLoading(false);
+    setAgentProgress({});
     setCreatingTeamRun(false);
   }
 
@@ -793,6 +821,7 @@ export function useTeamRunController({ toast, confirm, setScreenError, reloadKey
     handleAskTeamRun,
     refreshSelectedTeamRun,
     questionProgress,
+    agentProgress,
     handleResumeTeamRun,
     handleAnswerTeamDecision,
     handleCancelTeamRun,

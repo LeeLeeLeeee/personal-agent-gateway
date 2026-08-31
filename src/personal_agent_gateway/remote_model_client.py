@@ -25,6 +25,8 @@ _EVENT_KINDS = {
     "output.completed",
     # 상류 재시도 대기 중 (LMG Task 8).
     "run.retrying",
+    # 열린 provider item이 살아 있음을 알리는 LMG 생존 신호.
+    "run.heartbeat",
     "run.completed",
     "run.failed",
     "run.aborted",
@@ -51,6 +53,7 @@ _STRING_FIELDS = {
     "error_code",
     "partial_content",
 }
+_DEFAULT_TERMINAL_DELIVERY_GRACE_SECONDS = 20
 
 
 class RemoteRunError(RuntimeError):
@@ -101,7 +104,7 @@ class HttpModelClient:
         consumer_context_fingerprint: str | None = None,
         timeout_seconds: float = 3600,
         idle_timeout_seconds: float = 600,
-        timeout_grace_seconds: float = 5,
+        timeout_grace_seconds: float = _DEFAULT_TERMINAL_DELIVERY_GRACE_SECONDS,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -240,7 +243,10 @@ class HttpModelClient:
 
         request_timeout = httpx.Timeout(
             connect=min(max(self._timeout_seconds, 0.001), 10.0),
-            read=max(self._idle_timeout_seconds, 0.001),
+            read=max(
+                self._idle_timeout_seconds + self._timeout_grace_seconds,
+                0.001,
+            ),
             write=min(max(self._timeout_seconds, 0.001), 30.0),
             pool=min(max(self._timeout_seconds, 0.001), 10.0),
         )
@@ -267,6 +273,8 @@ class HttpModelClient:
                     async for line in response.aiter_lines():
                         if line == "":
                             await process_frame()
+                            if terminal is not None:
+                                break
                             continue
                         if line.startswith(":"):
                             continue

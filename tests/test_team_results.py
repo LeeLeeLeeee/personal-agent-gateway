@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -11,7 +12,10 @@ from personal_agent_gateway.personas import PersonaService
 from personal_agent_gateway.team_artifact_publisher import TeamArtifactPublisher
 from personal_agent_gateway.team_cycles import TeamCycleService
 from personal_agent_gateway.team_results import (
+    GitHeadSnapshotError,
     TeamRunResultPackager,
+    git_head_changes,
+    git_head_snapshot,
     workspace_changes,
     workspace_snapshot,
 )
@@ -65,6 +69,60 @@ def _completed_run(tmp_path: Path, write_mode: str = "isolated"):
     teams.finish_task(task.id, worker.id, "completed", result="API 구현 완료")
     run = teams.set_run_status(run.id, "completed", summary="서비스 구현 완료")
     return db, teams, run
+
+
+def test_git_head_snapshot_detects_commit_that_hides_a_dirty_nested_repo(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    repository = workspace / "app"
+    repository.mkdir(parents=True)
+
+    def git(*args: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", str(repository), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return completed.stdout.strip()
+
+    git("init")
+    git("config", "user.name", "Test Worker")
+    git("config", "user.email", "worker@example.invalid")
+    tracked = repository / "tracked.txt"
+    tracked.write_text("committed\n", encoding="utf-8")
+    git("add", "tracked.txt")
+    git("commit", "-m", "initial")
+    tracked.write_text("existing user change\n", encoding="utf-8")
+
+    files_before = workspace_snapshot(workspace)
+    heads_before = git_head_snapshot(workspace)
+    assert heads_before == {"app": git("rev-parse", "HEAD")}
+    git("add", "tracked.txt")
+    git("commit", "-m", "unauthorized worker commit")
+
+    assert workspace_changes(files_before, workspace_snapshot(workspace)) == {
+        "files_created": [],
+        "files_modified": [],
+        "files_deleted": [],
+    }
+    assert git_head_changes(heads_before, git_head_snapshot(workspace)) == {
+        "app": {
+            "before": heads_before["app"],
+            "after": git("rev-parse", "HEAD"),
+        }
+    }
+
+
+def test_git_head_snapshot_fails_closed_for_invalid_git_metadata(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "broken" / ".git").mkdir(parents=True)
+
+    with pytest.raises(GitHeadSnapshotError):
+        git_head_snapshot(workspace)
 
 
 def test_result_package_registers_run_outputs(

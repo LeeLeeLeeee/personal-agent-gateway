@@ -114,7 +114,24 @@ function buildHandoffs(messages) {
     });
 }
 
-export function currentWork(agent, task, runStatus) {
+export function requirementsAnalysisPending(detail) {
+  const queueCount = Number(detail?.queueCount || 0);
+  const requestDispatching = detail?.activeRequest?.status === "dispatching";
+  if (queueCount <= 0 && !requestDispatching) return false;
+
+  const activeCycle = [...(detail?.cycles || [])]
+    .sort((left, right) => Number(right.sequence || 0) - Number(left.sequence || 0))
+    .find((cycle) => ["queued", "running"].includes(cycle.status));
+  if (!activeCycle) return true;
+  return !(detail?.tasks || []).some((task) => task.cycle_id === activeCycle.id);
+}
+
+export function currentWork(agent, task, runStatus, analyzingRequirements = false) {
+  if (analyzingRequirements) {
+    return agent.role === "leader"
+      ? { title: "요구사항 분석중", startedAt: null }
+      : { title: "No active task", startedAt: null };
+  }
   if (task) {
     return {
       title: task.title,
@@ -967,7 +984,7 @@ export function TeamRunDetail({
   loading = false, loadError = false,
   onLoadDocument, onAddWork, onResume, onAnswerDecision,
   onRetryTask, onCancel, onReopen, onTriggerCycle, onRetryAuto, onContinueAuto, onRestartAuto,
-  onPause, onAskQuestion, questionProgress = null,
+  onPause, onAskQuestion, questionProgress = null, agentProgress = {},
   onRefreshDelivery, onCommitDelivery, onApplyDelivery,
   onResolveDeliveryConflict, onContinueDelivery, onCancelDeliveryConflicts,
   onContestPlan, onOpenSettings, onViewOutputs
@@ -1002,6 +1019,7 @@ export function TeamRunDetail({
   const [reopening, setReopening] = useState(false);
   const run = detail?.run;
   const nextRunAt = detail?.activeAutoSeries?.next_run_at || null;
+  const analyzingRequirements = requirementsAnalysisPending(detail);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -1024,7 +1042,7 @@ export function TeamRunDetail({
     };
   }, [nextRunAt]);
 
-  const hasRunningAgent = (detail?.agents || []).some(
+  const hasRunningAgent = !analyzingRequirements && (detail?.agents || []).some(
     (agent) => effectiveChildStatus(agent.status, run?.status) === "running"
   );
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -1057,7 +1075,9 @@ export function TeamRunDetail({
 
   const agents = (detail.agents || []).map((agent) => ({
     ...agent,
-    status: effectiveChildStatus(agent.status, run.status)
+    status: analyzingRequirements
+      ? "pending"
+      : effectiveChildStatus(agent.status, run.status)
   }));
   const tasks = (detail.tasks || []).map((task) => ({
     ...task,
@@ -1523,6 +1543,7 @@ export function TeamRunDetail({
           <div className="team-lanes">
             {agents.map((agent) => {
               const currentTask = findTask(tasks, agent.current_task_id);
+              const progress = agentProgress[agent.id] || null;
               const avatar = agent.persona_snapshot?.avatar;
               const roleLabel = agent.persona_snapshot?.role || agent.role;
               return (
@@ -1545,7 +1566,12 @@ export function TeamRunDetail({
                       {agent.status === "running" ? <span className="mono team-lane-live">LIVE</span> : null}
                     </div>
                     {(() => {
-                      const work = currentWork(agent, currentTask, run.status);
+                      const work = currentWork(
+                        agent,
+                        currentTask,
+                        run.status,
+                        analyzingRequirements
+                      );
                       const seconds = elapsedSeconds(work.startedAt, nowMs);
                       return (
                         <div className="team-lane-task">
@@ -1559,6 +1585,22 @@ export function TeamRunDetail({
                         </div>
                       );
                     })()}
+                    {progress ? (
+                      <div
+                        className="team-lane-progress"
+                        role="status"
+                        aria-live="polite"
+                        aria-label={`${agent.name} live response`}
+                      >
+                        <div className="mono team-lane-progress-head">LIVE RESPONSE</div>
+                        {progress.activity ? (
+                          <div className="mono team-lane-progress-activity">{progress.activity}</div>
+                        ) : null}
+                        {progress.answerPartial ? (
+                          <div className="team-lane-progress-answer">{progress.answerPartial}</div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {agentUsage(agent)}
                     <details className="team-lane-runtime">
                       <summary className="mono">RUNTIME</summary>

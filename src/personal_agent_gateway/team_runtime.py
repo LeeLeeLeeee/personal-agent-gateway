@@ -83,9 +83,12 @@ from personal_agent_gateway.team_repair_stages import repair_stage_for
 from personal_agent_gateway.team_results import (
     TeamRunResultPackager,
     WorkspaceSnapshot,
+    git_head_changes,
+    git_head_snapshot,
     workspace_changes,
     workspace_snapshot,
 )
+from personal_agent_gateway.team_memory import TeamRunMemoryService
 from personal_agent_gateway.team_output_contracts import (
     OutputContract,
     get_output_contract,
@@ -109,6 +112,15 @@ from personal_agent_gateway.teams import (
 
 _LOGGER = logging.getLogger(__name__)
 
+_AGENT_PROGRESS_TEXT_LIMIT = 8_000
+_AGENT_PROGRESS_ACTIVITY_LIMIT = 300
+
+
+def _bounded_progress_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1] + "…"
+
 PLANNING_PROMPT = """You are the leader agent for a personal-agent-gateway Team Run.
 Goal: {goal}
 Persona snapshot: {persona_snapshot_json}
@@ -116,6 +128,10 @@ Available team members: {team_roster_json}
 
 Before creating tasks, identify any consequential choice that only the user can make.
 First resolve ambiguity from the goal, frozen rules, and prior user decisions.
+A Worker's command wait ceiling is an execution detail, not a user decision.
+Do not ask the user to run the command, reduce the requested scope, or build a
+product step-runner solely because a long command yields early. Assign the work;
+the Worker receives provider-specific instructions for blocking and resuming it.
 Return ONLY one of:
 1. A JSON array of task objects. Each object must contain exactly:
    {{"plan_task_id":"stable-key", "title":"...", "description":"...", "owner_agent_id":"member-id or null",
@@ -169,6 +185,8 @@ Persona:
 
 Perform the concrete assignment below now. It is the complete user request.
 Do not ask the user what work to do and do not substitute unrelated repository work.
+Do not create commits or move Git HEAD or refs. Git history belongs to the Lead's
+synthesis stage; a Worker operation that changes repository HEAD is rejected.
 
 CONCRETE ASSIGNMENT
 Goal: {goal}
@@ -211,20 +229,60 @@ nobody checked, written as fact, is worse than a stated gap: it reads as an
 answer and cannot be told apart from one.
 
 Waiting costs as much as working. Every tool call resends this whole
-conversation, so checking a background job twenty times costs twenty full
-prompts even though nineteen of them learned nothing. When you wait for
-something to finish, wait inside one command -- loop there until it is done or
-a bound you set is reached, and report what the last check saw. Do not call the
-tool once per check. The loop is the whole point, not a longer sleep:
-    powershell: for ($i=0; $i -lt 20; $i++) {{ $s = <check>; if ($s -eq 'done') {{ break }}; Start-Sleep 30 }}; $s
-    sh:         for i in $(seq 20); do s=$(<check>); [ $s = done ] && break; sleep 30; done; echo $s
-One wait has a ceiling, and that loop will reach it. When your run tool comes
-back before the command finished -- partial output, a session or cell id, no
-exit code -- the process is still running and what you were handed is the wait,
-not the result. Resume that id and keep waiting, as many times as it takes,
-until an exit code arrives. Do not start the command over: a rerun pays the
-whole cost again and throws away what the first one had already done. A return
-without an exit code means "not finished yet", never "finished with nothing"."""
+conversation, so use the provider's blocking wait or resume primitive instead
+of polling through repeated model turns. After a long-running job has actually
+started, do not launch the same long-running job again merely because its first
+return was empty, partial, or lacked a confirmed exit status. That return is
+unresolved -- neither success nor proof that the process died. Confirm completion
+from a terminal status and the required artifact or durable state. Never end
+your reply merely saying that background work or a notification is pending."""
+
+
+def _worker_execution_block(worker: TeamAgent) -> str:
+    if worker.backend == "codex":
+        return """
+
+CODEX EXECUTION ENVIRONMENT
+On Windows, a command may yield after about 30 seconds while its process keeps
+running. For every command that may take more than 25 seconds, keep control in
+one `exec` cell and use this result-preserving shape (fill in the command and
+working directory, but do not simplify the control flow):
+
+    const chunks = [];
+    let r = await tools.exec_command({cmd: <command>, workdir: <directory>,
+      yield_time_ms: 30000, max_output_tokens: 20000});
+    if (r.output) chunks.push(r.output);
+    while (r.session_id !== undefined) {
+      r = await tools.write_stdin({session_id: r.session_id, chars: "",
+        yield_time_ms: 30000, max_output_tokens: 20000});
+      if (r.output) chunks.push(r.output);
+    }
+    text(JSON.stringify({...r, output: chunks.join("")}));
+
+Never emit only `r.output`. If the outer `exec` call yields a cell id while this
+JavaScript is still running, call the top-level `wait` tool on that same cell
+until the cell completes; do not launch another command. Only if the first full
+result truly has neither `session_id` nor `exit_code`, inspect the job's durable
+state with short commands and keep checking until it is terminal. Seeing
+`running` is not a reason to stop or relaunch. Do not use `Start-Process` merely
+to escape the command yield ceiling."""
+    if worker.backend == "claude":
+        raw_options = worker.persona_snapshot.get("default_options")
+        options = raw_options if isinstance(raw_options, dict) else {}
+        permission_mode = str(options.get("permission_mode") or "provider default")
+        return f"""
+
+CLAUDE EXECUTION ENVIRONMENT
+Permission mode for this worker: `{permission_mode}`. Prefer one foreground
+command and wait within the command tool's advertised timeout when the current
+policy permits it. If the tool returns a background task id, do not launch a
+duplicate: immediately call `TaskOutput` with `block=true` for that exact id and
+wait for its terminal result before reading the artifact. Do not end the turn
+waiting for a notification, and do not treat a Monitor that returned another
+background id as completion. If `TaskOutput` is unavailable, use another
+foreground blocking retrieval for that exact id; if none exists, report the
+task blocked instead of claiming that it is still running."""
+    return ""
 
 ACCEPTANCE_REVIEW_PROMPT = f"""You are the leader reviewing a rejected Team Run task outcome.
 Decide only from the goal, Cycle instruction, frozen rules, SPACE, Task contract,
@@ -236,6 +294,11 @@ task -- the specific thing that is missing or wrong, not a restatement of the
 rejection. Then answer one question: can the worker close it within the attempts
 that remain? An attempt spent on a gap the worker cannot close is an attempt the
 next real problem will not have.
+
+A Worker's command wait ceiling alone is not a user decision or a reason to add
+a product step-runner. The Worker has provider-specific blocking and resume
+instructions. Do not ask the user to run the command or reduce the requested
+scope solely because a tool returned before the command became terminal.
 
 When the answer is no -- the gap needs a decision nobody has made, a capability
 this run does not have, or more work than the remaining attempts hold -- choose
@@ -994,6 +1057,7 @@ class TeamRuntime:
         artifact_publisher: TeamArtifactPublisher | None = None,
         staged_inputs_resolver: Callable[[Path], StagedInputs | None] | None = None,
         *,
+        memory_service: TeamRunMemoryService | None = None,
         operations: TeamModelOperationService | None = None,
         model_invoker: TeamModelInvoker | None = None,
         model_effects: TeamModelEffectService | None = None,
@@ -1013,6 +1077,7 @@ class TeamRuntime:
         self._acceptance_service = acceptance_service or TeamAcceptanceService()
         self._artifact_publisher = artifact_publisher
         self._staged_inputs_resolver = staged_inputs_resolver
+        self._memory_service = memory_service
         self._operations = operations or TeamModelOperationService(
             teams._db,
             result_validators=team_model_effect_result_validators(),
@@ -1051,6 +1116,64 @@ class TeamRuntime:
         if cycle_id is None:
             return self._model_factory(agent, **streaming)
         return self._model_factory(agent, cycle_id, **streaming)
+
+    def _agent_progress(
+        self,
+        operation: TeamModelOperation,
+    ) -> Callable[[dict[str, object]], Awaitable[None]]:
+        answer_partial = ""
+
+        async def report(event: dict[str, object]) -> None:
+            nonlocal answer_partial
+            kind = event.get("kind")
+            progress: dict[str, object] = {
+                "type": "team.agent.progress",
+                "team_run_id": operation.team_run_id,
+                "cycle_id": operation.cycle_id,
+                "task_id": operation.task_id,
+                "agent_id": operation.agent_id,
+                "operation_id": operation.id,
+                "stage": operation.stage,
+                "active": True,
+            }
+            if kind in {"message.delta", "message.snapshot", "message.completed"}:
+                text = str(event.get("text") or "")
+                answer_partial = (
+                    answer_partial + text
+                    if kind == "message.delta"
+                    else text
+                )
+                answer_partial = _bounded_progress_text(
+                    answer_partial,
+                    _AGENT_PROGRESS_TEXT_LIMIT,
+                )
+                progress["answer_partial"] = answer_partial
+            elif kind == "tool.activity":
+                tool = event.get("tool")
+                tool = tool if isinstance(tool, dict) else {}
+                name = tool.get("name")
+                status = tool.get("status")
+                safe_name = name if isinstance(name, str) and name else "tool"
+                safe_status = (
+                    status if isinstance(status, str) and status else "active"
+                )
+                progress["activity"] = _bounded_progress_text(
+                    f"{safe_name} · {safe_status}",
+                    _AGENT_PROGRESS_ACTIVITY_LIMIT,
+                )
+            elif kind == "reasoning.delta":
+                progress["activity"] = "추론 중"
+            elif kind == "run.retrying":
+                progress["activity"] = "모델 재시도 중"
+            elif kind == "run.heartbeat":
+                progress["activity"] = "작업 계속 진행 중"
+            elif kind == "output.completed":
+                progress["activity"] = "응답 정리중"
+            else:
+                return
+            await self._publish(progress)
+
+        return report
 
     async def _invoke_with_repair(
         self,
@@ -1153,7 +1276,11 @@ class TeamRuntime:
         )
         try:
             return await self._invoke_operation(
-                repair_spec, agent, prompt, repair_parser or parser
+                repair_spec,
+                agent,
+                prompt,
+                repair_parser or parser,
+                workspace_baseline_operation_id=failed.id,
             )
         except InvalidOperationResult as exc:
             if on_exhausted is None:
@@ -1241,6 +1368,8 @@ class TeamRuntime:
         agent: TeamAgent,
         messages: list[dict[str, object]],
         parser: Callable[[ModelResponse], ValidatedOperationResult],
+        *,
+        workspace_baseline_operation_id: str | None = None,
     ) -> TeamModelOperation:
         open_operation = self._operations.get_open_for_cycle(
             spec.cycle_id,
@@ -1261,22 +1390,49 @@ class TeamRuntime:
         if (
             operation.status == "prepared"
             and operation.stage
-            in {"worker_execution", "mediation_worker", "acceptance_worker"}
+            in {
+                "worker_execution",
+                "mediation_worker",
+                "mediation_worker_repair",
+                "acceptance_worker",
+                "acceptance_worker_repair",
+            }
             and operation.task_id is not None
         ):
             current_run = self._teams.get_team_run(operation.team_run_id)
+            working_root = Path(
+                current_run.working_root or current_run.workspace_root
+            )
+            if workspace_baseline_operation_id is None:
+                baseline_snapshot = workspace_snapshot(working_root)
+                baseline_git_heads = git_head_snapshot(working_root)
+            else:
+                baseline_snapshot = (
+                    self._teams.get_operation_workspace_baseline(
+                        workspace_baseline_operation_id,
+                        team_run_id=operation.team_run_id,
+                        cycle_id=operation.cycle_id,
+                        task_id=operation.task_id,
+                        agent_id=operation.agent_id,
+                    )
+                )
+                baseline_git_heads = (
+                    self._teams.get_operation_git_head_baseline(
+                        workspace_baseline_operation_id,
+                        team_run_id=operation.team_run_id,
+                        cycle_id=operation.cycle_id,
+                        task_id=operation.task_id,
+                        agent_id=operation.agent_id,
+                    )
+                )
             self._teams.record_operation_workspace_baseline(
                 operation.id,
                 team_run_id=operation.team_run_id,
                 cycle_id=operation.cycle_id,
                 task_id=operation.task_id,
                 agent_id=operation.agent_id,
-                snapshot=workspace_snapshot(
-                    Path(
-                        current_run.working_root
-                        or current_run.workspace_root
-                    )
-                ),
+                snapshot=baseline_snapshot,
+                git_heads=baseline_git_heads,
             )
         if operation.status in {"completed", "applied"}:
             return operation
@@ -1284,10 +1440,16 @@ class TeamRuntime:
             raise OperationConflict(
                 f"Operation status {operation.status} cannot be invoked"
             )
+        on_event = (
+            self._agent_progress(operation)
+            if self._event_bus is not None
+            else None
+        )
         client = self._model(
             agent,
             spec.cycle_id,
             upstream_session_id=operation.upstream_session_id,
+            on_event=on_event,
         )
         try:
             return await self._model_invoker.invoke(
@@ -1313,6 +1475,20 @@ class TeamRuntime:
                 upstream_session_id=None,
             )
             raise
+        finally:
+            if on_event is not None:
+                await self._publish(
+                    {
+                        "type": "team.agent.progress",
+                        "team_run_id": operation.team_run_id,
+                        "cycle_id": operation.cycle_id,
+                        "task_id": operation.task_id,
+                        "agent_id": operation.agent_id,
+                        "operation_id": operation.id,
+                        "stage": operation.stage,
+                        "active": False,
+                    }
+                )
 
     def _with_radio(
         self,
@@ -2165,7 +2341,9 @@ class TeamRuntime:
             self._space_policy(run, cycle_id),
             cycle_id,
         ) + self._archive_block(
+            run,
             f"{goal_context}\n{instruction}",
+            cycle_id=cycle_id,
             persona_id=leader.persona_id,
             allow_request=False,
         ) + self._team_note_block(run) + ADD_WORK_PROMPT.format(
@@ -2238,21 +2416,31 @@ class TeamRuntime:
 
     def _archive_block(
         self,
+        run: TeamRun,
         query: str,
         *,
+        cycle_id: str | None,
         persona_id: str,
         allow_request: bool,
     ) -> str:
-        if self._archive_service is None:
-            return ""
-        return (
-            self._archive_service.prompt_context(
-                query,
-                persona_id=persona_id,
-                allow_request=allow_request,
+        blocks: list[str] = []
+        if self._archive_service is not None:
+            blocks.append(
+                self._archive_service.prompt_context(
+                    query,
+                    persona_id=persona_id,
+                    allow_request=allow_request,
+                )
             )
-            + "\n\n"
-        )
+        if self._memory_service is not None:
+            memory = self._memory_service.prompt_context(
+                query,
+                team_id=run.team_id,
+                exclude_cycle_id=cycle_id,
+            )
+            if memory:
+                blocks.append(memory)
+        return "\n\n".join(blocks) + ("\n\n" if blocks else "")
 
     def _team_note_block(self, run: TeamRun) -> str:
         """이 팀의 노트 전문. 없으면 빈 문자열.
@@ -2499,7 +2687,9 @@ class TeamRuntime:
         ) + _rules_block(
             self._rules_snapshot(run, cycle_id), include_persona_baseline=False
         ) + self._archive_block(
+            run,
             goal_context,
+            cycle_id=cycle_id,
             persona_id=leader_agent.persona_id,
             allow_request=False,
         ) + self._team_note_block(run) + PLANNING_PROMPT.format(
@@ -3559,6 +3749,7 @@ class TeamRuntime:
             if operation is None:
                 continue
             worker = self._teams.get_agent(task.owner_agent_id)
+            lead_stage = _lead_decision_stage(operation.stage)
             answer = self._resolved_lead_decision_answer(
                 operation,
                 task,
@@ -3573,7 +3764,7 @@ class TeamRuntime:
                     raise OperationConflict(
                         "Resolved Lead decision task is not actively owned"
                     )
-                if operation.stage == "mediation_lead":
+                if lead_stage == "mediation_lead":
                     stage = "mediation_worker"
                     messages = _mediation_worker_messages(
                         {"answer": answer}
@@ -3586,7 +3777,7 @@ class TeamRuntime:
                             run,
                         )
 
-                elif operation.stage == "acceptance_lead":
+                elif lead_stage == "acceptance_lead":
                     stage = "acceptance_worker"
                     messages = _acceptance_user_answer_messages(
                         task,
@@ -3629,7 +3820,7 @@ class TeamRuntime:
                 )
             if task.status == "pending":
                 continue
-            if operation.stage == "acceptance_lead":
+            if lead_stage == "acceptance_lead":
                 resolution = _operation_acceptance_resolution(operation)
                 effect = self._model_effects.apply_acceptance_lead(
                     operation.id,
@@ -3643,7 +3834,7 @@ class TeamRuntime:
                     resolution,
                     effect,
                 )
-            if operation.stage == "mediation_lead":
+            if lead_stage == "mediation_lead":
                 resolution = _operation_mediation_resolution(operation)
                 effect = self._model_effects.apply_mediation_lead(
                     operation.id,
@@ -3688,11 +3879,12 @@ class TeamRuntime:
         operation: TeamModelOperation,
         task: TeamTask,
     ) -> str | None:
-        if operation.stage not in {"mediation_lead", "acceptance_lead"}:
+        lead_stage = _lead_decision_stage(operation.stage)
+        if lead_stage is None:
             return None
         effect_ref = operation.effect_ref_json
         if (
-            operation.effect_type != operation.stage
+            operation.effect_type != lead_stage
             or not isinstance(effect_ref, dict)
             or effect_ref.get("next_stage") != "user_decision"
             or not isinstance(effect_ref.get("decision_request_id"), str)
@@ -3721,7 +3913,7 @@ class TeamRuntime:
                 task.id,
                 (
                     effect_ref.get("query_message_id")
-                    if operation.stage == "mediation_lead"
+                    if lead_stage == "mediation_lead"
                     else None
                 ),
             )
@@ -3732,7 +3924,7 @@ class TeamRuntime:
                 "Resolved Lead decision receipt is invalid"
             )
         if (
-            operation.stage == "mediation_lead"
+            lead_stage == "mediation_lead"
             and effect_ref.get("query_message_id")
             not in item.get("query_message_ids", [])
         ):
@@ -3774,8 +3966,16 @@ class TeamRuntime:
             raise OperationConflict("Completed Worker operation result is invalid")
         outcome = _operation_task_outcome(operation)
         working_root = Path(run.working_root or run.workspace_root)
+        before_git_heads = None
         try:
             before = self._teams.get_operation_workspace_baseline(
+                operation.id,
+                team_run_id=operation.team_run_id,
+                cycle_id=operation.cycle_id,
+                task_id=task.id,
+                agent_id=worker.id,
+            )
+            before_git_heads = self._teams.get_operation_git_head_baseline(
                 operation.id,
                 team_run_id=operation.team_run_id,
                 cycle_id=operation.cycle_id,
@@ -3812,6 +4012,18 @@ class TeamRuntime:
             task.acceptance.required_outputs,
             working_root,
         )
+        if before_git_heads is not None:
+            changed_heads = git_head_changes(
+                before_git_heads,
+                git_head_snapshot(working_root),
+            )
+            if changed_heads:
+                acceptance = AcceptanceResult(
+                    accepted=False,
+                    status="failed",
+                    reason_code="workspace_git_head_changed",
+                    evidence={"repositories": changed_heads},
+                )
         if acceptance.accepted and outcome.deliverables:
             try:
                 if self._artifact_publisher is None:
@@ -4303,7 +4515,9 @@ class TeamRuntime:
             self._space_policy(run, task.cycle_id),
             task.cycle_id,
         ) + self._archive_block(
+            run,
             f"{goal_context}\n{task.title}\n{question}",
+            cycle_id=task.cycle_id,
             persona_id=leader.persona_id,
             allow_request=False,
         ) + MEDIATION_PROMPT.format(
@@ -4555,6 +4769,14 @@ class TeamRuntime:
                 0,
                 messages,
                 task_id=task.id,
+                # An independent assignment carries its complete context in
+                # this prompt. Reusing a session from an older task also
+                # reuses that thread's tool contract; cycle 39 inherited an
+                # 8/24 code-mode wrapper that discarded command session ids,
+                # while a fresh thread completed the same 45-second command.
+                # Repairs and acceptance continuations still resume the new
+                # session recorded by this operation.
+                upstream_session_id=None,
             )
             def parser(response):
                 return self._validated_worker_result(
@@ -4735,7 +4957,9 @@ class TeamRuntime:
         ) + _rules_block(
             self._rules_snapshot(run, task.cycle_id), include_persona_baseline=True
         ) + self._archive_block(
+            run,
             f"{goal_context}\n{task.title}\n{task.description}",
+            cycle_id=task.cycle_id,
             persona_id=worker.persona_id,
             allow_request=True,
         ) + self._team_note_block(run) + WORKER_PROMPT.format(
@@ -4744,6 +4968,7 @@ class TeamRuntime:
             task_title=task.title,
             task_description=task.description,
         )
+        prompt += _worker_execution_block(worker)
         prompt += "\n\nAcceptance criteria:\n" + _task_acceptance_json(task.acceptance)
         prompt += (
             "\n\nALLOWED TASK INPUTS\n"
@@ -5369,7 +5594,9 @@ class TeamRuntime:
         ) + _rules_block(
             self._rules_snapshot(run, cycle_id), include_persona_baseline=False
         ) + self._archive_block(
+            run,
             f"{goal_context}\n{results}",
+            cycle_id=cycle_id,
             persona_id=leader_agent.persona_id,
             allow_request=True,
         ) + self._team_note_block(run) + synthesis_block + self._team_note_rewrite_block(run, contract, cycle_id) + self._commit_block(cycle_id) + self._next_cycle_block(run, contract, cycle_id)
@@ -5881,6 +6108,17 @@ def _operation_key(
     if task_id is None:
         return f"{cycle_id}:{stage}:{stage_ordinal}"
     return f"{cycle_id}:{task_id}:{stage}:{stage_ordinal}"
+
+
+def _lead_decision_stage(
+    stage: str,
+) -> Literal["mediation_lead", "acceptance_lead"] | None:
+    return {
+        "mediation_lead": "mediation_lead",
+        "mediation_lead_repair": "mediation_lead",
+        "acceptance_lead": "acceptance_lead",
+        "acceptance_lead_repair": "acceptance_lead",
+    }.get(stage)
 
 
 def _operation_request_digest(

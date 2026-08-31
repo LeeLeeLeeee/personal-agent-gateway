@@ -27,7 +27,7 @@ def _sse(*events: dict) -> str:
 
 @pytest.mark.parametrize(
     "kind",
-    ["message.snapshot", "output.completed", "run.retrying"],
+    ["message.snapshot", "output.completed", "run.retrying", "run.heartbeat"],
 )
 def test_decode_event_accepts_extended_kinds(kind: str) -> None:
     event = _decode_event(kind, '{"kind": "%s", "run_id": "run-1"}' % kind)

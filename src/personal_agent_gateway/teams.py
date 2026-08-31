@@ -3630,6 +3630,7 @@ class TeamRunService:
         task_id: str,
         agent_id: str,
         snapshot: Mapping[str, tuple[int, int]],
+        git_heads: Mapping[str, str] | None = None,
     ) -> None:
         normalized = {
             path: [int(value[0]), int(value[1])]
@@ -3640,12 +3641,26 @@ class TeamRunService:
         }
         if len(normalized) != len(snapshot):
             raise ValueError("Workspace baseline snapshot is invalid")
+        normalized_git_heads = None
+        if git_heads is not None:
+            normalized_git_heads = {
+                path: head
+                for path, head in sorted(git_heads.items())
+                if isinstance(path, str)
+                and isinstance(head, str)
+                and path
+                and head
+            }
+            if len(normalized_git_heads) != len(git_heads):
+                raise ValueError("Workspace Git baseline snapshot is invalid")
         message_id = _operation_workspace_baseline_id(operation_id)
         metadata = {
             "operation_id": operation_id,
             "task_id": task_id,
             "snapshot": normalized,
         }
+        if normalized_git_heads is not None:
+            metadata["git_heads"] = normalized_git_heads
         now = _now()
         with self._db.connection() as connection:
             connection.execute("begin immediate")
@@ -3673,13 +3688,15 @@ class TeamRunService:
             ).fetchone()
             if existing is not None:
                 message = _team_message_from_row(existing)
+                legacy_metadata = dict(metadata)
+                legacy_metadata.pop("git_heads", None)
                 if (
                     message.team_run_id != team_run_id
                     or message.cycle_id != cycle_id
                     or message.sender_agent_id != agent_id
                     or message.recipient_agent_id is not None
                     or message.kind != "operation_workspace_baseline"
-                    or message.metadata != metadata
+                    or message.metadata not in (metadata, legacy_metadata)
                 ):
                     raise ValueError(
                         "Workspace baseline receipt does not match"
@@ -3742,6 +3759,46 @@ class TeamRunService:
             ):
                 raise ValueError("Workspace baseline snapshot is invalid")
             normalized[path] = (value[0], value[1])
+        return normalized
+
+    def get_operation_git_head_baseline(
+        self,
+        operation_id: str,
+        *,
+        team_run_id: str,
+        cycle_id: str,
+        task_id: str,
+        agent_id: str,
+    ) -> dict[str, str] | None:
+        message = self._get_message(
+            _operation_workspace_baseline_id(operation_id)
+        )
+        metadata = message.metadata
+        if (
+            message.team_run_id != team_run_id
+            or message.cycle_id != cycle_id
+            or message.sender_agent_id != agent_id
+            or message.recipient_agent_id is not None
+            or message.kind != "operation_workspace_baseline"
+            or metadata.get("operation_id") != operation_id
+            or metadata.get("task_id") != task_id
+        ):
+            raise ValueError("Workspace baseline receipt is invalid")
+        git_heads = metadata.get("git_heads")
+        if git_heads is None:
+            return None
+        if not isinstance(git_heads, dict):
+            raise ValueError("Workspace Git baseline snapshot is invalid")
+        normalized: dict[str, str] = {}
+        for path, head in git_heads.items():
+            if (
+                not isinstance(path, str)
+                or not path
+                or not isinstance(head, str)
+                or not head
+            ):
+                raise ValueError("Workspace Git baseline snapshot is invalid")
+            normalized[path] = head
         return normalized
 
     def _require_cycle_for_run(self, team_run_id: str, cycle_id: str) -> TeamRunCycle:

@@ -2,7 +2,8 @@ import asyncio
 import contextlib
 import json
 import logging
-from dataclasses import dataclass
+import subprocess
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -513,6 +514,123 @@ def add_completed_operation_task(setup):
         result="existing result",
     )
     return task
+
+
+@pytest.mark.asyncio
+async def test_new_worker_assignment_starts_a_fresh_provider_session(tmp_path):
+    setup = make_operation_runtime(tmp_path)
+    setup.teams.set_agent_session(setup.worker.id, "old-task-session")
+    worker = setup.teams.get_agent(setup.worker.id)
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Fresh assignment",
+        "Run with the current tool contract.",
+        owner_agent_id=worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance((), (RequiredVerification("worker-result"),)),
+    )
+    task, worker = setup.teams.start_task(task.id, worker.id)
+    leader = setup.teams.get_agent(setup.run.leader_agent_id)
+
+    operation = await setup.runtime._run_task(
+        setup.run,
+        leader,
+        worker,
+        task,
+    )
+
+    assert operation.stage == "worker_execution"
+    assert setup.factory_sessions[-1] == (worker.id, None)
+    assert operation.upstream_session_id != "old-task-session"
+
+
+@pytest.mark.asyncio
+async def test_worker_model_events_publish_safe_accumulated_agent_progress(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    event_bus = EventBus()
+
+    class StreamingWorker:
+        def __init__(self, on_event):
+            self.on_event = on_event
+
+        async def complete_operation(self, _messages, *, consumer_run_id):
+            assert self.on_event is not None
+            for event in (
+                {"kind": "reasoning.delta", "text": "private reasoning"},
+                {"kind": "run.heartbeat"},
+                {
+                    "kind": "tool.activity",
+                    "tool": {
+                        "name": "shell",
+                        "status": "started",
+                        "arguments": {"token": "secret-token"},
+                        "result": "secret-result",
+                    },
+                },
+                {"kind": "message.delta", "text": "Hel"},
+                {"kind": "message.delta", "text": "lo"},
+                {"kind": "message.snapshot", "text": "x" * 9_000},
+            ):
+                await self.on_event(event)
+            return ModelResponse(_outcome_json("done"), [])
+
+    def model_factory(agent, _cycle_id=None, *, on_event=None):
+        if agent.role == "leader":
+            return setup.lead_client
+        return StreamingWorker(on_event)
+
+    runtime = TeamRuntime(
+        setup.teams,
+        model_factory,
+        event_bus,
+        operations=setup.operations,
+        model_invoker=TeamModelInvoker(setup.operations, sleep=_no_sleep),
+        model_effects=TeamModelEffectService(
+            setup.db,
+            setup.teams,
+            setup.operations,
+        ),
+    )
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Stream work",
+        "Report progress.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance(
+            (),
+            (RequiredVerification("worker-result"),),
+        ),
+    )
+    task, worker = setup.teams.start_task(task.id, setup.worker.id)
+    leader = setup.teams.get_agent(setup.run.leader_agent_id)
+
+    operation = await runtime._run_task(
+        setup.run,
+        leader,
+        worker,
+        task,
+    )
+
+    progress = [
+        event
+        for event in event_bus.recent()
+        if event["type"] == "team.agent.progress"
+    ]
+    assert operation.status == "completed"
+    assert progress[0]["activity"] == "추론 중"
+    assert progress[1]["activity"] == "작업 계속 진행 중"
+    assert progress[2]["activity"] == "shell · started"
+    assert "secret" not in json.dumps(progress, ensure_ascii=False)
+    assert progress[3]["answer_partial"] == "Hel"
+    assert progress[4]["answer_partial"] == "Hello"
+    assert len(progress[5]["answer_partial"]) == 8_000
+    assert progress[5]["answer_partial"].endswith("…")
+    assert progress[-1]["active"] is False
+    assert all(event["agent_id"] == worker.id for event in progress)
+    assert all(event["operation_id"] == operation.id for event in progress)
 
 
 @pytest.mark.asyncio
@@ -1950,6 +2068,53 @@ async def test_acceptance_user_answer_resumes_distinct_worker_operation(
 
 
 @pytest.mark.asyncio
+async def test_repaired_acceptance_user_answer_resumes_distinct_worker_operation(
+    tmp_path,
+):
+    """A repaired Lead decision is still an acceptance_lead receipt.
+
+    Cycle 39 paused from acceptance_lead_repair. Recovery treated that stage as
+    unrelated to the applied acceptance decision and tried to reserve the
+    already-used acceptance_lead key again with different messages.
+    """
+    setup = make_recoverable_acceptance_runtime(tmp_path)
+    setup.lead_client.responses = [
+        ModelResponse("not-json", [], upstream_session_id="lead-session-1"),
+        ModelResponse(
+            _ask_user_resolution("Which acceptance scope?"),
+            [],
+            upstream_session_id="lead-session-1",
+        ),
+        ModelResponse("summary", []),
+    ]
+
+    waiting = await setup.runtime.resume(setup.run.id, setup.cycle.id)
+    request = setup.teams.list_decision_requests(setup.run.id)[0]
+    assert waiting.status == "waiting_for_user"
+    setup.teams.answer_decision_request(
+        setup.run.id,
+        request.id,
+        request.revision,
+        {request.items[0]["id"]: "Use the current acceptance scope."},
+    )
+
+    completed = await restart_operation_runtime(setup).resume(
+        setup.run.id,
+        setup.cycle.id,
+    )
+
+    assert completed.status == "completed"
+    assert setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_lead_repair:1"
+    ).status == "applied"
+    continuation = setup.operations.get_by_key(
+        f"{setup.cycle.id}:{setup.task.id}:acceptance_worker:1"
+    )
+    assert continuation is not None
+    assert continuation.status == "applied"
+
+
+@pytest.mark.asyncio
 async def test_acceptance_user_decision_does_not_block_dependent_tasks(
     tmp_path,
 ):
@@ -2408,6 +2573,162 @@ async def test_completed_worker_recovery_uses_durable_workspace_baseline(
         and message.metadata.get("operation_id") == operation.id
     )
     assert output.metadata["created"] == ["revision.txt"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_first",
+    [False, True],
+    ids=["direct-outcome", "invalid-then-repair"],
+)
+async def test_worker_commit_is_rejected_even_when_it_hides_existing_changes(
+    tmp_path,
+    invalid_first,
+):
+    setup = make_operation_runtime(tmp_path)
+    working_root = Path(setup.run.working_root or setup.run.workspace_root)
+    repository = working_root / "app"
+    repository.mkdir(parents=True, exist_ok=True)
+
+    def git(*args: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", str(repository), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return completed.stdout.strip()
+
+    git("init")
+    git("config", "user.name", "Test Worker")
+    git("config", "user.email", "worker@example.invalid")
+    tracked = repository / "tracked.txt"
+    tracked.write_text("committed\n", encoding="utf-8")
+    git("add", "tracked.txt")
+    git("commit", "-m", "initial")
+    tracked.write_text("existing user change\n", encoding="utf-8")
+    baseline_head = git("rev-parse", "HEAD")
+
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Observe only",
+        "Do not modify files or Git history.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+        acceptance=TaskAcceptance(
+            (),
+            (RequiredVerification("worker-result"),),
+        ),
+    )
+    task, worker = setup.teams.start_task(task.id, setup.worker.id)
+    leader = setup.teams.get_agent(setup.run.leader_agent_id)
+
+    if invalid_first:
+        setup.worker_client.responses.insert(0, ModelResponse("not-json", []))
+
+    def commit_existing_change(call: int) -> None:
+        if call != 1:
+            return
+        git("add", "tracked.txt")
+        git("commit", "-m", "unauthorized worker commit")
+
+    setup.worker_client.before_complete = commit_existing_change
+    setup.lead_client.responses = [
+        ModelResponse(
+            json.dumps(
+                {
+                    "resolution": {
+                        "kind": "fail",
+                        "reason_code": "workspace_git_head_changed",
+                        "summary": "Worker commits are not allowed.",
+                    }
+                }
+            ),
+            [],
+        )
+    ]
+
+    operation = await setup.runtime._run_task(
+        setup.run,
+        leader,
+        worker,
+        task,
+    )
+    await setup.runtime._apply_cycle_worker_operation(
+        setup.run,
+        leader,
+        worker,
+        task,
+        operation,
+        before=None,
+    )
+
+    rejected = setup.teams.get_task(task.id)
+    assert rejected.status == "failed"
+    assert rejected.acceptance_result is not None
+    assert rejected.acceptance_result["reason_code"] == (
+        "workspace_git_head_changed"
+    )
+    assert rejected.acceptance_result["evidence"]["repositories"] == {
+        "app": {
+            "before": baseline_head,
+            "after": git("rev-parse", "HEAD"),
+        }
+    }
+    assert tracked.read_text(encoding="utf-8") == "existing user change\n"
+    assert git("status", "--short") == ""
+
+
+def test_legacy_workspace_baseline_without_git_heads_remains_readable(
+    tmp_path,
+):
+    setup = make_operation_runtime(tmp_path)
+    task = setup.teams.create_task(
+        setup.run.id,
+        "Legacy task",
+        "Legacy baseline compatibility.",
+        owner_agent_id=setup.worker.id,
+        cycle_id=setup.cycle.id,
+    )
+    operation = setup.operations.reserve(
+        OperationSpec(
+            operation_key=f"{setup.cycle.id}:{task.id}:worker_execution:legacy",
+            team_run_id=setup.run.id,
+            cycle_id=setup.cycle.id,
+            task_id=task.id,
+            agent_id=setup.worker.id,
+            provider=setup.worker.backend,
+            stage="worker_execution",
+            stage_ordinal=1,
+            request_digest="1" * 64,
+        )
+    )
+    setup.teams.record_operation_workspace_baseline(
+        operation.id,
+        team_run_id=setup.run.id,
+        cycle_id=setup.cycle.id,
+        task_id=task.id,
+        agent_id=setup.worker.id,
+        snapshot={},
+    )
+
+    setup.teams.record_operation_workspace_baseline(
+        operation.id,
+        team_run_id=setup.run.id,
+        cycle_id=setup.cycle.id,
+        task_id=task.id,
+        agent_id=setup.worker.id,
+        snapshot={},
+        git_heads={"app": "a" * 40},
+    )
+
+    assert setup.teams.get_operation_git_head_baseline(
+        operation.id,
+        team_run_id=setup.run.id,
+        cycle_id=setup.cycle.id,
+        task_id=task.id,
+        agent_id=setup.worker.id,
+    ) is None
 
 
 @pytest.mark.asyncio
@@ -10488,6 +10809,7 @@ async def test_the_lead_is_asked_to_commit_and_the_worker_is_not(tmp_path):
 
     worker_prompt = setup.runtime._worker_prompt(run, setup.worker, task)
     assert "COMMITTING THIS CYCLE" not in worker_prompt
+    assert "Do not create commits or move Git HEAD or refs" in worker_prompt
 
     await setup.runtime.resume(setup.run.id, setup.cycle.id)
 
@@ -10544,42 +10866,64 @@ def test_the_worker_is_told_not_to_poll_with_separate_tool_calls(tmp_path):
     run = setup.teams.get_team_run(setup.run.id)
     task = setup.teams.list_tasks(run.id, setup.cycle.id)[0]
 
-    prompt = setup.runtime._worker_prompt(run, setup.worker, task)
+    prompt = " ".join(setup.runtime._worker_prompt(run, setup.worker, task).split())
 
-    assert "wait inside one command" in prompt
-    # 프롬프트가 줄바꿈되므로 한 줄 안에 있는 조각으로 본다.
-    assert "once per check" in prompt
-    # 예시가 format() 을 거쳐 실제 중괄호로 나와야 한다. 규칙만 있고 방법이
-    # 없을 때 실측에서 작업자는 잠자는 시간만 30 초에서 55 초로 늘리고 호출은
-    # 여전히 따로 냈다.
-    assert "if ($s -eq 'done') { break }" in prompt
+    assert "provider's blocking wait or resume primitive" in prompt
+    assert "do not launch the same long-running job again" in prompt
+    assert "Never end your reply merely saying" in prompt
+    # 제공자마다 대기 정책이 다르므로 공통 프롬프트가 특정 셸의 긴 sleep
+    # 루프를 정답으로 못박으면 안 된다.
+    assert "if ($s -eq 'done') { break }" not in prompt
 
 
-def test_the_worker_is_told_a_cut_off_command_is_still_running(tmp_path):
-    """한 번의 기다림에는 천장이 있다. 그 위의 규칙만으로는 그 천장을 못 넘는다.
-
-    codex 가 자기 도구를 설명하는 문장에 박혀 있다 -- "Effective range on
-    Windows is 10000-30000 ms". 명령 실행은 30 초까지만 기다리고, 그 뒤에는
-    세션 id 를 붙여 중간 결과를 돌려준다. 프로세스는 살아 있다. 실측에서
-    영어 학습 TF 는 이것을 "환경이 30 초에서 죽인다" 로 읽고 매번 명령을
-    처음부터 다시 띄웠고, 그때마다 앱이 다시 죽어 다섯 사이클을 썼다.
-
-    도구 이름은 쓰지 않는다. WORKER_PROMPT 는 상수 하나여서 이 팀원이 어느
-    제공자로 도는지 모르고, exec_command 와 write_stdin 은 codex 에만 있다.
-    Claude 로 도는 팀원에게는 없는 도구를 쓰라는 지시가 된다.
-    """
+def test_the_codex_worker_keeps_a_cut_off_commands_metadata(tmp_path):
+    """codex code-mode가 r.output만 내보내면 재개 id와 종료 상태가 사라진다."""
     setup, _archive, _team_id = _note_setup(tmp_path, "끝냈습니다.")
     run = setup.teams.get_team_run(setup.run.id)
     task = setup.teams.list_tasks(run.id, setup.cycle.id)[0]
 
-    prompt = setup.runtime._worker_prompt(run, setup.worker, task)
+    prompt = " ".join(setup.runtime._worker_prompt(run, setup.worker, task).split())
 
-    assert "the process is still running" in prompt
-    assert "Resume that id and keep waiting" in prompt
-    # 다시 띄우는 것이 실측에서 팀을 다섯 사이클 묶어둔 행동이다.
-    assert "Do not start the command over" in prompt
-    assert "exec_command" not in prompt
+    assert "CODEX EXECUTION ENVIRONMENT" in prompt
+    assert "let r = await tools.exec_command" in prompt
+    assert "while (r.session_id !== undefined)" in prompt
+    assert "r = await tools.write_stdin" in prompt
+    assert "Never emit only `r.output`" in prompt
+    assert "call the top-level `wait` tool on that same cell" in prompt
+    assert "Seeing `running` is not a reason to stop" in prompt
+    assert "Do not use `Start-Process` merely to escape" in prompt
+    assert "TaskOutput" not in prompt
+
+
+def test_the_claude_worker_blocks_on_the_background_task_it_started(tmp_path):
+    """헤드리스 claude는 알림을 기다린다고 끝내면 background task도 끝난다."""
+    setup, _archive, _team_id = _note_setup(tmp_path, "끝냈습니다.")
+    run = setup.teams.get_team_run(setup.run.id)
+    task = setup.teams.list_tasks(run.id, setup.cycle.id)[0]
+    claude = replace(
+        setup.worker,
+        backend="claude",
+        persona_snapshot={
+            **setup.worker.persona_snapshot,
+            "default_options": {"permission_mode": "acceptEdits"},
+        },
+    )
+
+    prompt = " ".join(setup.runtime._worker_prompt(run, claude, task).split())
+
+    assert "CLAUDE EXECUTION ENVIRONMENT" in prompt
+    assert "Permission mode for this worker: `acceptEdits`" in prompt
+    assert "`TaskOutput` with `block=true`" in prompt
+    assert "Do not end the turn waiting for a notification" in prompt
     assert "write_stdin" not in prompt
+
+
+def test_leader_does_not_escalate_a_worker_wait_ceiling_to_the_user():
+    for prompt in (PLANNING_PROMPT, ACCEPTANCE_REVIEW_PROMPT):
+        flattened = " ".join(prompt.split())
+        assert "command wait ceiling" in flattened
+        assert "not a user decision" in flattened
+        assert "product step-runner" in flattened
 
 
 def test_the_note_reaches_the_planner_and_the_worker(tmp_path):

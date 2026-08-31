@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from personal_agent_gateway.artifacts import Artifact, ArtifactStore
-from personal_agent_gateway.file_safety import iter_safe_files
+from personal_agent_gateway.file_safety import (
+    IGNORED_DIRECTORY_NAMES,
+    iter_safe_files,
+)
 from personal_agent_gateway.teams import (
     TeamMessage,
     TeamRun,
@@ -15,6 +20,13 @@ from personal_agent_gateway.teams import (
 )
 
 WorkspaceSnapshot = dict[str, tuple[int, int]]
+GitHeadSnapshot = dict[str, str]
+
+_UNBORN_GIT_HEAD = "<unborn>"
+
+
+class GitHeadSnapshotError(RuntimeError):
+    pass
 
 _PACKAGE_FILES = {
     "run-result.json": ("text", "Team Run result", "application/json"),
@@ -74,6 +86,77 @@ def workspace_changes(before: WorkspaceSnapshot, after: WorkspaceSnapshot) -> di
         ),
         "files_deleted": sorted(before_paths - after_paths),
     }
+
+
+def git_head_snapshot(root: Path) -> GitHeadSnapshot:
+    snapshot: GitHeadSnapshot = {}
+    if not root.is_dir():
+        return snapshot
+    root = root.resolve()
+    for current, dirs, files in os.walk(root):
+        repository = Path(current)
+        if ".git" in dirs or ".git" in files:
+            relative = repository.relative_to(root).as_posix() or "."
+            snapshot[relative] = _git_head(repository)
+        dirs[:] = sorted(
+            name
+            for name in dirs
+            if name.lower() not in IGNORED_DIRECTORY_NAMES
+            and not (repository / name).is_symlink()
+        )
+    return snapshot
+
+
+def git_head_changes(
+    before: GitHeadSnapshot,
+    after: GitHeadSnapshot,
+) -> dict[str, dict[str, str | None]]:
+    return {
+        path: {"before": before.get(path), "after": after.get(path)}
+        for path in sorted(set(before) | set(after))
+        if before.get(path) != after.get(path)
+    }
+
+
+def _git_head(repository: Path) -> str:
+    safe_repository = repository.resolve().as_posix()
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "git",
+                "-c",
+                f"safe.directory={safe_repository}",
+                "-C",
+                safe_repository,
+                *args,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+    try:
+        completed = git("rev-parse", "--verify", "HEAD")
+        if completed.returncode != 0:
+            symbolic = git("symbolic-ref", "-q", "HEAD")
+            status = git("status", "--porcelain", "--untracked-files=no")
+            if symbolic.returncode == 0 and status.returncode == 0:
+                return _UNBORN_GIT_HEAD
+            raise GitHeadSnapshotError(
+                "Could not read Git HEAD for workspace repository"
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GitHeadSnapshotError(
+            "Could not inspect Git HEAD for workspace repository"
+        ) from exc
+    head = completed.stdout.strip()
+    if not head:
+        raise GitHeadSnapshotError(
+            "Git returned an empty HEAD for workspace repository"
+        )
+    return head
 
 
 def _message_paths(message: TeamMessage, key: str) -> list[str]:

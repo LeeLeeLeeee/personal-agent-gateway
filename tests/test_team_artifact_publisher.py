@@ -80,6 +80,74 @@ def test_publishes_only_declared_files_with_integrity_metadata(tmp_path: Path) -
     assert all("%SystemDrive%" not in item.relative_path for item in store.list())
 
 
+def test_successful_publication_indexes_declared_outputs_for_team_memory(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    output = workspace / "outputs" / "report.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("# Report", encoding="utf-8")
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+
+    class RecordingMemory:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def index_markdown_outputs(self, **kwargs) -> None:
+            self.calls.append(kwargs)
+
+    memory = RecordingMemory()
+
+    artifacts = TeamArtifactPublisher(store, memory).publish(
+        "run-1",
+        "cycle-1",
+        _task(),
+        _outcome("outputs/report.md"),
+        workspace,
+    )
+
+    assert len(artifacts) == 1
+    assert memory.calls == [
+        {
+            "team_run_id": "run-1",
+            "cycle_id": "cycle-1",
+            "task_id": "task-1",
+            "task_title": "Report",
+            "relative_paths": ["outputs/report.md"],
+            "workspace_root": workspace.resolve(),
+        }
+    ]
+
+
+def test_memory_index_failure_does_not_undo_published_artifacts(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    output = workspace / "outputs" / "report.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("# Report", encoding="utf-8")
+    db = Database(tmp_path / "app.db")
+    db.initialize()
+    store = ArtifactStore(db, tmp_path / "artifacts")
+
+    class FailingMemory:
+        def index_markdown_outputs(self, **_kwargs) -> None:
+            raise OSError("index unavailable")
+
+    artifacts = TeamArtifactPublisher(store, FailingMemory()).publish(
+        "run-1",
+        None,
+        _task(),
+        _outcome("outputs/report.md"),
+        workspace,
+    )
+
+    assert len(artifacts) == 1
+    assert len(store.list()) == 1
+
+
 def test_publication_failure_rolls_back_current_attempt(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     for name in ("one.md", "two.md"):

@@ -1,11 +1,15 @@
 import hashlib
+import logging
 import mimetypes
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from personal_agent_gateway.artifacts import Artifact, ArtifactStore
 from personal_agent_gateway.team_outcomes import TaskOutcome
+from personal_agent_gateway.team_memory import TeamRunMemoryService
 from personal_agent_gateway.teams import TeamTask
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ArtifactPublicationError(RuntimeError):
@@ -13,8 +17,13 @@ class ArtifactPublicationError(RuntimeError):
 
 
 class TeamArtifactPublisher:
-    def __init__(self, store: ArtifactStore) -> None:
+    def __init__(
+        self,
+        store: ArtifactStore,
+        memory: TeamRunMemoryService | None = None,
+    ) -> None:
         self._store = store
+        self._memory = memory
 
     def publish(
         self,
@@ -69,6 +78,20 @@ class TeamArtifactPublisher:
             for artifact in reversed(published):
                 self._store.delete(artifact.id)
             raise ArtifactPublicationError("artifact_publication_failed") from exc
+        if self._memory is not None:
+            try:
+                self._memory.index_markdown_outputs(
+                    team_run_id=run_id,
+                    cycle_id=cycle_id,
+                    task_id=task.id,
+                    task_title=task.title,
+                    relative_paths=[item.path for item in outcome.deliverables],
+                    workspace_root=workspace,
+                )
+            except Exception:
+                # Search memory is derived data. Losing it must not turn an
+                # already accepted and published task into a failed task.
+                _LOGGER.exception("Team Run document indexing failed")
         return tuple(published)
 
 

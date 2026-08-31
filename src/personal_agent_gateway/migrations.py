@@ -1133,6 +1133,46 @@ def _migration_36_auto_series_zero_interval(
     )
 
 
+def _migration_37_team_run_document_memory(
+    connection: sqlite3.Connection,
+) -> None:
+    connection.executescript(
+        """
+        create table if not exists team_run_document_sections (
+            id text primary key,
+            team_id text not null,
+            team_run_id text not null references team_runs(id) on delete cascade,
+            cycle_id text references team_run_cycles(id) on delete cascade,
+            task_id text not null references team_tasks(id) on delete cascade,
+            path text not null,
+            document_title text not null,
+            section_title text not null,
+            section_level integer not null,
+            section_ordinal integer not null,
+            content_markdown text not null,
+            content_sha256 text not null,
+            created_at text not null,
+            updated_at text not null,
+            unique(task_id, path, section_ordinal)
+        );
+
+        create virtual table if not exists team_run_document_sections_fts using fts5(
+            section_id unindexed,
+            document_title,
+            section_title,
+            content_markdown,
+            tokenize = 'unicode61'
+        );
+
+        create index if not exists idx_team_run_document_sections_team_updated
+        on team_run_document_sections(team_id, updated_at desc);
+
+        create index if not exists idx_team_run_document_sections_source
+        on team_run_document_sections(team_run_id, cycle_id, task_id, path);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "legacy-column-baseline", _migration_1_legacy_columns),
     (2, "operability-foundation", _migration_2_operability_foundation),
@@ -1170,6 +1210,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (34, "team-run-pause-request", _migration_34_team_run_pause_request),
     (35, "operation-usage", _migration_35_operation_usage),
     (36, "auto-series-zero-interval", _migration_36_auto_series_zero_interval),
+    (37, "team-run-document-memory", _migration_37_team_run_document_memory),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

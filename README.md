@@ -24,8 +24,8 @@ Team Runs 목록에서는 실행 상태, 현재 Cycle, 역할별 Persona와 Task
 
 - **개인 실행**: Agent 또는 Persona 기반 Chat, session 기록과 실시간 event 확인
 - **로컬 자동화**: 승인 가능한 Jobs, cron Schedules, IMAP·POP3 메일 Hooks와 Artifacts 관리
-- **팀 협업**: Leader·Member Teams, AUTO·TRIGGERED Cycle, 역할별 Task, Human in the loop
-- **안전한 작업 반영**: Spaces 접근 정책, Git worktree 격리와 Repository Delivery
+- **팀 협업**: Leader·Member Teams, AUTO·TRIGGERED Cycle, 역할별 Task, Agent Session 실시간 응답, Human in the loop
+- **안전한 작업 반영**: Spaces 접근 정책, Git worktree 격리와 Repository Delivery. Worker는 Git HEAD를 바꿀 수 없고 commit은 모든 Worker가 끝난 뒤 Leader synthesis만 수행
 - **운영 통제**: Dashboard 사용량, Operations health·emergency stop·backup, Settings와 audit
 
 화면별 동작과 기능 연결은 [전체 기능 가이드](docs/knowledge/gateway-feature-guide.md)에서 확인할 수 있습니다.
@@ -205,7 +205,7 @@ curl -H "Authorization: Bearer $LMG_LOCAL_TOKEN" http://127.0.0.1:8788/v1/models
 
 ### LMG run 종료 계약
 
-PAG는 LMG의 SSE를 EOF까지 검증하고 다음 terminal 중 정확히 하나만 허용합니다.
+PAG는 첫 유효 terminal을 권위 있는 종료로 받아들이고 즉시 response를 닫습니다.
 
 | terminal | Chat `termination` | 허용되는 `error_code` |
 | --- | --- | --- |
@@ -214,7 +214,7 @@ PAG는 LMG의 SSE를 EOF까지 검증하고 다음 terminal 중 정확히 하나
 | `run.aborted` + `run_cancelled` | `cancelled` | `run_cancelled` |
 | `run.aborted` + `run_timeout` | `timed_out` | `run_timeout` |
 
-terminal 없는 EOF는 `upstream_stream_incomplete`, 중복 terminal·terminal 뒤의 추가 이벤트·잘못된 JSON·shape·`run_id`는 `provider_protocol_error`로 처리합니다. 실패·중단의 `partial_content`는 transcript와 activity에 진단 정보로만 보존하며 정상 assistant 메시지나 성공 산출물로 노출하지 않습니다.
+terminal 이전 EOF는 `upstream_stream_incomplete`로 처리합니다. terminal 이후 wire data는 소비하지 않으며, LMG가 terminal 뒤 이벤트를 보내지 않는 계약을 소유합니다. terminal 이전의 잘못된 JSON·shape·`run_id`는 `provider_protocol_error`입니다. 실패·중단의 `partial_content`는 transcript와 activity에 진단 정보로만 보존하며 정상 assistant 메시지나 성공 산출물로 노출하지 않습니다.
 
 ### Chat과 LMG 세션 수명주기
 

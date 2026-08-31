@@ -719,6 +719,85 @@ describe("useTeamRunController question progress", () => {
   });
 });
 
+describe("useTeamRunController agent progress", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.teamRuns.mockResolvedValue([]);
+    api.teamRunDetail.mockImplementation(async (id) => detail(id));
+    api.teamDocuments.mockImplementation(async (id) => [`${id}.md`]);
+    api.teamRunDelivery.mockImplementation(async (id) => ({ source: { path: id } }));
+  });
+
+  it("keeps one merged ephemeral progress snapshot per agent without refetching", async () => {
+    const { result } = renderController();
+    await selectRun(result, "run-a");
+    const before = api.teamRunDetail.mock.calls.length;
+
+    act(() => result.current.handleTeamEvent({
+      type: "team.agent.progress",
+      team_run_id: "run-a",
+      agent_id: "worker-1",
+      operation_id: "operation-1",
+      stage: "worker_execution",
+      active: true,
+      activity: "shell · started"
+    }));
+    act(() => result.current.handleTeamEvent({
+      type: "team.agent.progress",
+      team_run_id: "run-a",
+      agent_id: "worker-1",
+      operation_id: "operation-1",
+      active: true,
+      answer_partial: "구현 중입니다."
+    }));
+
+    expect(api.teamRunDetail.mock.calls.length).toBe(before);
+    expect(result.current.agentProgress).toEqual({
+      "worker-1": {
+        operationId: "operation-1",
+        stage: "worker_execution",
+        taskId: null,
+        activity: "shell · started",
+        answerPartial: "구현 중입니다."
+      }
+    });
+
+    act(() => result.current.handleTeamEvent({
+      type: "team.agent.progress",
+      team_run_id: "run-a",
+      agent_id: "worker-1",
+      operation_id: "older-operation",
+      active: false
+    }));
+    expect(result.current.agentProgress["worker-1"]).toBeTruthy();
+
+    act(() => result.current.handleTeamEvent({
+      type: "team.agent.progress",
+      team_run_id: "run-a",
+      agent_id: "worker-1",
+      operation_id: "operation-1",
+      active: false
+    }));
+    expect(result.current.agentProgress).toEqual({});
+  });
+
+  it("ignores progress from another run", async () => {
+    const { result } = renderController();
+    await selectRun(result, "run-a");
+
+    act(() => result.current.handleTeamEvent({
+      type: "team.agent.progress",
+      team_run_id: "run-b",
+      agent_id: "worker-1",
+      operation_id: "operation-1",
+      active: true,
+      answer_partial: "남의 진행"
+    }));
+
+    expect(result.current.agentProgress).toEqual({});
+  });
+});
+
 describe("useTeamRunController 조용한 갱신", () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -103,6 +103,7 @@ from personal_agent_gateway.team_model_effects import (
     team_model_effect_result_validators,
 )
 from personal_agent_gateway.team_model_invoker import TeamModelInvoker
+from personal_agent_gateway.team_memory import TeamRunMemoryService
 from personal_agent_gateway.team_model_operations import (
     TeamModelOperationService,
 )
@@ -267,8 +268,12 @@ def create_app(
         ),
         event_bus,
         archive_service=app.state.archive_service,
+        memory_service=app.state.team_memory_service,
         result_packager=app.state.team_result_packager,
-        artifact_publisher=TeamArtifactPublisher(app.state.artifact_store),
+        artifact_publisher=TeamArtifactPublisher(
+            app.state.artifact_store,
+            app.state.team_memory_service,
+        ),
         staged_inputs_resolver=app.state.execution_contexts.staged_inputs_for,
         operations=operation_service,
         model_invoker=operation_invoker,
@@ -514,6 +519,11 @@ def _attach_local_services(
     session_activity_publisher = SessionActivityPublisher(session_activity_service, event_bus)
     persona_service = PersonaService(db)
     archive_service = ArchiveService(db)
+    team_memory_service = TeamRunMemoryService(db)
+    try:
+        team_memory_service.backfill()
+    except Exception:
+        _LOGGER.exception("Team Run document memory backfill failed")
     space_policy_service = SpacePolicyService(db)
     space_policy_service.seed_defaults()
     team_cycle_service = TeamCycleService(db)
@@ -622,6 +632,7 @@ def _attach_local_services(
     app.state.scheduler_loop = scheduler_loop
     app.state.persona_service = persona_service
     app.state.archive_service = archive_service
+    app.state.team_memory_service = team_memory_service
     app.state.space_policy_service = space_policy_service
     app.state.session_activity_publisher = session_activity_publisher
     app.state.session_activity_service = session_activity_service

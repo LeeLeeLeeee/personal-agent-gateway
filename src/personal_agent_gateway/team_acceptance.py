@@ -24,6 +24,7 @@ RECOVERABLE_ACCEPTANCE_REASONS = frozenset(
         "required_verification_failed",
         "task_not_completed",
         "invalid_task_outcome",
+        "workspace_git_head_changed",
     }
 )
 
